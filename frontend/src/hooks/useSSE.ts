@@ -22,10 +22,12 @@ export function useSSE(sessionId: string | null, onMessage: SSECallback, onRecon
   }, [sessionId])
 }
 
-export function useMultiSSE(sessionIds: string[], onMessage: SSECallback, onReconnect?: (sessionId: string) => void, onUnavailable?: (sessionId: string) => void) {
+export function useMultiSSE(sessionIds: string[], onMessage: SSECallback, onReconnect?: (sessionId: string) => void, onUnavailable?: (sessionId: string) => void, realSessionIds: string[] = []) {
   const streams = useRef(new Map<string, SessionStream>())
   const callbacks = useRef({ onMessage, onReconnect, onUnavailable })
   callbacks.current = { onMessage, onReconnect, onUnavailable }
+  const realIds = useRef(realSessionIds)
+  realIds.current = realSessionIds
   const idsKey = sessionIds.join('|')
   useEffect(() => {
     const desired = new Set(sessionIds.filter(Boolean))
@@ -35,7 +37,14 @@ export function useMultiSSE(sessionIds: string[], onMessage: SSECallback, onReco
     for (const id of desired) {
       if (streams.current.has(id)) continue
       const stream = new SessionStream({
-        sessionId: id, url: cursor => api.getSSEUrl(id, cursor), probe: () => api.getActiveSimulation(id),
+        sessionId: id, url: cursor => api.getSSEUrl(id, cursor), probe: async () => {
+          try { return await api.getActiveSimulation(id) }
+          catch (error) {
+            const status = error && typeof error === 'object' && 'status' in error ? error.status : null
+            if (realIds.current.includes(id) && (status === 404 || status === 410)) return api.recoverRealSession(id)
+            throw error
+          }
+        },
         onMessage: event => callbacks.current.onMessage(event),
         onReconnect: () => callbacks.current.onReconnect?.(id),
         onUnavailable: () => callbacks.current.onUnavailable?.(id),

@@ -101,7 +101,7 @@ def claim_table(monkeypatch):
         monkeypatch.setattr('app.services.db.get_dynamodb_resource', lambda: db)
         client = boto3.client('dynamodb', region_name='ap-south-1')
         monkeypatch.setattr('app.services.db.get_dynamodb_client', lambda: client)
-        db.create_table(TableName='Sessions', KeySchema=[{'AttributeName': 'session_id', 'KeyType': 'HASH'}], AttributeDefinitions=[{'AttributeName': 'session_id', 'AttributeType': 'S'}], BillingMode='PAY_PER_REQUEST')
+        db.create_table(TableName='Sessions', KeySchema=[{'AttributeName': 'session_id', 'KeyType': 'HASH'}], AttributeDefinitions=[{'AttributeName': 'session_id', 'AttributeType': 'S'}, {'AttributeName': 'user_id', 'AttributeType': 'S'}], GlobalSecondaryIndexes=[{'IndexName':'UserIdIndex','KeySchema':[{'AttributeName':'user_id','KeyType':'HASH'}],'Projection':{'ProjectionType':'ALL'}}], BillingMode='PAY_PER_REQUEST')
         monkeypatch.setattr(execution_broker, 'get_service', lambda value: SimpleNamespace(is_authenticated=lambda: True, account_identity=lambda: 'account'))
         monkeypatch.setattr('app.services.real_trading_day.market_date', lambda: '2026-10-09')
         monkeypatch.setattr('app.dependencies.require_real_trading_access', lambda user: user)
@@ -120,6 +120,7 @@ async def test_concurrent_real_starts_share_one_execution_engine(claim_table):
         await asyncio.sleep(.01)
         session = simulation.SimulationSession(real_sessions.prepared_identity(), 'RELIND', request.date, '09:15:00', 1,
             user_id='u', session_type='real', execution_broker='Kite', broker_account_id='account', state=SimulationState.RUNNING)
+        session.task = SimpleNamespace(done=lambda: False, add_done_callback=lambda callback: None)
         simulation._sessions[session.session_id] = session
         return SimpleNamespace(session_id=session.session_id)
     first, second = await asyncio.gather(real_sessions.start(request, 'u', create), real_sessions.start(request, 'u', create))

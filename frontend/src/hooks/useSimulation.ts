@@ -1,8 +1,8 @@
 import { mergeOpenOrders } from '../services/brokerOrderState'
 import { contractPosition, unrealizedPnl, advancePositionClock, mergeConfirmedTrade, PositionSnapshot, ContractPosition } from '../services/positionAccounting'
 import { refreshedSessionCapital } from '../brokerSnapshot'
-import { useState, useCallback, useRef } from 'react'
-import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsError, SimulationStartResponse, SessionGroupResponse } from '../services/api'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import api, { Trade, Position, Order, TickEvent, BarCandle, InsufficientFundsError, ApiError, SimulationStartResponse, SessionGroupResponse } from '../services/api'
 
 export type SessionState = 'idle' | 'running' | 'paused' | 'ended'
 
@@ -24,6 +24,7 @@ const FLAT_POSITION = (symbol: string): Position => ({
 })
 
 export interface SimulationState {
+  realClosing: boolean
   sessionId: string | null
   groupId: string | null
   group: SessionGroupResponse | null
@@ -121,6 +122,7 @@ export function useSimulation() {
   const positionSequenceRef = useRef(0)
 
   const [state, setState] = useState<SimulationState>({
+    realClosing: false,
     sessionId: null,
     groupId: null,
     group: null,
@@ -196,6 +198,7 @@ export function useSimulation() {
     else latestEquityTickRef.current = null
     setState(s => ({
       ...s,
+      realClosing: res.real_closing ?? false,
       sessionId: res.session_id,
       groupId: res.group_id,
       group: s.group?.group_id === res.group_id ? s.group : null,
@@ -275,7 +278,17 @@ export function useSimulation() {
 
   const restoreActiveGroup = useCallback(async () => {
     const group = await api.getActiveSessionGroup()
-    if (!group?.members.length) return null
+    if (!group?.members.length) {
+      let status
+      try { status = await api.executionBrokerStatus() }
+      catch (error) { if (error instanceof ApiError && (error.status === 403 || error.status === 401)) return null; throw error }
+      if (!status.active_session_id) return null
+      let response
+      try { response = await api.recoverRealSession(status.active_session_id) }
+      catch (error) { if (error instanceof ApiError && error.status === 410) return null; throw error }
+      await activateSession(response)
+      return response
+    }
     const saved = localStorage.getItem(`session-group:${group.group_id}`)
     let selected = group.members[0].session_id
     try {
@@ -351,7 +364,7 @@ export function useSimulation() {
         member.session_id === (sid ?? s.sessionId) ? { ...member, state: 'ended' as const } : member) } : s.group
       if (sid && sid !== s.sessionId) return { ...s, group }
       return {
-        ...s, group, sessionState: 'ended', sseUrl: null,
+        ...s, group, realClosing: false, sessionState: 'ended', sseUrl: null,
         latestEquityTick: null, latestCETick: null, latestPETick: null,
       }
     })
@@ -411,11 +424,42 @@ export function useSimulation() {
     return res.session_id
   }, [state.symbol, state.date, activateSession])
 
-  const attachToActiveSession = useCallback(async (sessionId: string) => {
-    const res = await api.getActiveSimulation(sessionId)
+  const attachToActiveSession = useCallback(async (sessionId: string, recoverReal = false) => {
+    let res
+    try { res = await api.getActiveSimulation(sessionId) }
+    catch (error) {
+      if (!recoverReal || !(error instanceof ApiError) || ![404, 410].includes(error.status)) throw error
+      res = await api.recoverRealSession(sessionId)
+    }
     await activateSession(res)
     return res
   }, [activateSession])
+
+  const setRealClosing = useCallback((closing: boolean) => setState(s => ({ ...s, realClosing: closing })), [])
+
+  const realPresenceIds = [...new Set([
+    ...(state.group?.members.filter(member => member.session_type === 'real').map(member => member.session_id) ?? []),
+    ...(state.sessionType === 'real' && state.sessionId && state.sessionState !== 'ended' ? [state.sessionId] : []),
+  ])].sort().join('|')
+  useEffect(() => {
+    if (!realPresenceIds) return
+    const ids = realPresenceIds.split('|')
+    let active = true
+    let pending = false
+    const acknowledge = async () => {
+      if (pending) return
+      pending = true
+      try { await Promise.all(ids.map(id => api.realHeartbeat(id))) }
+      catch (error) { if (active) setState(s => ({ ...s, orderError: `Session connection needs attention: ${String(error)}` })) }
+      finally { pending = false }
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') void acknowledge() }
+    void acknowledge()
+    const timer = window.setInterval(() => { void acknowledge() }, 180_000)
+    window.addEventListener('online', acknowledge)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { active = false; clearInterval(timer); window.removeEventListener('online', acknowledge); document.removeEventListener('visibilitychange', onVisible) }
+  }, [realPresenceIds])
 
   const refreshSessionData = useCallback(async () => {
     const id = state.sessionId
@@ -454,11 +498,12 @@ export function useSimulation() {
       try {
         const summary = await api.realCloseSummary(id)
         if (!window.confirm(`Stop this Real session? ${summary.position_count} open position(s) will be closed and ${summary.pending_order_count} pending order(s) reconciled. Cancel to close them yourself. This does not lock your trading day.`)) return
-        await api.stopSimulation(id)
+        const result = await api.stopSimulation(id)
+        if (result.status === 'closing') setState(s => s.sessionId === id ? { ...s, realClosing: true } : s)
         // Preserve broker state and SSE until the server confirms session_ended.
         return
       } catch (error) {
-        setState(s => s.sessionId === id ? { ...s, error: String(error) } : s)
+        setState(s => s.sessionId === id ? { ...s, orderError: String(error) } : s)
         return
       } finally { realStopPending.current = false }
     }
@@ -1107,6 +1152,7 @@ export function useSimulation() {
     startSession,
     attachToActiveSession,
     restoreActiveGroup,
+    setRealClosing,
     selectGroupMember,
     refreshGroup,
     refreshSessionData,

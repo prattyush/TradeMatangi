@@ -53,6 +53,7 @@ export interface DesktopStrategy {
 }
 
 export interface DesktopTradingSession {
+  real_closing?: boolean
   execution_broker?: string | null; broker_account_id?: string | null
   session_id: string; symbol: string; date: string; start_time: string
   speed: number; session_capital: number; instrument_type: 'equity' | 'options'

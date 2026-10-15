@@ -1117,13 +1117,32 @@ function ScreenController(props: ScreenControllerProps) {
   const reportDrawingError = useCallback((error: unknown) => setDrawingError(`Drawing sync failed: ${String(error)}`), [])
   const rawDesktopTradingRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
     if (hasNativeHost) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: `trading/${path}`, method, body, screenId: activeScreenId })
-    const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${path}`, { method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
+    const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/trading/${path}`, { signal: AbortSignal.timeout(30_000), method, headers: { Authorization: `Bearer ${browserToken}`, 'Content-Type': 'application/json' }, body: method === 'GET' ? undefined : JSON.stringify(body) })
     if (!response.ok) {
       const detail = await response.text().catch(() => '')
       throw new Error(`Trading request failed (${response.status})${detail ? `: ${detail.slice(0, 220)}` : ''}`)
     }
     return (response.status === 204 ? null : await response.json()) as T
   }
+  useEffect(() => {
+    const id = trading?.session.session_id
+    if (!id || trading?.session.session_type !== 'real' || trading.session.state === 'ended' || connection !== 'connected') return
+    let active = true
+    let pending = false
+    const acknowledge = async () => {
+      if (pending) return
+      pending = true
+      try { await rawDesktopTradingRequest(`broker/${encodeURIComponent(id)}/heartbeat`, 'POST') }
+      catch (error) { if (active) reportTradingError(error) }
+      finally { pending = false }
+    }
+    const visible = () => { if (document.visibilityState === 'visible') void acknowledge() }
+    void acknowledge()
+    const timer = window.setInterval(() => { void acknowledge() }, 180_000)
+    window.addEventListener('online', acknowledge)
+    document.addEventListener('visibilitychange', visible)
+    return () => { active = false; clearInterval(timer); window.removeEventListener('online', acknowledge); document.removeEventListener('visibilitychange', visible) }
+  }, [trading?.session.session_id, trading?.session.session_type, trading?.session.state, connection, serverUrl, browserToken])
   const tradingRefreshKey = (sessionId: string) => `${serverUrl}:${browserToken}:${sessionId}`
   const desktopTradingRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}): Promise<T> => {
     if (method === 'GET' && /^[^/]+\/snapshot$/.test(path)) {
@@ -1292,7 +1311,9 @@ function ScreenController(props: ScreenControllerProps) {
       setActiveToolTileId(saved.activeToolTileId ?? record.state.tiles?.[0]?.id ?? '')
       if (saved.session_id) {
         try {
-          const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${saved.session_id}/snapshot`, 'GET')
+          const snapshot = saved.mode === 'Real'
+            ? await desktopTradingRequest<DesktopTradingSnapshot>(`broker/${encodeURIComponent(saved.session_id)}/recover`, 'POST')
+            : await desktopTradingRequest<DesktopTradingSnapshot>(`${saved.session_id}/snapshot`, 'GET')
           if (!cancelled) { setTrading(snapshot); setSharedTradingSession(snapshot.source === 'desktop_paper' ? !snapshot.owned : !saved.owned || !snapshot.owned) }
         } catch (error) { if (!cancelled) { reportTradingError(`Session needs reattachment: ${String(error)}`); if (props.assignedId) setHandoffError(String(error)) } }
       }
@@ -1585,6 +1606,7 @@ function ScreenController(props: ScreenControllerProps) {
     let committed = false
     let startDispatched = false
     let attachedExisting = false
+    let realSessionId: string | null = null
     try {
       setReplayError('')
       clearTradingError()
@@ -1594,6 +1616,7 @@ function ScreenController(props: ScreenControllerProps) {
       if(mode==='Real'){
         const broker=await settingsAccountRequest<{broker:string;authenticated:boolean;active_session_id?:string|null}>('broker/status','GET');
         assertContext();setRealBroker(broker);
+        realSessionId = broker.active_session_id ?? null;
         if(!broker.authenticated){
           if(broker.broker==='kotak'){setShowKotakLogin(true);return;}
           throw new Error('Kite authentication required; update the Kite token in Admin.');
@@ -1602,10 +1625,22 @@ function ScreenController(props: ScreenControllerProps) {
       if (mode === 'Real' && (!Number.isFinite(Number(realAllocationPct)) || Number(realAllocationPct) <= 0 || Number(realAllocationPct) > 100)) throw new Error('Real capital allocation must be between 0 and 100%.')
       const startBody = isTradingMode(mode) ? { ...tradingStartBody(date), ...(mode === 'Real' ? { allocation_pct: Number(realAllocationPct) / 100, execution_broker: preferences?.real_execution_broker ?? sharedPreferences.real_execution_broker } : {}), brokerage_per_order: Number(preferences?.brokerage_per_order ?? 1), strategy_interval_secs: Number(preferences?.strategy_interval_secs ?? 180), override: Boolean(preferences?.override_session_enabled) } : null
       let attached: DesktopTradingSnapshot | null = null
+      if (mode === 'Real' && realSessionId) {
+        try {
+          attached = await desktopTradingRequest<DesktopTradingSnapshot>(`broker/${encodeURIComponent(realSessionId)}/recover`, 'POST')
+          assertContext()
+          attachedExisting = true
+        } catch (error) {
+          if (!String(error).includes('(410')) throw error
+          const status = await settingsAccountRequest<{ active_session_id?: string | null }>('broker/status', 'GET')
+          assertContext()
+          if (status.active_session_id) throw error
+        }
+      }
       let resumeSessionId: string | null = null
       let replayStartTime = `${runStartTime}:00`
       let initialBarIndex: number | undefined
-      if (startBody) {
+      if (startBody && !attached) {
         const candidateParams = new URLSearchParams({ symbol: String(startBody.symbol), date, instrument_type: String(startBody.instrument_type), desktop_mode: mode.toLowerCase() })
         candidateQuery = `candidate?${candidateParams}`
         const candidate = await desktopTradingRequest<DesktopTradingCandidate>(candidateQuery, 'GET')
@@ -2535,7 +2570,7 @@ function ScreenController(props: ScreenControllerProps) {
     refresh();const timer=setInterval(refresh,5000);
     return()=>{cancelled=true;clearInterval(timer);};
   },[connection,realDay?.state,realDay?.date,serverUrl,browserToken]);
-  useEffect(() => { if (trading?.session.state === 'ended') setRealClosing(false) }, [trading?.session.state])
+  useEffect(() => { if (trading?.session.state === 'ended') setRealClosing(false); else if (typeof trading?.session.real_closing === 'boolean') setRealClosing(trading.session.real_closing) }, [trading?.session.state, trading?.session.real_closing])
   useEffect(() => { setSnapshotsActive(Boolean(sharedPreferences.auto_start_event_snapshots) && !companion) }, [trading?.session.session_id, companion, sharedPreferences.auto_start_event_snapshots])
   const ticketSizeOptions = () => tradeTicket?.settings?.desktop_order_size_mode === 'quantity' ? ['1', '2', '3'] : ['l', 'm', 'h']
   const ticketSizeLabel = (key: string) => tradeTicket?.settings ? ticketSizingLabel(tradeTicket.settings, key) : ''
@@ -2622,7 +2657,7 @@ function ScreenController(props: ScreenControllerProps) {
       {realEnabled && <ToolbarActionButton icon="Real" className={mode === 'Real' ? 'selected mode-button' : 'mode-button'} onClick={() => switchMode('Real')}>Real</ToolbarActionButton>}
       {mode === 'Real' && !companion && <span className="run-controls">{(!trading || trading.session.state === 'ended') && <label>Capital % <input aria-label="Real Day capital allocation percent" type="number" min="0.01" max="100" step="0.01" style={{ width: 65 }} value={realAllocationPct} onChange={event => setRealAllocationPct(event.target.value)} /></label>}{realDay?.date === paperMarketDate() && realDay.state !== 'active' && <small>{realDay.state === 'done' ? 'Done for day 🔒' : 'Closing for day…'}</small>}<small>{realBroker?.broker ?? trading?.session.execution_broker ?? 'Broker'} · {realBroker?.authenticated ? 'Connected' : 'Authentication required'}</small>{!realBroker?.authenticated && <ToolbarActionButton icon="Refresh" onClick={() => { if(realBroker?.broker==='kotak'){setShowKotakLogin(true);return;} const context = contextRef.current; void settingsAccountRequest<{ broker: string; authenticated: boolean; active_session_id?: string | null }>('broker/status', 'GET').then(value => { if (context === contextRef.current) {setRealBroker(value);if(value.broker==='kotak'&&!value.authenticated)setShowKotakLogin(true)} }).catch(reportTradingError) }}>{realBroker?.broker==='kotak'?'Connect Kotak Neo':'Check broker'}</ToolbarActionButton>}
         {(!trading || trading.session.state === 'ended') && realBroker?.active_session_id && <ToolbarActionButton icon={trading?.session.session_id === realBroker.active_session_id ? 'Stop' : 'Inspect'} disabled={realActionPending} onClick={() => { if (trading?.session.session_id === realBroker.active_session_id) void closeReal(false); else void desktopTradingRequest<DesktopTradingSnapshot>(`${realBroker.active_session_id}/snapshot`, 'GET').then(setTrading).catch(reportTradingError) }}>{trading?.session.session_id === realBroker.active_session_id ? 'Close outstanding session' : 'Inspect outstanding session'}</ToolbarActionButton>}
-        {!trading || trading.session.state === 'ended' ? <ToolbarActionButton icon="Play" disabled={Boolean(realBroker?.active_session_id) || historicalStarting || !realBroker?.authenticated || (realDay?.date === paperMarketDate() && realDay.state !== 'active')} onClick={() => void startRun()}>Start Real</ToolbarActionButton> : <><ToolbarActionButton icon="Stop" disabled={realActionPending || realClosing} onClick={() => void closeReal(false)}>{realClosing ? 'Closing…' : 'Stop'}</ToolbarActionButton><ToolbarActionButton icon="Done" disabled={realActionPending || realClosing} onClick={() => void closeReal(true)}>Done for day</ToolbarActionButton><ToolbarActionButton icon="Refresh" disabled={realActionPending} onClick={() => void refreshBroker()}>Trade History Refresh</ToolbarActionButton></>}
+        {!trading || trading.session.state === 'ended' ? <ToolbarActionButton icon="Play" disabled={historicalStarting || !realBroker?.authenticated || (!realBroker?.active_session_id && realDay?.date === paperMarketDate() && realDay.state !== 'active')} onClick={() => void startRun()}>{realBroker?.active_session_id ? 'Recover Real' : 'Start Real'}</ToolbarActionButton> : <><ToolbarActionButton icon="Stop" disabled={realActionPending || realClosing} onClick={() => void closeReal(false)}>{realClosing ? 'Closing…' : 'Stop'}</ToolbarActionButton><ToolbarActionButton icon="Done" disabled={realActionPending || realClosing} onClick={() => void closeReal(true)}>Done for day</ToolbarActionButton><ToolbarActionButton icon="Refresh" disabled={realActionPending} onClick={() => void refreshBroker()}>Trade History Refresh</ToolbarActionButton></>}
       </span>}
       {companion && <span className="run-controls"><small>Linked · {mode} {trading?.session.execution_broker ?? ''}</small><ToolbarActionButton icon="Focus" onClick={() => {
         if (hasNativeHost) { void emit('desktop-focus-linked-primary', { screenId: primaryId }); void invoke(props.external.includes(primaryId) ? 'focus_screen_window' : 'focus_main_window', { screenId: primaryId }).catch(reportTradingError) }

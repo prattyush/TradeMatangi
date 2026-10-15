@@ -1074,8 +1074,8 @@ async fn desktop_settings_request(
     if path.starts_with('/') || path.split('/').any(|segment| segment == ".." || segment == ".") || path.contains('?') || path.contains('#') {
         return Err("Invalid settings path".into());
     }
-    let token = host.access_token(&base_url).await?;
-    let client = reqwest::Client::new();
+    let token = tokio::time::timeout(Duration::from_secs(30), host.access_token(&base_url)).await.map_err(|_| "Account authentication timed out")??;
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
     let url = format!("{}/api/desktop/v1/settings/{}", base_url.trim_end_matches('/'), path);
     let request = match method.as_str() {
         "GET" => client.get(url),
@@ -1161,7 +1161,7 @@ async fn desktop_drawing_request(
     }
     let token = if is_screen_request {
         tokio::time::timeout(Duration::from_secs(4), host.access_token(&base_url)).await.map_err(|_| "Screen authentication timed out")??
-    } else { host.access_token(&base_url).await? };
+    } else { tokio::time::timeout(Duration::from_secs(30), host.access_token(&base_url)).await.map_err(|_| "Trading authentication timed out")?? };
     let url = format!(
         "{}/api/desktop/v1/{}",
         base_url.trim_end_matches('/'),
@@ -1169,7 +1169,7 @@ async fn desktop_drawing_request(
     );
     let client = if is_screen_request {
         reqwest::Client::builder().timeout(Duration::from_secs(4)).build().map_err(|e| e.to_string())?
-    } else { reqwest::Client::new() };
+    } else { reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())? };
     let request = match method.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),

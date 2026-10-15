@@ -10,6 +10,13 @@ from fastapi import HTTPException
 from app.services.swing_funding_store import decode, encode
 
 STYLES = ("intraday", "swing")
+DAY_HEARTBEAT_SECONDS = 180
+DAY_LEASE_SECONDS = 900
+DAY_LOCAL_AUTHORITY_SECONDS = DAY_LEASE_SECONDS - 10
+
+
+def lease_seconds(style):
+    return DAY_LEASE_SECONDS if style == "intraday" else 45
 
 
 def key(broker, account, style):
@@ -138,7 +145,9 @@ def claim(user, broker, account, style, session_id, token, *, record=None):
         "trading_date": (record or {}).get("date") or (current or {}).get("trading_date"),
         "opened_at": (current or {}).get("opened_at", now),
         "updated_at": now,
-        "engine_until": now + 45,
+        "engine_until": now + lease_seconds(style),
+        **({"last_client_seen_at": current["last_client_seen_at"]} if current and "last_client_seen_at" in current else {}),
+        **({k: current[k] for k in ("handoff_token", "handoff_started_at") if k in current} if current else {}),
         "state": current["state"] if current else "starting",
     }
     condition = "attribute_not_exists(ledger_id) OR #state = :closed"
@@ -190,7 +199,7 @@ def claim(user, broker, account, style, session_id, token, *, record=None):
 def update(broker, account, style, user, session_id, token, *, state=None):
     changes = "SET engine_until = :until, updated_at = :now"
     values = {
-        ":until": int(time.time()) + 45,
+        ":until": int(time.time()) + lease_seconds(style),
         ":now": int(time.time()),
         ":owner": user,
         ":sid": session_id,
@@ -204,7 +213,7 @@ def update(broker, account, style, user, session_id, token, *, state=None):
     table().update_item(
         Key=key(broker, account, style),
         UpdateExpression=changes,
-        ConditionExpression="owner_user_id = :owner AND session_id = :sid AND operation_id = :token AND #state <> :closed AND #account = :account",
+        ConditionExpression="owner_user_id = :owner AND session_id = :sid AND operation_id = :token AND #state <> :closed AND #account = :account" + (" AND engine_until > :now" if style == "intraday" else ""),
         ExpressionAttributeNames={"#state": "state", "#account": "account"},
         ExpressionAttributeValues=encode(values),
     )
@@ -386,3 +395,17 @@ def fenced_put(session, table_name, item):
             {"Put": {"TableName": table_name, "Item": serialize(item)}},
         ]
     )
+
+
+def client_heartbeat(broker, account, user, session_id):
+    """Presence is an acknowledgement from a client, independent of engine health."""
+    now = int(time.time())
+    table().update_item(
+        Key=key(broker, account, "intraday"),
+        UpdateExpression="SET last_client_seen_at = :now",
+        ConditionExpression="owner_user_id = :owner AND session_id = :sid AND #account = :account AND #state <> :closed AND attribute_not_exists(handoff_token)",
+        ExpressionAttributeNames={"#account": "account", "#state": "state"},
+        ExpressionAttributeValues=encode({":now": now, ":owner": user, ":sid": session_id,
+                                         ":account": account, ":closed": "closed"}),
+    )
+    return {"session_id": session_id, "last_client_seen_at": now}

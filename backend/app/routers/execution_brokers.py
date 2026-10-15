@@ -64,7 +64,7 @@ async def status_for(user_id):
             else "reconciling"
             if runtime and runtime.real_recovery_pending
             else "running"
-            if runtime and runtime.state != simulation.SimulationState.ENDED
+            if runtime and real_sessions.engine_healthy(runtime)
             else "reconnecting",
         }
         if row['style'] == 'swing' and not row.get('recovery_conflict') and not row.get('unbound_account'):
@@ -120,6 +120,20 @@ async def status_for(user_id):
                     "owned_by_you": bool(row and row["owner_user_id"] == user_id),
                 }
             )
+    if account and not any(item["trading_style"] == "intraday" and item["broker"] == chosen for item in sessions):
+        # Read-only discovery also finds Ended books produced by the GitHub main release.
+        # Binding and reconciliation happen only through the explicit recover action.
+        from types import SimpleNamespace
+        from app.services.real_trading_day import market_date
+        from app.services.real_day_recovery import _legacy_candidates
+        day_slot = await asyncio.to_thread(slots.read, chosen, account, "intraday")
+        if not day_slot:
+            candidates = await asyncio.to_thread(_legacy_candidates, SimpleNamespace(date=market_date()), user_id, chosen)
+            if len(candidates) == 1:
+                legacy = candidates[0]
+                sessions.append({"session_id": legacy["session_id"], "broker": chosen,
+                    "trading_date": legacy["date"], "trading_style": "intraday", "state": "reconnecting",
+                    "capital": legacy.get("session_capital")})
     selected = next(
         (
             r
@@ -310,3 +324,15 @@ async def change_allocation(
     session = owned(session_id, user_id)
     async with _session_edit_lock(session):
         return await _change_allocation_locked(session_id, req, user_id)
+
+
+@router.post("/{session_id}/heartbeat")
+async def heartbeat(session_id: str, user_id: str = Depends(require_real_trading_access)):
+    from app.services.real_day_recovery import heartbeat as acknowledge
+    return await acknowledge(user_id, session_id)
+
+
+@router.post("/{session_id}/recover")
+async def recover_session(session_id: str, user_id: str = Depends(require_real_trading_access)):
+    from app.services.real_day_recovery import recover
+    return await recover(user_id, session_id)
