@@ -28,9 +28,14 @@ other operational table settings are not included.
 First make the full backup above. Then:
 
 ```bash
-python scripts/cleanup-real-session.py --user-id USER_ID --date 2026-10-15
-python scripts/cleanup-real-session.py --user-id USER_ID --date 2026-10-15 --backend-stopped
+python scripts/cleanup-real-session.py --email "you@example.com" --date 2026-10-15
+python scripts/cleanup-real-session.py --email "you@example.com" --date 2026-10-15 --backend-stopped
 ```
+
+The email is resolved to the internal UUID using the existing `Users.EmailIndex`.
+The `Users` record contains both `email` and `user_id`; you do not need to find
+the UUID manually. Unknown/ambiguous emails abort without deleting anything.
+`--user-id UUID` remains available as an alternative.
 
 The first command only lists sessions, trades and orders. The second lists them
 again and accepts `delete 1` (or another displayed number). Press Enter to cancel.

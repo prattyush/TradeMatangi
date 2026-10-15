@@ -158,6 +158,27 @@ def full_backup(client, directory):
     return save_backup(client, changes, directory, "entire-ddb", names)
 
 
+def user_id_for_email(client, email):
+    """Use the existing account email index; never guess a UUID or scan users."""
+    email = email.strip().lower()
+    if not email or "@" not in email:
+        raise ValueError("Provide a valid account email with --email")
+    rows = pages(client, "query", TableName="Users", IndexName="EmailIndex",
+                 KeyConditionExpression="#e = :email", ExpressionAttributeNames={"#e": "email"},
+                 ExpressionAttributeValues={":email": {"S": email}})
+    ids = {native(row)["user_id"] for row in rows}
+    if not ids:
+        raise ValueError(f"No user found for email {email} in Users.EmailIndex")
+    if len(ids) != 1:
+        raise ValueError(f"Multiple users found for email {email}; refusing cleanup")
+    user_id = ids.pop()
+    # Validate the base record, since an index update can lag behind Users.
+    current = client.get_item(TableName="Users", Key={"user_id": {"S": user_id}}, ConsistentRead=True).get("Item")
+    if not current or native(current).get("email") != email:
+        raise ValueError("User email mapping changed; retry after the index updates")
+    return user_id
+
+
 def list_sessions(client, user, date):
     # Maintenance uses consistent reads; no eventually consistent GSI dependence.
     rows = scan_equal(client, "Sessions", "user_id", user)

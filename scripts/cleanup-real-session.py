@@ -48,7 +48,9 @@ def display(client, sessions):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--user-id", required=True)
+    identity = parser.add_mutually_exclusive_group(required=True)
+    identity.add_argument("--email", help="Account email; resolved through Users.EmailIndex")
+    identity.add_argument("--user-id", help="Internal UUID (optional alternative to --email)")
     parser.add_argument("--date", required=True, type=lambda value: date.fromisoformat(value).isoformat())
     parser.add_argument("--backend-stopped", action="store_true", help="Confirm every backend instance using this DB is stopped; needed to delete")
     parser.add_argument("--backup-dir", type=Path, default=ROOT / "data" / "backups")
@@ -56,7 +58,9 @@ def main():
     from app.services.db import get_dynamodb_client
     client = get_dynamodb_client()
     print(f"Database: {maintenance.target(client)}")
-    sessions = maintenance.list_sessions(client, args.user_id, args.date)
+    user_id = maintenance.user_id_for_email(client, args.email) if args.email is not None else args.user_id
+    print(f"Account: {args.email.strip().lower() if args.email else user_id} | User ID: {user_id}")
+    sessions = maintenance.list_sessions(client, user_id, args.date)
     display(client, sessions)
     if not sessions:
         print("No matching Real Day sessions.")
