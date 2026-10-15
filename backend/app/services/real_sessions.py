@@ -1,6 +1,7 @@
 """Real Day engines, pinned to durable broker/account/style ownership."""
 
 import asyncio
+import logging
 import time
 import uuid
 from contextvars import ContextVar
@@ -9,6 +10,8 @@ from weakref import WeakValueDictionary
 from fastapi import HTTPException
 
 from app.services import real_session_slots as slots
+
+logger = logging.getLogger(__name__)
 
 _locks = WeakValueDictionary()
 _context = ContextVar("real_start_claim", default=None)
@@ -123,6 +126,51 @@ def prepared_broker():
     return claim["broker"] if claim else None
 
 
+async def recover_previous_day(user_id, broker_name, account, today):
+    """A dated Day slot may roll forward only after fresh, read-only verification."""
+    from app.services import execution_broker, real_close, real_recovery, simulation
+    from app.services.db import get_dynamodb_resource
+    slot = await asyncio.to_thread(slots.read, broker_name, account, "intraday")
+    if not slot or slot.get("owner_user_id") != user_id or slot.get("recovery_conflict"):
+        return
+    record = await asyncio.to_thread(lambda: get_dynamodb_resource().Table("Sessions").get_item(
+        Key={"session_id": slot["session_id"]}, ConsistentRead=True).get("Item"))
+    if not record or not isinstance(record.get("date"), str) or record["date"] >= today:
+        return
+    if record.get("user_id") != user_id or record.get("session_type") != "real" or record.get("trading_style", "intraday") != "intraday":
+        raise HTTPException(409, "Previous-day session ownership differs; repair the session link in Settings")
+    if record.get("broker_account_id") != account or execution_broker.name(record.get("execution_broker")) != broker_name:
+        from app.services.real_session_identity import repair
+        await repair(user_id, slot["session_id"])
+        record = await asyncio.to_thread(lambda: get_dynamodb_resource().Table("Sessions").get_item(
+            Key={"session_id": slot["session_id"]}, ConsistentRead=True).get("Item"))
+    if slot["session_id"] in real_close._jobs:
+        raise HTTPException(409, "Previous-day session closure is still being verified; retry shortly")
+    session = await restore_for_close(record, user_id)
+    from app.routers.orders import _session_edit_lock
+    async with _session_edit_lock(session):
+        if session.real_verified_closed:
+            return
+        if session.user_id != user_id or session.broker_account_id != account or getattr(session, "trading_style", "intraday") != "intraday" or execution_broker.name(session) != broker_name or session.date >= today:
+            raise HTTPException(409, "Previous-day session identity changed; refresh and retry")
+        try:
+            result = await real_recovery.verify(session)
+        except Exception as exc:
+            logger.warning("previous_day_verification_failed session_id=%s broker=%s error_type=%s", session.session_id, broker_name, type(exc).__name__)
+            raise HTTPException(409, "Previous-day broker exposure could not be verified. Reconcile the session in Settings before starting today") from exc
+        if not result["verified_flat"] or result.get("closure_blocked"):
+            raise HTTPException(409, "Previous-day session still has positions, pending orders or unresolved submissions. Reconcile it in Settings before starting today")
+        session.real_history_warning = session.real_history_warning or (
+            "Broker verified this book's scope is flat with no pending orders. "
+            "Older execution history may be incomplete; archived P&L is unverified.")
+        await asyncio.to_thread(simulation._upsert_session_to_db, session, strict=True)
+        from app.services import order_service
+        for order in order_service.get_open_orders(session.session_id):
+            order_service.cancel_order(session.session_id, order.order_id, session.date)
+        await real_close.finish(session)
+        logger.info("previous_day_book_released session_id=%s broker=%s trading_date=%s", session.session_id, broker_name, session.date)
+
+
 async def start(req, user_id, create):
     from app.dependencies import require_real_trading_access
     from app.services import execution_broker, simulation, user_settings_service
@@ -152,6 +200,7 @@ async def start(req, user_id, create):
             503, "Real ownership recovery is still pending; retry shortly"
         )
     account = await asyncio.to_thread(broker.account_identity)
+    await recover_previous_day(user_id, chosen, account, req.date)
     lock = _locks.setdefault((chosen, account), asyncio.Lock())
     async with lock:
         runtime = next(
@@ -252,9 +301,15 @@ async def start(req, user_id, create):
                 or execution_broker.name(record.get("execution_broker")) != chosen
                 or record.get("broker_account_id") != account
             ):
+                logger.warning(
+                    "real_session_link_mismatch session_id=%s broker=%s owner_matches=%s broker_matches=%s account_matches=%s saved_account_present=%s",
+                    record.get("session_id"), chosen, record.get("user_id") == user_id,
+                    execution_broker.name(record.get("execution_broker")) == chosen,
+                    record.get("broker_account_id") == account, bool(record.get("broker_account_id")),
+                )
                 raise HTTPException(
                     409,
-                    "Saved Real account identity differs; restore the original account",
+                    "Saved Real session link differs. Open Settings → Your Real sessions → Repair session link, then reconcile",
                 )
             if (
                 record["symbol"] != req.symbol

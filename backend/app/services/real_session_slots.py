@@ -135,6 +135,9 @@ def claim(user, broker, account, style, session_id, token, *, record=None):
         "owner_user_id": user,
         "session_id": session_id,
         "operation_id": token,
+        "trading_date": (record or {}).get("date") or (current or {}).get("trading_date"),
+        "opened_at": (current or {}).get("opened_at", now),
+        "updated_at": now,
         "engine_until": now + 45,
         "state": current["state"] if current else "starting",
     }
@@ -185,9 +188,10 @@ def claim(user, broker, account, style, session_id, token, *, record=None):
 
 
 def update(broker, account, style, user, session_id, token, *, state=None):
-    changes = "SET engine_until = :until"
+    changes = "SET engine_until = :until, updated_at = :now"
     values = {
         ":until": int(time.time()) + 45,
+        ":now": int(time.time()),
         ":owner": user,
         ":sid": session_id,
         ":token": token,
@@ -211,13 +215,14 @@ def close_action(user, broker, account, style, session_id, token):
         "Update": {
             "TableName": "WalletLedgers",
             "Key": serialize(key(broker, account, style)),
-            "UpdateExpression": "SET #state = :closed, engine_until = :zero",
+            "UpdateExpression": "SET #state = :closed, engine_until = :zero, closed_at = :now, updated_at = :now",
             "ConditionExpression": "owner_user_id = :owner AND session_id = :sid AND operation_id = :token AND #account = :account",
             "ExpressionAttributeNames": {"#state": "state", "#account": "account"},
             "ExpressionAttributeValues": serialize(
                 {
                     ":closed": "closed",
                     ":zero": 0,
+                    ":now": int(time.time()),
                     ":owner": user,
                     ":sid": session_id,
                     ":token": token,
@@ -283,6 +288,9 @@ def adopt(user, record, *, token=None, engine_until=0, _attempt=0):
         "session_id": sid,
         "operation_id": token or f"legacy:{sid}",
         "engine_until": engine_until,
+        "trading_date": record.get("date"),
+        "opened_at": int(time.time()),
+        "updated_at": int(time.time()),
         "unbound_account": unresolved,
         "state": "recovery_required"
         if unresolved

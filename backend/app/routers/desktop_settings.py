@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends
 from app.dependencies import get_desktop_user_id, require_real_trading_access
 from app.routers import admin, auth, breeze, kotak
 from app.models.schemas import KotakLoginRequest, WhitelistAddRequest
+from app.services.real_recovery import CloseRequest
+from app.routers.execution_brokers import AllocationRequest
 
 router = APIRouter(prefix="/api/desktop/v1/settings", tags=["desktop"])
 
@@ -105,3 +107,27 @@ async def execution_status(user_id: str = Depends(get_analysis_user_id)):
     require_real_trading_access(user_id)
     from app.routers.execution_brokers import status_for
     return await status_for(user_id)
+
+
+@router.post("/broker/{session_id}/repair-identity")
+async def repair_real_link(session_id: str, user_id: str = Depends(require_broker_access)):
+    from app.routers.execution_brokers import repair_identity
+    return await repair_identity(session_id, user_id)
+
+
+@router.post("/broker/{session_id}/reconcile")
+async def reconcile_real_link(session_id: str, user_id: str = Depends(require_broker_access)):
+    from app.routers.execution_brokers import reconcile
+    return await reconcile(session_id, user_id)
+
+
+@router.post("/broker/{session_id}/stop")
+async def close_real_link(session_id: str, req: CloseRequest | None = None, user_id: str = Depends(require_broker_access)):
+    from app.routers.execution_brokers import stop
+    return await stop(session_id, user_id, req)
+
+
+@router.post("/broker/{session_id}/allocation")
+async def allocate_real_link(session_id: str, req: AllocationRequest, user_id: str = Depends(require_broker_access)):
+    from app.routers.execution_brokers import change_allocation
+    return await change_allocation(session_id, req, user_id)
