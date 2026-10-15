@@ -162,3 +162,56 @@ class TestWalletDeleteEntry:
 
         # Should still remove from in-memory cache even if DB fails
         assert (FIXED_USER_ID, DATE) not in wallet_service._wallets
+
+
+class TestCleanupStorageCorrectness:
+    def test_paginates_preserves_numeric_keys_and_retries(self):
+        from decimal import Decimal
+        from app.services.session_cleanup_service import _batch_delete_composite_key
+        resource, table = _make_mock_resource()
+        table.query.side_effect = [
+            {"Items": [{"session_id": SESSION_ID, "round_trip_index": Decimal(1)}],
+             "LastEvaluatedKey": {"session_id": SESSION_ID, "round_trip_index": Decimal(1)}},
+            {"Items": [{"session_id": SESSION_ID, "round_trip_index": Decimal(2)}]},
+        ]
+        client = _make_mock_client()
+        pending = [{"DeleteRequest": {"Key": {"session_id": {"S": SESSION_ID}, "round_trip_index": {"N": "1"}}}}]
+        client.batch_write_item.side_effect = [{"UnprocessedItems": {"TradeLabels": pending}}, {"UnprocessedItems": {}}]
+        with patch("app.services.db.get_dynamodb_resource", return_value=resource), patch("app.services.db.get_dynamodb_client", return_value=client), patch("time.sleep"):
+            assert _batch_delete_composite_key("TradeLabels", "session_id", "round_trip_index", SESSION_ID) == 2
+        assert table.query.call_count == 2
+        assert client.batch_write_item.call_args_list[1].kwargs["RequestItems"]["TradeLabels"] == pending
+        first = client.batch_write_item.call_args_list[0].kwargs["RequestItems"]["TradeLabels"]
+        assert first[1]["DeleteRequest"]["Key"]["round_trip_index"] == {"N": "2"}
+
+    @pytest.mark.parametrize("name,index,row,expected", [
+        ("Strategies", "SessionIdIndex", {"session_id": SESSION_ID, "strategy_id": "s"}, {"strategy_id": {"S": "s"}}),
+        ("AICommands", "SessionCommandsIndex", {"session_id": SESSION_ID, "user_id": FIXED_USER_ID, "command_id": "c"}, {"user_id": {"S": FIXED_USER_ID}, "command_id": {"S": "c"}}),
+    ])
+    def test_gsi_uses_actual_table_key(self, name, index, row, expected):
+        from app.services.session_cleanup_service import _batch_delete_by_query
+        resource, table = _make_mock_resource()
+        table.query.return_value = {"Items": [row]}
+        client = _make_mock_client()
+        with patch("app.services.db.get_dynamodb_resource", return_value=resource), patch("app.services.db.get_dynamodb_client", return_value=client):
+            _batch_delete_by_query(name, "session_id", SESSION_ID, index)
+        assert client.batch_write_item.call_args.kwargs["RequestItems"][name][0]["DeleteRequest"]["Key"] == expected
+
+    def test_storage_failure_keeps_session_root_and_wallet(self):
+        resource, table = _make_mock_resource()
+        with patch("app.services.db.get_dynamodb_resource", return_value=resource), patch("app.services.simulation.get_session", return_value=None), patch("app.services.session_cleanup_service._batch_delete_composite_key", side_effect=RuntimeError("storage down")), patch("app.services.wallet_service.delete_entry") as wallet:
+            with pytest.raises(RuntimeError, match="storage down"):
+                delete_session_cascade(SESSION_ID, FIXED_USER_ID, DATE)
+        table.delete_item.assert_not_called()
+        wallet.assert_not_called()
+
+    def test_unprocessed_items_exhaustion_raises(self):
+        from app.services.session_cleanup_service import _batch_delete_composite_key
+        resource, table = _make_mock_resource()
+        table.query.return_value = {"Items": [{"session_id": SESSION_ID, "trade_id": "t"}]}
+        client = _make_mock_client()
+        client.batch_write_item.return_value = {"UnprocessedItems": {"Trades": [{"DeleteRequest": {"Key": {"session_id": {"S": SESSION_ID}, "trade_id": {"S": "t"}}}}]}}
+        with patch("app.services.db.get_dynamodb_resource", return_value=resource), patch("app.services.db.get_dynamodb_client", return_value=client), patch("time.sleep"):
+            with pytest.raises(RuntimeError, match="Incomplete deletion"):
+                _batch_delete_composite_key("Trades", "session_id", "trade_id", SESSION_ID)
+        assert client.batch_write_item.call_count == 5
