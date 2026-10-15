@@ -1,3 +1,5 @@
+import SwingOrderActions from './SwingOrderActions';
+import { SwingIconButton } from './SwingIcon';
 import type { SwingSubscribe } from "./swingStream";
 import { flashError } from "./notifications";
 import SwingStats from "./SwingStats";
@@ -18,7 +20,7 @@ import { SymbolSearch, type SymbolChoice } from "./SymbolSearch";
 
 export type SwingRequest = <T>(
   path: string,
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   body?: Record<string, unknown>,
 ) => Promise<T>;
 interface Portfolio {
@@ -146,6 +148,7 @@ export default function SwingPortfolioPanel({
     !labelState.current.saving &&
     (!labelState.current.dirty ||
       window.confirm("Discard unsaved trade labels?"));
+  const [orderAction, setOrderAction] = useState<{ order: any; editing: boolean } | null>(null);
   const [managementOpen, setManagementOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const requestedContract = useRef<SwingPane | null>(null);
@@ -201,6 +204,8 @@ export default function SwingPortfolioPanel({
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const portfolio = snapshot?.portfolio;
   const prefix = portfolio?.session_id;
+  useEffect(() => setOrderAction(null), [prefix]);
+  const openOrderActions = (order: any, editing: boolean) => { setError(""); setOrderAction({order, editing}); };
 
   useEffect(() => {
     if (snapshot?.portfolio) {
@@ -449,7 +454,7 @@ export default function SwingPortfolioPanel({
       } else if (event.type === "portfolio_error") setError(String(event.message));
     }, reason => setError(String(reason)));
   }, [streamedPortfolio, subscribe, refresh]);
-  const act = async (path: string, body: Record<string, unknown> = {}) => {
+  const act = async (path: string, body: Record<string, unknown> = {}, method: "POST" | "PATCH" = "POST") => {
     if (mutation.current) return false;
     mutation.current = true;
     const actionRevision = ++revision.current;
@@ -457,7 +462,7 @@ export default function SwingPortfolioPanel({
     setBusy(true);
     setError("");
     try {
-      const value = await request<Snapshot>(path, "POST", body);
+      const value = await request<Snapshot>(path, method, body);
       if (mounted.current && revision.current === actionRevision && (streamed === streamRevision.current || value.portfolio?.session_id !== streamedPortfolio)) setSnapshot(value);
       return true;
     } catch (reason) {
@@ -1165,6 +1170,9 @@ export default function SwingPortfolioPanel({
         }}
         error={error}
         busy={busy}
+        onOrderSelect={order => openOrderActions(order, false)}
+        onOrderEdit={order => openOrderActions(order, true)}
+        onOrderCancel={order => { void act(`${prefix}/orders/${order.order_id}/cancel`) }}
         onPause={() =>
           void act(`${prefix}/pause`, { paused: !portfolio.entries_paused })
         }
@@ -1184,6 +1192,10 @@ export default function SwingPortfolioPanel({
         boxSizing: "border-box",
       }}
     >
+      {orderAction && <SwingOrderActions key={orderAction.order.order_id} order={orderAction.order} editing={orderAction.editing} busy={busy} error={error}
+        onClose={() => setOrderAction(null)}
+        onSave={(price, quantity) => act(`${prefix}/orders/${orderAction.order.order_id}`, {price, quantity}, "PATCH")}
+        onCancel={() => act(`${prefix}/orders/${orderAction.order.order_id}/cancel`)}/>}
       {!chartWorkspace && navigationControls && <div className="swing-workspace-bar">{navigationControls}</div>}
       {chartWorkspace}
       {!chartWorkspace && portfolioControls}
@@ -1653,8 +1665,9 @@ export default function SwingPortfolioPanel({
                       <td>{order.quantity}</td>
                       <td>{money(order.limit_price)}</td>
                       <td>
+                        <SwingIconButton icon="Edit" label={`Edit order ${order.symbol}`} disabled={busy || ["stopped", "ended"].includes(portfolio.state)} onClick={() => openOrderActions(order, true)}/>
                         <button
-                          disabled={busy}
+                          disabled={busy || ["stopped", "ended"].includes(portfolio.state)}
                           onClick={() =>
                             void act(
                               `${prefix}/orders/${order.order_id}/cancel`,

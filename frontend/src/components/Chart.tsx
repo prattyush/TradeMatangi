@@ -65,6 +65,7 @@ interface Props {
   markerSessionKey?: string
   onRatioIndicatorsChange?: (keys: RocComparisonKey[]) => void
   // Open order price lines
+  onOrderSelect?: (order: Order) => void
   openOrders?: Order[]
   targetProfitStrategies?: StrategyResponse[]
   strategyPosition?: Position
@@ -426,6 +427,7 @@ export default function Chart({
   markerSessionKey,
   onRatioIndicatorsChange,
   openOrders,
+  onOrderSelect,
   targetProfitStrategies,
   strategyPosition,
   strategyPositionCE,
@@ -488,6 +490,8 @@ export default function Chart({
   const [showAllMarkers, setShowAllMarkers] = useState(defaultShowAllMarkers)
   const visibleTrades = useMemo(() => (externalTradeMarkers || showAllMarkers) ? trades : openPositionTrades(trades), [trades, showAllMarkers, externalTradeMarkers])
   useEffect(() => { setShowAllMarkers(defaultShowAllMarkers) }, [markerSessionKey, symbol, paneType, right, strike, expiry])
+  const orderSelectionRef = useRef({orders: openOrders, onSelect: onOrderSelect})
+  orderSelectionRef.current = {orders: openOrders, onSelect: onOrderSelect}
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
@@ -658,6 +662,14 @@ export default function Chart({
       if (onPriceSelectRef.current) {
         onPriceSelectRef.current(price)
         return
+      }
+
+      if (drawModeRef.current === 'none' && orderSelectionRef.current.onSelect) {
+        const hit = [...orderPriceLinesRef.current].map(([id, line]) => ({id, y: seriesRef.current!.priceToCoordinate(line.options().price)}))
+          .filter(item => item.y !== null && Math.abs(item.y - param.point!.y) <= 7)
+          .sort((a, b) => Math.abs(a.y! - param.point!.y) - Math.abs(b.y! - param.point!.y))[0]
+        const order = hit && orderSelectionRef.current.orders?.find(item => item.order_id === hit.id)
+        if (order) { orderSelectionRef.current.onSelect(order); return }
       }
 
       if (!param.time) return  // drawing modes need a time reference

@@ -739,14 +739,14 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
         return await _update_order_locked(session, order_id, req, session_id)
 
 
-async def _update_order_locked(session, order_id, req, session_id):
+async def _update_order_locked(session, order_id, req, session_id, *, swing_amendment=False):
     existing = order_service.get_order(session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
     _require_confirmed_recovery(existing)
     if req.trigger_price is None and req.limit_price is None and req.quantity is None:
         raise HTTPException(status_code=400, detail="Provide trigger_price, limit_price, or quantity to update")
-    if req.quantity is not None and req.quantity != existing.quantity:
+    if req.quantity is not None and req.quantity != existing.quantity and not (swing_amendment and session.trading_style == "swing"):
         if not (existing.is_stoploss or existing.order_type == OrderType.STOPLOSS):
             raise HTTPException(status_code=400, detail="Quantity can only be updated for pending stop-loss orders")
         lot_size = LOT_SIZES.get(session.symbol, 1) if existing.right else 1
@@ -801,7 +801,7 @@ async def _update_order_locked(session, order_id, req, session_id):
 
     order.broker_order_id = candidate.broker_order_id
     order.execution_role = candidate.execution_role
-    await persist_order_async(order)
+    await persist_order_async(order, strict=swing_amendment)
     return order
 
 

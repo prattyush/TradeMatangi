@@ -245,3 +245,11 @@ Persist the same Day identity and original capital for restart. Swing Stop uses
 until explicit Resume. Neither Stop action implies flat positions or cancelled
 broker orders. Broker history refresh must return a full broker snapshot; closure
 verification reports must never replace client trading state.
+
+Swing order amendments/cancellations must resolve the authenticated portfolio and
+child order. Reuse its session edit lock and broker-first edit path; futures quote
+processing already owns this lock, so do not acquire it twice. Paper attempt
+windows retain their original instructions after amendment. Combined price/quantity
+entry amendments reserve the final amount once. Cancel means cancel the pending
+order, never delete executions or flatten a position. Keep Day quantity rules
+separate from portfolio-scoped Swing amendments.

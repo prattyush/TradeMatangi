@@ -506,22 +506,21 @@ async def events(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+class AmendPortfolioOrder(ContractModel):
+    price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    quantity: int | None = Field(default=None, gt=0)
+
+
+@router.patch("/{portfolio_id}/orders/{order_id}")
+async def amend(portfolio_id: str, order_id: str, req: AmendPortfolioOrder, user: str = Depends(get_desktop_user_id)):
+    from app.services.swing_order_actions import act
+    return await act(user, portfolio_id, order_id, price=req.price, quantity=req.quantity)
+
+
 @router.post("/{portfolio_id}/orders/{order_id}/cancel")
-async def cancel(
-    portfolio_id: str, order_id: str, user: str = Depends(get_desktop_user_id)
-):
-    current = await service.ensure(user, portfolio_id)
-    for child in current.contexts.values():
-        if order_id in order_service._orders.get(child.session_id, {}):
-            if child.session_type == "real":
-                from app.routers.orders import cancel_order
-                await cancel_order(order_id, child.session_id)
-            else:
-                order_service.cancel_order(child.session_id, order_id, child.date)
-            result = service.snapshot(user, portfolio_id)
-            current.emit({"type": "portfolio_snapshot", **result})
-            return result
-    raise HTTPException(404, "Portfolio order not found")
+async def cancel(portfolio_id: str, order_id: str, user: str = Depends(get_desktop_user_id)):
+    from app.services.swing_order_actions import act
+    return await act(user, portfolio_id, order_id, cancel=True)
 
 
 @router.get("/contracts/futures")

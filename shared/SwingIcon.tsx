@@ -22,6 +22,7 @@ const paths = {
   Horizontal: 'M3 12h18 M3 9v6 M21 9v6',
   Trend: 'M3 19L21 5 M3 16v6 M21 2v6',
   Fib: 'M3 4h18 M3 9h13 M3 14h8 M3 20h18',
+  Edit: 'M4 16l12-12 4 4-12 12H4z M14 6l4 4',
   Delete: 'M4 6h16 M9 6V3h6v3 M6 6l1 15h10l1-15 M10 10v7 M14 10v7',
 } as const
 
