@@ -85,25 +85,25 @@ def compute_funds_ratio_quantity(
     effective_margin_rate = margin_rate if margin_rate > 0 else 1.0
     buying_power = spend / effective_margin_rate
 
-    if lot_size > 1:
-        unit_cost = price * lot_size
-        lots = int(buying_power / unit_cost)
-        if lots < 1:
-            if current_wallet >= unit_cost * effective_margin_rate:
-                lots = 1
-            else:
-                raise InsufficientFundsError(current_wallet, unit_cost * effective_margin_rate)
-        return lots * lot_size
-    else:
-        qty = int(buying_power / price) if price > 0 else 0
-        if qty < 1:
-            if margin_rate < 1:
-                raise ValueError("Capital allocation cannot fund one whole share")
-            if current_wallet >= price * effective_margin_rate:
-                qty = 1
-            else:
-                raise InsufficientFundsError(current_wallet, price * effective_margin_rate)
-        return qty
+    units = buying_power / (price * lot_size) if price > 0 else 0
+    return compute_capital_units_quantity(units, price, current_wallet, lot_size, effective_margin_rate)
+
+
+def compute_capital_units_quantity(units, price, current_wallet, lot_size=1, margin_rate=1.0):
+    """Capital sizing's shared whole-unit rounding and funded-minimum behavior.
+
+    Target sizing supplies Decimal units so exact lot boundaries stay exact.
+    """
+    count = int(units)
+    if count < 1:
+        if lot_size == 1 and margin_rate < 1:
+            raise ValueError("Capital allocation cannot fund one whole share")
+        cost = price * lot_size * margin_rate
+        if current_wallet >= cost:
+            count = 1
+        else:
+            raise InsufficientFundsError(current_wallet, cost)
+    return count * lot_size
 
 
 def compute_risk_ratio_quantity(

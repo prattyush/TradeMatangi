@@ -280,10 +280,23 @@ async def _place_order_locked(req: PlaceOrderRequest):
         order_strike = req.strike if req.strike is not None else (session.strike_ce if order_right == "CE" else session.strike_pe)
         order_expiry = req.expiry if req.expiry is not None else session.expiry
 
+    target_sizing = req.target_profit_pct is not None or req.sizing_target_price is not None
+    if target_sizing:
+        if session.state == sim_svc.SimulationState.ENDED:
+            raise HTTPException(409, 'Trading session has ended')
+        if getattr(session, 'trading_style', 'intraday') == 'swing':
+            raise HTTPException(422, 'Target % sizing is for Day Trading')
+        if req.target_profit_pct is None or req.sizing_target_price is None:
+            raise HTTPException(422, 'Provide both Target % and its sizing target price')
+        if not req.market_order or req.is_stoploss or req.order_type != OrderType.LIMIT or req.entry_sl_price is None:
+            raise HTTPException(422, 'Target % requires a market entry and its protective stoploss')
+        if any(v is not None for v in (req.quantity, req.funds_ratio_pct, req.risk_pct, req.risk_ratio_pct)):
+            raise HTTPException(422, 'Target % cannot be combined with another sizing method')
+
     if req.market_order:
         if req.order_type != OrderType.LIMIT:
             raise HTTPException(status_code=400, detail="Market execution requires a LIMIT order")
-        if session.session_type == "real":
+        if session.session_type == "real" or target_sizing:
             from app.services.execution_price_service import gap_for, limit_price
             # Read the exact contract quote on the server; do not trust a client price.
             quote = (getattr(session, "desktop_contract_quotes", {}) or {}).get(
@@ -299,6 +312,8 @@ async def _place_order_locked(req: PlaceOrderRequest):
             req.quote_price = current
             req.quote_timestamp = int(quote.get("timestamp", session.current_time)) if quote else int(session.current_time)
             req.quote_source = str(quote.get("source", "server_quote")) if quote else "session_quote"
+            if target_sizing and session.session_type in ('sim', 'stepwise') and req.quote_timestamp > int(session.current_time):
+                raise HTTPException(409, 'The target sizing quote is ahead of the replay clock')
             req.limit_price = limit_price(req.side, current, gap_for(session.user_id))
 
     # Naked short margin check for options sessions
@@ -350,7 +365,21 @@ async def _place_order_locked(req: PlaceOrderRequest):
 
     sizing_stop = req.entry_sl_price
     # Resolve quantity: either from funds_ratio_pct (FundsRatio mode) or explicit quantity
-    if req.funds_ratio_pct is not None:
+    if target_sizing:
+        from app.services.target_sizing import quantity as target_quantity
+        entry = req.quote_price
+        if (req.side == TradeSide.BUY and req.entry_sl_price >= entry) or (req.side == TradeSide.SELL and req.entry_sl_price <= entry):
+            raise HTTPException(400, 'Long stop must be below market entry; short stop must be above it')
+        try:
+            quantity = target_quantity(symbol=session.symbol, capital=session.session_capital,
+                target_pct=req.target_profit_pct, entry=entry, target=req.sizing_target_price,
+                side=req.side.value, reservation_price=req.limit_price,
+                wallet=_wallet_balance_for_session(session), lot_size=lot_size, margin_rate=order_margin_rate)
+        except InsufficientFundsError as exc:
+            raise HTTPException(402, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    elif req.funds_ratio_pct is not None:
         if req.funds_ratio_pct <= 0 or req.funds_ratio_pct > 1:
             raise HTTPException(status_code=400, detail="funds_ratio_pct must be between 0 and 1")
         # Price for quantity computation: trigger for TARGET/SL, limit for LIMIT

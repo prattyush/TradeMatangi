@@ -36,7 +36,7 @@ const money = (n: number | null | undefined) =>
 const pct = (n: number | null | undefined) =>
   n == null ? "—" : `${n.toFixed(2)}%`;
 const label = (s: string) =>
-  s === "CAPITAL"
+  s === "TARGET_PERCENT" ? "Target %" : s === "CAPITAL"
     ? "Capital %"
     : s === "RISK"
       ? "Risk %"
@@ -761,6 +761,7 @@ export default function PerformanceDashboard(props: Props) {
                 <option value="">All sizing</option>
                 <option value="CAPITAL">Capital %</option>
                 <option value="RISK">Risk %</option>
+                <option value="TARGET_PERCENT">Target %</option>
                 <option value="QUANTITY">Fixed quantity</option>
                 <option value="UNKNOWN">Unknown</option>
               </select>
@@ -1069,7 +1070,7 @@ export default function PerformanceDashboard(props: Props) {
               <>
                 <ComparisonTable
                   rows={report.comparisons.sizing}
-                  title="Capital %, Risk %, or fixed quantity?"
+                  title="Capital %, Risk %, Target %, or fixed quantity?"
                   dimension="sizing_method"
                   onSelect={select}
                 />
@@ -1281,8 +1282,9 @@ export default function PerformanceDashboard(props: Props) {
                 {pct(e.analytics.effective_allocation_pct)} capital allocation ·{" "}
                 {pct(e.analytics.effective_risk_pct)} initial risk
               </p>
+              {e.sizing_method === 'TARGET_PERCENT' && <p>Sizing target {money(e.analytics.sizing_target_price)} · projected gross profit {money(e.analytics.projected_target_profit)} ({pct(e.analytics.effective_target_pct)} of session capital). No target exit was created.</p>}
               <p>
-                Initial sizing stop {money(e.analytics.initial_stop)} · budget{" "}
+                Initial sizing stop {money(e.analytics.initial_stop)} · {e.sizing_method === 'TARGET_PERCENT' ? 'desired gross profit' : 'budget'}{" "}
                 {money(e.analytics.requested_budget)}
                 {e.analytics.budget_exceeded && " · budget exceeded"}
               </p>

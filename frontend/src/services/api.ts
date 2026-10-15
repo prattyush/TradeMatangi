@@ -1207,7 +1207,7 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { target_profit_pct?: number; sizing_target_price?: number; market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
     const settings = await api.getUserSettings()
     opts = { ...opts, target_deviation_pct: settings.target_deviation_pct ?? 0.01 }
@@ -1218,7 +1218,10 @@ const api = {
     } else {
       body.trigger_price = price  // TARGET and STOPLOSS both use trigger_price
     }
-    if (opts.risk_pct != null) {
+    if (opts.target_profit_pct != null) {
+      body.target_profit_pct = opts.target_profit_pct
+      body.sizing_target_price = opts.sizing_target_price
+    } else if (opts.risk_pct != null) {
       body.risk_pct = opts.risk_pct
     } else if (opts.risk_ratio_pct != null) {
       body.risk_ratio_pct = opts.risk_ratio_pct

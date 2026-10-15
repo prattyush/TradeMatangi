@@ -86,11 +86,11 @@ interface DrawingCommand { id: number; tool: string }
 interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
 type ConversionTarget = 'LIMIT' | 'STOPLOSS' | 'TARGET'
-type ChartOrderType = 'MARKET' | 'LIMIT' | 'TARGET' | 'AUTO_STOP' | 'AUTO_STOP_LIMIT'
+type ChartOrderType = 'MARKET' | 'TARGET_PERCENT' | 'LIMIT' | 'TARGET' | 'AUTO_STOP' | 'AUTO_STOP_LIMIT'
 type OrderAction = 'FILL_MISSING_SL' | 'USE_SL_BUY' | 'USE_SL_SELL' | 'BULK_LIMIT' | 'BULK_MOVE_SL' | 'START_TARGET_PROFIT' | 'START_TARGET_PROFIT_HALF' | 'START_UNDERLYING_TARGET_HALF' | 'START_LOCK_PROFIT' | 'START_AGGRESSIVE_SL' | 'START_BREAKEVEN' | 'START_UNDERLYING_TARGET' | 'START_UNDERLYING_SL' | 'START_UNDERLYING_SL_HALF'
 interface TradeTicket { tile: TileConfig; side: 'BUY' | 'SELL'; slPrice: number; orderType: ChartOrderType | null; anchor: { x: number; y: number }; sizeKey?: string; sessionId: string; settings: DesktopTradingSnapshot['settings'] }
 interface UnderlyingStrategyTicket { targetProfitSize?: 'full' | 'half'; strategyType: 'UnderlyingTargetProfit' | 'UnderlyingStoploss'; price: number; anchor: { x: number; y: number } }
-type PricePickAction = { orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket; missingSl?: { tile: TileConfig; requestId: string; quantity: number }; draft?: { tileId: string; contractKey: string; sessionId: string; apply: (price: number) => void } }
+type PricePickAction = { label?: string; orderId?: string; conversion?: ConversionTarget; ticket?: TradeTicket; missingSl?: { tile: TileConfig; requestId: string; quantity: number }; draft?: { tileId: string; contractKey: string; sessionId: string; apply: (price: number) => void } }
 type DesktopMode = 'Browse' | 'Paper' | 'Real' | 'Replay' | 'Stepwise'
 const isHistoricalTradingMode = (value: string) => value === 'Stepwise' || value === 'Replay'
 const isLiveTradingMode = (value: string) => value === 'Paper' || value === 'Real'
@@ -2185,6 +2185,7 @@ function ScreenController(props: ScreenControllerProps) {
   }
   const sizePayload = (ticket: TradeTicket): Record<string, unknown> => {
     if (!trading || !ticket.settings || !ticket.sizeKey) throw new Error('Load sizing settings and select a size first')
+    if (ticket.orderType === 'TARGET_PERCENT') return {target_profit_pct: Number(ticketSizingPayload({...ticket.settings,desktop_order_size_mode:'risk_ratio'},ticket.sizeKey,()=>0).risk_pct)}
     return ticketSizingPayload(ticket.settings, ticket.sizeKey, () => entryQuantity(ticket.tile.kind, ticket.sizeKey!, trading))
   }
 
@@ -2242,15 +2243,16 @@ function ScreenController(props: ScreenControllerProps) {
     if (!trading || !ticket.sizeKey || !ticket.orderType || !ticket.settings) return
     if (ticket.sessionId !== trading.session.session_id) throw new Error('Entry ticket belongs to a different session')
     if (!equityEntryEnabled(ticket.tile.kind, ticket.tile.symbol, trading)) throw new Error('Entry requires the active session underlying')
-    if (mode === 'Paper' && ticket.tile.kind === 'option' && ticket.orderType === 'MARKET' && paneCurrentPrice(ticket.tile) <= 0) throw new Error('No live premium is available for this option chart yet')
-    if (entryPrice !== undefined || ticket.orderType === 'MARKET') validateEntryStop(ticket.side, entryPrice ?? paneCurrentPrice(ticket.tile), ticket.slPrice)
+    if (mode === 'Paper' && ticket.tile.kind === 'option' && (ticket.orderType === 'MARKET' || ticket.orderType === 'TARGET_PERCENT') && paneCurrentPrice(ticket.tile) <= 0) throw new Error('No live premium is available for this option chart yet')
+    if (entryPrice !== undefined || ticket.orderType === 'MARKET') validateEntryStop(ticket.side, ticket.orderType === 'TARGET_PERCENT' ? paneCurrentPrice(ticket.tile) : entryPrice ?? paneCurrentPrice(ticket.tile), ticket.slPrice)
     if (ticket.orderType === 'AUTO_STOP' || ticket.orderType === 'AUTO_STOP_LIMIT') {
       await startDesktopStrategy('AutoStop', ticket.tile.kind === 'option' ? ticket.tile.right as 'CE' | 'PE' : null, ticket.slPrice, ticket)
       setTradeTicket(null)
       return
     }
     await ensureOptionContractAttached(ticket.tile)
-    const intent = ticket.orderType.toLowerCase()
+    if (tradingStateRef.current?.session.session_id !== ticket.sessionId || !currentTilesRef.current.some(item => item.id === ticket.tile.id && instrumentKeyForTile(item,catalogue) === instrumentKeyForTile(ticket.tile,catalogue))) throw new Error('Entry session or chart changed; select it again')
+    const intent = ticket.orderType === 'TARGET_PERCENT' ? 'market' : ticket.orderType.toLowerCase()
     const body: Record<string, unknown> = {
       symbol: ticket.tile.symbol,
       side: ticket.side,
@@ -2266,6 +2268,7 @@ function ScreenController(props: ScreenControllerProps) {
       body.live_stream_id = live.stream_id
       body.live_tile_id = ticket.tile.id
     }
+    if (ticket.orderType === 'TARGET_PERCENT') body.sizing_target_price = entryPrice
     if (intent !== 'market') body.price = entryPrice
     await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/chart-orders`, 'POST', body)
     if (!isLiveTradingMode(mode)) {
@@ -2326,6 +2329,13 @@ function ScreenController(props: ScreenControllerProps) {
     requestDraftPrice(tile, apply)
   }
   const requestOrderConvert = (order: DesktopOrder, target: ConversionTarget) => setPricePickAction({ orderId: order.order_id, conversion: target })
+  useEffect(() => {if (!trading || trading.session.state === 'ended') {setTradeTicket(null);setPricePickAction(null)}}, [trading?.session.session_id,trading?.session.state])
+  const entryPickSubmitting = useRef(false)
+  useEffect(() => {
+    const cancel = (event: KeyboardEvent) => { if(event.key==='Escape') {setTradeTicket(null);setPricePickAction(null)} }
+    window.addEventListener('keydown',cancel)
+    return () => window.removeEventListener('keydown',cancel)
+  }, [])
   const completePricePick = async (price: number) => {
     if (!trading || !pricePickAction) return
     if (!Number.isFinite(price)) { setPricePickAction(null); return }
@@ -2352,8 +2362,10 @@ function ScreenController(props: ScreenControllerProps) {
       return
     }
     if (pricePickAction.ticket) {
-      await placeTicketOrder(pricePickAction.ticket, price)
-      setPricePickAction(null)
+      if (entryPickSubmitting.current) return
+      entryPickSubmitting.current=true
+      try { await placeTicketOrder(pricePickAction.ticket, price);setPricePickAction(null) }
+      finally {entryPickSubmitting.current=false}
       return
     }
     if (pricePickAction.orderId && pricePickAction.conversion) {
@@ -2578,9 +2590,9 @@ function ScreenController(props: ScreenControllerProps) {
   },[connection,realDay?.state,realDay?.date,serverUrl,browserToken]);
   useEffect(() => { if (trading?.session.state === 'ended') setRealClosing(false); else if (typeof trading?.session.real_closing === 'boolean') setRealClosing(trading.session.real_closing) }, [trading?.session.state, trading?.session.real_closing])
   useEffect(() => { setSnapshotsActive(Boolean(sharedPreferences.auto_start_event_snapshots) && !companion) }, [trading?.session.session_id, companion, sharedPreferences.auto_start_event_snapshots])
-  const ticketSizeOptions = () => tradeTicket?.settings?.desktop_order_size_mode === 'quantity' ? ['1', '2', '3'] : ['l', 'm', 'h']
-  const ticketSizeLabel = (key: string) => tradeTicket?.settings ? ticketSizingLabel(tradeTicket.settings, key) : ''
-  const orderTypeLabel = (orderType: ChartOrderType) => orderType === 'MARKET' ? 'M' : orderType === 'LIMIT' ? 'L' : orderType === 'TARGET' ? 'T' : orderType === 'AUTO_STOP_LIMIT' ? 'ASL' : 'AS'
+  const ticketSizeOptions = () => tradeTicket?.orderType !== 'TARGET_PERCENT' && tradeTicket?.settings?.desktop_order_size_mode === 'quantity' ? ['1', '2', '3'] : ['l', 'm', 'h']
+  const ticketSizeLabel = (key: string) => tradeTicket?.settings ? tradeTicket.orderType === 'TARGET_PERCENT' ? ticketSizingLabel({...tradeTicket.settings,desktop_order_size_mode:'risk_ratio'},key).replace('Risk','Target') : ticketSizingLabel(tradeTicket.settings,key) : ''
+  const orderTypeLabel = (orderType: ChartOrderType) => orderType === 'TARGET_PERCENT' ? 'Target %' : orderType === 'MARKET' ? 'M' : orderType === 'LIMIT' ? 'L' : orderType === 'TARGET' ? 'T' : orderType === 'AUTO_STOP_LIMIT' ? 'ASL' : 'AS'
   const submitTicketWhenReady = (ticket: TradeTicket) => {
     if (!ticket.orderType || !ticket.sizeKey) {
       setTradeTicket(ticket)
@@ -2590,11 +2602,12 @@ function ScreenController(props: ScreenControllerProps) {
       void placeTicketOrder(ticket).catch(reportTradingError)
     } else {
       setTradeTicket(null)
-      setPricePickAction({ ticket })
+      setPricePickAction({ ticket, ...(ticket.orderType === 'TARGET_PERCENT' ? {label:'Click sizing target price (market entry)'} : {}) })
     }
   }
   const chooseTicketOrderType = (orderType: ChartOrderType) => {
     if (!tradeTicket) return
+    if ((orderType === 'TARGET_PERCENT') !== (tradeTicket.orderType === 'TARGET_PERCENT')) {setTradeTicket({...tradeTicket,orderType,sizeKey:undefined});return}
     submitTicketWhenReady({ ...tradeTicket, orderType })
   }
   const chooseTicketSize = (key: TradeTicket['sizeKey']) => {
@@ -2687,18 +2700,18 @@ function ScreenController(props: ScreenControllerProps) {
     {tradeTicket && <div className="trade-ticket trade-ticket-sizing" style={placeNearPoint(tradeTicket.anchor.x, tradeTicket.anchor.y, 280, 280)}>
       <header><strong>{tradeTicket.side} SL</strong><button onClick={() => { setTradeTicket(null); setPricePickAction(null) }}>x</button></header>
       <div className="ticket-row"><span>Stoploss</span><b>{tradeTicket.slPrice.toFixed(2)}</b></div>
-      {tradeTicket.settings.desktop_order_size_mode !== 'quantity' && <div className="ticket-sizing-toggle">
+      {tradeTicket.orderType !== 'TARGET_PERCENT' && tradeTicket.settings.desktop_order_size_mode !== 'quantity' && <div className="ticket-sizing-toggle">
         <span>Risk %</span>
         <button type="button" role="switch" aria-label="Use Capital % instead of Risk % for this order" aria-checked={tradeTicket.settings.desktop_order_size_mode === 'funds_ratio'} onClick={() => setTradeTicket(switchTicketSizing(tradeTicket, tradeTicket.settings.desktop_order_size_mode === 'funds_ratio' ? 'risk_ratio' : 'funds_ratio'))}><span /></button>
         <span>Capital %</span>
       </div>}
       {tradeTicket.settings && <div className="ticket-picker">
-        <div className="ticket-buttons">{(['MARKET', 'LIMIT', 'TARGET', 'AUTO_STOP', 'AUTO_STOP_LIMIT'] as const).map(orderType => <button key={orderType} title={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : orderType === 'AUTO_STOP' ? 'Auto Stop Order' : orderType} aria-label={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : orderTypeLabel(orderType)} className={tradeTicket.orderType === orderType ? 'active' : ''} onClick={() => chooseTicketOrderType(orderType)}>{orderTypeLabel(orderType)}</button>)}</div>
-        {tradeTicket?.settings?.desktop_order_size_mode === 'quantity' && <label>{tradeTicket.tile.kind === 'option' ? 'Lots' : 'Shares'}<input aria-label="Entry quantity" type="number" min="1" step="1" defaultValue="1" onChange={event => setTradeTicket({ ...tradeTicket, sizeKey: event.target.value })} /><button onClick={() => chooseTicketSize(tradeTicket.sizeKey ?? '1')}>Use quantity</button></label>}
+        <div className="ticket-buttons">{(['MARKET', 'LIMIT', 'TARGET', 'TARGET_PERCENT', 'AUTO_STOP', 'AUTO_STOP_LIMIT'] as const).map(orderType => <button key={orderType} title={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : orderType === 'AUTO_STOP' ? 'Auto Stop Order' : orderType} aria-label={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : orderTypeLabel(orderType)} className={tradeTicket.orderType === orderType ? 'active' : ''} onClick={() => chooseTicketOrderType(orderType)}>{orderTypeLabel(orderType)}</button>)}</div>
+        {tradeTicket.orderType !== 'TARGET_PERCENT' && tradeTicket?.settings?.desktop_order_size_mode === 'quantity' && <label>{tradeTicket.tile.kind === 'option' ? 'Lots' : 'Shares'}<input aria-label="Entry quantity" type="number" min="1" step="1" defaultValue="1" onChange={event => setTradeTicket({ ...tradeTicket, sizeKey: event.target.value })} /><button onClick={() => chooseTicketSize(tradeTicket.sizeKey ?? '1')}>Use quantity</button></label>}
         <div className="ticket-buttons">{ticketSizeOptions().map(key => <button key={key} className={tradeTicket.sizeKey === key ? 'active' : ''} onClick={() => chooseTicketSize(key)}>{tradeTicket.settings.desktop_order_size_mode === 'quantity' ? ticketSizeLabel(key) : <span className="ticket-size-label">{ticketSizeLabel(key).split(' ').map((part, index) => <span key={index}>{part}</span>)}</span>}</button>)}</div>
       </div>}
-      {tradeTicket.settings && <div className="ticket-hint">{tradeTicket?.settings?.desktop_order_size_mode === 'risk_ratio' ? `Risk % models stop-loss loss against session capital. At least one ${tradeTicket.tile.kind === 'option' ? 'lot' : 'share'} is placed if funded, even above that risk %. ` : tradeTicket?.settings?.desktop_order_size_mode === 'funds_ratio' ? tradeTicket.tile.kind === 'spot' ? 'Capital % sizes equity at 5× exposure: 12% supports 60% of session capital.' : 'Capital % sizes option premium against session capital.' : tradeTicket.tile.kind === 'option' ? 'Quantity is in complete option lots.' : 'Quantity is in whole shares.'}</div>}
-      <div className="ticket-hint">{tradeTicket.orderType === 'MARKET' ? `Uses chart quote ${paneCurrentPrice(tradeTicket.tile).toFixed(2)}; proxy set by server` : (tradeTicket.orderType === 'AUTO_STOP' || tradeTicket.orderType === 'AUTO_STOP_LIMIT') ? 'At bar close, uses selected SL and saved sizing' : tradeTicket.orderType ? 'Pick price' : 'Type + size'}</div>
+      {tradeTicket.settings && <div className="ticket-hint">{tradeTicket.orderType === 'TARGET_PERCENT' ? 'Target % uses session starting capital and saved Risk percentage presets. Capital sizing lot and funding rules apply.' : tradeTicket?.settings?.desktop_order_size_mode === 'risk_ratio' ? `Risk % models stop-loss loss against session capital. At least one ${tradeTicket.tile.kind === 'option' ? 'lot' : 'share'} is placed if funded, even above that risk %. ` : tradeTicket?.settings?.desktop_order_size_mode === 'funds_ratio' ? tradeTicket.tile.kind === 'spot' ? 'Capital % sizes equity at 5× exposure: 12% supports 60% of session capital.' : 'Capital % sizes option premium against session capital.' : tradeTicket.tile.kind === 'option' ? 'Quantity is in complete option lots.' : 'Quantity is in whole shares.'}</div>}
+      <div className="ticket-hint">{tradeTicket.orderType === 'TARGET_PERCENT' ? 'Click sizing target price. Market entry with this SL; no target exit is created.' : tradeTicket.orderType === 'MARKET' ? `Uses chart quote ${paneCurrentPrice(tradeTicket.tile).toFixed(2)}; proxy set by server` : (tradeTicket.orderType === 'AUTO_STOP' || tradeTicket.orderType === 'AUTO_STOP_LIMIT') ? 'At bar close, uses selected SL and saved sizing' : tradeTicket.orderType ? 'Pick price' : 'Type + size'}</div>
     </div>}
     {underlyingStrategyTicket && <div className="trade-ticket" style={placeNearPoint(underlyingStrategyTicket.anchor.x, underlyingStrategyTicket.anchor.y, 260, 150)}>
       <header><strong>{underlyingStrategyTicket.strategyType === 'UnderlyingTargetProfit' ? 'Underlying target' : 'Underlying SL'}</strong><button onClick={() => setUnderlyingStrategyTicket(null)}>x</button></header>
