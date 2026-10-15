@@ -1734,6 +1734,8 @@ Restart the backend and rebuild clients to apply; no migration is required.
 
 ## Real Day reconnect, legacy cutover and presence — 2026-10-15
 
+Delivered in [PR #666](https://github.com/prattyush/TradeMatangi/pull/666), pending review into dev.
+
 Follow-up to merged PR #665. Compatibility was checked against GitHub `main` at
 `d10ab97`, verified against the remote branch. Its Real Stop persists Ended while
 preserving trading state and does not create canonical ownership slots. Ended is
