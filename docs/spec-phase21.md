@@ -1930,3 +1930,19 @@ popup-free Stop, shared Swing Stop/reload/Resume, and desktop Real order/linked
 chart controls plus immediate Stop without confirmation or Closing state. Existing
 bundle-size/dependency warnings remain. Swing resume retains the same runtime's
 SSE subscribers so subsequent updates continue without reconnecting the view.
+
+## Website login attaches without restarting stopped Real books — 2026-10-15
+
+Implemented after PR #668. Login now reads active session metadata rather than
+POSTing Real recovery from broker observations. The saved-workspace fallback also
+attaches only to an existing engine. Missing/ended sessions (404/410), including
+stale group members, return to idle without a recovery banner or restarting the
+saved book. Start Real and explicit Settings recovery remain user actions; genuine
+backend failures still surface for retry. Explicit recovery errors include HTTP
+status even when the response is non-JSON.
+
+Validation: the website hook/browser acceptance covers live attachment with zero
+recovery POSTs, stale observations/groups and saved sessions (404/410), visible
+503 failures, explicit recovery success and non-JSON HTTP 502 errors. Existing
+refresh/Stop, capital and heartbeat checks also pass. Website production build
+passed. No backend changes or live broker operations are involved.
