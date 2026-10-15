@@ -2117,3 +2117,8 @@ partial-delete recovery, shared projection ownership, retained sessions/wallets,
 numeric and binary/set values, paginated reads, secondary-index/empty-table
 restoration, conflict refusal and interactive CLI deletion/restoration. Compilation
 and diff checks passed. No local or production trading records were changed.
+
+Session cleanup now accepts `--email`, resolving the internal UUID through the
+existing `Users.EmailIndex` and confirming the base user record. Unknown,
+ambiguous or stale email mappings abort before any deletion. UUID input remains
+available as an alternative; maintenance examples now use email.

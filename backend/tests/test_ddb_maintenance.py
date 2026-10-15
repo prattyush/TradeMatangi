@@ -263,3 +263,53 @@ def test_full_backup_recreates_secondary_indexes(db, tmp_path):
     schema = db.describe_table(TableName="Indexed")["Table"]
     assert schema["GlobalSecondaryIndexes"][0]["IndexName"] == "GlobalIndex"
     assert schema["LocalSecondaryIndexes"][0]["IndexName"] == "LocalIndex"
+
+
+def create_email_user(db, email="you@example.com", user_id="user"):
+    if "Users" not in m.tables(db):
+        db.create_table(TableName="Users", KeySchema=[{"AttributeName": "user_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "user_id", "AttributeType": "S"}, {"AttributeName": "email", "AttributeType": "S"}],
+            GlobalSecondaryIndexes=[{"IndexName": "EmailIndex", "KeySchema": [{"AttributeName": "email", "KeyType": "HASH"}], "Projection": {"ProjectionType": "ALL"}}], BillingMode="PAY_PER_REQUEST")
+    put(db, "Users", user_id=user_id, email=email)
+
+
+def test_email_lookup_normalizes_and_rejects_unknown_or_duplicate(db):
+    create_email_user(db)
+    assert m.user_id_for_email(db, "  YOU@EXAMPLE.COM  ") == "user"
+    with pytest.raises(ValueError, match="No user found"):
+        m.user_id_for_email(db, "missing@example.com")
+    create_email_user(db, user_id="other")
+    with pytest.raises(ValueError, match="Multiple users"):
+        m.user_id_for_email(db, "you@example.com")
+
+
+def test_email_lookup_rejects_stale_index(db):
+    create_email_user(db)
+    with patch.object(db, "get_item", return_value={"Item": wire({"user_id": "user", "email": "changed@example.com"})}):
+        with pytest.raises(ValueError, match="mapping changed"):
+            m.user_id_for_email(db, "you@example.com")
+
+
+def test_cli_email_deletes_correct_account_only(db, tmp_path):
+    create_email_user(db)
+    session(db)
+    other = put(db, "Sessions", session_id="other-session", user_id="other", date="2026-10-15", session_type="real")
+    module = load_script("cleanup-real-session.py")
+    argv = ["cleanup-real-session.py", "--email", "YOU@EXAMPLE.COM", "--date", "2026-10-15", "--backend-stopped", "--backup-dir", str(tmp_path)]
+    with patch("sys.argv", argv), patch("app.services.db.get_dynamodb_client", return_value=db), patch("builtins.input", return_value="delete 1"):
+        module.main()
+    assert not m.query(db, "Sessions", "session_id", "one")
+    assert m.query(db, "Sessions", "session_id", "other-session") == [other]
+    assert len(list(tmp_path.glob("*.json"))) == 1
+
+
+def test_cli_unknown_email_does_not_prompt_or_delete(db, tmp_path):
+    create_email_user(db)
+    selected = session(db)
+    module = load_script("cleanup-real-session.py")
+    argv = ["cleanup-real-session.py", "--email", "missing@example.com", "--date", "2026-10-15", "--backend-stopped", "--backup-dir", str(tmp_path)]
+    with patch("sys.argv", argv), patch("app.services.db.get_dynamodb_client", return_value=db), patch("builtins.input", side_effect=AssertionError("must not prompt")):
+        with pytest.raises(ValueError, match="No user found"):
+            module.main()
+    assert m.query(db, "Sessions", "session_id", "one") == [selected]
+    assert not list(tmp_path.glob("*.json"))
