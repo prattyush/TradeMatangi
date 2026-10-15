@@ -14,14 +14,16 @@ const server=createServer(async(req,res)=>{res.setHeader('Content-Type',req.url=
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
 const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/google-chrome',args:['--no-sandbox']});
 try{
- const page=await browser.newPage();const errors=[],calls=[];let failRestore=false,stallStart=false,refreshMode="valid";
+ const page=await browser.newPage();const errors=[],calls=[];let failRestore=false,stallStart=false,refreshMode="valid",activeStatus=200,groupMode="none",recoverFailure=false;
  page.on('pageerror',error=>errors.push(String(error)));
  const session={session_id:'main-book',symbol:'NIFTY',date:'2026-10-15',start_time:'09:15:00',speed:1,session_type:'real',instrument_type:'equity',state:'running',session_capital:50000};
  const flat={symbol:'NIFTY',side:'FLAT',quantity:0,avg_entry_price:0};
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname;calls.push({path,method:route.request().method()});let value={};
   if(path.endsWith('/simulation/active')&&new URL(route.request().url()).searchParams.get('session_id')==='paper-ended')return route.fulfill({status:404,json:{detail:'Session not found'}});
-  if(path.endsWith('/groups/active')){if(failRestore)return route.fulfill({status:503,json:{detail:'Temporary backend recovery'}});value=null}
+  if(path.endsWith('/simulation/active')&&activeStatus!==200)return route.fulfill({status:activeStatus,json:{detail:'Session unavailable'}});
+  if(path.endsWith('/recover')&&recoverFailure)return route.fulfill({status:502,contentType:'text/html',body:'<h1>Bad Gateway</h1>'});
+  if(path.endsWith('/groups/active')){if(failRestore)return route.fulfill({status:503,json:{detail:'Temporary backend recovery'}});value=groupMode==='stale'?{group_id:'old-group',members:[{session_id:'main-book'}]}:null}
   else if(path.endsWith('/brokers/status'))value={broker:'kotak',authenticated:true,active_session_id:'main-book'};
   else if(path.endsWith('/recover')||path.endsWith('/simulation/active'))value=session;
   else if(path.endsWith('/simulation/start')){if(stallStart)return;value=session}
@@ -47,7 +49,7 @@ try{
  await page.clock.fastForward(179000);assert.equal(beats(),1);
  await page.clock.fastForward(1000);await page.waitForTimeout(20);assert.equal(beats(),2);
  assert.equal(calls.filter(c=>c.path.endsWith('/simulation/start')).length,0);
- assert.equal(calls.filter(c=>c.path.endsWith('/recover')).length,1);
+ assert.equal(calls.filter(c=>c.path.endsWith('/recover')).length,0);
  // Transient restoration failure remains an error, never a false "no session".
  failRestore=true;await page.getByRole('button',{name:'Restore',exact:true}).click();
  await page.waitForFunction(()=>window.restoreError?.includes('503'));
@@ -78,6 +80,30 @@ try{
  await page.clock.fastForward(181000);assert.equal(beats(),beforeStop);
  assert(calls.some(c=>c.path.endsWith('/brokers/main-book/refresh')));
  assert(!calls.some(c=>c.path.endsWith('/reconcile')));
+ // Login must not POST recovery for stale observations or stale group members.
+ failRestore=false;
+ for(const status of [404,410]){
+  activeStatus=status;
+  for(const group of ['none','stale']){
+   groupMode=group;
+   const result=await page.evaluate(()=>window.sim.restoreActiveGroup().then(value=>({value})).catch(error=>({error:String(error)})));
+   assert.deepEqual(result,{value:null});
+  }
+  const savedError=await page.evaluate(()=>window.sim.attachToActiveSession('main-book').then(()=>null).catch(error=>error.status));
+  assert.equal(savedError,status);
+ }
+ assert.equal(calls.filter(c=>c.path.endsWith('/recover')).length,0);
+ // A real backend outage remains visible, rather than pretending the book ended.
+ groupMode='none';activeStatus=503;
+ const outage=await page.evaluate(()=>window.sim.restoreActiveGroup().then(()=>null).catch(error=>error.status));
+ assert.equal(outage,503);
+ // Explicit Settings recovery still works and non-JSON failures include HTTP status.
+ activeStatus=404;recoverFailure=true;
+ const recoveryError=await page.evaluate(()=>window.sim.attachToActiveSession('main-book',true).then(()=>null).catch(error=>String(error)));
+ assert.match(recoveryError,/Real recovery failed \(HTTP 502/);
+ recoverFailure=false;
+ await page.evaluate(()=>window.sim.attachToActiveSession('main-book',true));
+ await page.waitForFunction(()=>window.sim.sessionState==='running');
  assert.deepEqual(errors,[]);
- console.log('Website: refresh success/malformed/503 retains rendered state; Stop has no popup and ends heartbeat; existing main book restored without Start; original capital; immediate/3-minute presence; transient restore error preserved; timed-out Start checks status without duplicate submission.');
+ console.log('Website: login attaches without recovery POST; stopped/stale records stay stopped; explicit recovery retained; non-JSON error has HTTP status; refresh success/malformed/503 retains rendered state; Stop has no popup and ends heartbeat; existing main book restored without Start; original capital; immediate/3-minute presence; transient restore error preserved; timed-out Start checks status without duplicate submission.');
 }finally{await browser.close();await new Promise(done=>server.close(done))}

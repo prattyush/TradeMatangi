@@ -606,7 +606,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
         if (attachedSession) {
           attached = true
         } else if (saved.sessionId) {
-          try { attachedSession = await sim.attachToActiveSession(saved.sessionId, saved.sessionType === 'real') }
+          try { attachedSession = await sim.attachToActiveSession(saved.sessionId) }
           catch (error) { if (!(error instanceof ApiError) || ![404, 410].includes(error.status)) throw error }
           attached = !!attachedSession
         }

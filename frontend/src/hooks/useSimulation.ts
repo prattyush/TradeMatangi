@@ -285,8 +285,9 @@ export function useSimulation() {
       catch (error) { if (error instanceof ApiError && (error.status === 403 || error.status === 401)) return null; throw error }
       if (!status.active_session_id) return null
       let response
-      try { response = await api.recoverRealSession(status.active_session_id) }
-      catch (error) { if (error instanceof ApiError && error.status === 410) return null; throw error }
+      // Login attaches to a live engine; recovery/start requires an explicit action.
+      try { response = await api.getActiveSimulation(status.active_session_id) }
+      catch (error) { if (error instanceof ApiError && [404, 410].includes(error.status)) return null; throw error }
       await activateSession(response)
       return response
     }
@@ -296,7 +297,9 @@ export function useSimulation() {
       const candidate = JSON.parse(saved || '{}').selectedSessionId
       if (group.members.some(m => m.session_id === candidate)) selected = candidate
     } catch {}
-    const response = await api.getActiveSimulation(selected)
+    let response
+    try { response = await api.getActiveSimulation(selected) }
+    catch (error) { if (error instanceof ApiError && [404, 410].includes(error.status)) return null; throw error }
     await activateSession(response)
     setState(s => ({ ...s, groupId: group.group_id, group }))
     return response

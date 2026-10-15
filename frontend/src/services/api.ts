@@ -870,7 +870,11 @@ const api = {
     const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/recover`, {
       method: 'POST', headers: _authHeaders(), signal: controlSignal(),
     })
-    if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).detail || 'Real recovery failed', res.status)
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail
+      const message = typeof detail === 'string' && detail.trim() ? detail : 'Real recovery failed'
+      throw new ApiError(`${message} (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''})`, res.status)
+    }
     return res.json()
   },
   async realCloseSummary(sessionId: string): Promise<{ position_count: number; pending_order_count: number; restrictions_enabled?: boolean }> {
