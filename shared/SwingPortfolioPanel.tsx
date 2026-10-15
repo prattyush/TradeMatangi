@@ -64,6 +64,7 @@ interface PendingOrder {
   expiry?: string;
 }
 interface Snapshot {
+  restrictions_enabled?: boolean;
   delivery_review_context_ids?: string[];
   current_submission_ids?: string[];
   undated_submission_ids?: string[];
@@ -1312,6 +1313,11 @@ export default function SwingPortfolioPanel({
           )
         ) : (
           <>
+            {!companion && mode === "real" && portfolio.state === "stopped" && (
+              <button disabled={busy} onClick={() => void act("", { mode: "real", execution_broker: broker, capital: portfolio.session_capital })}>
+                Resume portfolio
+              </button>
+            )}
             {!portfolioId && portfolio.state === "ended" && (
               <button onClick={() => setSnapshot({ portfolio: null })}>
                 Start another portfolio
@@ -1325,7 +1331,7 @@ export default function SwingPortfolioPanel({
             {portfolio.history_warning && (
               <p role="status">{portfolio.history_warning}</p>
             )}
-            {!companion && mode === "real" && (
+            {!companion && mode === "real" && portfolio.state !== "stopped" && (
               <>
                 <button
                   disabled={busy}
@@ -1344,7 +1350,7 @@ export default function SwingPortfolioPanel({
             )}
             {Boolean(snapshot.reconciliation_pending?.length) && (
               <p role="status">
-                Execution recovery is pending. Entries wait for valid history;
+                Execution recovery is pending. Broker history may be incomplete;
                 no old fill or replacement order has been assumed.
               </p>
             )}
@@ -1375,8 +1381,11 @@ export default function SwingPortfolioPanel({
                 >
                   Reset capital
                 </button>
-                <button onClick={() => setConfirmClose(true)}>
-                  Close portfolio…
+                <button disabled={busy} onClick={() => {
+                  if (mode === "real" && snapshot.restrictions_enabled === false) void act(`${prefix}/close`)
+                  else setConfirmClose(true)
+                }}>
+                  {mode === "real" && snapshot.restrictions_enabled === false ? "Stop portfolio" : "Close portfolio…"}
                 </button>
               </div>
             )}

@@ -41,7 +41,7 @@ import { useSnapshot } from './hooks/useSnapshot'
 import api, { ApiError, OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/optionsRoc'
 import { selectPaperResumePanes } from './paperResume'
-import { brokerSnapshotSessionId } from './brokerSnapshot'
+import { isBrokerSnapshot, brokerSnapshotSessionId } from './brokerSnapshot'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
 
@@ -1431,6 +1431,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     } else if (event.type === 'position_snapshot') {
       sim.applyPositionSnapshot(event as unknown as import('./services/positionAccounting').PositionSnapshot)
     } else if (event.type === 'broker_snapshot') {
+      if (!isBrokerSnapshot(event)) { setBrokerError('Incomplete broker history response; existing trading state retained'); return }
       const snapshotSessionId = brokerSnapshotSessionId(event, simRef.current.sessionId)
       if (snapshotSessionId) {
         const snapshot = event as unknown as import('./services/api').BrokerSnapshot

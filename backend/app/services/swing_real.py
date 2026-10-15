@@ -36,6 +36,22 @@ async def start(user, req):
             503, "Authenticate the selected broker before starting Real Swing"
         )
     account = await asyncio.to_thread(broker.account_identity)
+    if not policy.enabled():
+        existing = await asyncio.to_thread(store.active, user, "real", broker_name)
+        if existing:
+            if existing["state"] in ("stopped", "closing"):
+                existing = await asyncio.to_thread(store.update, user, existing["session_id"],
+                    {"state":"running", "entries_paused":False, "real_broker_restrictions_enabled":False}, existing["version"])
+                from app.services import swing_portfolio_service as service
+                previous = service._runtimes.get(existing["session_id"])
+                if previous:
+                    previous.real_ready = False
+                    service.stop_runtime(previous)
+                    await asyncio.gather(*(task for task in previous.tasks.values() if task is not asyncio.current_task()), return_exceptions=True)
+                    # Keep SSE subscribers attached to this same portfolio runtime.
+                    previous.contexts.clear()
+                    previous.tasks.clear()
+            return existing
     wallet = await real_accounting.refresh(
         user, market_date(), broker, reason="swing_start"
     )
@@ -254,7 +270,7 @@ async def heartbeat(current):
             row = await asyncio.to_thread(
                 store.owned, current.user, current.portfolio_id
             )
-            if row["state"] == "ended":
+            if row["state"] in ("ended", "stopped"):
                 return
             if not policy.enabled():
                 from app.services.real_session_observer import record
@@ -301,7 +317,7 @@ async def engine(current):
             row = await asyncio.to_thread(
                 store.owned, current.user, current.portfolio_id
             )
-            if row["state"] == "ended":
+            if row["state"] in ("ended", "stopped"):
                 return
             if not current.real_ready or row["contexts"] != {
                 key: child.session_id for key, child in current.contexts.items()
@@ -321,7 +337,7 @@ async def engine(current):
                         )
                 if not current.contexts:
                     await reconcile_empty(current)
-                if row["state"] == "closing":
+                if policy.enabled() and row["state"] == "closing":
                     await close_positions(current)
                     await verify_close(current)
                 current.emit(
@@ -1243,7 +1259,7 @@ async def bind_observer(current, row):
             except Exception:
                 await asyncio.sleep(180)
                 continue
-            if saved["state"]=="ended": return
+            if saved["state"] in ("ended", "stopped"): return
             await asyncio.to_thread(record,current.user,current.portfolio_id,row["execution_broker"],row["broker_account_id"],
                 "swing",current.real_token,state=saved["state"],date=row["date"])
             current.real_valid_until=time.monotonic()+890

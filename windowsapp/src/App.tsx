@@ -1671,7 +1671,7 @@ function ScreenController(props: ScreenControllerProps) {
           // existing identity preserves the dated wallet and avoids a dead end.
           if (hasActivity && !window.confirm(`Resume Paper session ${candidate.existing_session_id} with its saved positions and history?`)) return
           resumeSessionId = candidate.existing_session_id
-        } else if (candidate.status === 'checkpoint' && candidate.checkpoint?.current_time) {
+        } else if (mode !== 'Real' && candidate.status === 'checkpoint' && candidate.checkpoint?.current_time) {
           const checkpointTime = new Date(candidate.checkpoint.current_time * 1000).toISOString().slice(11, 19)
           const selectedCursor = Math.floor(new Date(`${date}T${runStartTime}:00Z`).getTime() / 1000)
           const useSelectedTime = selectedCursor > candidate.checkpoint.current_time
@@ -1688,7 +1688,7 @@ function ScreenController(props: ScreenControllerProps) {
           } else {
             return
           }
-        } else if (candidate.status === 'existing') {
+        } else if (candidate.status === 'existing' && mode !== 'Real') {
           if (window.confirm(`A previous ${mode} run exists. Keep its history visible and start another clean run from the selected time?`)) {
             // Keep startBody unchanged; backend preserves previous records.
           } else if (window.confirm('Delete the previous matching run data and start clean?')) {
@@ -2529,11 +2529,17 @@ function ScreenController(props: ScreenControllerProps) {
     const sid = trading.session.session_id
     setRealActionPending(true)
     try {
-      const summary = await desktopTradingRequest<{ position_count: number; pending_order_count: number }>(`${sid}/close-summary`, 'GET')
+      const summary = await desktopTradingRequest<{ position_count: number; pending_order_count: number; restrictions_enabled?: boolean }>(`${sid}/close-summary`, 'GET')
       const message = `${done ? 'Finish Real trading for today' : 'Stop this Real session'}? ${summary.position_count} open position(s) will be closed and ${summary.pending_order_count} pending order(s) reconciled. Cancel to close them yourself.${done ? ' After confirmation, new Real entries are blocked for today across both brokers.' : ''}`
-      if (!window.confirm(message)) return
+      if ((done || summary.restrictions_enabled !== false) && !window.confirm(summary.restrictions_enabled === false ? "Stop Real trading for today? New entries will be locked for today; broker positions and orders stay unchanged." : message)) return
       const response = await desktopTradingRequest<RealTradingDayStatus>(`${sid}/${done ? 'done-for-day' : 'stop'}`, 'POST')
       if (done) setRealDay(previous => mergeRealTradingDayStatus(previous, response))
+      if (summary.restrictions_enabled === false) {
+        setRealClosing(false)
+        setTrading(current => current?.session.session_id === sid ? { ...current, session: { ...current.session, state: 'ended' } } : current)
+        setTradingNotice('Real session stopped. Broker positions, orders and history are preserved.')
+        return
+      }
       setRealClosing(true)
       setTradingNotice('Closing Real positions; waiting for broker confirmation. Refresh to inspect progress.')
     } catch (error) { reportTradingError(error) }

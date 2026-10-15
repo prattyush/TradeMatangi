@@ -1846,7 +1846,7 @@ and restores skip shared-participant enrollment and mandatory book reconciliatio
 Normal broker wallet/position/order updates continue; unrestricted Swing shows
 broker wallet funds instead of requiring a shared funding participant. Existing
 funding/history records are retained. Per-user session ownership, authentication,
-manual Done for day, explicit Stop/verified closure and protections against
+manual Done for day and protections against
 resubmitting genuinely uncertain broker orders remain intact. An old Day workspace
 is not silently restarted for a new date. Desktop does not force attachment to an
 unrelated observed Day book when Start is unrestricted.
@@ -1865,4 +1865,68 @@ order controls and no browser errors. No live broker orders were submitted.
 
 Separate follow-up requested: reuse the same Real Day book after Stop/Start and
 simplify Stop (no empty-book confirmation or closure-verification holding flow).
-These changes are deliberately excluded from the Admin policy PR.
+These changes were deliberately excluded from the Admin policy PR #667 (merged).
+They are implemented in the follow-up below.
+
+
+## Simple unrestricted Real lifecycle and Trade History Refresh — 2026-10-15
+
+**Implemented; follow-up PR against dev.** Admin restrictions remain disabled by
+default. This supersedes the earlier verified-closure Stop behavior only when
+that setting is off, on both website and desktop.
+
+- **Day Stop** saves the book and stops the application runtime immediately. It
+  does not submit exits, cancel broker orders, verify flatness, or update a
+  canonical ownership lock. This fixes the reported `ConditionalCheckFailedException`
+  from `/api/simulation/stop` trying to close a lock that observation mode never
+  claimed. There is no Stop confirmation popup or Closing holding screen.
+- **Day Start** resumes the same saved user/account/date/context session, including
+  an earlier verified-closed record, preserving its original capital, positions,
+  orders and trades. Old closing/recovery flags do not force a new book or label
+  this book's trades as previous-session history. Other dates/accounts remain
+  separate; authentication and user ownership checks remain.
+- **Swing Stop portfolio** preserves the parent/child IDs, capital, positions,
+  orders and history, persists `state=stopped`, and stops its runtime. Loading the
+  page restores saved display data without trading subscriptions or automatic
+  restart. **Resume portfolio** starts that same book without recalculating
+  capital from today's broker cash. Legacy `closing` state becomes stopped when
+  loaded unrestricted. No table migration is needed.
+- Broker positions and orders remain at the broker after Stop. **Exit all now**
+  remains the explicit exit action. **Done for day** stops Day runtimes and records
+  the user's daily entry lock directly, without exits or verified-closure waiting.
+- DDB observations record stopped state; stopped books are excluded from active
+  observations. Running books retain 180-second heartbeats. Observation failures
+  and stale recovery/ownership records do not gate lifecycle actions. Actual
+  uncertain submissions retain duplicate-order protection. Admin-on behavior
+  keeps the existing ownership and verified-closure workflow.
+
+**Refresh crash:** the website treated `/api/brokers/{id}/reconcile`'s verification
+report as a complete state snapshot, replacing arrays with missing fields and
+causing a rendering failure. Trade History now uses
+`POST /api/brokers/{id}/refresh`, returning the complete broker snapshot used by
+SSE (trades, positions, broker/application orders, version and wallet fields).
+The explicit Settings verification action keeps its separate response. The new
+refresh checks owned sessions; Admin-on canonical ownership remains enforced.
+HTTP and SSE snapshots are checked before replacing UI state. Failed/malformed
+HTTP refreshes retain the visible state and surface an error; requests have a
+30-second deadline. Charts remain mounted and session capital stays unchanged.
+
+Interfaces: close summaries and Swing snapshots include `restrictions_enabled`;
+Swing adds the `stopped` state and resumes through its existing Start route.
+Deploy the backend and rebuild both clients together. Local dev was aligned with
+GitHub dev after PR #667; the duplicate local commit was preserved on a backup
+branch, without force-pushing remote dev.
+
+Regression coverage includes empty/populated Stop, repeated Stop, original IDs
+and capital, persisted positions/orders after restoration, stopped Swing reload,
+unknown-order protection, Done for day, Admin-on closure, and website refresh
+success/malformed/503 behavior. Browser checks use synthetic APIs and submit no
+live broker orders.
+
+Validation: **223 focused backend tests**, **225 desktop/shared tests**, and six
+website snapshot/P&L tests passed. Website and desktop production builds passed.
+Browser acceptance passed for website refresh success/malformed/503 handling and
+popup-free Stop, shared Swing Stop/reload/Resume, and desktop Real order/linked
+chart controls plus immediate Stop without confirmation or Closing state. Existing
+bundle-size/dependency warnings remain. Swing resume retains the same runtime's
+SSE subscribers so subsequent updates continue without reconnecting the view.

@@ -2,7 +2,7 @@
 import asyncio
 import json
 
-from app.services import order_service, simulation
+from app.services import order_service, simulation, real_broker_policy
 
 _jobs = {}
 
@@ -17,6 +17,7 @@ def summary(session):
     return {**closure_requirements([session], session.acknowledged_undated_submission_ids), 'session_id': session.session_id, 'execution_broker': session.execution_broker,
             'positions': positions, 'position_count': len(positions),
             'pending_order_count': 0 if getattr(session, 'real_verified_closed', False) else len(order_service.get_open_orders(session.session_id)),
+            'restrictions_enabled': real_broker_policy.enabled(),
             'closing': bool(getattr(session, 'real_closing', False)),
             'history_warning': getattr(session, 'real_history_warning', None)}
 
@@ -60,8 +61,47 @@ async def finish(session):
     refresh_account_peers(session)
 
 
+async def stop(session):
+    """Stop this app runtime without touching orders or claiming broker flatness."""
+    from app.services import real_session_observer
+    job = _jobs.pop(session.session_id, None)
+    if job and job is not asyncio.current_task():
+        job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
+    session.real_closing = False
+    session.real_recovery_pending = False
+    session.real_verified_closed = False
+    session.real_start_preparing = False
+    # Persist before acknowledging Stop; a storage error must be visible/retryable.
+    original_state = session.state
+    session.state = simulation.SimulationState.ENDED
+    try:
+        await asyncio.to_thread(simulation._upsert_session_to_db, session, strict=True)
+    except Exception:
+        session.state = original_state
+        raise
+    session.queue.put_nowait(json.dumps({'type': 'session_ended', 'session_id': session.session_id}))
+    simulation.stop_session(session, preserve_trading_state=True)
+    task = getattr(session, 'real_engine_task', None)
+    if task and task is not asyncio.current_task():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    await asyncio.to_thread(real_session_observer.record, session.user_id, session.session_id,
+        session.execution_broker, session.broker_account_id, session.trading_style,
+        getattr(session, 'real_claim_token', ''), state='stopped', date=session.date)
+    if session.group_id:
+        from app.services import session_group_service as groups
+        group = await asyncio.to_thread(groups.get_group, session.group_id, session.user_id)
+        if group:
+            await asyncio.to_thread(groups.remove_member, group, session.session_id)
+    return {'status': 'stopped', 'session_id': session.session_id}
+
+
 async def close(session, acknowledge_undated_submission_ids=None):
-    from app.services.real_broker_policy import enforce
+    from app.services.real_broker_policy import enforce, enabled
+    await real_broker_policy.ensure_loaded()
+    if not enabled():
+        return await stop(session)
     if enforce(session) and getattr(session, 'real_start_preparing', False):
         from fastapi import HTTPException
 
@@ -98,6 +138,9 @@ async def close(session, acknowledge_undated_submission_ids=None):
         try:
             strategy_service.cancel_all(session.session_id)
             while session.state != simulation.SimulationState.ENDED:
+                if not enabled():
+                    await stop(session)
+                    return
                 try:
                     broker = execution_broker.get_service(session)
                     from app.services.real_trading_day import market_date

@@ -235,6 +235,13 @@ Off means observation only: retain DDB book records and 180-second heartbeats, b
 never gate Start/restore/order persistence or stop engines because canonical book
 relationships or lease/presence deadlines disagree. No mandatory shared-funding
 reconciliation is required at startup. Keep authentication, session ownership,
-uncertain-submission protection and explicit verified closure independent of this
-switch. New/resumed sessions adopt enforcement only when Admin opts in. Policy
+uncertain-submission protection. Verified closure belongs to enforcement-on
+flows; unrestricted Stop preserves broker exposure and stops only the app runtime. New/resumed sessions adopt enforcement only when Admin opts in. Policy
 reads on execution hot paths must remain in-memory; persistence/refresh runs off-loop.
+
+Unrestricted Day Stop must never call the canonical `_finish`/slot update path.
+Persist the same Day identity and original capital for restart. Swing Stop uses
+`stopped`, retains its active portfolio pointer, and restores read-only display
+until explicit Resume. Neither Stop action implies flat positions or cancelled
+broker orders. Broker history refresh must return a full broker snapshot; closure
+verification reports must never replace client trading state.

@@ -1,3 +1,4 @@
+import { isBrokerSnapshot } from '../brokerSnapshot'
 import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
 import type { PositionSnapshot } from './positionAccounting'
@@ -872,7 +873,7 @@ const api = {
     if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).detail || 'Real recovery failed', res.status)
     return res.json()
   },
-  async realCloseSummary(sessionId: string): Promise<{ position_count: number; pending_order_count: number }> {
+  async realCloseSummary(sessionId: string): Promise<{ position_count: number; pending_order_count: number; restrictions_enabled?: boolean }> {
     const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/close-summary`, { signal: controlSignal(), headers: _authHeaders() })
     if (!res.ok) throw new ApiError('Could not inspect Real positions before confirmation', res.status)
     return res.json()
@@ -1754,14 +1755,16 @@ const api = {
 
   async reconcileKotakOrders(sessionId: string): Promise<BrokerSnapshot> {
     const res = await fetch(
-      `${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/reconcile`,
-      { method: 'POST', headers: _authHeaders() }
+      `${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/refresh`,
+      { method: 'POST', signal: controlSignal(), headers: _authHeaders() }
     )
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
       throw new Error(typeof error.detail === 'string' ? error.detail : `Kotak reconcile failed: ${res.status}`)
     }
-    return res.json()
+    const snapshot = await res.json()
+    if (!isBrokerSnapshot(snapshot)) throw new Error('Incomplete broker history response; existing trading state retained')
+    return snapshot
   },
 
   async checkRealTradingAccess(): Promise<{ has_access: boolean }> {

@@ -117,7 +117,7 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
                 try { await onRefresh() } finally { setRefreshing(false) }
               }}
               disabled={refreshing}
-              title="Refresh from Kotak"
+              title="Refresh from broker"
               style={{
                 background: 'none', border: 'none', color: refreshing ? '#484f58' : '#8b949e',
                 cursor: refreshing ? 'default' : 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px',

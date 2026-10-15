@@ -1,3 +1,4 @@
+import { isBrokerSnapshot } from '../brokerSnapshot'
 import { mergeOpenOrders } from '../services/brokerOrderState'
 import { contractPosition, unrealizedPnl, advancePositionClock, mergeConfirmedTrade, PositionSnapshot, ContractPosition } from '../services/positionAccounting'
 import { refreshedSessionCapital } from '../brokerSnapshot'
@@ -497,10 +498,11 @@ export function useSimulation() {
       realStopPending.current = true
       try {
         const summary = await api.realCloseSummary(id)
-        if (!window.confirm(`Stop this Real session? ${summary.position_count} open position(s) will be closed and ${summary.pending_order_count} pending order(s) reconciled. Cancel to close them yourself. This does not lock your trading day.`)) return
+        if (summary.restrictions_enabled !== false && !window.confirm(`Stop this Real session? ${summary.position_count} open position(s) will be closed and ${summary.pending_order_count} pending order(s) reconciled. Cancel to close them yourself. This does not lock your trading day.`)) return
         const result = await api.stopSimulation(id)
+        if (result.status === 'stopped') handleSessionEnded(id)
         if (result.status === 'closing') setState(s => s.sessionId === id ? { ...s, realClosing: true } : s)
-        // Preserve broker state and SSE until the server confirms session_ended.
+        // Enforced closure keeps its stream until broker-confirmed completion.
         return
       } catch (error) {
         setState(s => s.sessionId === id ? { ...s, orderError: String(error) } : s)
@@ -527,7 +529,7 @@ export function useSimulation() {
       openOrders: [],
     }))
     if (id) api.stopSimulation(id).catch(() => {})
-  }, [state.sessionId, state.sessionType])
+  }, [state.sessionId, state.sessionType, handleSessionEnded])
 
   const pauseSession = useCallback(async () => {
     if (!state.sessionId) return
@@ -948,6 +950,7 @@ export function useSimulation() {
   }, [state.sessionId, state.stepwise])
 
   const applyBrokerSnapshot = useCallback((sessionId: string, snapshot: import('../services/api').BrokerSnapshot) => {
+    if (!isBrokerSnapshot(snapshot)) throw new Error('Incomplete broker history response; existing trading state retained')
     positionSequenceRef.current++
     setState(s => {
       if (s.sessionId !== sessionId || s.sessionType !== 'real') return s

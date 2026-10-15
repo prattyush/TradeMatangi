@@ -422,6 +422,8 @@ async def test_website_stop_recovers_saved_real_instead_of_reporting_false_closu
 
 @pytest.mark.asyncio
 async def test_closure_account_failure_remains_visible_and_pending(monkeypatch):
+    monkeypatch.setattr("app.services.real_broker_policy.enabled", lambda: True)
+    monkeypatch.setattr("app.services.real_broker_policy._loaded", True)
     from unittest.mock import AsyncMock
     from app.services import real_close, strategy_service
     session = simulation.SimulationSession('close-account', 'RELIND', '2026-10-09', '09:15:00', 1,
