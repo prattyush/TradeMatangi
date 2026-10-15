@@ -174,6 +174,12 @@
   lease expiry. Only verified closure atomically ends the book/funding participant
   and releases its slot. Swing roots own slots; execution children never compete
   for another slot. Missing parents/children and genuine conflicts remain pending.
+- Day slots carry an IST `trading_date` plus opened/updated/closed timestamps and
+  the engine lease. A previous-day Start may release the old Day row only after
+  fresh broker verification of a flat scope with no pending orders or closure-blocking submissions,
+  using the existing transactional closure. Timestamp age never deletes exposure
+  or expires Swing ownership. Session-link repairs require authenticated account
+  evidence and conditional ownership/funding checks; they never reset balances.
 - Claim/renew execution authority during restoration, but do not reconcile as empty,
   submit orders or verify closure until all persisted portfolio contexts are loaded.
   Do not expose an unregistered or unsuccessfully restored child in usable runtime.

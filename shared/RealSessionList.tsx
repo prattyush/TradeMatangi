@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 export interface RealBook {
   session_id: string; broker: string; trading_style: 'intraday' | 'swing'; state: string
-  capital?: number; available?: number; allocation_pct?: number
+  trading_date?: string; capital?: number; available?: number; allocation_pct?: number
   funding_status?: { state: string; available: number; shortfall?: number | null }
 }
 interface Verification { current_submission_ids?: string[]; undated_submission_ids?: string[]; closure_blocked?: boolean; verified_flat: boolean; positions: unknown[]; pending_orders: unknown[]; history_warning?: string | null; reconciliation_error?: string; message: string }
@@ -28,6 +28,15 @@ export default function RealSessionList({ request, onAttach }: { request: RealBo
       else { const value = await request<Verification>(`${book.session_id}/reconcile`, 'POST'); setVerification(previous => ({ ...previous, [book.session_id]: value })); await load() }
     } catch (reason) { setError(String(reason)) } finally { setBusy(false) }
   }
+  const repairLink = async (book: RealBook) => {
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const result = await request<{ message: string }>(`${book.session_id}/repair-identity`, 'POST')
+      setNotice(result.message)
+      setVerification(previous => { const next = { ...previous }; delete next[book.session_id]; return next })
+      await load()
+    } catch (reason) { setError(String(reason)) } finally { setBusy(false) }
+  }
   const load = useCallback(async () => setStatus(await request<RealStatus>('status', 'GET')), [request])
   useEffect(() => { let active = true; void request<RealStatus>('status', 'GET').then(value => { if (active) setStatus(value) }).catch(reason => { if (active) setError(String(reason)) }); return () => { active = false } }, [request])
   const save = async (book: RealBook) => {
@@ -43,10 +52,12 @@ export default function RealSessionList({ request, onAttach }: { request: RealBo
     {status?.recovery_ready === false && <p role="status">Server ownership recovery is pending. Existing books retain their slots.</p>}
     {status?.active_sessions?.map(book => <div key={book.session_id} style={{ marginTop: 8 }}>
       <span>{book.broker === 'kite' ? 'Kite' : 'Kotak'} · {book.trading_style === 'intraday' ? 'Day' : 'Swing'} · {book.state.replace(/_/g, ' ')}</span>
+      {book.trading_date && <small> · Session date {book.trading_date}</small>}
       {book.capital != null && <small> · Capital ₹{book.capital.toLocaleString('en-IN')}</small>}
       {book.available != null && <small> · Book available ₹{book.available.toLocaleString('en-IN')}</small>}
       {book.funding_status?.available != null && <small> · Shared broker available ₹{book.funding_status.available.toLocaleString('en-IN')}</small>}
       {book.funding_status && book.funding_status.state !== 'verified' && <p role="status">Shared account funding: {book.funding_status.state}{book.funding_status.shortfall != null ? ` · gap ₹${book.funding_status.shortfall.toLocaleString('en-IN')}` : ''}. Entries wait; exits remain available.</p>}
+      {book.trading_style === 'intraday' && <button type="button" title="Verify the authenticated account and restore this saved session link" disabled={busy} onClick={() => void repairLink(book)}>Repair session link</button>}
       {book.trading_style === 'intraday' && <button type="button" disabled={busy} onClick={() => void recover(book)}>Reconcile with broker</button>}
       {verification[book.session_id] && <div role="status">
         <p>{verification[book.session_id].verified_flat ? "Broker confirms this book’s scope is flat with no pending orders." : `${verification[book.session_id].positions.length} current positions · ${verification[book.session_id].pending_orders.length} pending orders.`}</p>

@@ -1682,3 +1682,50 @@ Artifacts: `.cache/swing-layout/`.
 Restart the backend and rebuild both clients to apply; no migration or SDK upgrade.
 The separate repeating `Real recovery remains pending` warning belongs to Real
 session recovery, not Paper Swing polling, and is unaffected by this change.
+
+## Real Day session-link repair and dated ownership recovery — 2026-10-15
+
+Implemented as a follow-up after PR #664 merged into dev. Settings → Your Real
+sessions now offers **Repair session link** beside Reconcile with broker, shared
+by website and desktop. The backend verifies the authenticated broker account,
+session owner and canonical Day ownership row before restoring missing identity
+metadata. A conflicting nonempty saved account needs independent matching funding
+evidence; conflicting old funding, another account/user, active engine leases and
+ambiguous ownership remain blocked with a specific explanation. The repair is a
+conditional transaction, so concurrent ownership/funding changes cannot partially
+rebind a book. It changes no capital, trades, positions, orders or funding amounts.
+The startup error points to this action and logs mismatch categories without
+credentials or account identifiers.
+
+Day ownership rows now explicitly retain `trading_date`, `opened_at`, `updated_at`,
+`engine_until` and `closed_at`. Successful closure marks the existing DynamoDB row
+closed and invalidates its lease; the next claim can replace that released row.
+No new table, TTL deletion job or periodic historical scan is added. Legacy rows
+use their referenced Session date during recovery.
+
+Starting Real Day trading now checks an owned previous-day book before claiming
+today's slot. It verifies the original account, recovers its existing ownership
+and reads current broker exposure. If the old Day scope is flat with no pending
+orders or closure-blocking submissions, it archives the book through the existing transactional
+closure path and allows today's normal claim. Older local intentions are cancelled
+only after broker verification; archived executions/capital remain unchanged and
+retain the older-history/P&L warning. Concurrent starts cannot close the book twice
+or claim duplicate execution engines.
+
+Age alone never discards exposure. Open positions, pending orders, current or
+unacknowledged undated submissions, conflicting identities or unavailable broker reports keep
+the prior row occupied and direct the user to reconciliation. Today's books and
+other users' books are unchanged. Swing ownership does not expire at the date
+boundary; tests confirm its slot and funding survive Day rollover. Account-level
+funding and the separate manual Real day closing/done controls remain intact.
+
+Validation: **97 focused backend tests pass**, including metadata repair/API
+authorization wiring, Kotak/Kite aliases, idempotency, private ownership, missing
+and conflicting identity/funding evidence, atomic race rollback, dated slot reuse,
+automatic Start rollover, broker failure, uncertain exposure, concurrent closure,
+Day/Swing funding separation and existing Real execution/recovery checks. Website
+and desktop TypeScript checks and production builds pass. The real session-list
+browser check verifies Repair → Reconcile, unchanged capital and useful retry
+errors with no page errors. No live broker orders or production database repairs
+were performed. Artifacts: `.cache/swing-layout/real-link-*`.
+Restart the backend and rebuild clients to apply; no migration is required.

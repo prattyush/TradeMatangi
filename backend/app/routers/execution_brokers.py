@@ -55,6 +55,7 @@ async def status_for(user_id):
         item = {
             "session_id": row["session_id"],
             "broker": row["broker"],
+            "trading_date": row.get("trading_date"),
             "trading_style": row["style"],
             "state": "recovery_required"
             if row.get("recovery_conflict") or row.get("unbound_account")
@@ -141,6 +142,12 @@ async def status_for(user_id):
 @router.get("/status")
 async def status(user_id: str = Depends(require_real_trading_access)):
     return await status_for(user_id)
+
+
+@router.post("/{session_id}/repair-identity")
+async def repair_identity(session_id: str, user_id: str = Depends(require_real_trading_access)):
+    from app.services.real_session_identity import repair
+    return await repair(user_id, session_id)
 
 
 @router.post("/{session_id}/reconcile")
