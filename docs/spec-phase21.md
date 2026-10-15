@@ -1946,3 +1946,54 @@ recovery POSTs, stale observations/groups and saved sessions (404/410), visible
 503 failures, explicit recovery success and non-JSON HTTP 502 errors. Existing
 refresh/Stop, capital and heartbeat checks also pass. Website production build
 passed. No backend changes or live broker operations are involved.
+
+## Swing order Edit and Cancel controls — 2026-10-15
+
+**Implemented for Paper and Real Swing, website and desktop.** The shared Orders
+panel previously only selected the chart, management exposed Cancel alone, and
+both chart renderers drew order lines without action callbacks.
+
+- Pending order rows now have accessible Edit and Cancel icons in the left panel;
+  portfolio management exposes both actions. Clicking the row still selects the
+  exact instrument. Clicking an order line opens Edit order / Cancel order actions.
+- One shared editor changes LIMIT price or TARGET/STOPLOSS trigger and eligible
+  total quantity. Filled and remaining quantities are displayed separately;
+  calculated execution limits remain separate from trigger input. No type
+  conversion or permanent history deletion is included. Cancel preserves trades
+  and any open position, allowing a separate stoploss to be placed afterwards.
+- Both clients use owned `PATCH /swing/portfolios/{portfolio_id}/orders/{order_id}`
+  with `{price?, quantity?}` and the existing POST cancellation route. These routes
+  remain under the existing desktop/API Swing prefixes. PATCH is supported by
+  both browser transports and the existing desktop native request bridge.
+- The backend resolves the owned portfolio/child/order and reuses existing order
+  edits, broker amendments/cancellations, persistence and wallet reservations.
+  Positive prices, ticks, contract lots, filled quantities and exact-contract exit
+  coverage are validated. Futures entries require cancel-and-replace with a new
+  margin preview; eligible futures exits can be amended. Stopped portfolios must
+  be resumed before order actions. Closing portfolios retain cancellation access.
+- Older Paper exits preserve their valid DAY attempt windows. Price/quantity
+  amendments start a new attempt rather than rewriting earlier instructions.
+  Existing unresolved-attempt guards apply to edit and cancel, with the reason
+  shown in the UI; normal Paper recovery resolves these from observed history.
+  Paper quote processing and order actions share the existing context edit lock
+  (futures retain their existing internal lock). No historical scans are added.
+- Combined Swing entry price/quantity amendments reserve the final amount once,
+  so insufficient funds do not leave a partially applied price change. Day order
+  quantity rules stay unchanged. Real broker refusal or uncertain response retains
+  the last confirmed order and reports the error; a racing fill is preserved.
+- Successful actions publish the existing portfolio snapshot/SSE update. Editors
+  retain values on failure, prevent duplicate submission while pending, and close
+  via the fixed close button, Escape, or backdrop. Chart objects/zoom remain in
+  place. There is no stoploss conversion action, as explicitly agreed.
+
+Verification: 89 focused backend tests and 225 desktop/shared tests passed.
+Actual-renderer browser coverage passes for desktop/website × Paper/Real: left
+panel editing, rejected edit/retry, clicking the actual chart order line, cancelling
+and retaining chart canvases. The built desktop Swing flow also verifies management
+cancellation/refunds, listed fractional options, pause, reset and detach/reconnect.
+Both client production builds pass. All broker behavior is mocked; no live broker
+orders or production data were changed.
+Final review also verified eligible futures exit editing and futures-entry
+cancel/re-preview behavior: all 23 focused amendment/futures tests passed after
+that check. Real broker refusal, cancellation refusal, refresh-in-progress and
+fill-during-edit paths retain the latest confirmed order state.

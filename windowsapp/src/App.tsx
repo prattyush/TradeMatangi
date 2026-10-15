@@ -578,7 +578,7 @@ export default function App() {
   const connectionRevision = useRef(-1)
   const [browserToken, setBrowserToken] = useState('')
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('desktop-server-url') ?? 'http://localhost:8700')
-  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => {
+  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', body?: Record<string, unknown>) => {
     const route = `swing/portfolios${path ? '/' + path : ''}`
     if ('__TAURI_INTERNALS__' in window) return invoke<T>('desktop_drawing_request', { baseUrl: serverUrl, path: route, method, body: body ?? {} })
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/desktop/v1/${route}`, {

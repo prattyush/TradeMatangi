@@ -580,7 +580,8 @@ def update_order(
     scope = get_session(session_id)
     if getattr(scope, "instrument_type", None) == "futures":
         from app.services.swing_futures import is_exit
-        if order.execution_role != "exit" or not is_exit(scope, order.side, quantity if quantity is not None else order.quantity):
+        remaining = (quantity if quantity is not None else order.quantity) - order.broker_filled_quantity
+        if order.execution_role != "exit" or remaining <= 0 or not is_exit(scope, order.side, remaining):
             raise ValueError("Futures entries must be cancelled and replaced after a fresh margin preview")
     from app.services.swing_paper_recovery import require_amendable, amend_attempt
     require_amendable(order)
@@ -591,17 +592,29 @@ def update_order(
     if is_real and trigger_price is not None and order.order_type in (OrderType.TARGET, OrderType.STOPLOSS):
         gap = gap if gap is not None else execution.gap_for(order.user_id, order.order_type == OrderType.STOPLOSS)
 
+    # Swing can amend price and quantity together. Reserve the final amount once,
+    # so a refused size increase cannot leave a partially applied price edit.
+    reservation_adjusted = False
+    combined_price = limit_price if order.order_type == OrderType.LIMIT else None
+    if order.order_type == OrderType.TARGET and trigger_price is not None:
+        combined_price = execution.limit_price(order.side, trigger_price, gap) if is_real else _target_limit_price(order.side, trigger_price, target_deviation_pct)
+    funded_entry = (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss
+    if order.trading_style == "swing" and quantity is not None and combined_price is not None and funded_entry:
+        changes = {"quantity": quantity, "trigger_price": trigger_price if trigger_price is not None else combined_price, "limit_price": combined_price}
+        _adjust_buy_reservation(order, _reservation_for(order, combined_price, quantity), trading_date, changes)
+        reservation_adjusted = True
+
     if order.order_type == OrderType.TARGET and trigger_price is not None:
         new_trigger = trigger_price
         new_limit = execution.limit_price(order.side, trigger_price, gap) if is_real else _target_limit_price(order.side, trigger_price, target_deviation_pct)
-        if (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss:
+        if (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss and not reservation_adjusted:
             _adjust_buy_reservation(order, _reservation_for(order, new_limit), trading_date, {"trigger_price": new_trigger, "limit_price": new_limit})
         order.trigger_price = new_trigger
         order.limit_price = new_limit
 
     elif order.order_type == OrderType.LIMIT and limit_price is not None:
         new_limit = limit_price
-        if (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss:
+        if (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss and not reservation_adjusted:
             _adjust_buy_reservation(order, _reservation_for(order, new_limit), trading_date, {"trigger_price": new_limit, "limit_price": new_limit})
         order.limit_price = new_limit
         order.trigger_price = new_limit
@@ -617,7 +630,7 @@ def update_order(
         order.market_order = False
 
     if quantity is not None:
-        if (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss and order.order_type != OrderType.STOPLOSS:
+        if (order.side == TradeSide.BUY or (order.right is None and order.reservation_margin_rate < 1)) and not order.is_stoploss and order.order_type != OrderType.STOPLOSS and not reservation_adjusted:
             _adjust_buy_reservation(order, _reservation_for(order, order.limit_price, quantity), trading_date, {"quantity": quantity})
         order.quantity = quantity
 

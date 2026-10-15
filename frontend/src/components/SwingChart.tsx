@@ -51,6 +51,7 @@ export default function SwingChart(props: SwingChartProps) {
         onPriceSelect={props.picking ? props.onPick : null}
         pricePickLabel="Pick a price for the confirmed Swing ticket"
         openOrders={props.orders}
+        onOrderSelect={props.onOrderSelect}
         position={props.position}
         height={height}
       />

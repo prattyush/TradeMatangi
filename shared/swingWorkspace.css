@@ -251,3 +251,11 @@
 .swing-funds-info dt { color: #94a3b8; }
 .swing-funds-info dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 .swing-funds-info small { display: block; }
+.swing-order-backdrop { position: fixed; inset: 0; z-index: 1500; background: #0009; display: flex; align-items: center; justify-content: center; }
+.swing-order-dialog { background: #161e2a; color: #e5e7eb; border: 1px solid #475569; border-radius: 8px; padding: 16px; width: min(420px, 90vw); max-height: 85vh; overflow: auto; }
+.swing-order-dialog header { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.swing-order-dialog form, .swing-order-dialog label { display: grid; gap: 8px; margin-bottom: 12px; }
+.swing-order-dialog input { padding: 8px; color: inherit; background: #0d1117; border: 1px solid #475569; }
+.swing-order-dialog button { padding: 6px 10px; margin: 4px; cursor: pointer; }
+.swing-order-row { display: flex; align-items: center; gap: 4px; }
+.swing-order-row > .swing-position-row { flex: 1; min-width: 0; }

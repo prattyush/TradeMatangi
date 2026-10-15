@@ -51,6 +51,7 @@ export interface SwingChartProps {
   toolsContainer?: HTMLElement | null;
   onPick: (price: number) => void;
   onActivate: () => void;
+  onOrderSelect?: (order: any) => void;
   loadOlder: (
     before: number,
   ) => Promise<{ candles: SwingCandle[]; more: boolean }>;
@@ -167,6 +168,7 @@ function PaneChart({
   toolsContainer,
   onPick,
   onActivate,
+  onOrderSelect,
 }: {
   pane: SwingPane;
   request: SwingRequest;
@@ -186,6 +188,7 @@ function PaneChart({
   toolsContainer?: HTMLElement | null;
   onPick: (price: number) => void;
   onActivate: () => void;
+  onOrderSelect?: (order: any) => void;
 }) {
   const [history, setHistory] = useState<History>({
       candles: [],
@@ -320,6 +323,7 @@ function PaneChart({
         picking={picking}
         position={position}
         orders={orders}
+        onOrderSelect={onOrderSelect}
         trades={swingMarkerTrades(
           trades,
           pane,
@@ -360,6 +364,7 @@ export default function SwingWorkspace({
   error,
   busy,
   onPause,
+  onOrderSelect, onOrderEdit, onOrderCancel,
 }: {
   request: SwingRequest;
   subscribe: SwingSubscribe;
@@ -385,6 +390,9 @@ export default function SwingWorkspace({
   error?: string;
   busy?: boolean;
   onPause: () => void;
+  onOrderSelect: (order: any) => void;
+  onOrderEdit: (order: any) => void;
+  onOrderCancel: (order: any) => void;
 }) {
   const prefix = snapshot.portfolio.session_id;
   const today = swingToday();
@@ -802,9 +810,8 @@ export default function SwingWorkspace({
           {tab === "Orders" &&
             (snapshot.open_orders?.length ? (
               snapshot.open_orders.map((o: any) => (
-                <button
+                <div className="swing-order-row" key={o.order_id}><button
                   className="swing-position-row"
-                  key={o.order_id}
                   onClick={() => selectRow(o)}
                 >
                   <strong>
@@ -812,10 +819,13 @@ export default function SwingWorkspace({
                   </strong>
                   <small>
                     {o.side}{" "}
-                    {Math.max(0, o.quantity - (o.filled_quantity ?? 0))} ·{" "}
+                    {Math.max(0, o.quantity - (o.broker_filled_quantity ?? o.filled_quantity ?? 0))} ·{" "}
                     {o.order_type} ₹{money(o.limit_price)}
                   </small>
                 </button>
+                <SwingIconButton label={`Edit order ${o.symbol}`} icon="Edit" disabled={busy || ['stopped', 'ended'].includes(snapshot.portfolio.state)} onClick={() => onOrderEdit(o)}/>
+                <SwingIconButton label={`Cancel order ${o.symbol}`} icon="Delete" disabled={busy || ['stopped', 'ended'].includes(snapshot.portfolio.state)} onClick={() => onOrderCancel(o)}/>
+                </div>
               ))
             ) : (
               <p>No pending intentions.</p>
@@ -982,6 +992,7 @@ export default function SwingWorkspace({
                   )}
                   trades={snapshot.trades ?? []}
                   markerBasis={snapshot.marker_basis ?? []}
+                  onOrderSelect={!["stopped", "ended"].includes(snapshot.portfolio.state) ? onOrderSelect : undefined}
                   orders={(snapshot.open_orders ?? []).filter((o: any) =>
                     exact(pane, o),
                   )}

@@ -682,6 +682,14 @@ async def _consume(current, session):
 
 
 async def on_tick(current, session, event):
+    if session.session_type == "paper" and session.instrument_type != "futures":
+        from app.routers.orders import _session_edit_lock
+        async with _session_edit_lock(session):
+            return await _on_tick_locked(current, session, event)
+    return await _on_tick_locked(current, session, event)
+
+
+async def _on_tick_locked(current, session, event):
     if session.instrument_type == "futures":
         from app.services.swing_futures import on_quote
         await on_quote(current,session,event)

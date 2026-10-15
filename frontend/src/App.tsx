@@ -225,7 +225,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const sim = useSimulation()
   const [showSwing, setShowSwing] = useState(false)
   const [showSwingKotakLogin,setShowSwingKotakLogin]=useState(false),[swingBrokerRevision,setSwingBrokerRevision]=useState(0)
-  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => {
+  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', body?: Record<string, unknown>) => {
     const response = await fetch(`${BACKEND_URL}/api/swing/portfolios${path ? '/' + path : ''}`, {
       method, headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
       body: method === 'GET' ? undefined : JSON.stringify(body ?? {})

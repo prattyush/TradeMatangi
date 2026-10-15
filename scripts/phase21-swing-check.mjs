@@ -27,7 +27,8 @@ try {
    else if(path.endsWith('/contracts/metadata'))value={contracts:[{expiry:'2026-11-03',right:'CE',strike:125.5,lot_size:10}]}
    else if(method==='GET')value=portfolio?.state==='ended'?{portfolio:null}:snapshot()
    else if(path.endsWith('/portfolios')){portfolio={session_id:'portfolio',mode:'paper',state:'running',entries_paused:false,session_capital:body.capital,guardrail_epoch:0};balance=body.capital;value=snapshot()}
-   else if(path.endsWith('/orders')){orders.push({...body,order_id:'entry',limit_price:body.price});balance-=body.quantity*body.price;value=snapshot()}
+   else if(path.endsWith('/orders')){orders.push({...body,order_id:'entry',status:'PENDING',trigger_price:body.price,limit_price:body.price});balance-=body.quantity*body.price;value=snapshot()}
+   else if(method==='PATCH'&&path.includes('/orders/')){balance+=orders[0].quantity*orders[0].price;Object.assign(orders[0],{price:body.price,limit_price:body.price,trigger_price:body.price,quantity:body.quantity});balance-=body.quantity*body.price;value=snapshot()}
    else if(path.endsWith('/cancel')){balance+=orders[0].quantity*orders[0].price;orders=[];value=snapshot()}
    else if(path.endsWith('/pause')){portfolio.entries_paused=body.paused;value=snapshot()}
    else if(path.endsWith('/capital')){portfolio.session_capital=body.capital;portfolio.guardrail_epoch++;value=snapshot()}
@@ -51,9 +52,18 @@ try {
  await panel.getByRole('button',{name:'Pause entries'}).waitFor()
  await panel.getByLabel('Limit ₹').fill('100')
  await panel.getByRole('button',{name:'Place intention'}).click()
+ await panel.getByRole('button',{name:'Orders',exact:true}).click()
+ await panel.getByRole('button',{name:'Edit order HDFCBANK',exact:true}).first().click()
+ const editor=page.getByRole('dialog',{name:'Swing order actions'})
+ await editor.getByLabel('Order price',{exact:true}).fill('105')
+ await editor.getByLabel('Order total quantity',{exact:true}).fill('2')
+ await editor.getByRole('button',{name:'Save order',exact:true}).click()
+ await editor.waitFor({state:'hidden'})
+ assert.equal(orders[0].limit_price,105);assert.equal(orders[0].quantity,2)
+ assert.equal(balance,99790)
  await panel.getByRole('button',{name:'Manage portfolio',exact:true}).click()
  await panel.getByRole('button',{name:'Cancel',exact:true}).waitFor()
- assert.equal(balance,99900)
+ assert.equal(balance,99790)
  await panel.getByRole('button',{name:'Cancel',exact:true}).click()
  await panel.getByText('No pending orders.').waitFor()
  assert.equal(balance,100000)
