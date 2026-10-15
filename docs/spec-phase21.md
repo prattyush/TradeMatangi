@@ -1997,3 +1997,53 @@ Final review also verified eligible futures exit editing and futures-entry
 cancel/re-preview behavior: all 23 focused amendment/futures tests passed after
 that check. Real broker refusal, cancellation refusal, refresh-in-progress and
 fill-during-edit paths retain the latest confirmed order state.
+
+### Swing chart order interaction parity — 2026-10-15
+
+Status: implemented; review PR targets `dev`. Applies to website and desktop,
+Paper and Real, equities, listed options and futures.
+
+- Pending order lines can be dragged: LIMIT changes its limit; TARGET/STOPLOSS
+  changes its trigger and recalculates the execution limit through the existing
+  order path. Prices snap to the contract tick. A drag sends one amendment on
+  release, while clicking opens Edit/Cancel. In-flight changes prevent duplicate
+  submissions. Rejections restore the latest confirmed line without replacing the
+  chart, resetting zoom or losing drawings.
+- The shared order editor has LTP and Pick on chart. LTP uses only a fresh quote
+  for the exact contract from the existing chart-watch SSE, including expiry and
+  option right/strike. Missing, stale and closed-market quotes disable LTP; no
+  snapshot polling or new quote requests are added. Picking selects the matching
+  chart and changes the draft only; Save remains explicit.
+- Chart right-click offers supported LIMIT/TARGET entries and LIMIT/STOPLOSS
+  exits, prefilled in the existing ticket with exact contract, side and price.
+  It never places an order immediately. Equity/options retain long-only entry
+  rules; futures support both directions. No strategy migration, order-type
+  conversion, MARKET flow or new shorting support is included.
+- Futures entry amendments now use an owned POST
+  `/{portfolio_id}/orders/{order_id}/amend-preview`, then the existing PATCH with
+  `capital_revision`, `approved_budget`, `fee_hash` and `order_fingerprint`.
+  This supersedes the cancel-and-replace limitation recorded in the preceding
+  order-management update. The dialog shows margin, fees, required funds,
+  existing reservation and additional funds before confirmation. The application
+  order ID is preserved. Futures exit edits continue through the direct path.
+- Confirmation refreshes margin/fees under the existing edit lock and rejects
+  changed order/draft, fills, capital, fee profile or insufficient approved funds.
+  Paper cash and the amended order persist atomically, reserving/refunding only
+  the difference. Real uses broker acknowledgement and existing reservations;
+  definitive refusal retains prior terms and ambiguous responses retain an
+  unconfirmed state until an authoritative broker refresh. Broker-held LIMITs
+  created by triggered Targets are amended rather than cancelled. A racing fill
+  is preserved. Remaining-quantity reservations and margins captured for prior
+  fills survive partial-fill amendments. Other pending exits remain included in
+  held-position coverage checks.
+
+Validation: 147 focused backend regression tests and 226 desktop/shared unit
+tests passed. Both production builds passed. Actual-renderer browser verification
+passed all 36 combinations of website/desktop × Paper/Real × equity/options/futures
+× LIMIT/Target/Stoploss, including drag/click separation, tick snapping, rejected
+drag rollback, exact/fresh/stale LTP, draft-only picking, explicit Futures margin
+confirmation, right-click ticket prefilling, cancellation and retained chart
+canvases. The built desktop Swing acceptance flow also passed entry/refund,
+listed options, pause, capital reset, detach/reconnect and close checks.
+Broker traffic in tests is synthetic; live broker execution still requires manual
+acceptance. No live orders or production data were changed by verification.

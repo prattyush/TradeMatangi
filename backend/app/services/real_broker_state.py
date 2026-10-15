@@ -203,6 +203,11 @@ def build_orders(session, broker_orders, master=None):
         order.broker_order_id = broker_report_id(row)
         if previous and not previous.broker_order_id and previous.recovery_state in ("submitting", "unknown"):
             order.recovery_state = None
+        if previous and previous.broker_order_id and (previous.analytics or {}).get('swing_amendment_pending'):
+            # A complete report supplies the authoritative result of an uncertain
+            # amendment, including a fill/cancel racing its acknowledgement.
+            order.recovery_state = None
+            order.analytics.pop('swing_amendment_pending', None)
         order.order_type = kind
         order.is_stoploss = kind == OrderType.STOPLOSS
         order.trigger_price, order.limit_price = row["trigger_price"], row["limit_price"]

@@ -509,12 +509,22 @@ async def events(portfolio_id: str, user: str = Depends(get_desktop_user_id)):
 class AmendPortfolioOrder(ContractModel):
     price: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     quantity: int | None = Field(default=None, gt=0)
+    capital_revision: int | None = Field(default=None, ge=0)
+    approved_budget: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    fee_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    order_fingerprint: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+@router.post("/{portfolio_id}/orders/{order_id}/amend-preview")
+async def amend_preview(portfolio_id: str, order_id: str, req: AmendPortfolioOrder, user: str = Depends(get_desktop_user_id)):
+    from app.services.swing_order_actions import act
+    return await act(user, portfolio_id, order_id, price=req.price, quantity=req.quantity, preview=True)
 
 
 @router.patch("/{portfolio_id}/orders/{order_id}")
 async def amend(portfolio_id: str, order_id: str, req: AmendPortfolioOrder, user: str = Depends(get_desktop_user_id)):
     from app.services.swing_order_actions import act
-    return await act(user, portfolio_id, order_id, price=req.price, quantity=req.quantity)
+    return await act(user, portfolio_id, order_id, price=req.price, quantity=req.quantity, approval=req.model_dump())
 
 
 @router.post("/{portfolio_id}/orders/{order_id}/cancel")

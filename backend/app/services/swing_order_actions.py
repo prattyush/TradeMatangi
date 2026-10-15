@@ -5,7 +5,7 @@ from app.models.schemas import OrderStatus, OrderType, TradeSide, UpdateOrderReq
 from app.services import order_service, trading, swing_portfolio_service as service, swing_portfolio_store as store
 
 
-async def act(user, portfolio_id, order_id, *, price=None, quantity=None, cancel=False):
+async def act(user, portfolio_id, order_id, *, price=None, quantity=None, cancel=False, preview=False, approval=None):
     row = store.owned(user, portfolio_id)
     if row['state'] in ('stopped', 'ended'):
         raise HTTPException(409, 'Resume this portfolio before changing orders')
@@ -51,14 +51,28 @@ async def act(user, portfolio_id, order_id, *, price=None, quantity=None, cancel
                 closing = (position.side == 'LONG' and order.side == TradeSide.SELL) or (position.side == 'SHORT' and order.side == TradeSide.BUY)
                 if closing and total - order.broker_filled_quantity > position.quantity:
                     raise HTTPException(422, 'Remaining exit quantity exceeds the held position')
+                if closing:
+                    outstanding = sum(max(0, other.quantity - other.broker_filled_quantity)
+                                      for other in order_service.get_open_orders(child.session_id)
+                                      if other.order_id != order_id and other.side == order.side
+                                      and (other.right, other.strike, other.expiry) == (order.right, order.strike, order.expiry))
+                    if outstanding + total - order.broker_filled_quantity > position.quantity:
+                        raise HTTPException(422, 'Other exits already cover this quantity; reduce or cancel them first')
                 if order.side == TradeSide.SELL and child.instrument_type != 'futures' and not closing:
                     raise HTTPException(422, 'This sell order has no matching long position')
-                if child.instrument_type == 'futures' and not closing:
-                    raise HTTPException(422, 'Cancel this futures entry and replace it after a fresh margin preview')
-                values = {'quantity':quantity}
-                if price is not None:
-                    values['limit_price' if order.order_type == OrderType.LIMIT else 'trigger_price'] = price
-                await _update_order_locked(child, order_id, UpdateOrderRequest(**values), child.session_id, swing_amendment=True)
+                if child.instrument_type == 'futures' and order.execution_role != 'exit' and (order.execution_role == 'entry' or not closing):
+                    from app.services import swing_futures_amend
+                    new_price = price if price is not None else (order.limit_price if order.order_type == OrderType.LIMIT else order.trigger_price)
+                    if preview:
+                        return await swing_futures_amend.preview(user, portfolio_id, child, order, new_price, total)
+                    await swing_futures_amend.amend(user, portfolio_id, child, order, new_price, total, approval)
+                elif preview:
+                    raise HTTPException(422, 'Only Futures entries need an amendment margin preview')
+                else:
+                    values = {'quantity':quantity}
+                    if price is not None:
+                        values['limit_price' if order.order_type == OrderType.LIMIT else 'trigger_price'] = price
+                    await _update_order_locked(child, order_id, UpdateOrderRequest(**values), child.session_id, swing_amendment=True)
         except InsufficientFundsError as exc:
             raise HTTPException(402, str(exc)) from exc
         except ValueError as exc:

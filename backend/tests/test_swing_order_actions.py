@@ -1,6 +1,6 @@
 """Portfolio-scoped edit/cancel, including persisted multi-day Paper exits."""
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import HTTPException
 from app.models.schemas import OrderType, OrderStatus
@@ -163,7 +163,7 @@ async def test_real_fill_racing_edit_preserves_latest_fill_and_real_cancel_rejec
 
 
 @pytest.mark.asyncio
-async def test_futures_entries_require_cancel_and_new_preview(future_book, no_subscriptions):
+async def test_futures_entries_require_fresh_amendment_preview(future_book, no_subscriptions):
     from app.services import swing_futures
     from tests.test_swing_futures import request
     parent, contract, now = future_book
@@ -191,3 +191,171 @@ async def test_futures_exit_can_edit_price_but_respects_lots(future_book, no_sub
     assert order.limit_price == 115
     with pytest.raises(HTTPException):
         await actions.act('u', parent['session_id'], order.order_id, price=116, quantity=4)
+
+
+def amendment_approval(preview):
+    return {**preview, 'approved_budget':preview['required_funds']}
+
+
+async def future_entry(future_book, side='BUY', kind=OrderType.LIMIT):
+    from app.services import swing_futures
+    from tests.test_swing_futures import request
+    parent, _, _ = future_book
+    pid = parent['session_id']
+    await swing_futures.place('u',pid,request(side).model_copy(update={'order_type':kind}))
+    child = service.runtime('u',pid).contexts['NIFTY:futures:2026-10-27']
+    return pid, child, order_service.get_open_orders(child.session_id)[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('side', ['BUY', 'SELL'])
+@pytest.mark.parametrize('kind', [OrderType.LIMIT, OrderType.TARGET])
+async def test_future_entry_amend_reserves_only_delta(future_book, no_subscriptions, side, kind):
+    from app.services import swing_cash
+    pid, child, order = await future_entry(future_book,side,kind)
+    view = service.snapshot('u',pid)['open_orders'][0]
+    assert view['instrument_type']=='futures' and view['tick_size']==.05 and view['lot_size']==5
+    before = swing_cash.read('u',pid)['current_balance']
+    preview = await actions.act('u',pid,order.order_id,price=105,quantity=10,preview=True)
+    assert order.quantity == 5 and order.limit_price == 100
+    assert swing_cash.read('u',pid)['current_balance'] == before
+    assert preview['additional_funds'] == round(preview['required_funds'] - order.reserved_amount,2)
+    await actions.act('u',pid,order.order_id,price=105,quantity=10,approval=amendment_approval(preview))
+    assert order.quantity == 10 and order.order_type == kind
+    assert (order.limit_price if kind == OrderType.LIMIT else order.trigger_price) == 105
+    assert order.reserved_amount == preview['required_funds']
+    assert swing_cash.read('u',pid)['current_balance'] == round(1000-order.reserved_amount,2)
+    assert order_service.get_order(child.session_id,order.order_id) is order
+    await actions.act('u',pid,order.order_id,cancel=True)
+    assert swing_cash.read('u',pid)['current_balance'] == 1000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change', ['draft','filled','capital','budget','fees','funds'])
+async def test_futures_amend_rejects_stale_approval(future_book, no_subscriptions, change):
+    from app.services import swing_cash
+    pid, child, order = await future_entry(future_book)
+    preview = await actions.act('u',pid,order.order_id,price=105,quantity=10,preview=True)
+    approval = amendment_approval(preview)
+    price = 106 if change == 'draft' else 105
+    if change == 'filled': order.broker_filled_quantity = 5
+    if change == 'capital': store.update('u',pid,{'guardrail_epoch':1},store.owned('u',pid)['version'])
+    if change == 'budget': approval['approved_budget']=1
+    if change == 'fees': approval['fee_hash']='0'*64
+    if change == 'funds': swing_cash.move('u',pid,-800,'test-spend')
+    before = swing_cash.read('u',pid)['current_balance']
+    with pytest.raises(HTTPException):
+        await actions.act('u',pid,order.order_id,price=price,quantity=10,approval=approval)
+    assert order.quantity == 5 and order.limit_price == 100
+    assert swing_cash.read('u',pid)['current_balance'] == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('kind', [OrderType.LIMIT, OrderType.TARGET])
+async def test_real_future_amend_persists_confirmed_terms(future_book, no_subscriptions, monkeypatch, kind):
+    from app.services import broker_order_service, real_funding
+    from app.services.db import get_dynamodb_resource
+    pid, child, order = await future_entry(future_book,kind=kind)
+    child.session_type = 'real'
+    order.broker_order_id = 'broker-1' if kind == OrderType.LIMIT else None
+    broker = AsyncMock()
+    monkeypatch.setattr(broker_order_service,'sync_order_edit_async',broker)
+    monkeypatch.setattr(real_funding,'reserve',lambda *a,**k: None)
+    preview = await actions.act('u',pid,order.order_id,price=105,preview=True)
+    await actions.act('u',pid,order.order_id,price=105,approval=amendment_approval(preview))
+    assert (order.limit_price if kind == OrderType.LIMIT else order.trigger_price) == 105
+    assert order.broker_order_id == ('broker-1' if kind == OrderType.LIMIT else None)
+    saved = get_dynamodb_resource().Table('Orders').get_item(Key={'session_id':child.session_id,'order_id':order.order_id})['Item']
+    assert float(saved['limit_price' if kind == OrderType.LIMIT else 'trigger_price']) == 105
+    broker.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_real_future_fill_during_ack_is_not_overwritten(future_book, no_subscriptions, monkeypatch):
+    from app.services import broker_order_service, real_funding
+    pid, child, order = await future_entry(future_book)
+    child.session_type = 'real'; order.broker_order_id = 'broker-1'
+    async def fill(*a,**k):
+        order.status = OrderStatus.FILLED; order.broker_filled_quantity = 5
+    monkeypatch.setattr(broker_order_service,'sync_order_edit_async',fill)
+    monkeypatch.setattr(real_funding,'reserve',lambda *a,**k: None)
+    preview = await actions.act('u',pid,order.order_id,price=105,preview=True)
+    with pytest.raises(HTTPException,match='Order changed'):
+        await actions.act('u',pid,order.order_id,price=105,approval=amendment_approval(preview))
+    assert order.status == OrderStatus.FILLED and order.broker_filled_quantity == 5 and order.limit_price == 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('rejected', [True, False])
+async def test_real_future_refusal_and_timeout_keep_confirmed_terms(future_book, no_subscriptions, monkeypatch, rejected):
+    from app.services import broker_order_service, real_funding, real_broker_state
+    from app.services.kotak_service import KotakOrderRejected
+    pid, child, order = await future_entry(future_book)
+    child.session_type='real'; order.broker_order_id='broker-1'
+    reserve = Mock()
+    monkeypatch.setattr(real_funding,'reserve',reserve)
+    error = KotakOrderRejected('refused') if rejected else TimeoutError('timeout')
+    monkeypatch.setattr(broker_order_service,'sync_order_edit_async',AsyncMock(side_effect=error))
+    preview = await actions.act('u',pid,order.order_id,price=105,quantity=10,preview=True)
+    old_reserved=order.reserved_amount
+    with pytest.raises(HTTPException,match='not confirmed'):
+        await actions.act('u',pid,order.order_id,price=105,quantity=10,approval=amendment_approval(preview))
+    assert order.limit_price==100 and order.quantity==5 and order.broker_order_id=='broker-1'
+    if rejected:
+        assert order.recovery_state != 'unknown'
+        assert reserve.call_args.args[2]==old_reserved
+    else:
+        assert order.recovery_state=='unknown' and order.analytics['swing_amendment_pending']
+        row={'broker_order_id':'broker-1','status':'open','order_type':'LIMIT','quantity':5,'side':'BUY','limit_price':100,'trigger_price':100,'filled_quantity':0,'filled_price':0,'product':'NRML','exchange':'NFO'}
+        restored=real_broker_state.build_orders(child,[row])[order.order_id]
+        assert restored.recovery_state is None and 'swing_amendment_pending' not in restored.analytics
+        assert restored.limit_price==100 and restored.quantity==5
+
+
+@pytest.mark.asyncio
+async def test_triggered_target_amends_held_limit_without_cancelling(future_book, no_subscriptions, monkeypatch):
+    from unittest.mock import Mock
+    from app.services import broker_order_service, execution_broker
+    pid, child, order = await future_entry(future_book,kind=OrderType.TARGET)
+    child.session_type='real';order.broker_order_id='broker-1'
+    monkeypatch.setattr(broker_order_service,'require_entry_allowed',lambda *a:None)
+    broker=Mock();broker.modify_sl_to_limit_order.return_value=None
+    monkeypatch.setattr(execution_broker,'get_service',lambda *a:broker)
+    candidate=order.model_copy(deep=True,update={'trigger_price':105})
+    await broker_order_service.sync_order_edit_async(child,candidate,OrderType.TARGET)
+    broker.modify_sl_to_limit_order.assert_called_once_with('broker-1',candidate.limit_price,5)
+    broker.cancel_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_partial_future_amendment_reserves_only_unfilled_quantity(future_book, no_subscriptions, monkeypatch):
+    from app.services import broker_order_service, real_funding, real_broker_state
+    from tests.test_swing_futures import request
+    from app.services import swing_futures
+    parent,_,_=future_book;pid=parent['session_id']
+    await swing_futures.place('u',pid,request(quantity=10,budget=400))
+    child=service.runtime('u',pid).contexts['NIFTY:futures:2026-10-27']
+    order=order_service.get_open_orders(child.session_id)[0]
+    child.session_type='real';order.broker_order_id='broker-1';order.broker_filled_quantity=5
+    monkeypatch.setattr(real_funding,'reserve',lambda *a,**k:None)
+    monkeypatch.setattr(broker_order_service,'sync_order_edit_async',AsyncMock())
+    preview=await actions.act('u',pid,order.order_id,price=105,quantity=15,preview=True)
+    assert preview['quantity']==10
+    await actions.act('u',pid,order.order_id,price=105,quantity=15,approval=amendment_approval(preview))
+    assert order.broker_filled_quantity==5 and order.quantity==15
+    child.real_funding_period='test'
+    real_broker_state.rebuild_reservations(child,{order.order_id:order},[])
+    assert order.reserved_amount==preview['required_funds']
+
+
+def test_amended_future_preview_does_not_rewrite_margin_of_earlier_fills(monkeypatch):
+    from types import SimpleNamespace
+    from app.models.schemas import Order, Trade, TradeSide
+    from app.services import futures_real, futures_risk
+    session=SimpleNamespace(session_id='s',execution_broker='kite',broker_account_id='a',user_id='u',symbol='NIFTY',expiry='2026-10-27',portfolio_id='p',future_contract={'exchange':'NFO'})
+    prior=Trade(trade_id='kite:a:NFO:first',session_id='s',user_id='u',symbol='NIFTY',side=TradeSide.BUY,quantity=5,price=100,timestamp=1,instrument_type='futures',analytics={'futures':{'entry_margin':100}})
+    monkeypatch.setattr(trading,'get_trades',lambda sid:[prior])
+    order=Order(order_id='o',session_id='s',user_id='u',symbol='NIFTY',side=TradeSide.BUY,order_type=OrderType.LIMIT,quantity=15,trigger_price=100,limit_price=100,created_at=1,broker_order_id='broker',analytics={'futures':{'margin':450,'amended_entry':True,'fee_profile':futures_risk.FeeProfile().model_dump(mode='json')}})
+    rows=[{'broker_order_id':'broker','exchange':'NFO','execution_id':name,'side':'BUY','quantity':5,'price':100,'timestamp':index+1} for index,name in enumerate(['first','second','third'])]
+    fills=futures_real.confirmed_trades(session,rows,{'o':order})
+    assert [t.analytics['futures']['entry_margin'] for t in fills]==[100,150,150]

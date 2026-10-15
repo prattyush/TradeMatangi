@@ -1,3 +1,4 @@
+import { snapSwingPrice, swingOrderTick } from '../../../shared/swingOrderPrice'
 import { flashError } from '../services/notifications'
 import { recordPerformance } from '../services/performanceDiagnostics'
 import { openPositionTrades, RecentLiveTicks, reconcileChartObjects } from '../services/tradingChartState'
@@ -65,6 +66,7 @@ interface Props {
   markerSessionKey?: string
   onRatioIndicatorsChange?: (keys: RocComparisonKey[]) => void
   // Open order price lines
+  onSwingOrderDrag?: (order: Order, price: number) => Promise<void>
   onOrderSelect?: (order: Order) => void
   openOrders?: Order[]
   targetProfitStrategies?: StrategyResponse[]
@@ -428,6 +430,7 @@ export default function Chart({
   onRatioIndicatorsChange,
   openOrders,
   onOrderSelect,
+  onSwingOrderDrag,
   targetProfitStrategies,
   strategyPosition,
   strategyPositionCE,
@@ -490,8 +493,10 @@ export default function Chart({
   const [showAllMarkers, setShowAllMarkers] = useState(defaultShowAllMarkers)
   const visibleTrades = useMemo(() => (externalTradeMarkers || showAllMarkers) ? trades : openPositionTrades(trades), [trades, showAllMarkers, externalTradeMarkers])
   useEffect(() => { setShowAllMarkers(defaultShowAllMarkers) }, [markerSessionKey, symbol, paneType, right, strike, expiry])
-  const orderSelectionRef = useRef({orders: openOrders, onSelect: onOrderSelect})
-  orderSelectionRef.current = {orders: openOrders, onSelect: onOrderSelect}
+  const orderSelectionRef = useRef({orders: openOrders, onSelect: onOrderSelect, onDrag:onSwingOrderDrag})
+  orderSelectionRef.current = {orders: openOrders, onSelect: onOrderSelect, onDrag:onSwingOrderDrag}
+  const swingDragPending = useRef(new Set<string>())
+  const swingClickUntil = useRef(0)
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
@@ -652,7 +657,7 @@ export default function Chart({
     ema21Ref.current = e21
 
     chart.subscribeClick((param: MouseEventParams) => {
-      if (!param.point || !seriesRef.current) return
+      if (!param.point || !seriesRef.current || Date.now() < swingClickUntil.current) return
       // Absorb the click that activated the draw mode (e.g. dropdown item click)
       if (ignoreNextClickRef.current) { ignoreNextClickRef.current = false; return }
       const price = seriesRef.current.coordinateToPrice(param.point.y)
@@ -850,6 +855,58 @@ export default function Chart({
       })
     }
     container!.addEventListener('contextmenu', handleContextMenu)
+    // Capture only a pending Swing order line; ordinary chart panning stays untouched.
+    let drag: {id: string; startY: number; moved: boolean; price: number} | null = null
+    let mounted = true
+    const restore = (id: string) => {
+      if (!mounted) return
+      const latest = orderSelectionRef.current.orders?.find(o => o.order_id === id)
+      if (latest) orderPriceLinesRef.current.get(id)?.applyOptions({price:orderDisplayPrice(latest)})
+    }
+    const dragStart = (event: MouseEvent) => {
+      if (event.button !== 0 || drawModeRef.current !== 'none' || onPriceSelectRef.current || !orderSelectionRef.current.onDrag) return
+      const rect = container.getBoundingClientRect()
+      const x = event.clientX - rect.left, y = event.clientY - rect.top
+      if (x < 0 || x > chart.timeScale().width()) return
+      const hit = [...orderPriceLinesRef.current].map(([id,line]) => ({id,y:series.priceToCoordinate(line.options().price)}))
+        .filter(item => item.y !== null && Math.abs(item.y-y) <= 7)
+        .sort((a,b) => Math.abs(a.y!-y)-Math.abs(b.y!-y))[0]
+      if (!hit) return
+      event.preventDefault(); event.stopImmediatePropagation()
+      if (swingDragPending.current.has(hit.id)) return
+      const order = orderSelectionRef.current.orders?.find(o => o.order_id === hit.id)
+      if (order) drag={id:hit.id,startY:event.clientY,moved:false,price:orderDisplayPrice(order)}
+    }
+    const dragMove = (event: MouseEvent) => {
+      if (!drag) return
+      event.preventDefault(); event.stopImmediatePropagation()
+      const value = series.coordinateToPrice(event.clientY-container.getBoundingClientRect().top)
+      const order = orderSelectionRef.current.orders?.find(o => o.order_id === drag!.id)
+      if (value === null || !order) return
+      if (Math.abs(event.clientY-drag.startY)>3) drag.moved=true
+      if (drag.moved) {
+        drag.price=snapSwingPrice(value,swingOrderTick(order))
+        if (drag.price>0) orderPriceLinesRef.current.get(drag.id)?.applyOptions({price:drag.price})
+      }
+    }
+    const dragEnd = (event: MouseEvent) => {
+      if (!drag) return
+      event.preventDefault(); event.stopImmediatePropagation()
+      const finished=drag; drag=null; swingClickUntil.current=Date.now()+400
+      const order=orderSelectionRef.current.orders?.find(o => o.order_id === finished.id)
+      if (!order) return
+      if (!finished.moved) {orderSelectionRef.current.onSelect?.(order); return}
+      if (finished.price<=0 || finished.price===orderDisplayPrice(order)) {restore(finished.id);return}
+      swingDragPending.current.add(finished.id)
+      void Promise.resolve(orderSelectionRef.current.onDrag?.(order,finished.price)).catch(() => {}).finally(() => {
+        swingDragPending.current.delete(finished.id);restore(finished.id)
+      })
+    }
+    const abortDrag = () => { if (drag) {restore(drag.id);drag=null} }
+    container.addEventListener('mousedown',dragStart,true)
+    window.addEventListener('mousemove',dragMove,true)
+    window.addEventListener('mouseup',dragEnd,true)
+    window.addEventListener('blur',abortDrag)
 
     const ro = new ResizeObserver(entries => {
       // Skip when the container is hidden (display:none during maximize of another pane)
@@ -861,6 +918,11 @@ export default function Chart({
 
     return () => {
       ro.disconnect()
+      mounted=false
+      container.removeEventListener('mousedown',dragStart,true)
+      window.removeEventListener('mousemove',dragMove,true)
+      window.removeEventListener('mouseup',dragEnd,true)
+      window.removeEventListener('blur',abortDrag)
       container.removeEventListener('contextmenu', handleContextMenu)
       tradeMarkerPool.current.clear()
       orderPriceLinesRef.current.clear()

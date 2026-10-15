@@ -1,3 +1,4 @@
+import { snapSwingPrice, swingOrderTick } from './swingOrderPrice';
 import SwingOrderActions from './SwingOrderActions';
 import { SwingIconButton } from './SwingIcon';
 import type { SwingSubscribe } from "./swingStream";
@@ -148,7 +149,9 @@ export default function SwingPortfolioPanel({
     !labelState.current.saving &&
     (!labelState.current.dirty ||
       window.confirm("Discard unsaved trade labels?"));
-  const [orderAction, setOrderAction] = useState<{ order: any; editing: boolean } | null>(null);
+  const [orderAction, setOrderAction] = useState<{ order: any; editing: boolean; initialPrice?: number } | null>(null);
+  const [orderPick, setOrderPick] = useState<{order: any; receive: (price: number) => void} | null>(null);
+  const [orderQuote, setOrderQuote] = useState<{price: number; time: number} | null>(null);
   const [managementOpen, setManagementOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const requestedContract = useRef<SwingPane | null>(null);
@@ -204,8 +207,8 @@ export default function SwingPortfolioPanel({
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const portfolio = snapshot?.portfolio;
   const prefix = portfolio?.session_id;
-  useEffect(() => setOrderAction(null), [prefix]);
-  const openOrderActions = (order: any, editing: boolean) => { setError(""); setOrderAction({order, editing}); };
+  useEffect(() => {setOrderAction(null);setOrderPick(null);setOrderQuote(null)}, [prefix]);
+  const openOrderActions = (order: any, editing: boolean) => { setOrderQuote(null); setError(""); setOrderAction({order, editing}); };
 
   useEffect(() => {
     if (snapshot?.portfolio) {
@@ -1152,11 +1155,26 @@ export default function SwingPortfolioPanel({
         navigationControls={navigationControls}
         portfolioControls={portfolioControls}
         onSelect={chooseChart}
+        pickOrder={orderPick?.order}
+        quoteOrder={orderAction?.order}
+        onOrderQuote={setOrderQuote}
+        onChartTicket={(pane, value, nextSide, nextType, tick) => {
+          chooseChart(pane); setPrice(String(snapSwingPrice(value,tick))); setSide(nextSide); setType(nextType);
+        }}
+        onOrderDrag={async (order, value) => {
+          if (busy) return;
+          const price = snapSwingPrice(value, swingOrderTick(order));
+          if ((order.instrument_type === "futures" || order.analytics?.futures) && order.execution_role !== "exit") {
+            setOrderQuote(null); setError(""); setOrderAction({order, editing:true, initialPrice:price}); return;
+          }
+          await act(`${prefix}/orders/${order.order_id}`, {price}, "PATCH");
+        }}
         onPick={(value) => {
+          if (orderPick) { orderPick.receive(value); setOrderPick(null); return; }
           if (Number.isFinite(value) && value > 0) setPrice(value.toFixed(2));
           setPicking(false);
         }}
-        picking={picking}
+        picking={picking || Boolean(orderPick)}
         ticket={tradeTicket}
         onHistory={() => {
           if (mayNavigate()) setAnalyticsOpen("history");
@@ -1192,9 +1210,12 @@ export default function SwingPortfolioPanel({
         boxSizing: "border-box",
       }}
     >
-      {orderAction && <SwingOrderActions key={orderAction.order.order_id} order={orderAction.order} editing={orderAction.editing} busy={busy} error={error}
-        onClose={() => setOrderAction(null)}
-        onSave={(price, quantity) => act(`${prefix}/orders/${orderAction.order.order_id}`, {price, quantity}, "PATCH")}
+      {orderPick && <div role="status" style={{position:'absolute',top:52,left:'30%',zIndex:1501,padding:10,background:'#161b22',border:'1px solid #58a6ff'}}>Pick a price on the {orderPick.order.symbol} {orderPick.order.right} {orderPick.order.strike} {orderPick.order.expiry} chart. <button onClick={() => setOrderPick(null)}>Cancel picking</button></div>}
+      {orderAction && <SwingOrderActions key={orderAction.order.order_id} order={orderAction.order} editing={orderAction.editing} initialPrice={orderAction.initialPrice} busy={busy} error={error} ltp={orderQuote} picking={Boolean(orderPick)}
+        onClose={() => {setOrderAction(null);setOrderPick(null)}}
+        onPick={receive => setOrderPick({order:orderAction.order, receive})}
+        onPreview={(price, quantity) => request(`${prefix}/orders/${orderAction.order.order_id}/amend-preview`, "POST", {price, quantity})}
+        onSave={(price, quantity, approval) => act(`${prefix}/orders/${orderAction.order.order_id}`, {price, quantity, ...approval}, "PATCH")}
         onCancel={() => act(`${prefix}/orders/${orderAction.order.order_id}/cancel`)}/>}
       {!chartWorkspace && navigationControls && <div className="swing-workspace-bar">{navigationControls}</div>}
       {chartWorkspace}

@@ -23,6 +23,7 @@ def confirmed_trades(session, executions, orders):
             raise ValueError("Unowned Futures execution needs broker reconciliation")
         grouped.setdefault(identifier, []).append(row)
     result = []
+    saved_fills = {trade.trade_id: trade for trade in trading.get_trades(session.session_id)}
     for identifier, rows in grouped.items():
         order = owned[identifier]
         info = order.analytics["futures"]
@@ -45,6 +46,11 @@ def confirmed_trades(session, executions, orders):
             )
             assigned += fee
             margin = float(info.get("margin", 0)) * row["quantity"] / order.quantity
+            prior = saved_fills.get(f"{session.execution_broker}:{session.broker_account_id}:{row['exchange']}:{row['execution_id']}")
+            if info.get('amended_entry') and prior and prior.quantity == row['quantity']:
+                # New margin approval covers only unfilled quantity. Retain the
+                # margin already captured for earlier executions of this order.
+                margin = (prior.analytics or {}).get('futures', {}).get('entry_margin', margin)
             result.append(
                 Trade(
                     trade_id=f"{session.execution_broker}:{session.broker_account_id}:{row['exchange']}:{row['execution_id']}",
