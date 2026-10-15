@@ -184,3 +184,27 @@ async def set_historical_source(req: HistoricalSourceRequest, user_id: str = Dep
         logger.exception("Could not save live historical policy")
         raise HTTPException(status_code=503, detail="Could not save historical settings")
     return req
+
+
+from app.services.real_broker_policy import Policy as RealBrokerPolicy
+
+
+@router.get('/real-broker-restrictions', response_model=RealBrokerPolicy)
+async def get_real_broker_restrictions(user_id: str = Depends(_require_admin)):
+    import asyncio
+    from app.services.real_broker_policy import refresh
+    return await asyncio.to_thread(refresh)
+
+
+@router.put('/real-broker-restrictions', response_model=RealBrokerPolicy)
+async def set_real_broker_restrictions(req: RealBrokerPolicy, user_id: str = Depends(_require_admin)):
+    import asyncio
+    from app.services.real_broker_policy import save
+    from app.services import real_broker_policy, real_sessions
+    previously_enabled = real_broker_policy.enabled()
+    result = await asyncio.to_thread(save,req)
+    if req.enabled and not previously_enabled:
+        await real_sessions.shutdown()
+        real_sessions.startup()
+    logger.info('real_broker_restrictions_changed enabled=%s admin_user_id=%s',req.enabled,user_id)
+    return result

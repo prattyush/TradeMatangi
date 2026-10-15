@@ -34,6 +34,9 @@ def pool(session):
 
 
 def require_entry(session):
+    from app.services.real_broker_policy import enforce
+    if not enforce(session):
+        return []
     if not getattr(session, "real_funding_period", None):
         return
     row = pool(session)
@@ -112,6 +115,9 @@ def verify_available(session, row):
 
 
 def ownership_actions(session):
+    from app.services.real_broker_policy import enforce
+    if not enforce(session):
+        return []
     """Funding snapshots from an expired engine cannot overwrite recovered state."""
     token = getattr(session, "real_claim_token", None)
     if not token:
@@ -148,6 +154,9 @@ def ownership_actions(session):
 
 
 def reserve(session, order_id, amount, *, owner="local"):
+    from app.services.real_broker_policy import enforce
+    if not enforce(session):
+        return []
     row = pool(session)
     ticket = f"{session.session_id}:{order_id}"
     amount = rules.money(amount)
@@ -224,6 +233,9 @@ def reserve(session, order_id, amount, *, owner="local"):
 
 
 def reconcile(session, available, *, coherent=True):
+    from app.services.real_broker_policy import enforce
+    if not enforce(session):
+        return []
     """Rebase one owned book from its durable executions; never debit fills twice."""
     from app.services import order_service, simulation, trading
 
@@ -382,6 +394,9 @@ def reconcile(session, available, *, coherent=True):
 
 
 def mark_pending(session):
+    from app.services.real_broker_policy import enforce
+    if not enforce(session):
+        return []
     """Unconfirmed broker effects block entries for both account participants."""
     row = pool(session)
 

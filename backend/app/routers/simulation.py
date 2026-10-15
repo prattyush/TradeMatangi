@@ -510,16 +510,21 @@ async def _start_simulation_impl(
             real_ledger = f"real:{chosen_broker}:{broker_account}:{req.date}"
             from app.services import swing_funding_store as funding_store, real_sessions
             recovered = real_sessions.recovery_record()
-            reference = float(recovered.get("session_capital", funds)) if recovered else account_wallet.get("balance", funds)
-            pool = await asyncio.to_thread(funding_store.initialize, user_id, chosen_broker, broker_account, reference)
-            allocation = req.allocation_pct
-            if recovered and not recovered.get("real_funding_period"):
-                # Legacy capital is already the book's allocation, not fresh broker cash.
-                allocation = float(recovered["session_capital"]) / float(pool["funding"]["allocation_reference"])
-            pool = await asyncio.to_thread(funding_store.start_participant, user_id, chosen_broker, broker_account,
-                pool["period_id"], "intraday", real_sessions.prepared_identity(), allocation, session_record_id=real_sessions.prepared_identity())
-            funds = pool["funding"]["modes"]["intraday"]["capital"]
-            funding_period = pool["period_id"]
+            from app.services.real_broker_policy import enabled as restrictions_enabled
+            if not restrictions_enabled():
+                funds = float(recovered.get("session_capital", funds)) if recovered else funds * req.allocation_pct
+                funding_period = recovered.get("real_funding_period") if recovered else None
+            else:
+                reference = float(recovered.get("session_capital", funds)) if recovered else account_wallet.get("balance", funds)
+                pool = await asyncio.to_thread(funding_store.initialize, user_id, chosen_broker, broker_account, reference)
+                allocation = req.allocation_pct
+                if recovered and not recovered.get("real_funding_period"):
+                    # Legacy capital is already the book's allocation, not fresh broker cash.
+                    allocation = float(recovered["session_capital"]) / float(pool["funding"]["allocation_reference"])
+                pool = await asyncio.to_thread(funding_store.start_participant, user_id, chosen_broker, broker_account,
+                    pool["period_id"], "intraday", real_sessions.prepared_identity(), allocation, session_record_id=real_sessions.prepared_identity())
+                funds = pool["funding"]["modes"]["intraday"]["capital"]
+                funding_period = pool["period_id"]
             if chosen_broker == "kite":
                 if req.instrument_type == 'options':
                     reference_right = req.right or 'CE'
@@ -655,7 +660,7 @@ async def _start_simulation_impl(
                 session.real_funding_period = funding_period
                 session.real_start_preparing = True
                 await real_sessions.bind_prepared(session)
-                if session.instrument_type == "options" or chosen_broker == "kite":
+                if restrictions_enabled() and (session.instrument_type == "options" or chosen_broker == "kite"):
                     await _prepare_real_options_resume(session, kotak_svc)
                 session.session_capital = funds
                 sim_svc._upsert_session_to_db(session, strict=True)
@@ -708,7 +713,7 @@ async def _start_simulation_impl(
         session.broker_account_id = broker_account
         session.session_capital = funds
         sim_svc._upsert_session_to_db(session, strict=True)
-        if chosen_broker == "kite":
+        if restrictions_enabled() and chosen_broker == "kite":
             await _prepare_real_options_resume(session, kotak_svc)
     session.desktop_created = desktop_independent
     groups.add_member(group, {"session_id": session.session_id, "symbol": session.symbol,

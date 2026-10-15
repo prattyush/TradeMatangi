@@ -853,7 +853,7 @@ const CONTROL_DEADLINE_MS = 30_000
 const controlSignal = () => AbortSignal.timeout(CONTROL_DEADLINE_MS)
 
 const api = {
-  async executionBrokerStatus(): Promise<{ broker: 'kotak' | 'kite'; authenticated: boolean; active_session_id?: string | null }> {
+  async executionBrokerStatus(): Promise<{ broker: 'kotak' | 'kite'; authenticated: boolean; active_session_id?: string | null; restrictions_enabled?: boolean }> {
     const res = await fetch(`${BACKEND_URL}/api/brokers/status`, { signal: controlSignal(),
       headers: _authHeaders() })
     if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).detail || 'Could not load execution broker status', res.status)
@@ -1453,6 +1453,15 @@ const api = {
       throw new Error(data.detail || `Set account name failed: ${res.status}`)
     }
     return res.json()
+  },
+
+  async realBrokerRestrictions(method: 'GET' | 'PUT', body?: { enabled: boolean }): Promise<{ enabled: boolean }> {
+    const response = await fetch(`${BACKEND_URL}/api/admin/real-broker-restrictions`, {
+      method, signal: controlSignal(), headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: method === 'PUT' ? JSON.stringify(body) : undefined,
+    })
+    if (!response.ok) throw new ApiError('Could not load/save Real broker restrictions', response.status)
+    return response.json()
   },
 
   async getAdminTokens(): Promise<AdminTokensResponse> {

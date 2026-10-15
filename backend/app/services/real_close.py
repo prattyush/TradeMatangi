@@ -61,7 +61,8 @@ async def finish(session):
 
 
 async def close(session, acknowledge_undated_submission_ids=None):
-    if getattr(session, 'real_start_preparing', False):
+    from app.services.real_broker_policy import enforce
+    if enforce(session) and getattr(session, 'real_start_preparing', False):
         from fastapi import HTTPException
 
         from app.services import real_sessions

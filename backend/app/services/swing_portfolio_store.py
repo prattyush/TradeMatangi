@@ -124,7 +124,8 @@ def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=Non
             }
         },
     ]
-    if mode == "real":
+    from app.services.real_broker_policy import enabled as restrictions_enabled
+    if mode == "real" and restrictions_enabled():
         from app.services import real_session_slots as slots
         from app.services.execution_broker import name
         token = str(uuid.uuid4())
@@ -167,6 +168,9 @@ def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=Non
                 "A Swing portfolio already exists; attach or close it before creating another",
             ) from exc
         raise
+    if mode == "real" and not restrictions_enabled():
+        from app.services.real_session_observer import record
+        record(user,portfolio_id,broker,account,"swing",str(uuid.uuid4()),date=row["date"])
     return row
 
 
@@ -286,7 +290,8 @@ def finish_verified_close(user, portfolio_id):
                     }
                 },
             ]
-    if row["mode"] == "real":
+    from app.services.real_broker_policy import enabled as restrictions_enabled
+    if row["mode"] == "real" and restrictions_enabled() and row.get("real_broker_restrictions_enabled", True):
         from app.services import real_session_slots as slots
         actions.append(slots.close_action(user, row["execution_broker"], row["broker_account_id"], "swing", portfolio_id, row["real_claim_token"]))
         if row.get("real_funding_period"):
@@ -300,4 +305,8 @@ def finish_verified_close(user, portfolio_id):
                 409, "Portfolio changed during closure; verify again"
             ) from exc
         raise
+    if row["mode"] == "real" and not restrictions_enabled():
+        from app.services.real_session_observer import close
+        close(user,portfolio_id,row["execution_broker"],row["broker_account_id"],"swing",row.get("real_claim_token"),
+            date=row["date"],funding_period=row.get("real_funding_period"))
     return row

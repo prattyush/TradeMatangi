@@ -244,6 +244,7 @@ class SimulationSession:
     acknowledged_undated_submission_ids: list[str] = field(default_factory=list)
     real_verified_closed: bool = False
     real_recovery_pending: bool = False
+    real_broker_restrictions_enabled: bool = True
     real_funding_period: str | None = None
     real_entries_paused: bool = False
     broker_account_id: str | None = None
@@ -331,6 +332,7 @@ def _count_total_bars(symbol: str, date: str, start_time: str, interval_secs: in
 
 
 def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -> None:
+    from app.services import real_broker_policy
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Sessions")
@@ -362,6 +364,7 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             "opening_inventory_request_id": session.opening_inventory_request_id,
             "opening_inventory_fingerprint": session.opening_inventory_fingerprint,
             "opening_inventory_captured_at": session.opening_inventory_captured_at,
+            "real_broker_restrictions_enabled": session.real_broker_restrictions_enabled,
             "real_funding_period": session.real_funding_period,
             "real_entries_paused": session.real_entries_paused,
         }
@@ -439,7 +442,7 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             paper_wallet.fenced_put("Sessions", item, user_id=session.user_id, date=session.date,
                 symbol=session.symbol, session_id=session.session_id,
                 token=session.paper_engine_token, stopped=session.state == SimulationState.ENDED)
-        elif session.session_type == "real" and getattr(session, "real_claim_token", None) :
+        elif session.session_type == "real" and getattr(session, "real_claim_token", None) and real_broker_policy.enforce(session):
             from app.services import real_session_slots as slots
             from app.services.db import get_dynamodb_client
             values = {":owner": session.user_id, ":sid": session.portfolio_id if session.trading_style == "swing" else session.session_id, ":token": session.real_claim_token, ":closed": "closed"}
@@ -530,6 +533,7 @@ def create_session(
         from app.services.real_sessions import prepared_claim
         claim = prepared_claim()
         if claim:
+            session.real_broker_restrictions_enabled = not claim.get("observe_only", False)
             session.real_claim_token = claim["operation_id"]
             session.real_active_claim = True
             session.real_engine_lease_required = True
@@ -728,6 +732,7 @@ def rebuild_session_from_db(
         opening_inventory_request_id=db_record.get("opening_inventory_request_id"),
         opening_inventory_fingerprint=db_record.get("opening_inventory_fingerprint"),
         opening_inventory_captured_at=int(db_record["opening_inventory_captured_at"]) if db_record.get("opening_inventory_captured_at") is not None else None,
+        real_broker_restrictions_enabled=bool(db_record.get("real_broker_restrictions_enabled",True)),
         real_funding_period=db_record.get("real_funding_period"),
         real_entries_paused=bool(db_record.get("real_entries_paused", db_record.get("state") == "paused")),
     )
@@ -2179,9 +2184,10 @@ async def _run_real_session(session: SimulationSession) -> None:
     await resume_conversions(session)
     loop = asyncio.get_running_loop()
     from app.services.execution_broker import get_service as get_position_broker
-    session.real_recovery_pending = True
+    from app.services.real_broker_policy import enforce
+    session.real_recovery_pending = enforce(session)
     from app.services import real_broker_state, real_close
-    while session.state != SimulationState.ENDED:
+    while enforce(session) and session.state != SimulationState.ENDED:
         try:
             await real_broker_state.refresh(session, get_position_broker(session))
             if not real_close.unresolved(session):
@@ -2197,6 +2203,9 @@ async def _run_real_session(session: SimulationSession) -> None:
         session.resume_event.clear()
     from app.services.broker_position_events import register as register_position_events
     register_position_events(session, get_position_broker(session), loop)
+    if not enforce(session):
+        from app.services.broker_order_service import refresh_funding_after_broker_event
+        refresh_funding_after_broker_event(session, initial_sync=True)  # Normal async updates; never a Start prerequisite.
 
     start_event = {
         "type": "session_started",

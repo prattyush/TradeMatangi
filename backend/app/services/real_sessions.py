@@ -9,7 +9,7 @@ from weakref import WeakValueDictionary
 
 from fastapi import HTTPException
 
-from app.services import real_session_slots as slots
+from app.services import real_session_slots as slots, real_broker_policy as policy
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ def active(user_id, broker=None, account=None):
 
 
 def active_all(user_id):
+    if not policy.enabled():
+        from app.services.real_session_observer import active
+        return active(user_id)
     return slots.for_user(user_id)
 
 
@@ -67,6 +70,16 @@ def _finish(user_id, token, session_id, broker, account, *, closing=False):
 def release(session):
     """Commit book completion and slot release together; caller verified exposure."""
     from app.services.db import get_dynamodb_client
+    if not policy.enforce(session):
+        from app.services.real_session_observer import close
+        close(session.user_id, session.session_id, session.execution_broker, session.broker_account_id,
+               session.trading_style, session.real_claim_token, date=session.date, funding_period=session.real_funding_period)
+        from app.services.db import get_dynamodb_resource
+        get_dynamodb_resource().Table("Sessions").update_item(Key={"session_id":session.session_id},
+            UpdateExpression="SET #state=:ended, real_verified_closed=:yes, real_closing=:no",
+            ConditionExpression="user_id=:user", ExpressionAttributeNames={"#state":"state"},
+            ExpressionAttributeValues={":ended":"ended", ":yes":True, ":no":False, ":user":session.user_id})
+        return
 
     actions = [
         {
@@ -177,6 +190,7 @@ async def start(req, user_id, create):
     from app.services.real_trading_day import market_date
 
     require_real_trading_access(user_id)
+    await policy.ensure_loaded()
     if req.date != market_date():
         raise HTTPException(400, "Real trading requires today IST")
     req.override = False  # Practice reset preferences never overwrite a Real book.
@@ -195,11 +209,14 @@ async def start(req, user_id, create):
             401,
             f"{chosen.title()} authentication required before starting a Real session",
         )
-    if not _ready:
+    if policy.enabled() and not _ready:
         raise HTTPException(
             503, "Real ownership recovery is still pending; retry shortly"
         )
     account = await asyncio.to_thread(broker.account_identity)
+    if not policy.enabled():
+        from app.services.real_session_observer import start as observe_start
+        return await observe_start(req, user_id, chosen, account, create)
     from app.services import real_day_recovery
     await real_day_recovery.adopt_legacy_context(req, user_id, chosen, account)
     await real_day_recovery.release_stale(user_id, chosen, account)
@@ -462,6 +479,10 @@ async def bind_prepared(session):
     claim = _context.get()
     if claim is None:
         return
+    if claim.get("observe_only"):
+        from app.services.real_session_observer import bind
+        return await bind(session, claim)
+    session.real_broker_restrictions_enabled = True
     task = getattr(session, "real_engine_task", None)
     if (
         task
@@ -501,6 +522,10 @@ async def bind_prepared(session):
             await asyncio.sleep(slots.DAY_HEARTBEAT_SECONDS)
             if session.state.value == "ended":
                 return
+            if not policy.enforce(session):
+                from app.services.real_session_observer import record
+                await asyncio.to_thread(record, session.user_id, session.session_id, claim["broker"], claim["account"], "intraday", claim["operation_id"], date=session.date)
+                continue
             if not engine_healthy(session):
                 logger.warning("real_engine_task_unhealthy session_id=%s", session.session_id)
                 from app.services.real_day_recovery import expire_local_engine
@@ -559,6 +584,16 @@ async def restore_for_close(record, user_id):
             409,
             "Saved Real account identity is missing; verify its original account before recovery or closure",
         )
+    if not policy.enabled():
+        from app.services import real_session_observer
+        runtime = simulation.get_session(sid)
+        if runtime and runtime.state != simulation.SimulationState.ENDED:
+            return runtime
+        session = await asyncio.to_thread(simulation.rebuild_session_from_db,record,user_id,read_only=True)
+        session.state=simulation.SimulationState.RUNNING
+        simulation._sessions[sid]=session
+        await real_session_observer.bind(session,{"operation_id":str(uuid.uuid4()),"broker":chosen,"account":account})
+        return session
     lock = _locks.setdefault((chosen, account), asyncio.Lock())
     async with lock:
         runtime = simulation.get_session(sid)
@@ -781,10 +816,20 @@ async def _recover_outstanding():
     from app.services.db import get_dynamodb_resource
 
     logger = logging.getLogger(__name__)
+    was_enforced = False
     while True:
         try:
+            await asyncio.to_thread(policy.refresh)
+            if not policy.enabled():
+                was_enforced = False
+                _ready = True
+                await asyncio.sleep(180)
+                continue
+            if not was_enforced:
+                _ready = False
             if not _ready:
                 await asyncio.to_thread(_adopt_legacy)
+                was_enforced = True
                 _ready = True
             for row in await asyncio.to_thread(_outstanding):
                 if row.get("recovery_conflict") or row.get("engine_until", 0) >= int(
@@ -873,7 +918,7 @@ async def _recover_outstanding():
 
 
 def engine_healthy(session):
-    if getattr(session, "real_engine_lease_required", False) and time.monotonic() >= session.real_engine_valid_until:
+    if policy.enforce(session) and getattr(session, "real_engine_lease_required", False) and time.monotonic() >= session.real_engine_valid_until:
         return False
     if session.state.value == "ended":
         return False

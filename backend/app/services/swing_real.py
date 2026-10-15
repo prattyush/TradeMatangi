@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import HTTPException
 
-from app.services import order_service, simulation, trading
+from app.services import order_service, simulation, trading, real_broker_policy as policy
 from app.services import real_session_slots as slots
 from app.services import swing_portfolio_store as store
 
@@ -19,9 +19,10 @@ async def start(user, req):
     from app.services.user_settings_service import get_settings
 
     require_real_trading_access(user)
+    await policy.ensure_loaded()
     from app.services import real_sessions
 
-    if not real_sessions._ready:
+    if policy.enabled() and not real_sessions._ready:
         raise HTTPException(503, "Server ownership recovery is pending; retry shortly")
     broker_name = (
         req.execution_broker
@@ -38,6 +39,9 @@ async def start(user, req):
     wallet = await real_accounting.refresh(
         user, market_date(), broker, reason="swing_start"
     )
+    if not policy.enabled():
+        return await asyncio.to_thread(store.create, user, "real", wallet["session_capital"] * req.allocation_pct,
+            broker=broker_name, account=account, loss_limit_pct=req.loss_limit_pct, allocation_pct=req.allocation_pct)
     pool = await asyncio.to_thread(
         funding.initialize, user, broker_name, account, wallet["balance"]
     )
@@ -91,6 +95,15 @@ async def start(user, req):
 
 async def bind(current, row):
     """One renewable parent lease fences every child, with no additional lock manager."""
+    if not policy.enabled():
+        return await bind_observer(current, row)
+    if getattr(current,"observe_only",False):
+        for name in ("real-lease","real-engine"):
+            task=current.tasks.pop(name,None)
+            if task:
+                task.cancel()
+                await asyncio.gather(task,return_exceptions=True)
+        current.observe_only=False
     if current.tasks.get("real-lease") and not current.tasks["real-lease"].done():
         if time.monotonic() >= getattr(current, "real_valid_until", 0):
             raise HTTPException(409, "Swing ownership needs reconnection")
@@ -159,10 +172,11 @@ async def bind(current, row):
             .Table("Sessions")
             .update_item(
                 Key={"session_id": row["session_id"]},
-                UpdateExpression="SET real_claim_token = :token, #version = :next",
+                UpdateExpression="SET real_claim_token = :token, real_broker_restrictions_enabled = :yes, #version = :next",
                 ConditionExpression="user_id = :owner AND #state <> :ended AND #version = :old",
                 ExpressionAttributeNames={"#state": "state", "#version": "version"},
                 ExpressionAttributeValues={
+                    ":yes": True,
                     ":old": row["version"],
                     ":next": row["version"] + 1,
                     ":token": token,
@@ -185,13 +199,14 @@ async def bind(current, row):
 
 
 def bind_child(current, child, row):
+    child.real_broker_restrictions_enabled = not getattr(current,"observe_only",False)
     child.real_claim_token = current.real_token
     child.real_engine_lease_required = True
     child.real_engine_valid_until = current.real_valid_until
     child.real_funding_period = row.get("real_funding_period")
     child.execution_broker = row["execution_broker"]
     child.broker_account_id = row["broker_account_id"]
-    child.real_recovery_pending = True
+    child.real_recovery_pending = policy.enforce(child)
 
 
 def funding_actor(current):
@@ -208,6 +223,7 @@ def funding_actor(current):
         instrument_type="equity",
         execution_broker=row["execution_broker"],
         broker_account_id=row["broker_account_id"],
+        real_broker_restrictions_enabled=not getattr(current,"observe_only",False),
         real_funding_period=row.get("real_funding_period"),
         real_claim_token=current.real_token,
         real_engine_lease_required=True,
@@ -240,6 +256,12 @@ async def heartbeat(current):
             )
             if row["state"] == "ended":
                 return
+            if not policy.enabled():
+                from app.services.real_session_observer import record
+                await asyncio.to_thread(record, current.user, current.portfolio_id, row["execution_broker"], row["broker_account_id"],
+                    "swing", current.real_token, date=row["date"])
+                await asyncio.sleep(180)
+                continue
             await asyncio.to_thread(
                 slots.update,
                 row["execution_broker"],
@@ -254,7 +276,7 @@ async def heartbeat(current):
             for child in current.contexts.values():
                 child.real_engine_valid_until = current.real_valid_until
         except Exception as exc:  # noqa: BLE001 - retain the book, stop an expired engine
-            if time.monotonic() >= current.real_valid_until:
+            if policy.enabled() and time.monotonic() >= current.real_valid_until:
                 for child in current.contexts.values():
                     child.real_recovery_pending = True
                     child.real_engine_valid_until = 0
@@ -268,7 +290,7 @@ async def heartbeat(current):
                 if task:
                     task.cancel()
                 return
-        await asyncio.sleep(10)
+        await asyncio.sleep(10 if policy.enabled() else 180)
 
 
 async def engine(current):
@@ -309,7 +331,7 @@ async def engine(current):
                     }
                 )
             except Exception as exc:  # noqa: BLE001 - persistent recovery must survive broker outages
-                if time.monotonic() >= current.real_valid_until:
+                if policy.enabled() and time.monotonic() >= current.real_valid_until:
                     for child in current.contexts.values():
                         child.real_recovery_pending = True
                     current.emit(
@@ -513,8 +535,7 @@ def commit(session, manifest):
     from app.services import real_broker_state as state
     from app.services.db import get_dynamodb_client
 
-    get_dynamodb_client().transact_write_items(
-        TransactItems=[
+    actions = [
             {
                 "ConditionCheck": {
                     "TableName": "WalletLedgers",
@@ -548,7 +569,7 @@ def commit(session, manifest):
             },
             {"Put": {"TableName": "Sessions", "Item": slots.serialize(manifest)}},
         ]
-    )
+    get_dynamodb_client().transact_write_items(TransactItems=actions if policy.enforce(session) else actions[1:])
     state._links[session.session_id] = {
         "projection_id": manifest["session_id"],
         **manifest,
@@ -790,7 +811,7 @@ async def import_inventory(child, fingerprint, request_id):
 
         def metadata(row):
             return [
-                ownership_check(child),
+                *([ownership_check(child)] if policy.enforce(child) else []),
                 {
                     "Update": {
                         "TableName": "Sessions",
@@ -871,7 +892,7 @@ def parent_metadata(child, parent, changes):
         values[f":v{index}"] = value
         setters.append(f"#f{index} = :v{index}")
     return [
-        ownership_check(child),
+        *([ownership_check(child)] if policy.enforce(child) else []),
         {
             "Update": {
                 "TableName": "Sessions",
@@ -1196,3 +1217,38 @@ async def renew_protection_on_quote(session, event):
         simulation._register_kotak_sl_for_order(
             session, renewal, asyncio.get_running_loop()
         )
+
+
+async def bind_observer(current, row):
+    """Restore this portfolio without consulting other books or reconciliation gates."""
+    if getattr(current,"observe_only",False) and current.tasks.get("real-lease") and not current.tasks["real-lease"].done():
+        return
+    from app.services.real_session_observer import record
+    previous=current.tasks.get("real-lease")
+    if previous:
+        previous.cancel()
+        await asyncio.gather(previous,return_exceptions=True)
+    current.observe_only=True
+    current.real_token=str(uuid.uuid4())
+    current.real_valid_until=time.monotonic()+890
+    current.real_ready=True
+    row=await asyncio.to_thread(store.update,current.user,row["session_id"],{"real_broker_restrictions_enabled":False},row["version"])
+    for child in current.contexts.values():
+        bind_child(current,child,row)
+        child.real_recovery_pending=False
+    async def heartbeat():
+        while True:
+            try:
+                saved=await asyncio.to_thread(store.owned,current.user,current.portfolio_id)
+            except Exception:
+                await asyncio.sleep(180)
+                continue
+            if saved["state"]=="ended": return
+            await asyncio.to_thread(record,current.user,current.portfolio_id,row["execution_broker"],row["broker_account_id"],
+                "swing",current.real_token,state=saved["state"],date=row["date"])
+            current.real_valid_until=time.monotonic()+890
+            for child in current.contexts.values(): child.real_engine_valid_until=current.real_valid_until
+            await asyncio.sleep(180)
+    current.tasks["real-lease"]=asyncio.create_task(heartbeat())
+    if not current.tasks.get("real-engine") or current.tasks["real-engine"].done():
+        current.tasks["real-engine"]=asyncio.create_task(engine(current))

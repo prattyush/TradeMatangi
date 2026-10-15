@@ -75,7 +75,8 @@ def require_entry_allowed(session, side, quantity, right=None, strike=None, expi
     name = getattr(side, 'value', side)
     closing = (position.side == 'LONG' and name == 'SELL') or (position.side == 'SHORT' and name == 'BUY')
     pure_exit = closing and 0 < quantity <= position.quantity
-    if not pure_exit and (getattr(session, 'real_entries_paused', False) or getattr(session, 'real_recovery_pending', False)):
+    from app.services.real_broker_policy import enforce
+    if not pure_exit and (getattr(session, 'real_entries_paused', False) or enforce(session) and getattr(session, 'real_recovery_pending', False)):
         raise HTTPException(409, 'Real entries are paused or recovering; existing positions remain manageable')
     if not pure_exit:
         from app.services.real_close import unresolved
@@ -83,7 +84,7 @@ def require_entry_allowed(session, side, quantity, right=None, strike=None, expi
             raise HTTPException(409, 'A Real broker operation is unconfirmed; reconcile before submitting new entries')
         from app.services.real_funding import require_entry
         require_entry(session)
-    if not pure_exit and getattr(session, 'real_recovery_pending', False):
+    if enforce(session) and not pure_exit and getattr(session, 'real_recovery_pending', False):
         raise HTTPException(409, 'Real recovery is pending; entries wait for broker reconciliation')
     try:
         status = state(session.user_id)

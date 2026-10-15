@@ -27,7 +27,8 @@ def name(value=None) -> str:
 def get_service(session=None, *, allow_expired=False):
     if not allow_expired and getattr(session, "real_verified_closed", False) is True:
         raise RuntimeError("This Real book is verified closed; broker operations are unavailable")
-    if not allow_expired and getattr(session, "real_engine_lease_required", False) is True:
+    from app.services.real_broker_policy import enforce
+    if not allow_expired and enforce(session) and getattr(session, "real_engine_lease_required", False) is True:
         import time
         if time.monotonic() >= session.real_engine_valid_until:
             raise RuntimeError("Real engine ownership expired; reconnect to the authoritative session")

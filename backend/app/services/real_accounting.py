@@ -142,7 +142,7 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
 def apply_session_capital(session, capital):
     """Persist corrected legacy capital and update sibling sessions on this account/day."""
     from app.services import simulation
-    if getattr(session,"trading_style","intraday") == "swing" or getattr(session, "real_funding_period", None):
+    if getattr(session,"trading_style","intraday") == "swing" or getattr(session, "real_funding_period", None) or getattr(session,"real_active_claim",False):
         return
     sessions = {session.session_id: session}
     sessions.update({sid: other for sid, other in simulation._sessions.items()

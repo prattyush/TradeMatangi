@@ -12,6 +12,8 @@ from app.services import simulation, order_service, trading
 
 @pytest.fixture
 def db(monkeypatch):
+    monkeypatch.setattr("app.services.real_broker_policy.enabled", lambda: True)
+    monkeypatch.setattr("app.services.real_broker_policy._loaded", True)
     with mock_aws():
         resource = boto3.resource("dynamodb", region_name="ap-south-1")
         client = boto3.client("dynamodb", region_name="ap-south-1")
