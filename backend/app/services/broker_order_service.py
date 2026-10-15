@@ -48,7 +48,9 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
     try:
         replacement = None
         if old_id:
-            if new_order_type == OrderType.LIMIT:
+            # A triggered TARGET is already a broker LIMIT. Amending it must
+            # modify that live order, whereas an explicit conversion still cancels.
+            if new_order_type == OrderType.LIMIT or (new_order_type == OrderType.TARGET and previous is not None and previous.order_type == OrderType.TARGET):
                 replacement = await asyncio.to_thread(broker.modify_sl_to_limit_order, old_id, order.limit_price, order.quantity)
             elif new_order_type == OrderType.STOPLOSS:
                 replacement = await asyncio.to_thread(broker.modify_sl_order, old_id, order.trigger_price, order.limit_price, order.quantity)

@@ -188,6 +188,8 @@ export default function SwingChart(
         position={props.position}
         openOrders={props.orders}
         onOrderSelect={props.onOrderSelect}
+        onOrderDrag={props.onOrderDrag}
+        onSwingChartContext={props.onChartContext}
         trades={props.trades}
         pricePickAction={props.picking ? { ticket: {} } : null}
         onPricePick={props.onPick}

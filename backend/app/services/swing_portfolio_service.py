@@ -58,6 +58,7 @@ def snapshot(user, portfolio_id):
     current = runtime(user, portfolio_id)
     positions, orders, executions, marker_basis = [], [], [], []
     futures = []
+    order_metadata = {}
     net = 0.0
     complete = True
     for session in current.contexts.values():
@@ -69,7 +70,15 @@ def snapshot(user, portfolio_id):
                                  "symbol": session.symbol, "instrument_type": session.instrument_type,
                                  "timestamp": int(captured) // 1000 + 19800}
                                 for holding in getattr(session, "opening_positions", []))
-        orders.extend(order_service.get_open_orders(session.session_id))
+        pending_orders = order_service.get_open_orders(session.session_id)
+        orders.extend(pending_orders)
+        for order in pending_orders:
+            contract = (getattr(session, 'future_contract', None) or {}) if session.instrument_type == 'futures' else next((c for c in getattr(session, 'desktop_contracts', []) if (c.get('right'), c.get('strike'), c.get('expiry')) == (order.right, order.strike, order.expiry)), {})
+            metadata = {'instrument_type': session.instrument_type, 'tick_size': contract.get('tick_size') or .05, 'lot_size': contract.get('lot_size') or 1}
+            if session.instrument_type == 'futures' and not order.execution_role:
+                from app.services.swing_futures import is_exit
+                metadata['execution_role'] = 'exit' if is_exit(session, order.side, order.quantity - order.broker_filled_quantity) else 'entry'
+            order_metadata[order.order_id] = metadata
         if session.instrument_type == "futures":
             from app.services.futures_ledger import read, values
             mark = session.last_price if getattr(session,"swing_quote_seen",False) else None
@@ -191,7 +200,7 @@ def snapshot(user, portfolio_id):
         "funding_status": {key: value for key, value in funding_status.items() if key != "modes"} if funding_status else None,
         "allocation_pct": mode.get("funding_allocation", mode.get("capital", 0)) / pool["funding"]["allocation_reference"] if row["mode"] == "real" and pool else None,
         "positions": positions,
-        "open_orders": [o.model_dump(mode="json") for o in orders],
+        "open_orders": [{**o.model_dump(mode="json"), **order_metadata[o.order_id]} for o in orders],
         "trades": [t.model_dump(mode="json") for t in executions],
         "marker_basis": marker_basis,
         "futures": futures,

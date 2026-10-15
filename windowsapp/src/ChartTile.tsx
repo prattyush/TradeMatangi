@@ -1,3 +1,4 @@
+import { snapSwingPrice, swingOrderTick } from '../../shared/swingOrderPrice'
 import { beginPerformanceSample, endPerformanceSample } from '../../frontend/src/services/performanceDiagnostics'
 import { canonicalDrawingKey as canonicalInstrumentKey, drawingIdentity } from "./drawingIdentity"
 import { announceDrawingChange, watchDrawingChanges } from "./drawingChanges"
@@ -90,7 +91,7 @@ const placeNearPoint = (x: number, y: number, width: number, height: number) => 
   }
 }
 
-export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, legacyDrawingScope, drawingScope, candleAnchorSeconds=0, hideWindowActions = false, readOnlyOrders = false, symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loadOlder, viewportResetKey, loading, message, settings, isReplaying, isLive, instrument, baseUrl, drawingRequest, onDrawingError, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, levelsPosition = null, brokeragePerOrder = 1, aggregatePnl, positionMarkPrice, sessionCapital = 0, lotSize = 1, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, entryUnavailableReason = null, shortEntryEnabled = false, underlyingStrategyEnabled = false, showHistoricalMarkers = false, onToggleHistoricalMarkers, pricePickAction = null, onPricePick, onOrderSelect, onOrderDrag, onStrategyDrag, onStrategyTargetProfitPct, onStrategyCancel, onOrderCancel, onOrderConvertRequest, onOrderQuantityUpdate, onChartOrderAction, swapTargets = [] }: { shareDayDrawings?:boolean; externalTradeMarkers?:boolean; legacyDrawingScope?:string; drawingScope?:string; candleAnchorSeconds?:number; hideWindowActions?: boolean; readOnlyOrders?: boolean; symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loadOlder?: (beforeTimestamp: number) => Promise<{ candles: Candle[]; more: boolean }>; viewportResetKey?: string; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; drawingRequest: DrawingRequest; onDrawingError?: (error: unknown) => void; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; levelsPosition?: DesktopPosition | null; brokeragePerOrder?: number; aggregatePnl?: number; positionMarkPrice?: number; sessionCapital?: number; lotSize?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; entryUnavailableReason?: string | null; shortEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; showHistoricalMarkers?: boolean; onToggleHistoricalMarkers?: () => void; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderSelect?: (order: DesktopOrder) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onStrategyTargetProfitPct?: (strategyId: string, percentage: number) => Promise<void>; onStrategyCancel?: (strategyId: string) => Promise<void>; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onOrderQuantityUpdate?: (order: DesktopOrder, quantity: number) => Promise<void>; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void; swapTargets?: TileSwap[] }) {
+export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, legacyDrawingScope, drawingScope, candleAnchorSeconds=0, hideWindowActions = false, readOnlyOrders = false, symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loadOlder, viewportResetKey, loading, message, settings, isReplaying, isLive, instrument, baseUrl, drawingRequest, onDrawingError, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, levelsPosition = null, brokeragePerOrder = 1, aggregatePnl, positionMarkPrice, sessionCapital = 0, lotSize = 1, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, entryUnavailableReason = null, shortEntryEnabled = false, underlyingStrategyEnabled = false, showHistoricalMarkers = false, onToggleHistoricalMarkers, pricePickAction = null, onPricePick, onOrderSelect, onSwingChartContext, onOrderDrag, onStrategyDrag, onStrategyTargetProfitPct, onStrategyCancel, onOrderCancel, onOrderConvertRequest, onOrderQuantityUpdate, onChartOrderAction, swapTargets = [] }: { shareDayDrawings?:boolean; externalTradeMarkers?:boolean; legacyDrawingScope?:string; drawingScope?:string; candleAnchorSeconds?:number; hideWindowActions?: boolean; readOnlyOrders?: boolean; symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loadOlder?: (beforeTimestamp: number) => Promise<{ candles: Candle[]; more: boolean }>; viewportResetKey?: string; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; drawingRequest: DrawingRequest; onDrawingError?: (error: unknown) => void; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; levelsPosition?: DesktopPosition | null; brokeragePerOrder?: number; aggregatePnl?: number; positionMarkPrice?: number; sessionCapital?: number; lotSize?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; entryUnavailableReason?: string | null; shortEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; showHistoricalMarkers?: boolean; onToggleHistoricalMarkers?: () => void; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderSelect?: (order: DesktopOrder) => void; onSwingChartContext?: (price: number, x: number, y: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onStrategyTargetProfitPct?: (strategyId: string, percentage: number) => Promise<void>; onStrategyCancel?: (strategyId: string) => Promise<void>; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onOrderQuantityUpdate?: (order: DesktopOrder, quantity: number) => Promise<void>; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void; swapTargets?: TileSwap[] }) {
   void baseUrl
   const element = useRef<HTMLDivElement>(null)
   const [historicalMarkersVisible, setHistoricalMarkersVisible] = useState(showHistoricalMarkers)
@@ -132,6 +133,10 @@ export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, 
   const [clock, setClock] = useState(() => Date.now())
   const indicatorKey = indicators.join('|')
   const tradingOverlaysRef = useRef(new TradingOverlayRegistry())
+  const swingInteractions = useRef({onOrderSelect, onSwingChartContext})
+  swingInteractions.current = {onOrderSelect, onSwingChartContext}
+  const swingDragPending = useRef(new Set<string>())
+  const swingDragGesture = useRef(new Map<string, {price: number; moved: boolean; ignoreUntil: number}>())
   const tradingOverlayInputsRef = useRef({ openOrders, strategies, position, sessionCapital, onOrderDrag, onStrategyDrag })
   tradingOverlayInputsRef.current = { openOrders, strategies, position, sessionCapital, onOrderDrag, onStrategyDrag }
   const tradeMarkersRef = useRef(new TradingOverlayRegistry())
@@ -259,12 +264,13 @@ export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, 
       }
     }
     const openContext = (event: MouseEvent) => {
-      if (!tradingEnabledRef.current || !chartRef.current || !container) return
+      if ((!tradingEnabledRef.current && !swingInteractions.current.onSwingChartContext) || !chartRef.current || !container) return
       const rect = container.getBoundingClientRect()
       const point = chartRef.current.convertFromPixel([{ x: event.clientX - rect.left, y: event.clientY - rect.top }], { paneId: 'candle_pane' })
       const value = Array.isArray(point) ? point[0]?.value : undefined
       if (typeof value !== 'number' || !Number.isFinite(value)) return
       event.preventDefault()
+      if (swingInteractions.current.onSwingChartContext) { swingInteractions.current.onSwingChartContext(value,event.clientX,event.clientY); return }
       setContextMenu({ x: event.clientX, y: event.clientY, price: Number(value.toFixed(2)) })
     }
     container.addEventListener('mousedown', rememberPointer)
@@ -560,16 +566,43 @@ export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, 
         paneId: 'candle_pane',
         points: [{ timestamp, value: price }],
         styles: { line: { color, size: selectedLine ? 3 : 2, style: 'dashed', dashedValue: [6, 3] } },
-        lock: Boolean(onOrderSelect),
-        onClick: onOrderSelect ? () => { onOrderSelect(order); return true } : undefined,
+        lock: readOnlyOrders && !onOrderDrag,
+        onClick: onOrderSelect ? () => {
+          const gesture = swingDragGesture.current.get(order.order_id)
+          const latest = tradingOverlayInputsRef.current.openOrders.find(item => item.order_id === order.order_id)
+          if (latest && !swingDragPending.current.has(order.order_id) && (!gesture || Date.now() > gesture.ignoreUntil)) swingInteractions.current.onOrderSelect?.(latest)
+          return true
+        } : undefined,
         extendData: { orderId: order.order_id, label },
-        onSelected: () => { if (onOrderSelect) { onOrderSelect(order); return } setSelectedOrderId(order.order_id); setSelectedOrderAnchor(lastPointerRef.current); setSelectedStrategyId(null); setSelectedStrategyAnchor(null); setSelected(null) },
+        onSelected: () => { if (readOnlyOrders) return; setSelectedOrderId(order.order_id); setSelectedOrderAnchor(lastPointerRef.current); setSelectedStrategyId(null); setSelectedStrategyAnchor(null); setSelected(null) },
         onDeselected: () => { setSelectedOrderId(current => current === order.order_id ? null : current); setSelectedOrderAnchor(null) },
+        onPressedMoveStart: () => {
+          if (onOrderSelect) swingDragGesture.current.set(order.order_id, {price: orderPrice(order), moved:false, ignoreUntil:0})
+        },
+        onPressedMoving: (event: any) => {
+          const gesture = swingDragGesture.current.get(order.order_id)
+          if (gesture && Math.abs(event.overlay.points[0]?.value - gesture.price) > swingOrderTick(order)/2) {gesture.moved=true;gesture.ignoreUntil=Date.now()+400}
+        },
         onPressedMoveEnd: (event: any) => {
           const value = event.overlay.points[0]?.value
           const inputs = tradingOverlayInputsRef.current
           const latest = inputs.openOrders.find(item => item.order_id === order.order_id)
-          if (latest && typeof value === 'number' && Number.isFinite(value)) inputs.onOrderDrag?.(latest, Number(value.toFixed(2)))
+          if (!latest || typeof value !== 'number' || !Number.isFinite(value)) return
+          if (!onOrderSelect) { inputs.onOrderDrag?.(latest, Number(value.toFixed(2))); return }
+          const gesture = swingDragGesture.current.get(order.order_id)
+          if (!gesture?.moved || swingDragPending.current.has(order.order_id)) return
+          gesture.ignoreUntil = Date.now()+400
+          swingDragPending.current.add(order.order_id)
+          const restore = () => {
+            swingDragPending.current.delete(order.order_id)
+            if (chartRef.current !== chart) return
+            const confirmed = tradingOverlayInputsRef.current.openOrders.find(item => item.order_id === order.order_id)
+            if (confirmed) chart.overrideOverlay({id:event.overlay.id, points:[{timestamp,value:orderPrice(confirmed)}]})
+            tradingOverlaysRef.current.invalidate(overlayKey)
+          }
+          const snapped = snapSwingPrice(value,swingOrderTick(latest))
+          if (snapped <= 0 || snapped === orderPrice(latest)) {restore();return}
+          void Promise.resolve(inputs.onOrderDrag?.(latest, snapped)).catch(() => {}).finally(restore)
         },
       } as any)
     }
@@ -620,7 +653,7 @@ export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, 
     const removed = tradingOverlaysRef.current.prune(chart, retained)
     if (removed.length) reportChartDiagnostic('trading_overlays_removed', { instrument: drawingInstrumentKey, keys: removed, removed_at_ms: Date.now(), renderer_time_ms: performance.now() })
     setFloatingLabels(nextLabels)
-  }, [openOrders, strategies, selectedOrderId, selectedStrategyId, position, tradingSettings, sessionCapital, aggregatePnl, positionMarkPrice, brokeragePerOrder, symbol, interval, candles, onOrderSelect, onOrderDrag, onStrategyDrag])
+  }, [openOrders, strategies, selectedOrderId, selectedStrategyId, position, tradingSettings, sessionCapital, aggregatePnl, positionMarkPrice, brokeragePerOrder, symbol, interval, candles, readOnlyOrders, onOrderSelect, onOrderDrag, onStrategyDrag])
   useEffect(() => {
     const chart = chartRef.current
     const latest = candles[candles.length - 1]

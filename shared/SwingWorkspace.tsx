@@ -1,3 +1,4 @@
+import { snapSwingPrice } from './swingOrderPrice';
 import type { SwingSubscribe } from "./swingStream";
 import { SwingIconButton } from "./SwingIcon";
 import { flashError } from "./notifications";
@@ -51,6 +52,8 @@ export interface SwingChartProps {
   toolsContainer?: HTMLElement | null;
   onPick: (price: number) => void;
   onActivate: () => void;
+  onOrderDrag?: (order: any, price: number) => Promise<void>;
+  onChartContext?: (price: number, x: number, y: number) => void;
   onOrderSelect?: (order: any) => void;
   loadOlder: (
     before: number,
@@ -168,7 +171,7 @@ function PaneChart({
   toolsContainer,
   onPick,
   onActivate,
-  onOrderSelect,
+  onOrderSelect, onOrderDrag, onChartContext,
 }: {
   pane: SwingPane;
   request: SwingRequest;
@@ -188,6 +191,8 @@ function PaneChart({
   toolsContainer?: HTMLElement | null;
   onPick: (price: number) => void;
   onActivate: () => void;
+  onOrderDrag?: (order: any, price: number) => Promise<void>;
+  onChartContext?: (price: number, x: number, y: number) => void;
   onOrderSelect?: (order: any) => void;
 }) {
   const [history, setHistory] = useState<History>({
@@ -324,6 +329,8 @@ function PaneChart({
         position={position}
         orders={orders}
         onOrderSelect={onOrderSelect}
+        onOrderDrag={onOrderDrag}
+        onChartContext={onChartContext}
         trades={swingMarkerTrades(
           trades,
           pane,
@@ -364,7 +371,7 @@ export default function SwingWorkspace({
   error,
   busy,
   onPause,
-  onOrderSelect, onOrderEdit, onOrderCancel,
+  onOrderSelect, onOrderEdit, onOrderCancel, onOrderDrag, onChartTicket, pickOrder, quoteOrder, onOrderQuote,
 }: {
   request: SwingRequest;
   subscribe: SwingSubscribe;
@@ -390,10 +397,16 @@ export default function SwingWorkspace({
   error?: string;
   busy?: boolean;
   onPause: () => void;
+  onOrderDrag?: (order: any, price: number) => Promise<void>;
+  onChartTicket?: (pane: SwingPane, price: number, side: "BUY" | "SELL", type: "LIMIT" | "TARGET" | "STOPLOSS", tick?: number) => void;
+  pickOrder?: any;
+  quoteOrder?: any;
+  onOrderQuote?: (quote: {price: number; time: number} | null) => void;
   onOrderSelect: (order: any) => void;
   onOrderEdit: (order: any) => void;
   onOrderCancel: (order: any) => void;
 }) {
+  const [chartMenu, setChartMenu] = useState<{pane: SwingPane; price: number; tick: number; x: number; y: number} | null>(null);
   const prefix = snapshot.portfolio.session_id;
   const today = swingToday();
   const [panes, setPanes] = useState<SwingPane[]>([
@@ -629,9 +642,41 @@ export default function SwingWorkspace({
     );
     setTicketOpen(true);
   };
+  useEffect(() => {
+    if (pickOrder) selectRow(pickOrder);
+  }, [pickOrder]);
+  const quoteCallback = useRef(onOrderQuote);
+  quoteCallback.current = onOrderQuote;
+  useEffect(() => {
+    const quote = quoteOrder && marketOpen && quotes.find(q =>
+      (q.instrument.underlying ?? q.instrument.symbol) === quoteOrder.symbol &&
+      (q.instrument.right ?? "") === (quoteOrder.right ?? "") &&
+      (q.instrument.strike ?? "") === (quoteOrder.strike ?? "") &&
+      (q.instrument.expiry ?? "") === (quoteOrder.expiry ?? ""));
+    quoteCallback.current?.(quote ? {price:quote.close, time:quote.time} : null);
+  }, [quotes, quoteOrder, marketOpen]);
+  useEffect(() => {
+    if (!chartMenu) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setChartMenu(null) };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [chartMenu]);
   const sizes = [1, 2, 3, 4];
   return (
     <div className="swing-workspace">
+      {chartMenu && <div style={{position:'fixed',inset:0,zIndex:1400}} onClick={() => setChartMenu(null)}>
+        <div role="menu" aria-label="Swing chart orders" style={{position:'absolute',left:Math.max(0, Math.min(chartMenu.x, window.innerWidth - 210)),top:Math.max(0, Math.min(chartMenu.y, window.innerHeight - 240)),background:'#161b22',padding:12,border:'1px solid #30363d',display:'grid',gap:8}}>
+          {(["BUY", "SELL"] as const).flatMap(side => {
+            const held = snapshot.positions?.find((p: any) => exact(chartMenu.pane, p));
+            const exit = held?.quantity > 0 && ((held.side === 'LONG' && side === 'SELL') || (held.side === 'SHORT' && side === 'BUY'));
+            if (chartMenu.pane.instrument_type !== 'futures' && side === 'SELL' && !exit) return [];
+            if (!exit && snapshot.portfolio.entries_paused) return [];
+            return (exit ? ['LIMIT','STOPLOSS'] as const : ['LIMIT','TARGET'] as const).map(type => <button role="menuitem" key={side+type} onClick={() => {
+              onSelect(chartMenu.pane); setTicketOpen(true); onChartTicket?.(chartMenu.pane,chartMenu.price,side,type,chartMenu.tick); setChartMenu(null);
+            }}>{side} {type === 'STOPLOSS' ? 'Stoploss' : type === 'TARGET' ? 'Target' : 'Limit'} · ₹{chartMenu.price.toFixed(2)}</button>);
+          })}
+        </div>
+      </div>}
       <div className="swing-workspace-bar">
         {navigationControls}
         {portfolioControls}
@@ -984,7 +1029,7 @@ export default function SwingWorkspace({
                     symbols.find((s) => s.symbol === pane.symbol)?.chart_type
                   }
                   active={active === index}
-                  picking={picking && active === index}
+                  picking={picking && (pickOrder ? exact(pane, pickOrder) : active === index)}
                   onPick={onPick}
                   onActivate={() => setActive(index)}
                   position={snapshot.positions?.find((p: any) =>
@@ -992,7 +1037,15 @@ export default function SwingWorkspace({
                   )}
                   trades={snapshot.trades ?? []}
                   markerBasis={snapshot.marker_basis ?? []}
-                  onOrderSelect={!["stopped", "ended"].includes(snapshot.portfolio.state) ? onOrderSelect : undefined}
+                  onOrderSelect={!["stopped", "ended"].includes(snapshot.portfolio.state) && !picking ? onOrderSelect : undefined}
+                  onOrderDrag={!busy && !picking && !["stopped", "ended"].includes(snapshot.portfolio.state) ? onOrderDrag : undefined}
+                  onChartContext={snapshot.portfolio.state === 'running' && !busy && !picking && (pane.instrument_type !== 'equity' || symbols.find(s => s.symbol === pane.symbol)?.chart_type !== 'index') ? (price,x,y) => {
+                    if (!Number.isFinite(price) || price <= 0) return;
+                    const order = snapshot.open_orders?.find((o: any) => exact(pane,o));
+                    const contract = metadata.find(c => (!c.symbol || c.symbol === pane.symbol) && (c.right ?? '') === (pane.right ?? '') && (c.strike ?? '') === (pane.strike ?? '') && (c.expiry ?? '') === (pane.expiry ?? ''));
+                    const tick = Number(order?.tick_size ?? order?.analytics?.futures?.contract?.tick_size ?? contract?.tick_size ?? .05);
+                    setActive(index);setChartMenu({pane,price:snapSwingPrice(price,tick),tick,x,y});
+                  } : undefined}
                   orders={(snapshot.open_orders ?? []).filter((o: any) =>
                     exact(pane, o),
                   )}
