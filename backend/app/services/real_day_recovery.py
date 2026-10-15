@@ -117,6 +117,9 @@ async def expire_local_engine(session):
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     simulation.stop_session(session, preserve_trading_state=True)
+    from app.services.real_broker_policy import enabled
+    if not enabled():
+        return
     # Release execution authority only, never logical book ownership.
     try:
         await asyncio.to_thread(slots.table().update_item,
@@ -173,8 +176,6 @@ async def recover(user, sid):
         raise HTTPException(404, "Real session not found")
     if record.get("trading_style", "intraday") != "intraday":
         raise HTTPException(400, "Real Day session required")
-    if record.get("real_verified_closed"):
-        raise HTTPException(410, "Real session is verified closed")
     from app.services import real_broker_policy as policy
     await policy.ensure_loaded()
     if not policy.enabled():
@@ -188,6 +189,8 @@ async def recover(user, sid):
         fields["date"] = market_date()
         return await start_with_paper_claim(SimulationStartRequest.model_validate(fields), user,
             desktop_independent=bool(record.get("desktop_created")))
+    if record.get("real_verified_closed"):
+        raise HTTPException(410, "Real session is verified closed")
     broker = execution_broker.name(record.get("execution_broker"))
     service = execution_broker.get_service(broker)
     if not await asyncio.to_thread(service.is_authenticated):

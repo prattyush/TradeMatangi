@@ -8,13 +8,13 @@ const root=resolve(new URL('..',import.meta.url).pathname);
 const {build}=await import(resolve(root,'frontend/node_modules/esbuild/lib/main.js'));
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright-core');
 const dir=await mkdtemp(tmpdir()+'/real-recovery-');
-await build({stdin:{contents:`import React from 'react';import{createRoot}from'react-dom/client';import{useSimulation}from'${root}/frontend/src/hooks/useSimulation';import api from'${root}/frontend/src/services/api';function Harness(){const sim=useSimulation();window.sim=sim;window.api=api;return <div><button onClick={()=>sim.restoreActiveGroup().catch(e=>window.restoreError=String(e))}>Restore</button><pre>{sim.sessionId}:{sim.sessionCapital}</pre></div>}createRoot(document.getElementById('root')).render(<Harness/>);`,resolveDir:root+'/frontend',loader:'tsx'},bundle:true,jsx:'automatic',define:{'import.meta.env':'{}'},outfile:dir+'/app.js',logLevel:'silent'});
+await build({stdin:{contents:`import React from 'react';import{createRoot}from'react-dom/client';import{useSimulation}from'${root}/frontend/src/hooks/useSimulation';import api from'${root}/frontend/src/services/api';function Harness(){const sim=useSimulation();window.sim=sim;window.api=api;return <div><button onClick={()=>sim.restoreActiveGroup().catch(e=>window.restoreError=String(e))}>Restore</button><pre>{sim.sessionId}:{sim.sessionCapital}</pre><span data-testid="trade-count">{sim.trades.length}</span></div>}createRoot(document.getElementById('root')).render(<Harness/>);`,resolveDir:root+'/frontend',loader:'tsx'},bundle:true,jsx:'automatic',define:{'import.meta.env':'{}'},outfile:dir+'/app.js',logLevel:'silent'});
 await writeFile(dir+'/index.html','<div id="root"></div><script src="/app.js"></script>');
 const server=createServer(async(req,res)=>{res.setHeader('Content-Type',req.url==='/app.js'?'text/javascript':'text/html');res.end(await readFile(dir+(req.url==='/app.js'?'/app.js':'/index.html')))});
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
 const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/google-chrome',args:['--no-sandbox']});
 try{
- const page=await browser.newPage();const errors=[],calls=[];let failRestore=false,stallStart=false;
+ const page=await browser.newPage();const errors=[],calls=[];let failRestore=false,stallStart=false,refreshMode="valid";
  page.on('pageerror',error=>errors.push(String(error)));
  const session={session_id:'main-book',symbol:'NIFTY',date:'2026-10-15',start_time:'09:15:00',speed:1,session_type:'real',instrument_type:'equity',state:'running',session_capital:50000};
  const flat={symbol:'NIFTY',side:'FLAT',quantity:0,avg_entry_price:0};
@@ -25,6 +25,12 @@ try{
   else if(path.endsWith('/brokers/status'))value={broker:'kotak',authenticated:true,active_session_id:'main-book'};
   else if(path.endsWith('/recover')||path.endsWith('/simulation/active'))value=session;
   else if(path.endsWith('/simulation/start')){if(stallStart)return;value=session}
+  else if(path.endsWith('/close-summary'))value={position_count:0,pending_order_count:0,restrictions_enabled:false};
+  else if(path.endsWith('/simulation/stop'))value={status:'stopped'};
+  else if(path.endsWith('/brokers/main-book/refresh')){
+   if(refreshMode==='failure')return route.fulfill({status:503,json:{detail:'Broker temporarily unavailable'}});
+   value=refreshMode==='invalid'?{positions:[],verified_flat:true}:{orders:[],open_orders:[],trades:[],application_orders:[],positions:[],session_capital:50000,state_version:10,state_generation:'test'};
+  }
   else if(path.endsWith('/position-snapshot'))value={session_id:'main-book',positions:[],trades:[],application_orders:[],state_version:1,state_generation:'test'};
   else if(path.endsWith('/position'))value=flat;
   else if(path.endsWith('/by-context'))value={trades:[],sessionIds:[]};
@@ -55,6 +61,23 @@ try{
  const recoverCount=calls.filter(c=>c.path.endsWith('/recover')).length;
  const paperError=await page.evaluate(()=>window.sim.attachToActiveSession('paper-ended').then(()=>null).catch(e=>e.status));
  assert.equal(paperError,404);assert.equal(calls.filter(c=>c.path.endsWith('/recover')).length,recoverCount);
+ // Trade History uses a complete broker snapshot, not the verification report.
+ await page.evaluate(async()=>{window.sim.applyBrokerSnapshot('main-book',await window.api.reconcileKotakOrders('main-book'))});
+ await page.getByText('main-book:50000',{exact:true}).waitFor();
+ assert.equal(await page.getByTestId('trade-count').textContent(),'0');
+ for(const mode of ['invalid','failure']){
+  refreshMode=mode;
+  const message=await page.evaluate(()=>window.api.reconcileKotakOrders('main-book').then(()=>null).catch(error=>String(error)));
+  assert.match(message,mode==='invalid'?/Incomplete broker history/:/Broker temporarily unavailable/);
+  assert.equal(await page.getByTestId('trade-count').textContent(),'0');
+ }
+ const beforeStop=beats();let dialogs=0;page.on('dialog',dialog=>{dialogs++;void dialog.dismiss()});
+ await page.evaluate(()=>window.sim.stopSession());
+ await page.waitForFunction(()=>window.sim.sessionState==='ended');
+ assert.equal(dialogs,0);
+ await page.clock.fastForward(181000);assert.equal(beats(),beforeStop);
+ assert(calls.some(c=>c.path.endsWith('/brokers/main-book/refresh')));
+ assert(!calls.some(c=>c.path.endsWith('/reconcile')));
  assert.deepEqual(errors,[]);
- console.log('Website: existing main book restored without Start; original capital; immediate/3-minute presence; transient restore error preserved; timed-out Start checks status without duplicate submission.');
+ console.log('Website: refresh success/malformed/503 retains rendered state; Stop has no popup and ends heartbeat; existing main book restored without Start; original capital; immediate/3-minute presence; transient restore error preserved; timed-out Start checks status without duplicate submission.');
 }finally{await browser.close();await new Promise(done=>server.close(done))}

@@ -44,7 +44,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
   else if(path.endsWith('/broker/status'))value={broker:'kite',authenticated:true,active_session_id:trading||recovering||observing?'session':null,restrictions_enabled:!observing}
   else if(path.endsWith('/broker/session/recover')){trading=snapshot();value=trading}
   else if(path.endsWith('/real-day-status'))value={date,state:'active',results:[]}
-  else if(path.endsWith('/close-summary'))value={position_count:1,pending_order_count:2}
+  else if(path.endsWith('/close-summary'))value={position_count:1,pending_order_count:2,restrictions_enabled:!observing}
   else if(path.endsWith('/done-for-day'))value={date,state:'closing',results:[]}
   else if(path.endsWith('/broker-refresh'))value=snapshot()
   else if(path.endsWith('/screens/record')){if(method==='PUT')record={...record,...body,revision:record.revision+1};value=record}
@@ -215,7 +215,14 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await page.getByRole('button',{name:'Close screen',exact:true}).click()
  await page.getByRole('button',{name:/^Wallet ₹/}).waitFor()
  assert.equal(calls.filter(c=>c.path.endsWith('/trading/session/stop')).length,stopsBefore)
- if(mode==='Real'){
+ if(observing){
+  const dialogCount=dialogs.length;
+  await page.getByRole('button',{name:'Stop',exact:true}).click();
+  await page.getByRole('button',{name:'Start Real',exact:true}).waitFor();
+  assert.equal(dialogs.length,dialogCount);
+  assert(calls.some(c=>c.path.endsWith('/trading/session/stop')));
+  assert.equal(await page.getByRole('button',{name:'Closing…',exact:true}).count(),0);
+ } else if(mode==='Real'){
   const before=calls.filter(c=>c.path.endsWith('/done-for-day')).length
   await page.getByRole('button',{name:'Done for day',exact:true}).click()
   await page.waitForTimeout(100)

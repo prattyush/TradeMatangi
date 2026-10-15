@@ -572,6 +572,9 @@ async def restore_for_close(record, user_id):
 
     if record.get("user_id") != user_id:
         raise HTTPException(404, "Real session not found")
+    await policy.ensure_loaded()
+    if not policy.enabled():
+        return await asyncio.to_thread(simulation.rebuild_session_from_db, record, user_id, read_only=True)
     if record.get("real_verified_closed"):
         return await asyncio.to_thread(
             simulation.rebuild_session_from_db, record, user_id, read_only=True
@@ -584,16 +587,6 @@ async def restore_for_close(record, user_id):
             409,
             "Saved Real account identity is missing; verify its original account before recovery or closure",
         )
-    if not policy.enabled():
-        from app.services import real_session_observer
-        runtime = simulation.get_session(sid)
-        if runtime and runtime.state != simulation.SimulationState.ENDED:
-            return runtime
-        session = await asyncio.to_thread(simulation.rebuild_session_from_db,record,user_id,read_only=True)
-        session.state=simulation.SimulationState.RUNNING
-        simulation._sessions[sid]=session
-        await real_session_observer.bind(session,{"operation_id":str(uuid.uuid4()),"broker":chosen,"account":account})
-        return session
     lock = _locks.setdefault((chosen, account), asyncio.Lock())
     async with lock:
         runtime = simulation.get_session(sid)

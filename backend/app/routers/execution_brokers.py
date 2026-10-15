@@ -176,6 +176,27 @@ async def repair_identity(session_id: str, user_id: str = Depends(require_real_t
     return await repair(user_id, session_id)
 
 
+@router.post("/{session_id}/refresh")
+async def refresh_history(session_id: str, user_id: str = Depends(require_real_trading_access)):
+    """Return the same complete snapshot as broker_snapshot SSE events."""
+    session = simulation.get_session(session_id)
+    if session:
+        session = owned(session_id, user_id)
+    else:
+        record = await saved_real_record(session_id, user_id)
+        if not record:
+            raise HTTPException(404, "Real session not found")
+        session = await asyncio.to_thread(simulation.rebuild_session_from_db, record, user_id, read_only=True)
+    from app.services import real_broker_policy as policy, real_session_slots as slots
+    await policy.ensure_loaded()
+    if policy.enforce(session):
+        slot = await asyncio.to_thread(slots.read, session.execution_broker, session.broker_account_id, session.trading_style)
+        identity = session.portfolio_id if session.trading_style == 'swing' else session.session_id
+        if not slot or slot['owner_user_id'] != user_id or slot['session_id'] != identity:
+            raise HTTPException(409, 'This book is no longer active; view its archived history')
+    return await real_broker_state.refresh(session, execution_broker.get_service(session))
+
+
 @router.post("/{session_id}/reconcile")
 async def reconcile(
     session_id: str, user_id: str = Depends(require_real_trading_access)

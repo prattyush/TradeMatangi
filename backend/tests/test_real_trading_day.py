@@ -7,6 +7,8 @@ from app.routers import trading as routes
 
 @pytest.fixture
 def user(monkeypatch):
+    monkeypatch.setattr("app.services.real_broker_policy.enabled", lambda: True)
+    monkeypatch.setattr("app.services.real_broker_policy._loaded", True)
     session=simulation.SimulationSession(session_id='day-test',symbol='RELIND',date='2026-10-07',start_time='09:15:00',speed=1,user_id='day-user',session_type='real',session_capital=10000)
     monkeypatch.setattr(day,'has_outstanding_day_slot',lambda *_:False)
     monkeypatch.setattr(day,'market_date',lambda:'2026-10-07')

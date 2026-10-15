@@ -49,13 +49,13 @@ def begin(user_id):
     return {'date': date, 'state': row['real_trading_state']}
 
 
-def finish(user_id, date):
+def finish(user_id, date, *, message="All real session positions confirmed closed; real trading is locked for this IST day"):
     from botocore.exceptions import ClientError
     try:
         table().update_item(Key={'user_id': user_id, 'ledger_id': 'real-day-lock:' + date},
             UpdateExpression='SET real_trading_state = :done, completed_at = :now, message = :message',
             ConditionExpression='real_trading_state = :closing',
-            ExpressionAttributeValues={':done':'done', ':closing':'closing', ':now':datetime.now(ZoneInfo('Asia/Kolkata')).isoformat(), ':message':'All real session positions confirmed closed; real trading is locked for this IST day'})
+            ExpressionAttributeValues={':done':'done', ':closing':'closing', ':now':datetime.now(ZoneInfo('Asia/Kolkata')).isoformat(), ':message':message})
     except ClientError as exc:
         if exc.response['Error']['Code'] != 'ConditionalCheckFailedException':
             raise
@@ -169,12 +169,17 @@ def has_outstanding_day_slot(user_id, date):
 
 
 async def complete_when_flat(user_id):
+    from app.services.real_broker_policy import enabled
+    if not enabled():
+        return
     from app.services import emergency_exit, real_broker_state, real_close
     from app.services.execution_broker import get_service
 
     date = market_date()
     try:
         while market_date() == date:
+            if not enabled():
+                return
             all_sessions = sessions_for(user_id)
             sessions = unique_books(all_sessions)
             try:
@@ -241,6 +246,9 @@ async def complete_when_flat(user_id):
 
 
 def monitor(user_id):
+    from app.services.real_broker_policy import enabled
+    if not enabled():
+        return
     if user_id not in _jobs:
         _jobs[user_id] = asyncio.create_task(complete_when_flat(user_id))
 
@@ -267,6 +275,19 @@ async def cancel_entries(session):
 async def done_for_day(user_id):
     from app.services import emergency_exit, simulation, strategy_service
 
+    from app.services import real_broker_policy
+    await real_broker_policy.ensure_loaded()
+    if not real_broker_policy.enabled():
+        from app.services.real_close import stop
+        status = await asyncio.to_thread(begin, user_id)
+        results = []
+        for session in sessions_for(user_id):
+            await stop(session)
+            results.append({'session_id':session.session_id, 'status':'stopped', 'results':[]})
+        await asyncio.to_thread(finish, user_id, status['date'], message='Real trading is locked for this IST day; broker positions and orders are unchanged')
+        status = {**status, 'state':'done'}
+        broadcast(user_id, status, 'Real trading is locked for today; broker positions and orders are unchanged')
+        return {**status, 'results':results}
     status = await asyncio.to_thread(begin, user_id)
     if status["state"] == "done":
         # Repair old 'done before release' failures without lifting the day barrier.

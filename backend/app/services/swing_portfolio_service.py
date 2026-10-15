@@ -164,7 +164,10 @@ def snapshot(user, portfolio_id):
         from app.services import wallet_service
         from app.services.real_trading_day import market_date
         ledger=f"real:{row['execution_broker']}:{row['broker_account_id']}:{market_date()}"
-        wallet_balance=wallet_service.get_real_wallet_snapshot(user,market_date(),ledger)["balance"]
+        try:
+            wallet_balance=wallet_service.get_real_wallet_snapshot(user,market_date(),ledger)["balance"]
+        except ValueError:
+            wallet_balance=None  # Missing broker cash must not block Stop or saved display.
         funding_status=None
     if row["mode"] == "real" and row["state"] == "ended":
         positions, orders = [], []
@@ -181,6 +184,7 @@ def snapshot(user, portfolio_id):
         delivery_review=delivery_review_contexts(current)
     return {
         "portfolio": row,
+        "restrictions_enabled": restrictions_enabled(),
         "delivery_review_context_ids":delivery_review,
         **requirements,
         "wallet_balance": wallet_balance,
@@ -232,6 +236,8 @@ def require_entry_allowed(
         (session.instrument_type == "futures" and side == TradeSide.BUY and position.side == "SHORT")
     )
     if session.session_type == "real":
+        if store.owned(session.user_id, session.portfolio_id)["state"] == "stopped":
+            raise HTTPException(409, "Resume this portfolio before trading")
         current = _runtimes.get(session.portfolio_id)
         if not current or not current.real_ready:
             raise HTTPException(409, "Portfolio contexts are restoring; retry after reconciliation")
@@ -241,6 +247,9 @@ def require_entry_allowed(
         from app.services.real_broker_policy import enforce
         if enforce(session) and session.real_recovery_pending:
             raise HTTPException(409, "Broker history needs reconciliation; entries wait")
+        from app.services.real_close import unresolved
+        if unresolved(session):
+            raise HTTPException(409, "A Real broker operation is unconfirmed; no duplicate entry submitted")
         from app.services.real_funding import require_entry
         require_entry(session)
     if expiry and session.session_type != "real":
@@ -259,7 +268,7 @@ def require_entry_allowed(
         )
     row = store.owned(session.user_id, session.portfolio_id)
     current = _runtimes.get(session.portfolio_id)
-    if current and (
+    if current and (session.session_type != "real" or enforce(session)) and (
         any(
             getattr(child, "futures_margin_pending", False) or getattr(child, "futures_settlement_pending", False) or getattr(child, "swing_book_needs_repair", False) or (child.session_type == "real" and child.real_recovery_pending)
             for child in current.contexts.values()
@@ -303,7 +312,7 @@ def attach_context(
     if row["mode"] not in ("paper", "real"):
         raise HTTPException(409, "Unsupported portfolio mode")
     context_key = f"{symbol}:futures:{expiry}" if instrument_type == "futures" else f"{symbol}:{instrument_type}"
-    if row["state"] == "ended" or (
+    if row["state"] in ("ended", "stopped") or (
         row["state"] == "closing"
         and context_key not in row["contexts"]
     ):
@@ -479,12 +488,20 @@ async def ensure(user, portfolio_id, *, subscribe=True):
 
 async def _restore(user, portfolio_id, *, subscribe=True):
     row = store.owned(user, portfolio_id)
-    if row["mode"] == "real" and row["state"] != "ended":
+    from app.services import real_broker_policy
+    if row["mode"] == "real":
+        await real_broker_policy.ensure_loaded()
+    if row["mode"] == "real" and not real_broker_policy.enabled() and row["state"] == "closing":
+        row = store.update(user, portfolio_id, {"state":"stopped", "entries_paused":True}, row["version"])
+        current = runtime(user, portfolio_id)
+        stop_runtime(current)
+        await asyncio.gather(*(task for task in current.tasks.values() if task is not asyncio.current_task()), return_exceptions=True)
+    if row["mode"] == "real" and row["state"] not in ("ended", "stopped"):
         from app.dependencies import require_real_trading_access
         from app.services.swing_real import bind
         require_real_trading_access(user)
         await bind(runtime(user, portfolio_id), row)
-    if row["state"] == "ended":
+    if row["state"] in ("ended", "stopped"):
         current = runtime(user, portfolio_id)
         from app.services.db import get_dynamodb_resource
 
@@ -841,6 +858,21 @@ def close_position_on_quote(session, event):
 
 async def close_portfolio(user, portfolio_id, acknowledge_undated_submission_ids=None, *, acknowledge_delivery_context_ids=None):
     row = store.owned(user, portfolio_id)
+    from app.services import real_broker_policy
+    await real_broker_policy.ensure_loaded()
+    if row["mode"] == "real" and not real_broker_policy.enabled():
+        if row["state"] == "stopped":
+            return row
+        # Saved display restoration does not contact the broker or start a runtime.
+        current = await ensure(user, portfolio_id, subscribe=False) if row["state"] == "ended" else runtime(user, portfolio_id)
+        row = store.update(user, portfolio_id, {"state":"stopped", "entries_paused":True}, row["version"])
+        stop_runtime(current)
+        await asyncio.gather(*(task for task in current.tasks.values() if task is not asyncio.current_task()), return_exceptions=True)
+        from app.services.real_session_observer import record
+        await asyncio.to_thread(record, user, portfolio_id, row["execution_broker"], row["broker_account_id"],
+            "swing", getattr(current, "real_token", ""), state="stopped", date=row["date"])
+        current.emit({"type":"portfolio_snapshot", **snapshot(user, portfolio_id)})
+        return row
     if row["state"] == "ended":
         return row
     if row["mode"] == "real" and acknowledge_undated_submission_ids:
