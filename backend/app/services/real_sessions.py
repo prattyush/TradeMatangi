@@ -200,7 +200,12 @@ async def start(req, user_id, create):
             503, "Real ownership recovery is still pending; retry shortly"
         )
     account = await asyncio.to_thread(broker.account_identity)
+    from app.services import real_day_recovery
+    await real_day_recovery.adopt_legacy_context(req, user_id, chosen, account)
+    await real_day_recovery.release_stale(user_id, chosen, account)
+    await real_day_recovery.check_handoff(user_id, chosen, account)
     await recover_previous_day(user_id, chosen, account, req.date)
+    await real_day_recovery.retire_failed_engine(user_id, chosen, account)
     lock = _locks.setdefault((chosen, account), asyncio.Lock())
     async with lock:
         runtime = next(
@@ -245,7 +250,7 @@ async def start(req, user_id, create):
                         "broker_account_id": account,
                     },
                     token=getattr(runtime, "real_claim_token", None),
-                    engine_until=int(time.time()) + 45,
+                    engine_until=int(time.time()) + slots.DAY_LEASE_SECONDS,
                 )
             if (
                 getattr(runtime, "real_start_preparing", False)
@@ -403,14 +408,14 @@ async def start(req, user_id, create):
 
         async def renew_preparation():
             while True:
-                await asyncio.sleep(10)
+                await asyncio.sleep(slots.DAY_HEARTBEAT_SECONDS)
                 try:
                     await asyncio.to_thread(
                         slots.update, chosen, account, "intraday", user_id, sid, token
                     )
                     live = simulation.get_session(sid)
                     if live and getattr(live, "real_claim_token", None) == token:
-                        live.real_engine_valid_until = time.monotonic() + 40
+                        live.real_engine_valid_until = time.monotonic() + slots.DAY_LOCAL_AUTHORITY_SECONDS
                 except Exception:  # noqa: BLE001 - lease failures must preserve the outstanding book
                     return
 
@@ -431,6 +436,7 @@ async def start(req, user_id, create):
             )
             if session:
                 session.real_active_claim = True
+                watch_execution(session)
             if session and session.real_closing:
                 from app.services.real_close import close
 
@@ -439,6 +445,9 @@ async def start(req, user_id, create):
         finally:
             # An exception never releases a potentially submitted book. Its saved
             # preparation/session identity allows retry after the engine expires.
+            live = simulation.get_session(sid)
+            if live:
+                live.real_start_preparing = False
             preparing.cancel()
             await asyncio.gather(preparing, return_exceptions=True)
             _context.reset(context_token)
@@ -477,7 +486,7 @@ async def bind_prepared(session):
     session.real_claim_token = claim["operation_id"]
     session.real_active_claim = True
     session.real_engine_lease_required = True
-    session.real_engine_valid_until = time.monotonic() + 40
+    session.real_engine_valid_until = time.monotonic() + slots.DAY_LOCAL_AUTHORITY_SECONDS
 
     if (
         isinstance(getattr(session, "real_funding_period", None), str)
@@ -489,8 +498,13 @@ async def bind_prepared(session):
 
     async def renew():
         while session.state.value != "ended":
-            await asyncio.sleep(10)
+            await asyncio.sleep(slots.DAY_HEARTBEAT_SECONDS)
             if session.state.value == "ended":
+                return
+            if not engine_healthy(session):
+                logger.warning("real_engine_task_unhealthy session_id=%s", session.session_id)
+                from app.services.real_day_recovery import expire_local_engine
+                await expire_local_engine(session)
                 return
             try:
                 await asyncio.to_thread(
@@ -502,12 +516,13 @@ async def bind_prepared(session):
                     session.session_id,
                     claim["operation_id"],
                 )
-                session.real_engine_valid_until = time.monotonic() + 40
-            except Exception:  # noqa: BLE001 - lease failures must preserve the outstanding book
-                if time.monotonic() >= session.real_engine_valid_until:
+                session.real_engine_valid_until = time.monotonic() + slots.DAY_LOCAL_AUTHORITY_SECONDS
+            except Exception as exc:  # lease failures preserve logical ownership
+                from botocore.exceptions import ClientError
+                lost = isinstance(exc, ClientError) and exc.response["Error"]["Code"] == "ConditionalCheckFailedException"
+                logger.warning("real_engine_renewal_failed session_id=%s error_type=%s", session.session_id, type(exc).__name__)
+                if lost or time.monotonic() >= session.real_engine_valid_until:
                     import json
-
-                    from app.services import simulation
 
                     session.queue.put_nowait(
                         json.dumps(
@@ -519,7 +534,8 @@ async def bind_prepared(session):
                             }
                         )
                     )
-                    simulation.stop_session(session, preserve_trading_state=True)
+                    from app.services.real_day_recovery import expire_local_engine
+                    await expire_local_engine(session)
                     return
 
     session.real_engine_task = asyncio.create_task(renew())
@@ -580,17 +596,24 @@ async def restore_for_close(record, user_id):
 
 _ready = True
 _startup_task = None
+_shutting_down = False
+_recovery_tasks = set()
 
 
 def startup():
     """One cutover scan, then bounded recovery of the live slot partition."""
-    global _ready, _startup_task
+    global _ready, _startup_task, _shutting_down
+    _shutting_down = False
     _ready = False
     _startup_task = asyncio.create_task(_recover_outstanding())
 
 
 async def shutdown():
-    global _startup_task, _ready
+    global _startup_task, _ready, _shutting_down
+    _shutting_down = True
+    for task in tuple(_recovery_tasks):
+        task.cancel()
+    await asyncio.gather(*tuple(_recovery_tasks), return_exceptions=True)
     if _startup_task:
         _startup_task.cancel()
         await asyncio.gather(_startup_task, return_exceptions=True)
@@ -768,8 +791,14 @@ async def _recover_outstanding():
                     time.time()
                 ):
                     continue
+                if row["style"] == "intraday" and row.get("handoff_token"):
+                    from app.services.real_day_recovery import check_handoff
+                    try:
+                        await check_handoff(row["owner_user_id"], row["broker"], row["account"])
+                    except HTTPException:
+                        continue
                 session = simulation.get_session(row["session_id"])
-                if session and session.state != simulation.SimulationState.ENDED:
+                if session and (row["style"] == "swing" and session.state != simulation.SimulationState.ENDED or row["style"] == "intraday" and engine_healthy(session)):
                     continue
                 try:
                     record = await asyncio.to_thread(
@@ -824,6 +853,7 @@ async def _recover_outstanding():
                         fields["execution_broker"] = row["broker"]
                         fields["session_type"] = "real"
                         fields["override"] = False
+                        fields.pop("group_id", None)
                         await start_with_paper_claim(
                             SimulationStartRequest.model_validate(fields),
                             row["owner_user_id"],
@@ -840,3 +870,50 @@ async def _recover_outstanding():
                 "Real startup/recovery remains pending: %s", type(exc).__name__
             )
         await asyncio.sleep(30)
+
+
+def engine_healthy(session):
+    if getattr(session, "real_engine_lease_required", False) and time.monotonic() >= session.real_engine_valid_until:
+        return False
+    if session.state.value == "ended":
+        return False
+    if getattr(session, "real_closing", False):
+        from app.services import real_close
+        task = real_close._jobs.get(session.session_id)
+        return bool(task and not task.done())
+    if getattr(session, "real_start_preparing", False) and session.task is None:
+        return True
+    task = session.task
+    return bool(task and not task.done())
+
+
+async def _recover_failed_task(session):
+    from app.services import real_day_recovery
+    try:
+        if simulation_session_is_current(session):
+            await real_day_recovery.expire_local_engine(session)
+            if not _shutting_down:
+                await real_day_recovery.recover(session.user_id, session.session_id)
+    except Exception as exc:
+        logger.warning("real_execution_recovery_pending session_id=%s error_type=%s", session.session_id, type(exc).__name__)
+
+
+def simulation_session_is_current(session):
+    from app.services import simulation
+    return not _shutting_down and simulation.get_session(session.session_id) is session and session.state.value != "ended" and not session.real_closing
+
+
+def watch_execution(session):
+    task = session.task
+    if task is None or getattr(session, "_real_watched_task", None) is task:
+        return
+    session._real_watched_task = task
+    def completed(done):
+        if not done.cancelled():
+            done.exception()  # Retrieve failures before the real-session run loop is entered.
+        if simulation_session_is_current(session):
+            logger.warning("real_execution_task_finished session_id=%s", session.session_id)
+            recovery = asyncio.create_task(_recover_failed_task(session))
+            _recovery_tasks.add(recovery)
+            recovery.add_done_callback(_recovery_tasks.discard)
+    task.add_done_callback(completed)

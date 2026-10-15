@@ -534,7 +534,8 @@ def create_session(
             session.real_active_claim = True
             session.real_engine_lease_required = True
             import time
-            session.real_engine_valid_until = time.monotonic() + 40
+            from app.services.real_session_slots import DAY_LOCAL_AUTHORITY_SECONDS
+            session.real_engine_valid_until = time.monotonic() + DAY_LOCAL_AUTHORITY_SECONDS
     _sessions[session_id] = session
     _upsert_session_to_db(session, strict=session_type == "real")
     from app.services.guardrail_service import initialize_guardrails
@@ -2346,8 +2347,13 @@ async def _run_real_session(session: SimulationSession) -> None:
     finally:
         if session.stream_manager is not None:
             session.stream_manager.stop()
-        session.state = SimulationState.ENDED
-        end_event = {"type": "session_ended"}
+        unexpected_end = session.state != SimulationState.ENDED and not session.real_verified_closed
+        if unexpected_end:
+            end_event = {"type": "real_session_status", "session_id": session.session_id,
+                         "state": "recovery_required", "message": "Real execution interrupted; recovering the existing book."}
+        else:
+            session.state = SimulationState.ENDED
+            end_event = {"type": "session_ended"}
         try:
             session.queue.put_nowait(json.dumps(end_event))
         except asyncio.QueueFull:
@@ -2879,7 +2885,7 @@ def stop_session(session: SimulationSession, *, preserve_trading_state: bool = F
     if session.session_type == "real":
         preserve_trading_state = True
     desktop_paper = getattr(session, "desktop_origin", None) == "desktop_paper"
-    cleanup_owned = not getattr(session, "paper_lease_lost", False)
+    cleanup_owned = not getattr(session, "paper_lease_lost", False) and not getattr(session, "real_authority_lost", False)
     if desktop_paper:
         from app.services import paper_wallet
         try:

@@ -38,7 +38,7 @@ import { useMultiSSE } from './hooks/useSSE'
 import { activeSessionSubscriptions } from './services/sessionSubscriptions'
 import { useRecording } from './hooks/useRecording'
 import { useSnapshot } from './hooks/useSnapshot'
-import api, { OHLCCandle } from './services/api'
+import api, { ApiError, OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/optionsRoc'
 import { selectPaperResumePanes } from './paperResume'
 import { brokerSnapshotSessionId } from './brokerSnapshot'
@@ -78,6 +78,7 @@ interface WorkspaceSnapshot {
   view?: WorkspaceView
   analysisOpen?: boolean
   sessionId?: string | null
+  sessionType?: string
   panes?: PaneConfig[]
   layoutPreset?: LayoutPreset
   activePaneId?: number | null
@@ -249,6 +250,8 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     }
   })
   const workspaceRestoredRef = useRef(false)
+  const [workspaceRestoreError, setWorkspaceRestoreError] = useState<string | null>(null)
+  const [workspaceRestoreAttempt, setWorkspaceRestoreAttempt] = useState(0)
   const workspaceReadySessionRef = useRef<string | null>(null)
   const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
   const simRef = useRef(sim)
@@ -585,16 +588,26 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   useEffect(() => {
     let cancelled = false
     const restore = async () => {
+      workspaceRestoredRef.current = false
+      setWorkspaceRestoreError(null)
+      let failed = false
       try {
         const raw = localStorage.getItem(workspaceStorageKey)
-        const saved = raw ? JSON.parse(raw) as WorkspaceSnapshot : {}
+        let saved: WorkspaceSnapshot = {}
+        try {
+          const parsed: unknown = raw ? JSON.parse(raw) : {}
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid workspace')
+          saved = parsed as WorkspaceSnapshot
+        }
+        catch { localStorage.removeItem(workspaceStorageKey) }
 
         let attached = false
-        let attachedSession = await sim.restoreActiveGroup().catch(() => null)
+        let attachedSession = await sim.restoreActiveGroup()
         if (attachedSession) {
           attached = true
         } else if (saved.sessionId) {
-          attachedSession = await sim.attachToActiveSession(saved.sessionId).catch(() => null)
+          try { attachedSession = await sim.attachToActiveSession(saved.sessionId, saved.sessionType === 'real') }
+          catch (error) { if (!(error instanceof ApiError) || ![404, 410].includes(error.status)) throw error }
           attached = !!attachedSession
         }
 
@@ -604,6 +617,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           return
         }
 
+        if (cancelled) return
         if (saved.view === 'patterns') setShowPatternLibrary(true)
         if (saved.view === 'structures') setShowChartStructures(true)
         if (saved.analysisOpen || saved.view === 'analysis') setShowAnalysis(true)
@@ -625,16 +639,16 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
             setPanes(restoredPanes)
           }
         }
-      } catch {
-        localStorage.removeItem(workspaceStorageKey)
-        resetWorkspaceToIdle()
+      } catch (error) {
+        failed = true
+        if (!cancelled) setWorkspaceRestoreError(`Session restoration needs attention: ${String(error)}`)
       } finally {
-        if (!cancelled) workspaceRestoredRef.current = true
+        if (!cancelled && !failed) workspaceRestoredRef.current = true
       }
     }
     restore()
     return () => { cancelled = true }
-  }, [workspaceStorageKey, resetWorkspaceToIdle]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [workspaceStorageKey, resetWorkspaceToIdle, workspaceRestoreAttempt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!workspaceRestoredRef.current) return
@@ -651,6 +665,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       view,
       analysisOpen: showAnalysis,
       sessionId: sim.sessionId,
+      sessionType: sim.sessionType,
       panes,
       layoutPreset,
       activePaneId,
@@ -1369,6 +1384,9 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     if (event.type === 'tick') {
       sim.setLatestTick(event as unknown as Parameters<typeof sim.setLatestTick>[0])
       if (!isActiveSessionEvent) return
+    } else if (event.type === 'real_session_status' && isActiveSessionEvent) {
+      if (typeof event.closing === 'boolean') sim.setRealClosing(event.closing)
+      if (event.message) setBrokerError(String(event.message))
     } else if (event.type === 'session_ended') {
       sim.handleSessionEnded(eventSessionId)
       if (!isActiveSessionEvent) return
@@ -1462,9 +1480,10 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const handleSSEReconnect = useCallback((sessionId?: string) => {
     if (sessionId && sessionId !== sim.sessionId) return
     sim.refreshSessionData()
+    if (sim.sessionId && sim.sessionType === 'real') void api.realHeartbeat(sim.sessionId).catch(error => flashError(error, 'Session connection'))
     if (sim.sessionId) void refreshRunningStrategies(sim.sessionId)
     setPanes(prev => prev.map(p => ({ ...p, reloadKey: (p.reloadKey ?? 0) + 1 })))
-  }, [sim.refreshSessionData, sim.sessionId, refreshRunningStrategies])
+  }, [sim.refreshSessionData, sim.sessionId, sim.sessionType, refreshRunningStrategies])
 
   const handleSSEUnavailable = useCallback((sessionId: string) => {
     sim.handleSessionEnded(sessionId)
@@ -1474,7 +1493,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     }
   }, [sim.handleSessionEnded, sim.sessionId])
 
-  useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect, handleSSEUnavailable)
+  useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect, handleSSEUnavailable, [...(sim.group?.members.filter(member => member.session_type === 'real').map(member => member.session_id) ?? []), ...(sim.sessionType === 'real' && sim.sessionId ? [sim.sessionId] : [])])
 
   // Fetch round-trips and labels for trade history when session is active
   useEffect(() => {
@@ -2182,6 +2201,10 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      {sim.realClosing && <div role="status" style={{ padding: '8px 20px', background: '#442b16', color: '#ffd8a8' }}>Closing Real session… Waiting for broker confirmation.</div>}
+      {workspaceRestoreError && <div role="alert" style={{ padding: '8px 20px', background: '#442b16', color: '#ffd8a8' }}>
+        {workspaceRestoreError} <button onClick={() => setWorkspaceRestoreAttempt(value => value + 1)}>Retry recovery</button>
+      </div>}
       {/* Header */}
       <div style={{
         padding: '10px 20px', background: '#161b22', borderBottom: '1px solid #30363d',
@@ -2433,7 +2456,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           isRealTradingUser={isRealTradingUser}
           sessionActive={sim.sessionState === 'running' || sim.sessionState === 'paused'}
           onWalletReset={sim.incrementWalletRefreshKey}
-          onAttachRealSession={async id => { await sim.attachToActiveSession(id) }}
+          onAttachRealSession={async id => { await sim.attachToActiveSession(id, true) }}
           onSizingModeChange={(mode, fr, rr, slPct) => {
             setSizingMode(mode)
             setFundsRatios(fr)

@@ -2016,3 +2016,16 @@ async def close_real_book(session_id: str, user_id: str = Depends(get_desktop_us
     require_real_trading_access(user_id)
     from app.routers.execution_brokers import stop
     return await stop(session_id, user_id, req)
+
+
+@router.post("/broker/{session_id}/heartbeat")
+async def real_day_heartbeat(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    from app.services.real_day_recovery import heartbeat
+    return await heartbeat(user_id, session_id)
+
+
+@router.post("/broker/{session_id}/recover")
+async def recover_real_day(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    from app.services.real_day_recovery import recover
+    response = await recover(user_id, session_id)
+    return _snapshot(_require_session(response.session_id, user_id), user_id)

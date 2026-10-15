@@ -1686,7 +1686,7 @@ session recovery, not Paper Swing polling, and is unaffected by this change.
 ## Real Day session-link repair and dated ownership recovery — 2026-10-15
 
 Implemented in [PR #665](https://github.com/prattyush/TradeMatangi/pull/665),
-pending review into dev after PR #664 merged. Settings → Your Real
+merged into dev as `8d0bc0a` after PR #664. Settings → Your Real
 sessions now offers **Repair session link** beside Reconcile with broker, shared
 by website and desktop. The backend verifies the authenticated broker account,
 session owner and canonical Day ownership row before restoring missing identity
@@ -1730,3 +1730,88 @@ browser check verifies Repair → Reconcile, unchanged capital and useful retry
 errors with no page errors. No live broker orders or production database repairs
 were performed. Artifacts: `.cache/swing-layout/real-link-*`.
 Restart the backend and rebuild clients to apply; no migration is required.
+
+
+## Real Day reconnect, legacy cutover and presence — 2026-10-15
+
+Follow-up to merged PR #665. Compatibility was checked against GitHub `main` at
+`d10ab97`, verified against the remote branch. Its Real Stop persists Ended while
+preserving trading state and does not create canonical ownership slots. Ended is
+therefore not proof of broker-verified closure when moving from main to dev.
+
+| Sprint | Delivery | Status |
+|---|---|---|
+| 1 | Legacy account verification; restore original session/capital; reconnect controls | Implemented |
+| 2 | 3-minute heartbeat, 15-minute expiry, failed-engine recovery and safe stale handoff | Implemented |
+| 3 | Regression coverage, client checks and documentation | Complete |
+
+**Restore and compatibility.** Start and read-only broker status use the existing
+user index to discover the latest dated legacy Day candidates, including stopped
+records. Only matching latest-date candidates are strongly reread; no new table
+scan or periodic history job is added. Multiple candidates are not arbitrarily
+selected. Missing account metadata requires saved account evidence or a matching
+saved broker-projection hash; a same-broker login alone is insufficient. Unbound
+slot metadata and its Session are repaired together. Today's original session ID,
+capital, positions, orders and history are retained. Legacy funding migration does
+not apply a new allocation percentage to the original session capital. Prior-day
+books use existing verified-flat closure; newer completed books prevent revival
+of older legacy dates.
+
+Website restoration preserves workspace references on temporary errors and offers
+Retry recovery. Owned broker status can restore a missing workspace. Authenticated
+Day recover/heartbeat services are shared with desktop. Rebuilt books do not reuse
+ended UI groups. Start/Stop/restore controls have finite client deadlines; Real
+Start checks status after timeout without submitting another Start, and Stop
+retains its UI session until backend closure is confirmed. SSE reconnect probes
+can recover Real books; unexpected execution-task termination emits recovery
+status rather than false session completion and immediately initiates recovery.
+
+**Timing.** Day engine/preparation heartbeat: **180 seconds**; durable lease:
+**900 seconds**; local execution authority: **890 seconds**. Client presence is
+separate and acknowledged immediately on attach/reconnect and every 180 seconds.
+Website Real group members keep presence when another member is selected. Ticks
+and order processing do not wait for heartbeats. Swing keeps its existing lease
+cadence and cannot renew Day client presence. Dead tasks cannot renew authority;
+expired or replaced authority cannot revive itself with a late renewal.
+
+**Stale handoff.** Another authorized user's Start may verify a book after 15
+minutes without client presence. Conditional fencing rejects racing heartbeats
+or ownership changes. Release requires fresh verified-flat broker scope, no
+pending application orders and no closure-blocking submissions/conversion/split
+work. Existing transactional closure releases Day funding and preserves Swing
+and history. Verification failure keeps the original owner and attempts recovery
+of its management; it never cancels orders or liquidates merely to free the slot.
+A live engine on another server must expire first. Handoff markers can be cleared
+after their own 15-minute timeout and authority expiry, preventing permanent
+blockage after a crash. Missing legacy presence is not abandonment evidence.
+Manual Done for day restrictions remain intact. Only failures/recovery transitions
+are logged; successful heartbeats do not create repetitive log entries.
+
+**Deployment.** Stop the old main backend before running dev against the shared
+broker account/database: old main does not participate in the new ownership fence.
+No new table or bulk migration is needed. Restart the backend and rebuild both
+clients. Automated validation uses mocked brokers, without live orders or
+production database repairs.
+
+
+**Interfaces and validation.** Added authenticated
+`POST /api/brokers/{session_id}/recover` and `/heartbeat`, with desktop equivalents
+under `/api/desktop/v1/trading/broker/{session_id}`. Session responses now include
+additive `real_closing`; both clients show pending closure on reattachment.
+Desktop restores saved Real screens through recovery and offers **Recover Real**
+for an outstanding book instead of disabling Start indefinitely. Prior-day
+reconnection only verifies/archives a flat book; it does not request liquidation.
+An ended Paper workspace does not enter the Real recovery path.
+
+Validation: **322 backend tests pass**, including **31 new recovery regressions**;
+**225 desktop/shared tests pass**. Website and desktop production builds/type
+checks and native `cargo check --offline` pass. Mocked website browser checks
+verify original capital/session restoration, immediate and 3-minute presence,
+transient errors, timed-out Start status checks without duplicate Start, and
+isolation of ended Paper sessions. The desktop Real browser acceptance verifies
+Recover Real, no new Start request, heartbeat delivery, three retained charts,
+order entry/editing and uncertainty fencing, with no browser errors.
+Browser entrypoints: `scripts/real-day-recovery-browser-check.mjs` and
+`REAL_RECOVERY_CHECK=1 scripts/phase21-real-linked-check.mjs`; desktop artifacts:
+`.cache/real-day-recovery/desktop/`. Existing build bundle-size and Python dependency
+deprecation warnings remain; no live broker orders or production data were touched.

@@ -22,6 +22,7 @@ export function accountSettingsRequest(
       `${baseUrl.replace(/\/$/, '')}/api/desktop/v1/settings/${path}`,
       {
         method,
+        signal: AbortSignal.timeout(30_000),
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'

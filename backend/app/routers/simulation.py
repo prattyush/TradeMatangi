@@ -32,6 +32,7 @@ router = APIRouter(prefix="/api/simulation", tags=["simulation"], dependencies=[
 def _session_response(session, group=None) -> SimulationStartResponse:
     group = group or (session.group_id and __import__("app.services.session_group_service", fromlist=["get_group"]).get_group(session.group_id, session.user_id))
     return SimulationStartResponse(
+        real_closing=bool(getattr(session, "real_closing", False)),
         session_id=session.session_id, symbol=session.symbol, date=session.date,
         start_time=session.start_time, speed=session.speed, session_capital=session.session_capital,
         instrument_type=session.instrument_type, strike=session.strike, expiry=session.expiry,
@@ -511,8 +512,12 @@ async def _start_simulation_impl(
             recovered = real_sessions.recovery_record()
             reference = float(recovered.get("session_capital", funds)) if recovered else account_wallet.get("balance", funds)
             pool = await asyncio.to_thread(funding_store.initialize, user_id, chosen_broker, broker_account, reference)
+            allocation = req.allocation_pct
+            if recovered and not recovered.get("real_funding_period"):
+                # Legacy capital is already the book's allocation, not fresh broker cash.
+                allocation = float(recovered["session_capital"]) / float(pool["funding"]["allocation_reference"])
             pool = await asyncio.to_thread(funding_store.start_participant, user_id, chosen_broker, broker_account,
-                pool["period_id"], "intraday", real_sessions.prepared_identity(), req.allocation_pct, session_record_id=real_sessions.prepared_identity())
+                pool["period_id"], "intraday", real_sessions.prepared_identity(), allocation, session_record_id=real_sessions.prepared_identity())
             funds = pool["funding"]["modes"]["intraday"]["capital"]
             funding_period = pool["period_id"]
             if chosen_broker == "kite":

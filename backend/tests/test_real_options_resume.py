@@ -131,10 +131,10 @@ async def test_start_route_reconciles_and_selects_before_starting_engine(session
         "app.services.kotak_service.get_service": Mock(return_value=broker),
         "app.services.real_accounting.refresh": AsyncMock(return_value={"session_capital": 100000}),
         "app.services.real_broker_state.refresh": AsyncMock(side_effect=refresh),
-        "app.services.real_sessions.recovery_record": Mock(return_value={"session_id": s.session_id}),
+        "app.services.real_sessions.recovery_record": Mock(return_value={"session_id": s.session_id, "session_capital": 50000}),
         "app.services.real_sessions.prepared_identity": Mock(return_value=s.session_id),
-        "app.services.swing_funding_store.initialize": Mock(return_value={"period_id": "period"}),
-        "app.services.swing_funding_store.start_participant": Mock(return_value={"period_id": "period", "funding": {"modes": {"intraday": {"capital": 100000}}}}),
+        "app.services.swing_funding_store.initialize": Mock(return_value={"period_id": "period", "funding": {"allocation_reference": 100000}}),
+        "app.services.swing_funding_store.start_participant": Mock(return_value={"period_id": "period", "funding": {"modes": {"intraday": {"capital": 50000}}}}),
         "app.services.simulation.find_session_by_context": Mock(return_value={"session_id": s.session_id}),
         "app.services.simulation.get_session": Mock(return_value=None),
         "app.services.simulation.rebuild_session_from_db": Mock(return_value=s),
@@ -148,6 +148,8 @@ async def test_start_route_reconciles_and_selects_before_starting_engine(session
             stack.enter_context(patch(target, new=replacement))
         result = await route._start_simulation_impl(req, s.user_id)
     assert result.strike_pe == 24000 and result.strike_ce == 24200
+    assert result.session_capital == 50000
+    assert patches["app.services.swing_funding_store.start_participant"].call_args.args[6] == .5
     patches["app.services.real_broker_state.refresh"].assert_awaited_once_with(s, broker)
     patches["app.services.simulation.start_session"].assert_called_once_with(s)
     patches["app.services.simulation.rebuild_session_from_db"].assert_called_once()

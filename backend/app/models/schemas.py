@@ -51,6 +51,7 @@ class SimulationStartRequest(ContractModel):
 
 
 class SimulationStartResponse(ContractModel):
+    real_closing: bool = False
     trading_style: str = "intraday"
     portfolio_id: str | None = None
     execution_broker: str | None = None

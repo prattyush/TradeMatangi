@@ -210,3 +210,19 @@ Full decisions, exclusions and acceptance gates:
   balances, live sizing capital or guardrails.
 - Event-snapshot candle reconstruction must retain exact fractional strikes
   and existing IST wall-clock timestamps; only observed cached seconds qualify.
+
+
+### Real Day presence and cross-release recovery
+
+Day renews every 180 seconds with 900-second durable/890-second local authority;
+shared slot helpers must retain Swing's existing lease cadence. Client presence
+is separate from engine health. Expiry never releases ownership or proves broker
+exposure flat. Dead tasks must not renew. Stale handoff fences execution before
+fresh verification and transactional closure; pending orders and uncertain
+current submissions block release.
+
+Legacy main Real Stop persisted Ended without verified closure. Recover its
+original identity/capital and require durable account/projection evidence before
+binding a missing account. Never reuse an ended UI group or apply a new allocation
+percentage to legacy capital. Old main must not execute concurrently against the
+same broker account because it lacks the new fence.

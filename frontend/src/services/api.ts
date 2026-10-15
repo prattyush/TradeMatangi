@@ -241,6 +241,7 @@ export interface StartStrategyRequest {
 }
 
 export interface SimulationStartResponse {
+  real_closing?: boolean
   execution_broker?: string | null
   broker_account_id?: string | null
   session_id: string
@@ -848,14 +849,31 @@ export interface EmergencyExitResult {
 }
 export interface RealTradingDayStatus { date: string; state: 'active' | 'closing' | 'done'; message?: string }
 
+const CONTROL_DEADLINE_MS = 30_000
+const controlSignal = () => AbortSignal.timeout(CONTROL_DEADLINE_MS)
+
 const api = {
   async executionBrokerStatus(): Promise<{ broker: 'kotak' | 'kite'; authenticated: boolean; active_session_id?: string | null }> {
-    const res = await fetch(`${BACKEND_URL}/api/brokers/status`, { headers: _authHeaders() })
+    const res = await fetch(`${BACKEND_URL}/api/brokers/status`, { signal: controlSignal(),
+      headers: _authHeaders() })
     if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).detail || 'Could not load execution broker status', res.status)
     return res.json()
   },
+  async realHeartbeat(sessionId: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/heartbeat`, {
+      method: 'POST', headers: _authHeaders(), signal: controlSignal(),
+    })
+    if (!res.ok) throw new ApiError('Real session presence could not be confirmed; reconnect to check its status', res.status)
+  },
+  async recoverRealSession(sessionId: string): Promise<SimulationStartResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/recover`, {
+      method: 'POST', headers: _authHeaders(), signal: controlSignal(),
+    })
+    if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).detail || 'Real recovery failed', res.status)
+    return res.json()
+  },
   async realCloseSummary(sessionId: string): Promise<{ position_count: number; pending_order_count: number }> {
-    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/close-summary`, { headers: _authHeaders() })
+    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/close-summary`, { signal: controlSignal(), headers: _authHeaders() })
     if (!res.ok) throw new ApiError('Could not inspect Real positions before confirmation', res.status)
     return res.json()
   },
@@ -969,11 +987,24 @@ const api = {
 
   async startSimulation(req: SimulationStartRequest = {}): Promise<SimulationStartResponse> {
     const body = { symbol: 'NIFTY', date: '2026-05-06', start_time: '09:15:00', speed: 1.0, ...req }
-    const res = await fetch(`${BACKEND_URL}/api/simulation/start`, {
+    const signal = controlSignal()
+    let res: Response
+    try { res = await fetch(`${BACKEND_URL}/api/simulation/start`, {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify(body),
-    })
+    }) } catch (error) {
+      if (req.session_type === 'real' && signal.aborted) {
+        const status = await api.executionBrokerStatus().catch(() => null)
+        if (status?.active_session_id) {
+          const existing = await api.getActiveSimulation(status.active_session_id).catch(() => null)
+          if (existing && existing.symbol === body.symbol && existing.date === body.date && existing.instrument_type === (body.instrument_type ?? 'equity')) return existing
+        }
+        throw new Error('Real Start timed out; its outcome is still being checked. Use recovery or retry Start to reconnect to the same book.')
+      }
+      throw error
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       throw new Error(body.detail || `Start simulation failed: ${res.status}`)
@@ -984,6 +1015,7 @@ const api = {
   async getActiveSimulation(session_id: string): Promise<SimulationStartResponse> {
     const qs = new URLSearchParams({ session_id })
     const res = await fetch(`${BACKEND_URL}/api/simulation/active?${qs}`, {
+      signal: controlSignal(),
       headers: _authHeaders(),
     })
     if (!res.ok) {
@@ -994,7 +1026,8 @@ const api = {
   },
 
   async getActiveSessionGroup(): Promise<SessionGroupResponse | null> {
-    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/active`, { headers: _authHeaders() })
+    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/active`, { signal: controlSignal(),
+      headers: _authHeaders() })
     if (res.status === 404 || res.status === 204) return null
     if (!res.ok) throw new Error(`Active group fetch failed: ${res.status}`)
     return res.json()
@@ -1042,11 +1075,20 @@ const api = {
   },
 
   async stopSimulation(session_id: string): Promise<{ status?: string }> {
-    const response = await fetch(`${BACKEND_URL}/api/simulation/stop`, {
+    const signal = controlSignal()
+    let response: Response
+    try { response = await fetch(`${BACKEND_URL}/api/simulation/stop`, {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id }),
-    })
+    }) } catch (error) {
+      if (signal.aborted) {
+        await api.executionBrokerStatus().catch(() => null)
+        throw new Error('Stop timed out. The server may still be closing the session; reconnect to check its status.')
+      }
+      throw error
+    }
     if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not stop session', response.status)
     return response.json()
   },
@@ -1105,7 +1147,7 @@ const api = {
   },
 
   async getTrades(session_id: string): Promise<Trade[]> {
-    const res = await fetch(`${BACKEND_URL}/api/trades?session_id=${session_id}`)
+    const res = await fetch(`${BACKEND_URL}/api/trades?session_id=${session_id}`, { signal: controlSignal() })
     if (!res.ok) throw new Error(`Get trades failed: ${res.status}`)
     return res.json()
   },
@@ -1127,7 +1169,7 @@ const api = {
   },
 
   async getPositionSnapshot(sessionId: string): Promise<PositionSnapshot> {
-    const response = await fetch(`${BACKEND_URL}/api/trades/position-snapshot?session_id=${encodeURIComponent(sessionId)}`, { headers: _authHeaders() })
+    const response = await fetch(`${BACKEND_URL}/api/trades/position-snapshot?session_id=${encodeURIComponent(sessionId)}`, { signal: controlSignal(), headers: _authHeaders() })
     if (!response.ok) throw new Error(`Position snapshot failed: ${response.status}`)
     return response.json()
   },
@@ -1137,7 +1179,7 @@ const api = {
     if (right) url += `&right=${right}`
     if (strike != null) url += `&strike=${strike}`
     if (expiry) url += `&expiry=${encodeURIComponent(expiry)}`
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: controlSignal() })
     if (!res.ok) throw new Error(`Get position failed: ${res.status}`)
     return res.json()
   },
@@ -1301,7 +1343,7 @@ const api = {
 
   async getOrders(session_id: string, open_only = true): Promise<Order[]> {
     const res = await fetch(`${BACKEND_URL}/api/orders?session_id=${session_id}&open_only=${open_only}`, {
-      headers: _authHeaders(),
+      signal: controlSignal(), headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Get orders failed: ${res.status}`)
     return res.json()
