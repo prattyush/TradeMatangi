@@ -1,3 +1,4 @@
+import RealBrokerRestrictionSetting from '../../shared/RealBrokerRestrictionSetting'
 import KotakLoginDialog from './KotakLoginDialog'
 import RealSessionList, { type RealBookRequest } from '../../shared/RealSessionList'
 import HistorySharingSettings, { type HistorySharingState } from '../../shared/analysis/HistorySharingSettings'
@@ -785,6 +786,7 @@ export function DesktopSettingsModal({
               {tab === 'Admin' && profile?.is_admin && (
                 <section className="settings-section">
                   <strong>Admin</strong>
+                  <RealBrokerRestrictionSetting request={(method, body) => accountRequest('admin/real-broker-restrictions', method, body)} />
                   <p>
                     Data source changes use the same account-wide policies as
                     the website.

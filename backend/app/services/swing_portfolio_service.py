@@ -145,10 +145,11 @@ def snapshot(user, portfolio_id):
             trade.price * trade.quantity * (1 if trade.side == TradeSide.SELL else -1)
             - trade.commission
         )
+    from app.services.real_broker_policy import enabled as restrictions_enabled
     if row["mode"] == "real":
         complete = complete and current.real_ready and row["contexts"] == {key: child.session_id for key, child in current.contexts.items()} and not any(child.real_recovery_pending for child in current.contexts.values())
         from app.services import swing_funding_store as funding
-        pool = funding.read(user, row["execution_broker"], row["broker_account_id"]) if row["state"] != "ended" else None
+        pool = funding.read(user, row["execution_broker"], row["broker_account_id"]) if row["state"] != "ended" and restrictions_enabled() else None
         mode = (pool or {}).get("funding", {}).get("modes", {}).get("swing", {})
         from app.services.swing_accounting import mode_available
         wallet_balance = mode_available(pool['funding'], 'swing') if mode else 0
@@ -159,6 +160,12 @@ def snapshot(user, portfolio_id):
     else:
         wallet_balance = swing_cash.read(user, portfolio_id)["current_balance"]
         funding_status = None
+    if row["mode"] == "real" and not restrictions_enabled() and row["state"] != "ended":
+        from app.services import wallet_service
+        from app.services.real_trading_day import market_date
+        ledger=f"real:{row['execution_broker']}:{row['broker_account_id']}:{market_date()}"
+        wallet_balance=wallet_service.get_real_wallet_snapshot(user,market_date(),ledger)["balance"]
+        funding_status=None
     if row["mode"] == "real" and row["state"] == "ended":
         positions, orders = [], []
         wallet_balance, funding_status = None, None
@@ -231,7 +238,8 @@ def require_entry_allowed(
     if exit_order:
         return
     if session.session_type == "real":
-        if session.real_recovery_pending:
+        from app.services.real_broker_policy import enforce
+        if enforce(session) and session.real_recovery_pending:
             raise HTTPException(409, "Broker history needs reconciliation; entries wait")
         from app.services.real_funding import require_entry
         require_entry(session)
@@ -399,7 +407,8 @@ def attach_context(
         if row["mode"] == "real":
             from app.services.swing_real import bind_child
             bind_child(current, session, row)
-        session.swing_recovery_required = True
+        from app.services.real_broker_policy import enforce
+        session.swing_recovery_required = row["mode"] != "real" or enforce(session)
         session.swing_quote_seen = False
         session.desktop_contract_quotes = {}
         if row["mode"] == "paper" and saved:

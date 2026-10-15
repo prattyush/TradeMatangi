@@ -131,3 +131,16 @@ async def close_real_link(session_id: str, req: CloseRequest | None = None, user
 async def allocate_real_link(session_id: str, req: AllocationRequest, user_id: str = Depends(require_broker_access)):
     from app.routers.execution_brokers import change_allocation
     return await change_allocation(session_id, req, user_id)
+
+
+from app.services.real_broker_policy import Policy as RealBrokerPolicy
+
+
+@router.get('/admin/real-broker-restrictions')
+async def get_real_broker_restrictions(user_id: str = Depends(require_admin)):
+    return await admin.get_real_broker_restrictions(user_id)
+
+
+@router.put('/admin/real-broker-restrictions')
+async def set_real_broker_restrictions(req: RealBrokerPolicy, user_id: str = Depends(require_admin)):
+    return await admin.set_real_broker_restrictions(req,user_id)

@@ -1734,7 +1734,8 @@ Restart the backend and rebuild clients to apply; no migration is required.
 
 ## Real Day reconnect, legacy cutover and presence — 2026-10-15
 
-Delivered in [PR #666](https://github.com/prattyush/TradeMatangi/pull/666), pending review into dev.
+Delivered in [PR #666](https://github.com/prattyush/TradeMatangi/pull/666), merged into dev as `4076850`.
+The enforcement behavior below is now opt-in; see the Admin policy follow-up.
 
 Follow-up to merged PR #665. Compatibility was checked against GitHub `main` at
 `d10ab97`, verified against the remote branch. Its Real Stop persists Ended while
@@ -1817,3 +1818,51 @@ Browser entrypoints: `scripts/real-day-recovery-browser-check.mjs` and
 `REAL_RECOVERY_CHECK=1 scripts/phase21-real-linked-check.mjs`; desktop artifacts:
 `.cache/real-day-recovery/desktop/`. Existing build bundle-size and Python dependency
 deprecation warnings remain; no live broker orders or production data were touched.
+
+
+## Admin opt-in for Real broker restrictions — 2026-10-15
+
+**Default: disabled**, for both Real Day and Real Swing on website and desktop.
+Admin → **Enforce Real broker session restrictions (Day and Swing)** is shared by
+both clients and saved through admin-only APIs. Enabling applies the prior
+broker-wide ownership/legacy relationship, expiry and mandatory reconciliation
+checks when sessions start or resume. Disabling removes those startup barriers;
+there is no wait for a 15-minute expiry and no forced reconciliation merely
+because another book or stale ownership record exists.
+
+DynamoDB records and **3-minute observation heartbeats remain enabled**. Per-book
+observation rows share the existing WalletLedgers table, so simultaneous users'
+Day/Swing records do not overwrite one another. They record owner, book, broker,
+account, style, trading date, heartbeat timestamps and state. With enforcement off,
+expired/missed heartbeats, conflicting canonical slots and failed observation
+writes do not reject Start or stop execution. The background ownership recovery
+loop does not perform adoption, stale handoff or forced recovery while disabled.
+The policy is cached in memory: live quotes/order hot paths do not fetch it from
+DynamoDB. Admin updates persist before changing the cache.
+
+Day starts use their existing user/context session for idempotent resume, retaining
+original capital and history, without proving links to other books. Swing starts
+and restores skip shared-participant enrollment and mandatory book reconciliation.
+Normal broker wallet/position/order updates continue; unrestricted Swing shows
+broker wallet funds instead of requiring a shared funding participant. Existing
+funding/history records are retained. Per-user session ownership, authentication,
+manual Done for day, explicit Stop/verified closure and protections against
+resubmitting genuinely uncertain broker orders remain intact. An old Day workspace
+is not silently restarted for a new date. Desktop does not force attachment to an
+unrelated observed Day book when Start is unrestricted.
+
+APIs: `GET/PUT /api/admin/real-broker-restrictions`, mirrored under
+`/api/desktop/v1/settings/admin/real-broker-restrictions`; payload `{enabled:false}`
+by default. Broker status adds `restrictions_enabled`. No new table or manual
+migration is required. Restart the backend and rebuild website/desktop clients.
+
+Validation for the Admin opt-in change: 333 focused backend tests passed before
+final resume coverage was added; the final policy/options-resume run passed all
+26 cases. Website and desktop production builds and 225 desktop/shared tests
+passed. Browser checks passed for Admin default-off/save/retry behavior and
+unrestricted desktop Real startup with an existing observed book, linked charts,
+order controls and no browser errors. No live broker orders were submitted.
+
+Separate follow-up requested: reuse the same Real Day book after Stop/Start and
+simplify Stop (no empty-book confirmation or closure-verification holding flow).
+These changes are deliberately excluded from the Admin policy PR.

@@ -93,6 +93,8 @@ async def test_kite_callback_before_registration_replays_partial_fill(monkeypatc
 
 @pytest.fixture
 def claim_table(monkeypatch):
+    monkeypatch.setattr("app.services.real_broker_policy.enabled", lambda: True)
+    monkeypatch.setattr("app.services.real_broker_policy._loaded", True)
     with mock_aws():
         db = boto3.resource('dynamodb', region_name='ap-south-1')
         table = db.create_table(TableName='WalletLedgers', KeySchema=[{'AttributeName':'user_id','KeyType':'HASH'}, {'AttributeName':'ledger_id','KeyType':'RANGE'}],
@@ -140,6 +142,7 @@ def test_claim_cannot_be_released_by_a_different_operation(claim_table):
 
 
 def test_expired_engine_cannot_route_another_broker_write(monkeypatch):
+    monkeypatch.setattr("app.services.real_broker_policy.enabled", lambda: True)
     broker = object()
     monkeypatch.setattr(kite_execution, 'get_service', lambda: broker)
     stale = SimpleNamespace(execution_broker='Kite', real_engine_lease_required=True, real_engine_valid_until=0)

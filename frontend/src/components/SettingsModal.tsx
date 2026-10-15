@@ -1,3 +1,4 @@
+import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionSetting'
 import FuturesRiskSettings from "./FuturesRiskSettings"
 import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
 import { NIFTY_PREMIUM_PRESETS as THRESHOLD_VALUES_NIFTY, SENSEX_PREMIUM_PRESETS as THRESHOLD_VALUES_SENSEX, withSavedPremium } from '../../../shared/optionPremiumPresets'
@@ -2234,6 +2235,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {activeTab === 'admin' && isAdmin && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+                <RealBrokerRestrictionSetting request={(method, body) => api.realBrokerRestrictions(method, body)} />
                 {/* Broker Tokens */}
                 <div>
                   <div style={{ fontSize: 12, color: '#f0883e', fontWeight: 600, marginBottom: 10 }}>

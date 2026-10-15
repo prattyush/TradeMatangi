@@ -34,7 +34,8 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
         raise KotakError('Order split is unconfirmed; refresh broker orders before editing')
     if reprice or previous is None or previous.order_type != order.order_type or previous.trigger_price != order.trigger_price:
         await asyncio.to_thread(reprice_trigger, order)
-    if isinstance(getattr(session, "real_funding_period", None), str) and session.real_funding_period and not _is_position_exit(session, order):
+    from app.services.real_broker_policy import enforce
+    if enforce(session) and isinstance(getattr(session, "real_funding_period", None), str) and session.real_funding_period and not _is_position_exit(session, order):
         from app.services import real_funding, swing_accounting
         funded = real_funding.pool(session)
         ticket = f"{session.session_id}:{order.order_id}"
@@ -476,7 +477,7 @@ def submit_once(session, order, method, **kwargs):
     return identifier
 
 
-def refresh_funding_after_broker_event(session):
+def refresh_funding_after_broker_event(session, *, initial_sync=False):
     """A bounded Day refresh clears confirmed ACK/fill funding effects for both owners."""
     period = getattr(session, 'real_funding_period', None)
     if isinstance(period, str) and period and getattr(session, "real_engine_lease_required", False) is True and not getattr(session, "real_verified_closed", False):
@@ -486,7 +487,7 @@ def refresh_funding_after_broker_event(session):
         except Exception:
             session.real_recovery_pending = True
             logger.exception("Broker funding update remains pending session=%s", session.session_id)
-    if not isinstance(period, str) or not period or getattr(session, 'trading_style', 'intraday') == 'swing':
+    if getattr(session, 'trading_style', 'intraday') == 'swing' or (not initial_sync and (not isinstance(period, str) or not period)):
         return  # Swing's persistent engine already refreshes its complete journal.
     task = getattr(session, 'real_funding_refresh_task', None)
     session.real_funding_refresh_dirty = True

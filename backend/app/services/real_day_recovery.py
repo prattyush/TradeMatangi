@@ -156,7 +156,8 @@ async def retire_failed_engine(user, broker, account):
     if not row or row["owner_user_id"] != user:
         return
     session = simulation.get_session(row["session_id"])
-    if session and not real_sessions.engine_healthy(session):
+    from app.services.real_broker_policy import enabled
+    if session and (not real_sessions.engine_healthy(session) or enabled() and not session.real_broker_restrictions_enabled):
         logger.warning("real_engine_recovery_requested session_id=%s", session.session_id)
         await expire_local_engine(session)
 
@@ -174,6 +175,19 @@ async def recover(user, sid):
         raise HTTPException(400, "Real Day session required")
     if record.get("real_verified_closed"):
         raise HTTPException(410, "Real session is verified closed")
+    from app.services import real_broker_policy as policy
+    await policy.ensure_loaded()
+    if not policy.enabled():
+        fields = {k:v for k,v in record.items() if k in SimulationStartRequest.model_fields}
+        fields.pop("group_id",None)
+        fields.update(session_type="real", override=False)
+        # No saved-account/legacy-book/expiry relationship gate in observation mode.
+        from app.services.real_trading_day import market_date
+        if record["date"] != market_date():
+            raise HTTPException(410,"This saved Day session is from a previous date; start today explicitly")
+        fields["date"] = market_date()
+        return await start_with_paper_claim(SimulationStartRequest.model_validate(fields), user,
+            desktop_independent=bool(record.get("desktop_created")))
     broker = execution_broker.name(record.get("execution_broker"))
     service = execution_broker.get_service(broker)
     if not await asyncio.to_thread(service.is_authenticated):
@@ -209,6 +223,13 @@ async def recover(user, sid):
 async def heartbeat(user, sid):
     from app.dependencies import require_real_trading_access
     require_real_trading_access(user)
+    from app.services.real_broker_policy import enabled
+    if not enabled():
+        record = await asyncio.to_thread(_saved,sid)
+        if not record or record.get("user_id") != user or record.get("session_type") != "real":
+            raise HTTPException(404,"Real session not found")
+        from app.services.real_session_observer import presence
+        return await asyncio.to_thread(presence,user,sid)
     rows = await asyncio.to_thread(slots.for_user, user)
     row = next((r for r in rows if r["session_id"] == sid and r["style"] == "intraday"), None)
     if not row:

@@ -39,6 +39,7 @@ async def saved_real_record(session_id, user_id):
 
 async def status_for(user_id):
     from app.services.user_settings_service import get_settings
+    from app.services.real_trading_day import market_date
 
     chosen = (await asyncio.to_thread(get_settings, user_id, strict=True))[
         "real_execution_broker"
@@ -48,6 +49,8 @@ async def status_for(user_id):
     from app.services import real_session_slots as slots
     from app.services import real_sessions
 
+    from app.services import real_broker_policy as policy
+    await policy.ensure_loaded()
     active_slots = await asyncio.to_thread(real_sessions.active_all, user_id)
     sessions = []
     for row in active_slots:
@@ -82,9 +85,16 @@ async def status_for(user_id):
             await asyncio.to_thread(
                 funding.read, user_id, row["broker"], row["account"]
             )
-            if isinstance(row.get("account"), str) and row["account"]
+            if policy.enabled() and isinstance(row.get("account"), str) and row["account"]
             else None
         )
+        if not policy.enabled():
+            if runtime:
+                item["capital"] = runtime.session_capital
+            else:
+                from app.services.real_day_recovery import _saved
+                saved = await asyncio.to_thread(_saved, row["session_id"])
+                if saved: item["capital"] = saved.get("session_capital")
         participant = (pool or {}).get("participants", {}).get(row["style"])
         if (
             participant
@@ -112,7 +122,7 @@ async def status_for(user_id):
     availability = []
     if account:
         for style in slots.STYLES:
-            row = await asyncio.to_thread(slots.read, chosen, account, style)
+            row = await asyncio.to_thread(slots.read, chosen, account, style) if policy.enabled() else None
             availability.append(
                 {
                     "trading_style": style,
@@ -120,7 +130,7 @@ async def status_for(user_id):
                     "owned_by_you": bool(row and row["owner_user_id"] == user_id),
                 }
             )
-    if account and not any(item["trading_style"] == "intraday" and item["broker"] == chosen for item in sessions):
+    if policy.enabled() and account and not any(item["trading_style"] == "intraday" and item["broker"] == chosen for item in sessions):
         # Read-only discovery also finds Ended books produced by the GitHub main release.
         # Binding and reconciliation happen only through the explicit recover action.
         from types import SimpleNamespace
@@ -139,6 +149,7 @@ async def status_for(user_id):
             r
             for r in sessions
             if r["broker"] == chosen and r["trading_style"] == "intraday"
+            and (policy.enabled() or r.get("trading_date") == market_date())
         ),
         None,
     )
@@ -150,6 +161,7 @@ async def status_for(user_id):
         "active_sessions": sessions,
         "availability": availability,
         "recovery_ready": real_sessions._ready,
+        "restrictions_enabled": policy.enabled(),
     }
 
 
@@ -179,9 +191,10 @@ async def reconcile(
             simulation.rebuild_session_from_db, record, user_id, read_only=True
         )
     from app.services import real_session_slots as slots
-    slot = await asyncio.to_thread(slots.read, session.execution_broker, session.broker_account_id, session.trading_style)
+    from app.services.real_broker_policy import enforce
+    slot = await asyncio.to_thread(slots.read, session.execution_broker, session.broker_account_id, session.trading_style) if enforce(session) else None
     identity = session.portfolio_id if session.trading_style == 'swing' else session.session_id
-    if not slot or slot['owner_user_id'] != user_id or slot['session_id'] != identity:
+    if enforce(session) and (not slot or slot['owner_user_id'] != user_id or slot['session_id'] != identity):
         raise HTTPException(409, 'This book is no longer active; view its archived history')
     from app.services import real_recovery
     from app.services.real_trading_day import market_date

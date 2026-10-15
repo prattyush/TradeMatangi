@@ -226,3 +226,15 @@ original identity/capital and require durable account/projection evidence before
 binding a missing account. Never reuse an ended UI group or apply a new allocation
 percentage to legacy capital. Old main must not execute concurrently against the
 same broker account because it lacks the new fence.
+
+
+### Real broker restrictions are Admin opt-in
+
+Default `enabled=false` in the shared Admin policy applies to Real Day and Swing.
+Off means observation only: retain DDB book records and 180-second heartbeats, but
+never gate Start/restore/order persistence or stop engines because canonical book
+relationships or lease/presence deadlines disagree. No mandatory shared-funding
+reconciliation is required at startup. Keep authentication, session ownership,
+uncertain-submission protection and explicit verified closure independent of this
+switch. New/resumed sessions adopt enforcement only when Admin opts in. Policy
+reads on execution hot paths must remain in-memory; persistence/refresh runs off-loop.

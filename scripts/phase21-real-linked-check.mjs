@@ -21,6 +21,7 @@ const contract=tile=>({symbol:tile.symbol,right:tile.right,strike:Number(tile.st
 const candles=Array.from({length:240},(_,i)=>({timestamp:start-86400+i*180,open:100+i/10,high:102+i/10,low:99+i/10,close:101+i/10}))
 async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  const recovering=Boolean(process.env.REAL_RECOVERY_CHECK)&&mode==='Real'
+ const observing=Boolean(process.env.REAL_OBSERVATION_CHECK)&&mode==='Real'
  const page=await browser.newPage({viewport:{width:1400,height:850}}),errors=[],calls=[],submissions=[]
  if(process.env.NATIVE_REPLAY_CHECK)await installNativeReplayMock(page)
  page.on('pageerror',e=>errors.push(String(e)))
@@ -40,7 +41,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
   else if(path.endsWith('/screens')) { if(method==='POST'){value={screen_id:'linked-record-'+linkedRecords.length,name:body.name,revision:1,order:body.order,state:body.state};if(process.env.NATIVE_REPLAY_CHECK)value.state={...value.state,layout:'2-side',tiles:value.state.tiles.filter(t=>t.kind==='spot'||t.right==='PE')};linkedRecords.push(value)}else value={screens:[record,...linkedRecords]} }
   else if(path.includes('/screens/linked-record-')){value=linkedRecords.find(r=>path.endsWith(r.screen_id));if(method==='PUT')Object.assign(value,body,{revision:value.revision+1})}
   else if(path.endsWith('/settings/profile'))value={email:'synthetic@example.invalid',is_admin:true,real_trading_enabled:mode==='Real'}
-  else if(path.endsWith('/broker/status'))value={broker:'kite',authenticated:true,active_session_id:trading||recovering?'session':null}
+  else if(path.endsWith('/broker/status'))value={broker:'kite',authenticated:true,active_session_id:trading||recovering||observing?'session':null,restrictions_enabled:!observing}
   else if(path.endsWith('/broker/session/recover')){trading=snapshot();value=trading}
   else if(path.endsWith('/real-day-status'))value={date,state:'active',results:[]}
   else if(path.endsWith('/close-summary'))value={position_count:1,pending_order_count:2}
@@ -111,6 +112,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await page.getByRole('button',{name:mode==='Real'?(recovering?'Recover Real':'Start Real'):/^(Start|Resume)$/,exact:true}).click()
  if(emptyStopped){await page.getByRole('button',{name:'Stop',exact:true}).waitFor();assert.equal(dialogs.length,0);assert(calls.some(c=>c.path.endsWith('/trading/session/resume')));assert(calls.some(c=>c.path.endsWith('/prepare-session')&&c.body.session_id==='session'));assert(!calls.some(c=>c.path.endsWith('/trading/start')))}
  await page.getByRole('button',{name:'Order',exact:true}).waitFor({state:'visible'})
+ if(observing){await page.getByRole('button',{name:'Stop',exact:true}).waitFor();assert.equal(calls.filter(c=>c.path.endsWith('/broker/session/recover')).length,0);assert(calls.some(c=>c.path.endsWith('/trading/start')))}
  // Toolbar action labels remain accessible while the visible controls are icons.
  for(const label of ['Record screen','Create linked screen','Event snapshots off']){
   const button=page.getByRole('button',{name:label,exact:true})
@@ -229,4 +231,4 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  results.push({mode,emptyStopped,panes:expectedPanes,checks:process.env.NATIVE_REPLAY_CHECK?'linked underlying/PE stream startup, PE position, Fibonacci creation/deletion, candle notifications with polling suspended':'startup rollback/removal, chart retention, non-modal orders, exact contracts, lot/price edits, premium picker, dragging/clamping, uncertainty fencing',errors})
  await page.close()
 }
-try {for(const mode of process.env.REAL_RECOVERY_CHECK?['Real']:process.env.NATIVE_REPLAY_CHECK?['Replay']:['Real','Stepwise','Replay','Paper'])await scenario(mode);await writeFile(resolve(artifacts,'real-linked-browser-summary.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2))}finally{await browser.close();server.close()}
+try {for(const mode of process.env.REAL_RECOVERY_CHECK||process.env.REAL_OBSERVATION_CHECK?['Real']:process.env.NATIVE_REPLAY_CHECK?['Replay']:['Real','Stepwise','Replay','Paper'])await scenario(mode);await writeFile(resolve(artifacts,'real-linked-browser-summary.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2))}finally{await browser.close();server.close()}

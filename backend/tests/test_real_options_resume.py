@@ -14,7 +14,8 @@ from app.services.kotak_service import KotakError
 
 
 @pytest.fixture
-def session():
+def session(monkeypatch):
+    monkeypatch.setattr("app.services.real_broker_policy.enabled", lambda: True)
     s = simulation.SimulationSession(session_id="real-options-resume", user_id="user",
         symbol="NIFTY", date="2026-10-08", start_time="09:15:00", speed=1,
         session_type="real", instrument_type="options", strike=24200,
@@ -109,7 +110,8 @@ def test_real_stop_preserves_broker_orders(session):
 
 
 @pytest.mark.asyncio
-async def test_start_route_reconciles_and_selects_before_starting_engine(session):
+@pytest.mark.parametrize("enforced",[True,False])
+async def test_start_route_reconciles_and_selects_before_starting_engine(session,enforced):
     s = session
     req = SimulationStartRequest(symbol=s.symbol, date=s.date, start_time=s.start_time,
         speed=1, session_type="real", instrument_type="options", strike=24200,
@@ -121,8 +123,9 @@ async def test_start_route_reconciles_and_selects_before_starting_engine(session
     async def refresh(current, service):
         add_position(current, "PE", 24000, 100)
     def start(current):
-        assert current.strike_pe == 24000
+        assert current.strike_pe == (24000 if enforced else 24300)
     patches = {
+        "app.services.real_broker_policy.enabled": Mock(return_value=enforced),
         "app.services.real_trading_day.state": Mock(return_value={"state": "active"}),
         "app.services.session_group_service.get_active_group": Mock(return_value=None),
         "app.services.session_group_service.create_group": Mock(return_value=group),
@@ -147,10 +150,14 @@ async def test_start_route_reconciles_and_selects_before_starting_engine(session
         for target, replacement in patches.items():
             stack.enter_context(patch(target, new=replacement))
         result = await route._start_simulation_impl(req, s.user_id)
-    assert result.strike_pe == 24000 and result.strike_ce == 24200
+    assert result.strike_pe == (24000 if enforced else 24300) and result.strike_ce == 24200
     assert result.session_capital == 50000
-    assert patches["app.services.swing_funding_store.start_participant"].call_args.args[6] == .5
-    patches["app.services.real_broker_state.refresh"].assert_awaited_once_with(s, broker)
+    if enforced:
+        assert patches["app.services.swing_funding_store.start_participant"].call_args.args[6] == .5
+        patches["app.services.real_broker_state.refresh"].assert_awaited_once_with(s, broker)
+    else:
+        patches["app.services.swing_funding_store.start_participant"].assert_not_called()
+        patches["app.services.real_broker_state.refresh"].assert_not_awaited()
     patches["app.services.simulation.start_session"].assert_called_once_with(s)
     patches["app.services.simulation.rebuild_session_from_db"].assert_called_once()
     assert not broker.place_options_sl_order.called

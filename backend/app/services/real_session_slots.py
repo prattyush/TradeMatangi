@@ -360,6 +360,10 @@ def fenced_put(session, table_name, item):
     """Fence durable child evidence to the existing parent/book engine identity."""
     from app.services.db import get_dynamodb_client
 
+    from app.services.real_broker_policy import enforce
+    if not enforce(session):
+        get_dynamodb_client().put_item(TableName=table_name, Item=serialize(item))
+        return
     identity = (
         session.portfolio_id if session.trading_style == "swing" else session.session_id
     )
