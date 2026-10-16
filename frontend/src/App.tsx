@@ -1,3 +1,7 @@
+import { buildDayChartContextMenu, type DayChartMenuContext } from "./services/dayChartContextMenu";
+import { chartPaneHeight } from "./services/chartLayout";
+import { useWebsiteChartRenderer } from "./hooks/useWebsiteChartRenderer";
+import { chartEntryError, chartMarketPrice, matchesChartContract } from "./services/chartOrderContext";
 import { pendingOrderEdits } from '../../shared/charts/pendingOrderEdits'
 import TradingChartHost from './components/TradingChartHost'
 import { browserSwingSubscribe } from "../../shared/swingStream";
@@ -225,6 +229,7 @@ export default function App() {
 
 function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenMessages:(id?:string)=>void; authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
+  const websiteChartRenderer = useWebsiteChartRenderer()
   useEffect(()=>{pendingOrderEdits.setScope(`${BACKEND_URL}:${authUser.userId}`)},[authUser.userId])
   const [showSwing, setShowSwing] = useState(false)
   const [showSwingKotakLogin,setShowSwingKotakLogin]=useState(false),[swingBrokerRevision,setSwingBrokerRevision]=useState(0)
@@ -314,11 +319,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [tradeLabels, setTradeLabels] = useState<import('./services/api').TradeLabel[]>([])
 
   // ── Context menu state ─────────────────────────────────────────────────────
-  const [contextMenu, setContextMenu] = useState<{
-    x: number; y: number; price: number
-    paneType: string; right?: 'CE' | 'PE'
-    paneId: number
-  } | null>(null)
+  const [contextMenu, setContextMenu] = useState<DayChartMenuContext | null>(null)
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [swingAnalysisPortfolio,setSwingAnalysisPortfolio]=useState<string|undefined>()
@@ -376,18 +377,23 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [lpPickActive, setLpPickActive] = useState(false)
   const [injectedLpPrice, setInjectedLpPrice] = useState<number | null>(null)
   const [missingSlPick, setMissingSlPick] = useState<{ sessionId: string; paneId: number; right?: string; strike?: number; expiry?: string; quantity: number; requestId: string } | null>(null)
+  const [pricePickOrigin, setPricePickOrigin] = useState<{sessionId: string; type: string; right?: string | null; strike?: number | null; expiry?: string | null} | null>(null)
+  const cancelPricePick = useCallback(() => {
+    setMissingSlPick(null); setContextMenuOrderPick(null); setContextMenuEntryTicket(null)
+    setPricePickOrderId(null); setTpPickActive(false); setUtpPickActive(false); setLpPickActive(false); setPricePickOrigin(null)
+  }, [])
   const missingSlSubmitting = useRef(false)
   useEffect(() => {
-    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape') {setMissingSlPick(null);setContextMenuOrderPick(null);setContextMenuEntryTicket(null)} }
+    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape') cancelPricePick() }
     window.addEventListener('keydown', cancel)
     return () => window.removeEventListener('keydown', cancel)
   }, [])
   const [contextMenuOrderPick, setContextMenuOrderPick] = useState<{
-    sessionId: string; side: 'BUY' | 'SELL'; orderType: 'TARGET' | 'LIMIT' | 'TARGET_PERCENT'; targetProfitPct?: number; slPrice: number;
+    sessionId: string; paneId?: number; side: 'BUY' | 'SELL'; orderType: 'TARGET' | 'LIMIT' | 'TARGET_PERCENT'; targetProfitPct?: number; slPrice: number;
     quantity: number | null; fundsRatioPct?: number; riskRatioPct?: number; right?: string; strike?: number; expiry?: string;
   } | null>(null)
   const [contextMenuEntryTicket, setContextMenuEntryTicket] = useState<ContextMenuEntryTicket | null>(null)
-  useEffect(() => {setContextMenuOrderPick(null);setContextMenuEntryTicket(null)}, [sim.sessionId, sim.sessionState, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
+  useEffect(() => {cancelPricePick();setContextMenu(null)}, [sim.sessionId, sim.sessionState, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
   const contextMenuOrderSubmitting = useRef(false)
   const contextMenuEntryTicketRef = useRef<HTMLDivElement>(null)
 
@@ -553,6 +559,13 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [openOptionContracts, setOpenOptionContracts] = useState<OpenOptionContract[]>([])
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(2)
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
+  useEffect(() => {
+    const exists = (value: {paneId?:number;right?:string|null;strike?:number|null;expiry?:string|null}) => panes.some(p => p.id === value.paneId && matchesChartContract(value,p))
+    if (contextMenuEntryTicket && !exists(contextMenuEntryTicket)) setContextMenuEntryTicket(null)
+    if (contextMenuOrderPick && !exists(contextMenuOrderPick)) setContextMenuOrderPick(null)
+    if (missingSlPick && !exists(missingSlPick)) setMissingSlPick(null)
+  }, [panes, contextMenuEntryTicket, contextMenuOrderPick, missingSlPick])
+
   useEffect(() => { setMissingSlPick(null);setContextMenuOrderPick(null);setContextMenuEntryTicket(null) }, [sim.sessionId, activePaneId, panes])
   const [maximizedPaneId, setMaximizedPaneId] = useState<number | null>(null)
   useEffect(startPerformanceDiagnostics, [])
@@ -793,12 +806,19 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   }, [])
 
   useEffect(() => {
+    let frame: number | undefined
     const obs = new ResizeObserver(entries => {
       const h = entries[0]?.contentRect.height
-      if (h && h > 0) setColumnHeight(Math.max(160, h - 8))
+      if (!h || h <= 0) return
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        frame = undefined
+        const next = Math.max(160, Math.floor(h - 8))
+        setColumnHeight(previous => previous === next ? previous : next)
+      })
     })
     if (mainContentRef.current) obs.observe(mainContentRef.current)
-    return () => obs.disconnect()
+    return () => { obs.disconnect(); if (frame !== undefined) cancelAnimationFrame(frame) }
   }, [])
 
   useEffect(() => {
@@ -1535,12 +1555,18 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   }, [sim.startSession, sim.groupId, sim.group?.speed, addingSession, brokeragePerOrder, stratIntervalSecs, autoStartSnapshots, startSnapshots])
 
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
-  const handleChartPriceSelect = useCallback((price: number) => {
+  const handleChartPriceSelect = useCallback((price: number, sourcePane: PaneConfig) => {
+    if (!Number.isFinite(price) || price <= 0 || !panes.some(p=>p.id===sourcePane.id && matchesChartContract(sourcePane,p))) return
+    if (contextMenuOrderPick && (contextMenuOrderPick.sessionId !== sim.sessionId || !matchesChartContract(contextMenuOrderPick, sourcePane))) return
+    if (pricePickOrigin && (pricePickOrigin.sessionId !== sim.sessionId || !matchesChartContract(pricePickOrigin, sourcePane))) return
+    if (utpPickActive && sourcePane.type !== 'equity') return
     if (missingSlPick) {
+      if (missingSlPick.sessionId !== sim.sessionId || missingSlPick.paneId !== sourcePane.id) return
       if (missingSlSubmitting.current) return
       missingSlSubmitting.current = true
       const pick = missingSlPick
       void api.fillMissingStoploss({ session_id: pick.sessionId, trigger_price: price, request_id: pick.requestId, right: pick.right, strike: pick.strike, expiry: pick.expiry }).then(() => {
+        if(simRef.current.sessionId !== pick.sessionId)return
         void sim.refreshOpenOrders(pick.sessionId).catch(error => setBrokerError(String(error)))
         setMissingSlPick(null)
         setBrokerError(null)
@@ -1564,7 +1590,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       if (contextMenuOrderSubmitting.current) return
       const p = contextMenuOrderPick
       if (p.sessionId !== sim.sessionId) {setContextMenuOrderPick(null);return}
-      if (sim.sessionType === 'paper' && p.right &&
+      if (sim.sessionType !== 'real' && p.right &&
           (p.strike !== (p.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE) || p.expiry !== sim.sessionExpiry)) {
         setBrokerError('Select a live option contract before placing an order')
         setContextMenuOrderPick(null)
@@ -1575,7 +1601,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
         group_id: crypto.randomUUID(),
       }
       if (p.right) opts.right = p.right
-      if ((sim.sessionType === 'paper' || p.orderType === 'TARGET_PERCENT') && p.right) { opts.strike = p.strike; opts.expiry = p.expiry }
+      if (p.right) { opts.strike = p.strike; opts.expiry = p.expiry }
       if (p.fundsRatioPct != null) opts.funds_ratio_pct = p.fundsRatioPct
       if (p.riskRatioPct != null) opts.risk_pct = p.riskRatioPct
       if (p.orderType === 'TARGET') opts.target_deviation_pct = targetDeviationPct
@@ -1590,7 +1616,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       setInjectedEditPrice({ orderId: pricePickOrderId, price })
       setPricePickOrderId(null)
     }
-  }, [missingSlPick, sim.sessionId, sim.refreshOpenOrders, pricePickOrderId, tpPickActive, utpPickActive, lpPickActive, contextMenuOrderPick, targetDeviationPct, sim.placeOrder, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
+  }, [panes, pricePickOrigin, missingSlPick, sim.sessionId, sim.refreshOpenOrders, pricePickOrderId, tpPickActive, utpPickActive, lpPickActive, contextMenuOrderPick, targetDeviationPct, sim.placeOrder, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
 
   // ── Strategy callbacks ────────────────────────────────────────────────────────
   const handleStartStrategy = useCallback(async (
@@ -1688,20 +1714,19 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   }, [sim.sessionId, sim.bulkUpdateOrders])
 
   const submitContextMenuEntry = useCallback((ticket: ContextMenuEntryTicket, quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number, targetProfitPct?: number) => {
-    if (!sim.sessionId || !ticket.side || !ticket.orderType) return
-    if (sim.sessionType === 'paper' && ticket.right &&
-        (ticket.strike !== (ticket.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE) || ticket.expiry !== sim.sessionExpiry)) {
-      setBrokerError('Select a live option contract before placing an order')
-      return
-    }
+    if (!sim.sessionId || !ticket.side || !ticket.orderType || ticket.sessionId !== sim.sessionId) return
+    const entryError = chartEntryError({type: ticket.right ? 'options' : 'equity', ...ticket}, {instrumentType:sim.sessionInstrumentType, sessionType:sim.sessionType, strikeCE:sim.sessionStrikeCE, strikePE:sim.sessionStrikePE, expiry:sim.sessionExpiry})
+    if (entryError) { setBrokerError(entryError); return }
     if (ticket.orderType === 'MARKET') {
-      const panePrice = ticket.right === 'CE' ? (sim.currentPriceCE || sim.currentPrice) : ticket.right === 'PE' ? (sim.currentPricePE || sim.currentPrice) : sim.currentPrice
+      let panePrice: number
+      try { panePrice = chartMarketPrice(ticket.right, {equity:sim.currentPrice,ce:sim.currentPriceCE,pe:sim.currentPricePE}) }
+      catch (error) { setBrokerError(String(error)); return }
       const marketablePrice = ticket.side === 'BUY' ? panePrice * (1 + targetDeviationPct) : panePrice * (1 - targetDeviationPct)
       const opts: Record<string, unknown> = { market_order: true, execute_immediately: sim.sessionType === 'real', entry_sl_price: ticket.price, group_id: crypto.randomUUID() }
       if (fundsRatioPct != null) opts.funds_ratio_pct = fundsRatioPct
       if (riskRatioPct != null) opts.risk_pct = riskRatioPct
       if (ticket.right) opts.right = ticket.right
-      if (sim.sessionType === 'paper' && ticket.right) { opts.strike = ticket.strike; opts.expiry = ticket.expiry }
+      if (ticket.right) { opts.strike = ticket.strike; opts.expiry = ticket.expiry }
       sim.placeOrder(ticket.side, 'LIMIT', marketablePrice, quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(error => setBrokerError(String(error)))
     } else if (ticket.orderType === 'AUTO_STOP' || ticket.orderType === 'AUTO_STOP_LIMIT') {
       api.startStrategy({
@@ -1712,152 +1737,34 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
         autostop_deviation_pct: autostopDeviationPct,
         direction: ticket.side,
         right: ticket.right,
+        strike: ticket.strike, expiry: ticket.expiry,
         entry_sl_price: ticket.price,
         risk_ratio_pct: riskRatioPct != null ? riskRatioPct / 100 : undefined,
         funds_ratio_pct: fundsRatioPct,
         quantity: quantity ?? undefined,
       }).catch(error => setBrokerError(String(error)))
     } else {
-      setContextMenuOrderPick({ sessionId: sim.sessionId, side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, targetProfitPct, right: ticket.right, strike: ticket.strike, expiry: ticket.expiry })
+      setContextMenuOrderPick({ sessionId: sim.sessionId, paneId: ticket.paneId, side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, targetProfitPct, right: ticket.right, strike: ticket.strike, expiry: ticket.expiry })
     }
     setContextMenuEntryTicket(null)
-  }, [sim.sessionId, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, targetDeviationPct, autostopTriggerType, autostopDeviationPct])
+  }, [instrumentType, sim.sessionInstrumentType, sim.sessionId, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, targetDeviationPct, autostopTriggerType, autostopDeviationPct])
 
   // ── Context menu handler ───────────────────────────────────────────────────
-  const handleChartContextMenu = useCallback((price: number, screenX: number, screenY: number, ctx: {
+  const handleChartContextMenu = useCallback((price: number, screenX: number, screenY: number, _ctx: {
     paneType: string; right?: 'CE' | 'PE'; hasPosition: boolean; hasOpenOrders: boolean; hasSLOrders: boolean
   }, paneId: number) => {
-    if (sim.sessionState !== 'running' && sim.sessionState !== 'paused') return
-    if (paneId !== activePaneId) {
-      setPricePickOrderId(null)
-      setTpPickActive(false)
-      setContextMenuOrderPick(null)
-    }
-    setContextMenuEntryTicket(null)
+    if (!sim.sessionId || !Number.isFinite(price) || price<=0 || (sim.sessionState !== 'running' && sim.sessionState !== 'paused')) return
+    cancelPricePick()
     setActivePaneId(paneId)
-    setContextMenu({ x: screenX, y: screenY, price, paneType: ctx.paneType, right: ctx.right, paneId })
-  }, [sim.sessionState, activePaneId])
+    const source = panes.find(p => p.id === paneId)
+    if (!source) return
+    setContextMenu({ sessionId:sim.sessionId!, x:screenX, y:screenY, price, paneType:source.type, right:source.right, strike:source.strike, expiry:source.expiry, paneId })
+  }, [panes, sim.sessionId, sim.sessionState, activePaneId, cancelPricePick])
 
   // ── Context menu actions ───────────────────────────────────────────────────
   const contextMenuActions = useMemo((): ContextMenuAction[] => {
-    if (!contextMenu || !sim.sessionId) return []
-
-    const { price, paneType, right } = contextMenu
-    const actions: ContextMenuAction[] = []
-
-    const pane = panes.find(p => p.id === contextMenu.paneId)
-    const netQuantity = right ? sim.trades.filter(t => t.session_id === sim.sessionId && t.right === right && t.strike === pane?.strike && (t.expiry ?? sim.sessionExpiry) === pane?.expiry).reduce((sum, t) => sum + (t.side === 'BUY' ? t.quantity : -t.quantity), 0) : 0
-    const position = right ? { side: netQuantity > 0 ? 'LONG' : netQuantity < 0 ? 'SHORT' : 'FLAT', quantity: Math.abs(netQuantity) } : sim.position
-    if (!(paneType === 'equity' && instrumentType === 'options') && position?.side !== 'FLAT' && position?.quantity > 0) {
-      const covered = sim.openOrders.filter(o => o.status === 'PENDING' && o.side === (position.side === 'LONG' ? 'SELL' : 'BUY') && (o.right ?? null) === (right ?? null) && (!right || (o.strike === pane?.strike && o.expiry === pane?.expiry))).reduce((sum, o) => sum + o.quantity, 0)
-      const quantity = Math.max(0, position.quantity - covered)
-      actions.push({ label: `SL · ${quantity}`, disabled: quantity === 0, onClick: () => {
-        setContextMenuOrderPick(null); setPricePickOrderId(null); setTpPickActive(false); setUtpPickActive(false); setLpPickActive(false)
-        setMissingSlPick({ sessionId: sim.sessionId!, paneId: contextMenu.paneId, right, strike: right ? pane?.strike : undefined, expiry: right ? pane?.expiry : undefined, quantity, requestId: crypto.randomUUID() })
-      } })
-    }
-
-    // "Use as SL" actions
-    const slMode = localStorage.getItem('contextMenuSLMode') === 'both' ? 'both' : 'longOnly'
-
-    actions.push({
-      label: `Use as SL @ ${price.toFixed(2)}`,
-      onClick: () => setContextMenuEntryTicket({ x: contextMenu.x, y: contextMenu.y, price, right,
-        strike: pane?.strike, expiry: pane?.expiry, side: slMode === 'both' ? null : 'BUY', sizingMode }),
-    })
-
-    // Shift SL to here
-    const hasSLOrders = sim.openOrders.some(o => o.is_stoploss && (!right || o.right === right))
-    if (hasSLOrders) {
-      actions.push({
-        label: 'Shift SL to here',
-        onClick: () => {
-          api.bulkUpdateSL(sim.sessionId!, price, right ?? null).then(res => {
-            if (res.orders.length > 0) sim.bulkUpdateOrders(res.orders)
-          }).catch(() => {})
-        }
-      })
-    }
-
-    // Make as limit price
-    const hasOpenOrders = sim.openOrders.some(o => !o.is_stoploss && o.status === 'PENDING' && (!right || o.right === right))
-    if (hasOpenOrders) {
-      actions.push({
-        label: 'Make as limit price',
-        onClick: () => {
-          const ordersToConvert = sim.openOrders.filter(o => !o.is_stoploss && o.status === 'PENDING' && (!right || o.right === right))
-          ordersToConvert.forEach(o => {
-            api.convertOrder(sim.sessionId!, o.order_id, 'LIMIT', price).then(updated => {
-              sim.bulkUpdateOrders([updated])
-            }).catch(() => {})
-          })
-        }
-      })
-    }
-
-    // Start strategy
-    const stratActions: ContextMenuAction[] = [
-      {
-        label: 'Target Profit',
-        submenu: (['half', 'full'] as const).map(size => ({
-          label: size === 'half' ? 'Half' : 'Full',
-          onClick: () => { api.startStrategy({ session_id: sim.sessionId!, strategy_type: 'TargetProfit', target_profit_value: price, target_profit_size: size, right: right ?? undefined }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {}) },
-        })),
-      },
-      {
-        label: 'Lock Profit',
-        onClick: () => {
-          api.startStrategy({
-            session_id: sim.sessionId!,
-            strategy_type: 'LockProfit',
-            lock_profit_value: price,
-            right: right ?? undefined,
-          }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
-        }
-      },
-    ]
-
-    // Aggressive SL — requires open position on current pane (not for underlying pane in options)
-    if (!(paneType === 'equity' && instrumentType === 'options')) {
-      const panePosition = right === 'CE' ? sim.positionCE : right === 'PE' ? sim.positionPE : sim.position
-      if (panePosition && panePosition.side !== 'FLAT') {
-        stratActions.push({
-          label: 'Aggressive SL',
-          onClick: () => {
-            api.startStrategy({
-              session_id: sim.sessionId!,
-              strategy_type: 'AggressiveStoploss',
-              right: right ?? undefined,
-            }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
-          }
-        })
-      }
-    }
-
-    // Underlying-only strategies (equity pane in options sessions)
-    if (paneType === 'equity' && instrumentType === 'options') {
-      for (const targetRight of (['CE', 'PE'] as const)) {
-        if ((targetRight === 'CE' ? sim.positionCE : sim.positionPE).side === 'FLAT') continue
-        stratActions.push({
-          label: `Underlying Target (${targetRight})`,
-          submenu: (['half', 'full'] as const).map(size => ({ label: size === 'half' ? 'Half' : 'Full', onClick: () => { api.startStrategy({ session_id: sim.sessionId!, strategy_type: 'UnderlyingTargetProfit', target_profit_value: price, target_profit_size: size, right: targetRight }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {}) } })),
-        })
-      }
-      for (const targetRight of (['CE', 'PE'] as const)) {
-        if ((targetRight === 'CE' ? sim.positionCE : sim.positionPE).side === 'FLAT') continue
-        stratActions.push({ label: `Underlying SL (${targetRight})`, submenu: (['half', 'full'] as const).map(size => ({
-          label: size === 'half' ? 'Half' : 'Full', onClick: () => {
-            api.startStrategy({ session_id: sim.sessionId!, strategy_type: 'UnderlyingStoploss', underlying_sl_price: price,
-              underlying_stoploss_size: size, right: targetRight }).then(resp => { strategySyncVersionRef.current++; setRunningStrategies(prev => [...prev, resp]) }).catch(() => {})
-          }
-        })) })
-      }
-    }
-
-    actions.push({ label: 'Start strategy', submenu: stratActions })
-
-    return actions
-  }, [panes, sim.trades, sim.sessionExpiry, contextMenu, sim.sessionId, sim.sessionState, sim.openOrders, sim.position, sim.positionCE, sim.positionPE, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, sim.bulkUpdateOrders, sim.handleOrderConverted, sizingMode, fundsRatios, riskRatios, instrumentType])
+    return buildDayChartContextMenu({contextMenu,sim,simRef,panes,sizingMode,cancelPricePick,setMissingSlPick,setContextMenuEntryTicket,setBrokerError,strategySyncVersionRef,setRunningStrategies,setBrokerOrdersSnapshot,targetDeviationPct})
+  }, [panes, sim.trades, sim.sessionInstrumentType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, contextMenu, sim.sessionId, sim.sessionState, sim.openOrders, sim.position, sim.positionCE, sim.positionPE, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, sim.bulkUpdateOrders, sim.handleOrderConverted, sizingMode, fundsRatios, riskRatios, instrumentType, sim.sessionType, sim.applyBrokerSnapshot, sim.updateOrder, targetDeviationPct, cancelPricePick])
 
   // Net session P&L = gross dayPnl minus per-trade commissions (computed by backend)
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
@@ -1896,8 +1803,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   }, [sim.pnlEquity, sim.pnlCE, sim.pnlPE, sim.sessionType, sim.brokeragePerOrder, getPositionForPane, getTickForPane, panes])
 
   // ── Layout rendering helpers ──────────────────────────────────────────────────
-  const chartToolbarHeight = 32
-  const rowHeight = Math.max(160, Math.floor((columnHeight - chartToolbarHeight * 2 - 4) / 2))
+  const rowHeight = chartPaneHeight(columnHeight, websiteChartRenderer, 2)
 
   const renderPane = (pane: PaneConfig, height: number, style?: React.CSSProperties) => {
     const isMaximized = maximizedPaneId === pane.id
@@ -1964,7 +1870,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
         <TradingChartHost
           realTrading={sim.sessionType==='real'}
           onBrokerSnapshot={(sessionId,snapshot)=>{if(simRef.current.sessionId!==sessionId)return;sim.applyBrokerSnapshot(sessionId,snapshot);setBrokerOrdersSnapshot({sessionId,orders:snapshot.orders});setBrokerError(snapshot.wallet_error??null)}}
-          onOrderDrag={async (order,price)=>{ return await sim.updateOrder(order.order_id,order.order_type==='LIMIT'?undefined:price,order.order_type==='LIMIT'?price:undefined,targetDeviationPct) }}
+          onOrderDrag={async (order,price)=>{ if(order.session_id!==simRef.current.sessionId)throw new Error('Session changed'); return await sim.updateOrder(order.order_id,order.order_type==='LIMIT'?undefined:price,order.order_type==='LIMIT'?price:undefined,targetDeviationPct) }}
           pendingStrategyIds={chartPendingStrategyIds}
           onStrategyDrag={handleUpdateStrategyPrice}
           onStrategyCancel={handleCancelStrategy}
@@ -1991,14 +1897,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           } : undefined}
           currentSimTime={draft ? null : (sim.latestEquityTick?.time ?? null)}
           isActive={pane.id === activePaneId}
-          onActivate={() => {
-            setActivePaneId(pane.id)
-            if ((pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || contextMenuOrderPick) && pane.id !== activePaneId) {
-              setPricePickOrderId(null)
-              setTpPickActive(false)
-              setContextMenuOrderPick(null)
-            }
-          }}
+          onActivate={() => { setActivePaneId(pane.id) }}
           trades={draft ? [] : paneTradingData.get(pane.id)?.trades}
           markerSessionKey={chartSessionKey}
           openOrders={draft ? [] : paneTradingData.get(pane.id)?.orders}
@@ -2010,11 +1909,11 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           strategyPosition={pane.type === 'equity' ? sim.position : pane.right === 'CE' ? sim.positionCE : sim.positionPE}
           strategyPositionCE={sim.positionCE}
           strategyPositionPE={sim.positionPE}
-          onPriceSelect={((missingSlPick?.paneId === pane.id && missingSlPick.sessionId === sim.sessionId) || pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || (contextMenuOrderPick && (contextMenuOrderPick.orderType !== 'TARGET_PERCENT' || (pane.id === activePaneId && (!contextMenuOrderPick.right || (pane.right === contextMenuOrderPick.right && pane.strike === contextMenuOrderPick.strike && pane.expiry === contextMenuOrderPick.expiry))))))
-            ? (price) => {
-                setActivePaneId(pane.id)
-                handleChartPriceSelect(price)
-              }
+          onCancelPricePick={cancelPricePick}
+          onPriceSelect={((missingSlPick?.paneId === pane.id && missingSlPick.sessionId === sim.sessionId)
+            || (contextMenuOrderPick && contextMenuOrderPick.sessionId === sim.sessionId && matchesChartContract(contextMenuOrderPick,pane))
+            || ((pricePickOrderId || tpPickActive || utpPickActive || lpPickActive) && pricePickOrigin?.sessionId === sim.sessionId && matchesChartContract(pricePickOrigin,pane)))
+            ? price => { setActivePaneId(pane.id); handleChartPriceSelect(price, pane) }
             : null}
           pricePickLabel={missingSlPick?.paneId === pane.id ? `Click stop-loss price for ${missingSlPick.quantity}` : contextMenuOrderPick ? `⊕ Click for ${contextMenuOrderPick.orderType === 'TARGET_PERCENT' ? 'Sizing Target (market entry)' : contextMenuOrderPick.orderType === 'TARGET' ? 'Target' : 'Limit'} Price` : undefined}
           onContextMenu={draft ? undefined : (price, screenX, screenY, ctx) => handleChartContextMenu(price, screenX, screenY, ctx, pane.id)}
@@ -2059,7 +1958,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   const renderLayout = () => {
     const gap = 4
-    const maxH = Math.max(160, columnHeight - chartToolbarHeight)
+    const maxH = chartPaneHeight(columnHeight, websiteChartRenderer, 1)
 
     // Maximize is handled inline per-layout rather than with a separate top-level
     // branch. Keeping the same flex container structure means the pane wrapper div's
@@ -2067,12 +1966,12 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     // Non-maximized panes get display:none — still mounted, liveWindowRef preserved.
 
     if (layoutPreset === 1) {
-      const h = columnHeight - chartToolbarHeight
+      const h = maxH
       return panes[0] ? renderPane(panes[0], Math.max(160, h)) : null
     }
 
     if (layoutPreset === 2) {
-      const h = Math.max(160, Math.floor((columnHeight - chartToolbarHeight * 2 - gap) / 2))
+      const h = rowHeight
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap }}>
           {panes.slice(0, 2).map(p => {
@@ -2898,15 +2797,18 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
                 await sim.updateOrder(orderId, triggerPrice, limitPrice, targetDeviationPct, quantity)
               }}
               onRequestPricePick={orderId => {
+                const order = sim.openOrders.find(o => o.order_id === orderId)
+                const pane = panes.find(p => p.id === activePaneId)
+                setPricePickOrigin({sessionId:sim.sessionId!,...(order ? {type:order.right?'options':'equity',right:order.right,strike:order.strike,expiry:order.expiry} : pane ?? {type:'equity'})})
                 setPricePickOrderId(orderId)
                 setInjectedEditPrice(null)
               }}
               injectedEditPrice={injectedEditPrice}
-              onRequestTpPick={() => { setTpPickActive(true); setInjectedTpPrice(null) }}
+              onRequestTpPick={right => { const pane=panes.find(p=>p.id===activePaneId); if(right)setPricePickOrigin({sessionId:sim.sessionId!,type:'options',right,strike:right==='CE'?sim.sessionStrikeCE:sim.sessionStrikePE,expiry:sim.sessionExpiry}); else if(pane)setPricePickOrigin({sessionId:sim.sessionId!,...pane}); setTpPickActive(true); setInjectedTpPrice(null) }}
               injectedTpPrice={injectedTpPrice}
-              onRequestUtpPick={() => { setUtpPickActive(true); setInjectedUtpPrice(null) }}
+              onRequestUtpPick={() => { setPricePickOrigin({sessionId:sim.sessionId!,type:'equity'}); setUtpPickActive(true); setInjectedUtpPrice(null) }}
               injectedUtpPrice={injectedUtpPrice}
-              onRequestLpPick={() => { setLpPickActive(true); setInjectedLpPrice(null) }}
+              onRequestLpPick={right => { const pane=panes.find(p=>p.id===activePaneId); if(right)setPricePickOrigin({sessionId:sim.sessionId!,type:'options',right,strike:right==='CE'?sim.sessionStrikeCE:sim.sessionStrikePE,expiry:sim.sessionExpiry}); else if(pane)setPricePickOrigin({sessionId:sim.sessionId!,...pane}); setLpPickActive(true); setInjectedLpPrice(null) }}
               injectedLpPrice={injectedLpPrice}
               onStartStrategy={handleStartStrategy}
               onCancelAllStrategies={handleCancelAllStrategies}

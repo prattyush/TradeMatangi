@@ -1169,6 +1169,7 @@ export default function SwingPortfolioPanel({
           }
           await act(`${prefix}/orders/${order.order_id}`, {price}, "PATCH");
         }}
+        onCancelPick={() => { setOrderPick(null); setPicking(false); }}
         onPick={(value) => {
           if (orderPick) { orderPick.receive(value); setOrderPick(null); return; }
           if (Number.isFinite(value) && value > 0) setPrice(value.toFixed(2));

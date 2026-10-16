@@ -6,30 +6,33 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   useState,
   type ReactNode,
 } from "react";
 import Chart, { type Props, type LightweightChartState } from "./Chart";
 import { useWebsiteChartRenderer } from "../hooks/useWebsiteChartRenderer";
 import type { OHLCCandle, Order, BrokerSnapshot } from "../services/api";
-const KLine = lazy(() => import("./WebsiteKLineChart"));
+import { flashError } from "../services/notifications";
 class ChartBoundary extends Component<
-  { children: ReactNode; onFallback: () => void },
-  { error: boolean }
+  { children: ReactNode; onRetry: () => void },
+  { error: Error | null }
 > {
-  state = { error: false };
-  static getDerivedStateFromError() {
-    return { error: true };
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error : new Error(String(error)) };
+  }
+  componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    console.error("KLine chart failed", error, info.componentStack);
+    flashError(error, "KLine chart");
   }
   render() {
-    return this.state.error ? (
-      <div role="alert">
-        KLine could not load. Your session is still running.{" "}
-        <button onClick={this.props.onFallback}>Use Lightweight</button>
-      </div>
-    ) : (
-      this.props.children
-    );
+    return this.state.error ? <div role="alert">
+      KLine could not load or render. Trading controls remain available.{' '}
+      <button onClick={this.props.onRetry}>Retry chart</button>
+      <div>Change chart renderer in Settings. If Retry fails, refresh the page.</div>
+      <details><summary>Chart error details</summary>{this.state.error.message}</details>
+    </div> : this.props.children;
   }
 }
 export interface TradingChartProps extends Props {
@@ -54,10 +57,7 @@ export default function TradingChartHost(props: TradingChartProps) {
   useEffect(() => {
     if (!activity) setRenderer(requestedRenderer);
   }, [requestedRenderer, activity]);
-  const [fallback, setFallback] = useState(false);
-  useEffect(() => {
-    if (renderer === "lightweight") setFallback(false);
-  }, [renderer]);
+  const [attempt, setAttempt] = useState(0);
   const lightweightState = useRef<LightweightChartState>({});
   const retained = useRef(new Map<number, OHLCCandle>());
   const identity = JSON.stringify([
@@ -70,6 +70,7 @@ export default function TradingChartHost(props: TradingChartProps) {
     props.tradingDate,
     props.markerSessionKey,
   ]);
+  const KLine = useMemo(() => lazy(() => import("./WebsiteKLineChart")), [attempt, identity]);
   const last = useRef(identity);
   if (last.current !== identity) {
     last.current = identity;
@@ -80,13 +81,12 @@ export default function TradingChartHost(props: TradingChartProps) {
     else
       for (const candle of candles) retained.current.set(candle.time, candle);
   }, []);
-  return renderer === "kline" && !fallback ? (
-    <ChartBoundary onFallback={() => setFallback(true)}>
+  return renderer === "kline" ? (
+    <ChartBoundary key={`${identity}:${attempt}`} onRetry={() => setAttempt(v => v + 1)}>
       <Suspense
         fallback={
           <div role="status">
-            Loading KLine…{" "}
-            <button onClick={() => setFallback(true)}>Use Lightweight</button>
+            Loading KLine… Change renderer in Settings if loading does not finish.
           </div>
         }
       >
@@ -94,18 +94,11 @@ export default function TradingChartHost(props: TradingChartProps) {
           key={identity}
           {...props}
           retained={retained}
-          onFallback={() => setFallback(true)}
         />
       </Suspense>
     </ChartBoundary>
   ) : (
     <>
-      {fallback && (
-        <div role="status">
-          Using Lightweight for this chart.{" "}
-          <button onClick={() => setFallback(false)}>Retry KLine</button>
-        </div>
-      )}
       <Chart
         {...props}
         lightweightState={lightweightState}

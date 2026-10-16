@@ -3,7 +3,7 @@ import type { Props } from "../components/Chart";
 import api, { type OHLCCandle } from "../services/api";
 import { rememberChartData } from "../services/chartDataCache";
 import { RecentLiveTicks } from "../services/tradingChartState";
-import { mergeKLineHistory, mergeKLineTick } from "../services/klineCandles";
+import { checkedChartCandles, mergeKLineHistory, mergeKLineTick } from "../services/klineCandles";
 
 export function useKLineCandles(
   props: Props,
@@ -120,8 +120,9 @@ export function useKLineCandles(
                 )
               : Promise.resolve([]),
           ]);
-          history = [...prior, ...session];
+          history = [...checkedChartCandles(prior), ...checkedChartCandles(session)];
         }
+        history = checkedChartCandles(history);
         if (disposed) return;
         const now =
           latest.current.currentSimTime ?? latest.current.latestTick?.time;

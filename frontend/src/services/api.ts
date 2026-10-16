@@ -228,6 +228,8 @@ export interface StrategyResponse {
 }
 
 export interface StartStrategyRequest {
+  strike?: number
+  expiry?: string
   session_id: string
   strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss'
   right?: 'CE' | 'PE' | null

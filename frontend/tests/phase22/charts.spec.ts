@@ -629,3 +629,116 @@ for(const drawing of [
   await expect(page.getByRole('button',{name:'Clear',exact:true})).toHaveCount(0);
   expect(await page.evaluate(()=>(window as any).invalidRemovals)).toBe(0);
 });
+
+test('one collapsible tools panel controls only the active KLine chart', async ({page})=>{
+  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({sharedTools:true}));
+  await expect(page.locator('.website-kline')).toHaveCount(2);
+  await page.waitForFunction(()=>(window as any).charts().every((c:any)=>c.getDataList().length>0));
+  await expect(page.getByRole('button',{name:'Toggle drawing and indicator tools'})).toHaveCount(1);
+  await page.getByRole('button',{name:'Toggle drawing and indicator tools'}).click();
+  await expect(page.locator('.website-chart-tools-name')).toHaveText('NIFTY');
+  await page.locator('.website-chart-tools button').filter({hasText:/^MA$/}).click();
+  const second=await page.locator('.kline').nth(1).boundingBox();await page.mouse.click(second!.x+100,second!.y+100);
+  await expect(page.locator('.website-chart-tools-name')).toContainText('24000 PE');
+  await expect(page.locator('.website-chart-tools button').filter({hasText:/^MA$/})).toHaveAttribute('aria-pressed','false');
+  await page.getByRole('button',{name:'Horizontal line',exact:true}).click();
+  await page.waitForFunction(()=>(window as any).charts()[1].getOverlays().length>0);
+  await page.waitForTimeout(550); // Keep activation and placement distinct from a chart double-click.
+  await page.mouse.click(second!.x+150,second!.y+180);
+  await page.waitForFunction(()=>(window as any).drawings.length===1);
+  expect(await page.evaluate(()=>(window as any).drawings[0].instrument.right)).toBe('PE');
+  const first=await page.locator('.kline').nth(0).boundingBox();await page.mouse.click(first!.x+100,first!.y+100);
+  await expect(page.locator('.website-chart-tools button').filter({hasText:/^MA$/})).toHaveAttribute('aria-pressed','true');
+  await page.getByRole('button',{name:'Toggle drawing and indicator tools'}).click();
+  await expect(page.locator('.website-kline-tools')).toBeHidden();
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await expect(page.getByRole('complementary',{name:'Active chart drawings and indicators'})).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('Swing chart resizes and toggles the shared tools without ResizeObserver errors', async ({page})=>{
+  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({swingHarness:true}));
+  await page.waitForSelector('.swing-renderer .website-kline canvas');
+  for(const width of [760,1101,800,1200]){
+    await page.setViewportSize({width,height:700});
+    await page.getByRole('button',{name:'Toggle drawing and indicator tools'}).click();
+    await page.waitForTimeout(100);
+  }
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await page.waitForSelector('.tv-lightweight-charts');
+  for(const width of [800,1200]){await page.setViewportSize({width,height:750});await page.waitForTimeout(100)}
+  await page.evaluate(()=>(window as any).switchRenderer('kline'));
+  await page.waitForSelector('.website-kline canvas');
+  await page.waitForTimeout(300);
+  expect(errors).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+test('KLine recovery reports the real error and retries only the chart',async({page})=>{
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  const writes=()=>page.evaluate(()=>(window as any).requests.filter((r:any)=>r.method!=='GET').length);
+  const before=await writes();
+  await page.evaluate(()=>(window as any).setProps({trades:{invalid:'reconnect fixture'}}));
+  await expect(page.getByRole('alert')).toContainText('KLine could not load or render');
+  await page.getByText('Chart error details',{exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('iterable');
+  await expect(page.getByRole('button',{name:/Use Lightweight|Retry KLine/})).toHaveCount(0);
+  await page.evaluate(()=>(window as any).setProps({trades:[]}));
+  await page.getByRole('button',{name:'Retry chart',exact:true}).click();
+  await page.waitForSelector('.website-kline canvas');
+  expect(await writes()).toBe(before);
+  await page.evaluate(()=>(window as any).setProps({trades:{invalid:true}}));
+  await expect(page.getByRole('alert')).toContainText('KLine could not load or render');
+  await page.evaluate(()=>(window as any).setProps({trades:[],markerSessionKey:'different-session'}));
+  await page.waitForSelector('.website-kline canvas');
+  expect(await writes()).toBe(before);
+});
+
+test('chart renderer switches only through settings and Escape cancels picking without a numeric write',async({page})=>{
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await expect(page.getByRole('button',{name:/Lightweight/})).toHaveCount(0);
+  await page.evaluate(()=>(window as any).setProps({onPriceSelect:(p:number)=>(window as any).picked=p,onCancelPricePick:()=>{(window as any).cancelled=true;(window as any).setProps({onPriceSelect:null})}}));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>(window as any).cancelled===true);
+  expect(await page.evaluate(()=>(window as any).picked)).toBeUndefined();
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));await page.waitForSelector('.tv-lightweight-charts');
+  expect(await page.evaluate(()=>(window as any).requests.filter((r:any)=>r.url.includes('/api/orders/')&&r.method!=='GET').length)).toBe(0);
+});
+
+test('three KLine replay charts use the available height without the old toolbar gap',async({page})=>{
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({threeCharts:true}));
+  await expect(page.locator('.website-kline')).toHaveCount(3);
+  await page.waitForFunction(()=>(window as any).charts().length===3&&(window as any).charts().every((c:any)=>c.getDataList().length>0));
+  const gap=await page.evaluate(()=>{
+    const area=document.querySelector('[data-testid="three-chart-area"]')!.getBoundingClientRect();
+    const bottoms=[...document.querySelectorAll('.website-kline')].map(e=>e.getBoundingClientRect().bottom);
+    return area.bottom-Math.max(...bottoms);
+  });
+  expect(gap).toBeGreaterThanOrEqual(0);expect(gap).toBeLessThanOrEqual(1);
+});
+
+test('production underlying context menu prevents option-premium orders',async({page})=>{
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({menuHarness:true,openOrders:[]}));
+  const rect=await page.locator('.kline').boundingBox();await page.mouse.click(rect!.x+250,rect!.y+150,{button:'right'});
+  await expect(page.getByText('Place option orders on a CE/PE chart',{exact:true})).toBeVisible();
+  await expect(page.getByText(/^Use as SL @/)).toHaveCount(0);
+  await expect(page.getByText('Shift SL to here',{exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=>(window as any).requests.filter((r:any)=>r.url.includes('/api/orders')&&r.method!=='GET').length)).toBe(0);
+});
+for(const right of ['CE','PE'])test(`production ${right} right-click menu and ticket preserve the selected contract`,async({page})=>{
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(right=>(window as any).setProps({menuHarness:true,paneType:'options',right,strike:24000,expiry:'2026-10-20',openOrders:[]}),right);
+  await page.waitForSelector('.website-kline canvas');
+  const rect=await page.locator('.kline').boundingBox();await page.mouse.click(rect!.x+250,rect!.y+150,{button:'right'});
+  await page.getByText(/^Use as SL @/).click();
+  await expect(page.getByRole('dialog',{name:'Chart entry ticket'})).toContainText(`24000 ${right}`);
+  await page.getByRole('button',{name:'Limit',exact:true}).click();
+  await page.getByRole('button',{name:'Qty 1',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).submittedTicket)).toMatchObject({ticket:{sessionId:'session',paneId:1,right,strike:24000,expiry:'2026-10-20',orderType:'LIMIT'},quantity:1});
+});

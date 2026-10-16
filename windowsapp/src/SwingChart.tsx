@@ -193,6 +193,7 @@ export default function SwingChart(
         onSwingChartContext={props.onChartContext}
         trades={props.trades}
         pricePickAction={props.picking ? { ticket: {} } : null}
+        onPricePickCancel={props.onCancelPick}
         onPricePick={props.onPick}
       />
     </div>

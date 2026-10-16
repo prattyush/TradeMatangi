@@ -1,3 +1,9 @@
+import { buildDayChartContextMenu } from "../../src/services/dayChartContextMenu";
+import ChartContextMenu from "../../src/components/ChartContextMenu";
+import ChartEntryTicket, { type EntryTicket } from "../../src/components/ChartEntryTicket";
+import { chartPaneHeight } from "../../src/services/chartLayout";
+import { WebsiteChartTools } from "../../src/components/WebsiteChartTools";
+import SwingChart from "../../src/components/SwingChart";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import TradingChartHost from "../../src/components/TradingChartHost";
@@ -186,6 +192,8 @@ window.fetch = async (input: any, options: any = {}) => {
   });
 };
 function Harness() {
+  const [entryTicket,setEntryTicket]=useState<EntryTicket|null>(null);
+  const [menu,setMenu]=useState<any>(null);
   const [props, setProps] = useState<any>({
     symbol: "NIFTY",
     tradingDate: "2026-10-16",
@@ -227,7 +235,7 @@ function Harness() {
   w.directSwitch = (value: any) => publishRenderer(value, rendererAccountKey());
   w.refreshBroker = () => api.reconcileKotakOrders("session");
   w.getPending = () => pendingOrderEdits.get("session", "o1");
-  return (
+  const chart = (
     <TradingChartHost
       {...props}
       onBrokerSnapshot={(_session, snapshot) =>
@@ -248,6 +256,30 @@ function Harness() {
       }}
     />
   );
+  if (props.menuHarness) {
+    const flat={side:'FLAT',quantity:0};
+    const pane={id:1,type:props.paneType??'equity',right:props.right,strike:props.strike,expiry:props.expiry};
+    const environment={contextMenu:menu,sim:{sessionId:'session',symbol:'NIFTY',sessionType:'sim',sessionInstrumentType:'options',trades:[],openOrders:[],position:flat,positionCE:flat,positionPE:flat},simRef:{current:{sessionId:'session'}},panes:[pane],sizingMode:'quantity',cancelPricePick:()=>{},setMissingSlPick:()=>{},setContextMenuEntryTicket:setEntryTicket,setBrokerError:()=>{},strategySyncVersionRef:{current:0},setRunningStrategies:()=>{},setBrokerOrdersSnapshot:()=>{},targetDeviationPct:.01};
+    return <>{React.cloneElement(chart,{onContextMenu:(price:number,x:number,y:number,ctx:any)=>setMenu({sessionId:'session',paneId:1,price,x,y,...ctx,strike:props.strike,expiry:props.expiry})})}
+      {menu&&<ChartContextMenu x={menu.x} y={menu.y} price={menu.price} actions={buildDayChartContextMenu(environment as unknown as Parameters<typeof buildDayChartContextMenu>[0])} onClose={()=>setMenu(null)}/>}
+      {entryTicket&&<ChartEntryTicket ticket={entryTicket} fundsRatios={{l:3,m:6,h:12}} riskRatios={{l:1,m:2,h:4}} instrumentType="options" sessionType="sim" onChange={setEntryTicket} onSubmit={(ticket,quantity)=>{w.submittedTicket={ticket,quantity};setEntryTicket(null)}} onClose={()=>setEntryTicket(null)}/>}
+    </>;
+  }
+  if (props.threeCharts) {
+    const height = chartPaneHeight(700, 'kline', 2);
+    return <WebsiteChartTools><div data-testid="three-chart-area" style={{height:700,display:'flex',flexDirection:'column',gap:4}}>
+      {React.cloneElement(chart,{height})}
+      <div style={{display:'flex',gap:4}}>{["CE","PE"].map(right=><div key={right} style={{flex:1,minWidth:0}}>{React.cloneElement(chart,{height,paneType:'options',right,strike:24000,expiry:'2026-10-20',openOrders:[],isActive:false})}</div>)}</div>
+    </div></WebsiteChartTools>;
+  }
+  if (props.swingHarness) return <WebsiteChartTools><div style={{display:'flex',height:'70vh'}}>
+    <SwingChart pane={{symbol:'NIFTY',instrument_type:'equity',interval:'3m',as_of_date:'2026-10-16'}} drawingScope="test" chartKind="index" candles={today} loading={false} message="" live={false} active picking={false} orders={[]} onPick={()=>{}} onActivate={()=>{}} loadOlder={async()=>({candles:[],more:false})} />
+  </div></WebsiteChartTools>;
+  if (props.sharedTools) return <WebsiteChartTools><div style={{display:'flex',minWidth:0}}>
+    <div style={{flex:1,minWidth:0}}>{React.cloneElement(chart,{isActive:!props.activeIndex,onActivate:()=>setProps((p:any)=>({...p,activeIndex:0}))})}</div>
+    <div style={{flex:1,minWidth:0}}>{React.cloneElement(chart,{paneType:'options',right:'PE',strike:24000,expiry:'2026-10-20',openOrders:[],isActive:props.activeIndex===1,onActivate:()=>setProps((p:any)=>({...p,activeIndex:1}))})}</div>
+  </div></WebsiteChartTools>;
+  return chart;
 }
 createRoot(document.getElementById("test-root")!).render(
   <React.StrictMode>
@@ -260,3 +292,8 @@ w.chart = () => {
   return init(element);
 };
 w.ready = true;
+
+w.charts = () => [...document.querySelectorAll(".kline")].map(element => {
+  element.id = element.getAttribute("k-line-chart-id") ?? "";
+  return init(element as HTMLElement);
+});

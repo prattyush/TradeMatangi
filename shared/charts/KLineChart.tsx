@@ -373,6 +373,7 @@ export function KLineChart({
   onToggleHistoricalMarkers,
   pricePickAction = null,
   onPricePick,
+  onPricePickCancel,
   onOrderSelect,
   onSwingChartContext,
   onOrderDrag,
@@ -452,6 +453,7 @@ export function KLineChart({
   onToggleHistoricalMarkers?: () => void;
   pricePickAction?: PricePickAction | null;
   onPricePick?: (price: number) => void;
+  onPricePickCancel?: () => void;
   onOrderSelect?: (order: DesktopOrder) => void;
   onSwingChartContext?: (price: number, x: number, y: number) => void;
   onOrderDrag?: (order: DesktopOrder, price: number) => void;
@@ -1466,7 +1468,7 @@ export function KLineChart({
       if (event.key === "Escape") {
         setDrawingGesture(false);
         setContextMenu(null);
-        if (pricePickAction) onPricePick?.(NaN);
+        if (pricePickAction) { if (onPricePickCancel) onPricePickCancel(); else onPricePick?.(NaN); }
       }
       if (
         (event.key === "Delete" || event.key === "Backspace") &&
@@ -1501,6 +1503,7 @@ export function KLineChart({
     drawings,
     openOrders,
     pricePickAction,
+    onPricePickCancel,
   ]);
   const deletePendingRef = useRef(new Set<string>());
   const deleteDrawing = async (id: string) => {

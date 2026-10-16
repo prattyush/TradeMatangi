@@ -89,6 +89,7 @@ export interface Props {
   strategyPositionPE?: Position
   strategyPaneActive?: boolean
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
+  onCancelPricePick?: () => void
   onPriceSelect?: ((price: number) => void) | null
   pricePickLabel?: string
   // Right-click context menu
@@ -345,13 +346,22 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
     })
     chartRef.current = chart
 
+    let resizeFrame: number | undefined
+    let lastWidth = Math.floor(el.clientWidth)
     const ro = new ResizeObserver(entries => {
-      const w = entries[0].contentRect.width
-      if (w > 0) chart.applyOptions({ width: w })
+      const width = Math.floor(entries[0].contentRect.width)
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
+      resizeFrame = undefined
+      if (width <= 0 || width === lastWidth) return
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = undefined
+        if (width !== lastWidth) { lastWidth = width; chart.applyOptions({ width }) }
+      })
     })
     ro.observe(el)
     return () => {
       ro.disconnect()
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
       chart.remove()
       chartRef.current = null
       seriesRefs.current.clear()
@@ -464,6 +474,7 @@ export default function Chart({
   strategyPositionCE,
   strategyPositionPE,
   strategyPaneActive = false,
+  onCancelPricePick,
   onPriceSelect = null,
   pricePickLabel,
   onContextMenu,
@@ -624,6 +635,12 @@ export default function Chart({
   onCandlesChangeRef.current = onCandlesChange
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
+  useEffect(() => {
+    if (!isActive || !onPriceSelect || !onCancelPricePick) return
+    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancelPricePick() }
+    window.addEventListener('keydown',cancel)
+    return () => window.removeEventListener('keydown',cancel)
+  }, [isActive,onPriceSelect,onCancelPricePick])
   useEffect(() => { onContextMenuRef.current = onContextMenu }, [onContextMenu])
   useEffect(() => {
     if (!drawDropdownOpen) return
@@ -950,16 +967,23 @@ export default function Chart({
     window.addEventListener('mouseup',dragEnd,true)
     window.addEventListener('blur',abortDrag)
 
+    let resizeFrame: number | undefined
+    let lastWidth = Math.floor(container.clientWidth)
     const ro = new ResizeObserver(entries => {
-      // Skip when the container is hidden (display:none during maximize of another pane)
-      // to avoid applyOptions({ width: 0 }) which can corrupt the Lightweight Charts canvas.
-      const w = entries[0].contentRect.width
-      if (w > 0) chart.applyOptions({ width: w })
+      const width = Math.floor(entries[0].contentRect.width)
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
+      resizeFrame = undefined
+      if (width <= 0 || width === lastWidth) return
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = undefined
+        if (width !== lastWidth) { lastWidth = width; chart.applyOptions({ width }) }
+      })
     })
     ro.observe(containerRef.current)
 
     return () => {
       ro.disconnect()
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
       mounted=false
       container.removeEventListener('mousedown',dragStart,true)
       window.removeEventListener('mousemove',dragMove,true)
