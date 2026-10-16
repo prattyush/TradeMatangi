@@ -58,3 +58,11 @@ export function mergeKLineHistory(
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
+
+/** Keep malformed reconnect responses out of the renderer, without inventing prices. */
+export function checkedChartCandles(rows: unknown): OHLCCandle[] {
+  if (!Array.isArray(rows) || rows.some(row => !row || !['time','open','high','low','close'].every(key => typeof row[key] === 'number' && Number.isFinite(row[key])))) {
+    throw new Error('Chart history contains invalid candles. Retry chart data.');
+  }
+  return rows;
+}

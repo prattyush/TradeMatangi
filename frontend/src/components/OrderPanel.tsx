@@ -32,7 +32,7 @@ interface Props {
   // Price-pick from chart
   onRequestPricePick: (orderId: string) => void
   injectedEditPrice: { orderId: string; price: number } | null
-  onRequestTpPick?: () => void
+  onRequestTpPick?: (right?: 'CE' | 'PE') => void
   injectedTpPrice?: number | null
   onRequestUtpPick?: () => void
   injectedUtpPrice?: number | null
@@ -71,7 +71,7 @@ interface Props {
   onUpdateStrategyPrice?: (strategyId: string, price: number) => Promise<void>
   onBulkUpdateSL?: (triggerPrice: number, right: string | null) => Promise<{ updated: number }>
   onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number) => Promise<{ converted: number; results?: { order_id: string; state: string; message?: string | null }[] }>
-  onRequestLpPick?: () => void
+  onRequestLpPick?: (right?: 'CE' | 'PE') => void
   injectedLpPrice?: number | null
   onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
   onSnapshotEvent?: (event: { type: string; description: string; details: Record<string, unknown> }) => void
@@ -881,7 +881,7 @@ export default function OrderPanel({
                 />
                 {!tpIsPct && onRequestTpPick && (
                   <button
-                    onClick={onRequestTpPick}
+                    onClick={() => onRequestTpPick?.(instrumentType==='options'?stratRight:undefined)}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',
@@ -1051,7 +1051,7 @@ export default function OrderPanel({
                 />
                 {!lpIsPct && onRequestLpPick && (
                   <button
-                    onClick={onRequestLpPick}
+                    onClick={() => onRequestLpPick?.(instrumentType==='options'?stratRight:undefined)}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',

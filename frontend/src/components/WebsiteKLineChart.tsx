@@ -80,7 +80,6 @@ async function drawingRequest(
 export default function WebsiteKLineChart(
   props: TradingChartProps & {
     retained: MutableRefObject<Map<number, OHLCCandle>>;
-    onFallback: () => void;
   },
 ) {
   const sharedTools = useWebsiteChartTools();
@@ -96,14 +95,14 @@ export default function WebsiteKLineChart(
   const [catalogue, setCatalogue] = useState<SymbolInfo[]>([]);
   useEffect(() => {
     let active = true;
-    const request = catalogueRequest ?? (catalogueRequest = api.getSymbols());
+    const request = catalogueRequest ?? (catalogueRequest = api.getSymbols().catch(error => { catalogueRequest = undefined; throw error; }));
     void request
       .then((value) => {
         if (active && Array.isArray(value)) setCatalogue(value);
         else if (active)
           reportError(
             new Error(
-              "Instrument catalogue is unavailable; use Lightweight or reopen the chart",
+              "Instrument catalogue is unavailable; retry chart data or change renderer in Settings",
             ),
           );
       })
@@ -111,7 +110,7 @@ export default function WebsiteKLineChart(
     return () => {
       active = false;
     };
-  }, []);
+  }, [refresh]);
   const [settings, setSettings] = useState(defaults),
     [collapsed, setCollapsed] = useState(true);
   const indicatorKey = `website-kline-indicators:${rendererAccountKey()}:${props.symbol}:${props.paneType}:${props.right ?? ""}:${props.strike ?? ""}:${props.expiry ?? ""}`;
@@ -375,7 +374,7 @@ export default function WebsiteKLineChart(
     return (
       <div role="status">
         {error || "Loading chart instrument…"}{" "}
-        <button onClick={props.onFallback}>Use Lightweight</button>
+        <button onClick={() => { catalogueRequest = undefined; setRefresh(v => v + 1); }}>Retry chart data</button> <span>Change chart renderer in Settings.</span>
       </div>
     );
   return (
@@ -399,13 +398,6 @@ export default function WebsiteKLineChart(
           }}
         >
           ↻
-        </button>
-        <button
-          title="Use Lightweight for this chart"
-          disabled={busy}
-          onClick={props.onFallback}
-        >
-          Lightweight
         </button>
         {props.onMaximize && (
           <button
@@ -526,6 +518,7 @@ export default function WebsiteKLineChart(
           pricePickAction={
             props.onPriceSelect ? { label: props.pricePickLabel } : null
           }
+          onPricePickCancel={props.onCancelPricePick}
           onPricePick={(price) => {
             if (Number.isFinite(price) && price > 0)
               props.onPriceSelect?.(price);

@@ -89,6 +89,7 @@ export interface Props {
   strategyPositionPE?: Position
   strategyPaneActive?: boolean
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
+  onCancelPricePick?: () => void
   onPriceSelect?: ((price: number) => void) | null
   pricePickLabel?: string
   // Right-click context menu
@@ -473,6 +474,7 @@ export default function Chart({
   strategyPositionCE,
   strategyPositionPE,
   strategyPaneActive = false,
+  onCancelPricePick,
   onPriceSelect = null,
   pricePickLabel,
   onContextMenu,
@@ -633,6 +635,12 @@ export default function Chart({
   onCandlesChangeRef.current = onCandlesChange
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
+  useEffect(() => {
+    if (!isActive || !onPriceSelect || !onCancelPricePick) return
+    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancelPricePick() }
+    window.addEventListener('keydown',cancel)
+    return () => window.removeEventListener('keydown',cancel)
+  }, [isActive,onPriceSelect,onCancelPricePick])
   useEffect(() => { onContextMenuRef.current = onContextMenu }, [onContextMenu])
   useEffect(() => {
     if (!drawDropdownOpen) return

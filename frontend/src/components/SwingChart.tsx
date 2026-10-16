@@ -67,6 +67,7 @@ export default function SwingChart(props: SwingChartProps) {
         drawingStorageKey={`swing-drawings:${props.drawingScope}:${pane.symbol}:${pane.right}:${pane.strike}:${pane.expiry}:${pane.interval}`}
         isActive={props.active}
         onActivate={props.onActivate}
+        onCancelPricePick={props.onCancelPick}
         onPriceSelect={props.picking ? props.onPick : null}
         pricePickLabel="Pick a price for the confirmed Swing ticket"
         openOrders={props.orders}

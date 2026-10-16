@@ -188,3 +188,35 @@ PR #675 was ultimately retargeted to and merged into preprod. The next follow-up
 - **21 browser tests pass**: the earlier 19 plus multi-chart shared tools/active-contract drawing/independent indicator state/Lightweight hiding, and actual Swing renderer resize/tool-toggle/renderer-switch checks without runtime errors or horizontal overflow.
 - **259 shared/desktop unit tests pass**; both TypeScript checks and the website Vite production build pass. The existing large-chunk advisory remains. Backend tests were not repeated for these presentation-only changes.
 - Manual acceptance: deploy the website, verify the single left rail in Day and Swing, switch active charts and toggle the panel, then repeat the original resize action that raised the notification. Existing live broker acceptance remains manual; no broker calls were submitted by this verification.
+
+
+## Order pipeline, recovery and layout corrective sprints — PR #676
+
+The latest requested destination is **preprod**, on `fix/website-chart-tools-and-resize`. This supersedes earlier dev destination notes. These corrections extend the shared-tools/resize follow-up; no broker execution endpoint is replaced.
+
+| Sprint | Scope and design | Status |
+|---|---|---|
+| Pipeline 0 | Trace production chart menu, ticket, picking, strategies, drag callbacks and API serialization; record scope and assumptions | Complete |
+| Pipeline 1 | Capture source session/pane/right/strike/expiry; reject underlying option entries and stale tickets; retain underlying strategies | Complete |
+| Pipeline 2 | Preserve contract through entries and price picks; explicit Escape cancellation; reject unavailable option quote without underlying fallback | Complete |
+| Pipeline 3 | Scope bulk modifications to exact contract, stop sequential writes at first failure, retain successful results and existing broker confirmation rules | Complete |
+| Pipeline 4 | Settings-only renderer selection; chart-only retry, identity reset and actual error diagnostics; validate historical candle payloads | Complete |
+| Pipeline 5 | Remove redundant Lightweight toolbar allowance from KLine replay heights; test three-chart layout, update regression coverage and documentation | Complete |
+
+### Decisions and edge cases
+
+- The production Day context menu is extracted into one builder shared by both website renderers. An options underlying chart offers a CE/PE instruction rather than a premium-priced entry, SL shift, limit conversion or premium strategy. Existing underlying Target/SL strategies remain available for open CE/PE positions. Premium strategies and missing-SL actions use the clicked contract's position.
+- Tickets retain their originating session and contract and display instrument information. Changing session or removing/changing the source pane dismisses pending interaction. Price picks are accepted only on the matching price domain/contract; underlying strategy picks use the underlying chart. Escape explicitly cancels without passing an invalid numeric value.
+- Replay, Stepwise and Paper option entries must match the active streamed strike and expiry. Real entries continue through existing server contract validation and broker paths. A missing CE/PE quote never substitutes the underlying quote. Real alternate-contract authoritative pricing remains the existing backend's responsibility.
+- Context bulk changes run sequentially, stop at the first error and report partial completion. Exact option right/strike/expiry must match; legacy orders lacking contract identity are excluded from these chart bulk shortcuts rather than guessed. Closing SL shifts additionally require the position's closing side. Existing panel reconciliation remains available. No automatic resubmission, queue or backend locks are added.
+- Broker-owned SL modifications retain pending-edit acknowledgment and existing reconciliation behavior. Conversions retain existing broker-conversion confirmation checks. Chart drag callbacks continue to use the existing website update pipeline. Late responses cannot apply order/session state to a different session.
+- Renderer selection uses the saved Settings preference, including the existing Swing display settings. There are no per-chart Lightweight switches or local fallback overrides. Error boundaries show the actual exception, remount on chart identity changes and offer chart-only Retry with a fresh lazy component. Session ownership and pending edits remain outside that boundary. Catalogue/history failures retain retry paths and valid retained candles.
+- The original refresh/background exception was not supplied with a stack trace, so its exact cause remains unconfirmed. Regression tests inject a render failure to verify diagnostics/retry, rather than claiming to reproduce that original exception. A cached failed network module import may still require page refresh; error guidance states this.
+- KLine's chart height already includes its controls. The old 32-pixel-per-row Lightweight toolbar reservation now applies only to Lightweight. KLine single, maximized and two-row layouts use the available height; the minimum chart height remains unchanged. Desktop layout is unchanged.
+
+### Verification and remaining acceptance
+
+- **27 Playwright browser scenarios pass**, including production underlying menu exclusions, production CE/PE menu-to-ticket contract capture, Settings-only switching, Escape cancellation, error/retry/identity reset without trading writes, and three actual KLine charts filling a 700-pixel replay workspace within one pixel. Earlier order drag, broker acknowledgment, drawing/indicator, resize, replay/Stepwise and Swing tests remain green.
+- **278 desktop/shared unit tests pass across 42 files**, including production menu policy, exact-contract matching, quote selection, sequential partial failure and actual order-request serialization. The browser ticket fixture captures submissions rather than placing live orders; it does not mount the entire application session controller.
+- **18 focused backend presentation/cutoff tests pass**. Both client TypeScript checks and production JavaScript builds are checked for this follow-up; existing bundle-size advisories remain. The historical full-backend suite above was not rerun for these client changes.
+- Manual preprod acceptance remains: repeat the original idle/refresh failure and inspect any displayed error, verify three-chart spacing at the user's viewport, and exercise chosen small Kite/Kotak orders with explicit user confirmation. Native Windows installer/pop-out acceptance and main/dev promotion remain manual. Automated checks use fictional data/mocked services and perform no live broker writes.

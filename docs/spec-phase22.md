@@ -17,7 +17,7 @@
 
 See [Phase 22 implementation plan](spec-phase22-implementation-plan.md) for sprints, decisions, design, exclusions, verification commands and current status.
 
-Implementation began on **preprod**. The reviewed changes are on `feat/phase22-website-kline`, with a PR targeting **dev** at the latest request. Website Settings → General → Trading chart selects **Lightweight** (default) or **KLine** for Day and Swing. Swing also has a chart display settings gear. Switching does not restart the session or backend. Analysis/Patterns stay Lightweight.
+PR #675 was merged into **preprod**. The current follow-up is on `fix/website-chart-tools-and-resize`, with PR #676 targeting **preprod**. Website Settings → General → Trading chart selects **Lightweight** (default) or **KLine** for Day and Swing. Swing also has a chart display settings gear. Switching does not restart the session or backend. Analysis/Patterns stay Lightweight.
 
 Day KLine covers Replay, Stepwise, Paper and Real, using existing website trading APIs. Existing Swing actions remain available. Shared KLine drawings load when opening/reopening or explicitly refreshing charts; no new continuous synchronization is added.
 
@@ -32,3 +32,10 @@ The follow-up review fixes unavailable/authoritative website P&L, overlapping st
 Website Day and Swing now have one collapsible **✎** panel on the far left. Expand it for drawings and indicators, then click a chart to make it active; its instrument caption and controls appear in the panel. Indicator selections remain independent for each chart. Per-chart tool buttons are removed in the website workspace. The panel hides when using Lightweight. Desktop controls keep their existing layout.
 
 Website Day/Swing size observers and Lightweight chart/ratio widths now coalesce layout changes into animation frames, ignore unchanged dimensions, and cancel pending work on unmount. Browser regression coverage now totals **21 passing scenarios**, with **259 shared/desktop unit tests**, both TypeScript checks and the website production build passing. No global ResizeObserver error suppression is added; the reported warning still needs confirmation in the user's original deployed scenario.
+
+
+### Order pipeline, recovery and replay layout follow-up
+
+PR #676 also preserves the exact session, pane, option right, strike and expiry through chart menus, entry tickets, price picks and strategies. In options sessions, the underlying menu directs entries to CE/PE charts and retains underlying-specific strategies. Premium order changes target only the clicked contract. Renderer selection is exclusively in Settings; chart errors offer Retry and diagnostic details. Three-chart KLine replay layouts now use the space previously reserved for Lightweight toolbars, removing the unused bottom gap.
+
+Current verification: **27 browser scenarios, 278 desktop/shared unit tests and 18 focused backend tests pass**. See the linked implementation plan for sprint details, assumptions and manual acceptance limits.
