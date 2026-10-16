@@ -36,8 +36,8 @@
       "klinecharts": [
         "../frontend/node_modules/klinecharts"
       ],
-      "react-klinecharts-ui/*": [
-        "../frontend/node_modules/react-klinecharts-ui/*"
+      "react-klinecharts-ui/extensions": [
+        "node_modules/react-klinecharts-ui/dist/extensions.d.ts"
       ]
     }
   },
