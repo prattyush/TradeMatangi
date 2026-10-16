@@ -1,3 +1,4 @@
+import { usePendingOrderEdits } from '../../../shared/charts/pendingOrderEdits'
 import { snapSwingPrice, swingOrderTick } from '../../../shared/swingOrderPrice'
 import { flashError } from '../services/notifications'
 import { recordPerformance } from '../services/performanceDiagnostics'
@@ -14,6 +15,9 @@ import {
   MouseEventParams,
   IPriceLine,
   LineStyle,
+  type SeriesMarker,
+  type LineSeriesPartialOptions,
+  type PriceLineOptions,
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
 import { PositionPnlPrimitive } from '../indicators/positionPnlPrimitive'
@@ -34,7 +38,17 @@ export interface ChartVisibleRange {
   to: Time
 }
 
-interface Props {
+export interface LightweightChartState {
+  drawings?: SavedDrawing[]
+  showEma?: boolean
+  showPositionLevels?: boolean
+  activeRatioIndicators?: RocComparisonKey[]
+  expandedRatioIndicator?: RocComparisonKey | null
+}
+export interface Props {
+  lightweightState?: { current: LightweightChartState }
+  onCandleState?: (candles: OHLCCandle[], replace: boolean) => void
+  retainedCandles?: { current: Map<number, OHLCCandle> }
   candleAnchorSeconds?:number
   defaultShowAllMarkers?:boolean
   externalTradeMarkers?: boolean
@@ -124,6 +138,19 @@ type Drawing =
   | { type: 'hline'; ref: IPriceLine }
   | { type: 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
   | { type: 'buymarker' | 'sellmarker'; ref: ISeriesApi<'Line'> }
+
+type SavedLine = { data: LineData<Time>[]; options?: LineSeriesPartialOptions; markers?: SeriesMarker<Time>[] }
+type SavedDrawing =
+  | { type: 'hline'; price: number; options?: Partial<PriceLineOptions> }
+  | { type: Exclude<DrawMode, 'none' | 'hline'>; lines: LineData<Time>[][]; series?: SavedLine[] }
+const saveLine = (ref: ISeriesApi<'Line'>): SavedLine => {
+  const o = ref.options()
+  return { data: ref.data() as LineData<Time>[], markers: ref.markers(), options: {
+    color: o.color, lineWidth: o.lineWidth, lineStyle: o.lineStyle,
+    lineVisible: o.lineVisible, crosshairMarkerVisible: o.crosshairMarkerVisible,
+    priceLineVisible: o.priceLineVisible, lastValueVisible: o.lastValueVisible,
+  } }
+}
 
 const FIB_LEVELS = [
   { ratio: 0,    color: '#e6edf3', label: '0' },
@@ -420,6 +447,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 }
 
 export default function Chart({
+  onCandleState, retainedCandles, lightweightState,
   candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
@@ -480,14 +508,21 @@ export default function Chart({
   const drawPtsRef = useRef<{ time: number; price: number }[]>([])
   const drawingsRef = useRef<Drawing[]>([])
   useEffect(() => {
-    if (!drawingStorageKey) return
+    if (!drawingStorageKey && !lightweightState) return
     const save = () => {
-      const drawings = drawingsRef.current.map(d => d.type==='hline'?{type:d.type,price:d.ref.options().price}:{type:d.type,lines:('refs' in d?d.refs:[d.ref]).map(ref=>ref.data())})
-      try { localStorage.setItem(drawingStorageKey,JSON.stringify(drawings)) } catch { /* Storage can be disabled. */ }
+      const drawings: SavedDrawing[] = drawingsRef.current.map(d => {
+        if (d.type === 'hline') return { type: d.type, price: d.ref.options().price, options: d.ref.options() }
+        const series = ('refs' in d ? d.refs : [d.ref]).map(saveLine)
+        return { type: d.type, lines: series.map(s => s.data), series }
+      })
+      if(lightweightState)lightweightState.current.drawings=drawings
+      if(drawingStorageKey)try { localStorage.setItem(drawingStorageKey,JSON.stringify(drawings)) } catch { /* Storage can be disabled. */ }
     }
+    // Day only needs an in-memory handoff on unmount. Preserve Swing's existing local-save behavior.
+    if(!drawingStorageKey)return save
     const timer=setInterval(save,1000)
     return ()=>{clearInterval(timer);save()}
-  },[drawingStorageKey])
+  },[drawingStorageKey,lightweightState])
   const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef(new Map<string, { object: ISeriesApi<'Line'>; signature: string }>())
   const [showAllMarkers, setShowAllMarkers] = useState(defaultShowAllMarkers)
@@ -497,6 +532,8 @@ export default function Chart({
   orderSelectionRef.current = {orders: openOrders, onSelect: onOrderSelect, onDrag:onSwingOrderDrag}
   const swingDragPending = useRef(new Set<string>())
   const swingClickUntil = useRef(0)
+  const pendingEdits=usePendingOrderEdits()
+  const pendingRevision=pendingEdits.snapshot()
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
@@ -512,12 +549,15 @@ export default function Chart({
   onVisibleRangeChangeRef.current = onVisibleRangeChange
 
   const readSwingIndicators = () => {try{return drawingStorageKey?JSON.parse(localStorage.getItem(`${drawingStorageKey}:indicators`)??'{}'):{}}catch{return {}}}
-  const [showEma, setShowEma] = useState<boolean>(()=>readSwingIndicators().showEma??true)
-  const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>([])
-  const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(null)
+  const [showEma, setShowEma] = useState<boolean>(()=>lightweightState?.current.showEma??readSwingIndicators().showEma??true)
+  const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>(()=>lightweightState?.current.activeRatioIndicators??[])
+  const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(()=>lightweightState?.current.expandedRatioIndicator??null)
   const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
-  const [showPositionLevels, setShowPositionLevels] = useState<boolean>(()=>readSwingIndicators().showPositionLevels??false)
+  const [showPositionLevels, setShowPositionLevels] = useState<boolean>(()=>lightweightState?.current.showPositionLevels??readSwingIndicators().showPositionLevels??false)
   useEffect(()=>{if(drawingStorageKey)try{localStorage.setItem(`${drawingStorageKey}:indicators`,JSON.stringify({showEma,showPositionLevels}))}catch{/* Storage can be disabled. */}},[drawingStorageKey,showEma,showPositionLevels])
+  useEffect(()=>{
+    if(lightweightState)Object.assign(lightweightState.current,{showEma,showPositionLevels,activeRatioIndicators,expandedRatioIndicator})
+  },[lightweightState,showEma,showPositionLevels,activeRatioIndicators,expandedRatioIndicator])
   const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
@@ -633,6 +673,8 @@ export default function Chart({
   // ── Chart initialisation — runs once on mount only ───────────────────────
   useEffect(() => {
     if (!containerRef.current) return
+    // A recreated canvas owns new series; discard disposed references before restoring drawings.
+    drawingsRef.current = []
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
       height: chartHeight,
@@ -944,9 +986,30 @@ export default function Chart({
 
   // ── Historical + pre-session — equity only ───────────────────────────────────
   useEffect(() => {
-    if (!drawingStorageKey || !chartRef.current || !seriesRef.current) return
-    try { const saved=JSON.parse(localStorage.getItem(drawingStorageKey)??'[]');for(const d of saved){if(d.type==='hline'){const ref=seriesRef.current.createPriceLine({price:d.price,color:'#e6edf3',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:''});drawingsRef.current.push({type:'hline',ref})}else{const refs=d.lines.map((data:LineData<Time>[])=>{const ref=chartRef.current!.addLineSeries({color:'#ffa657',lineWidth:1,priceLineVisible:false,lastValueVisible:false});ref.setData(data);return ref});drawingsRef.current.push({type:d.type,refs} as Drawing)}}setDrawingCount(saved.length)} catch { /* Ignore invalid old local drawings. */ }
-  },[drawingStorageKey])
+    if ((!drawingStorageKey && !lightweightState?.current.drawings) || !chartRef.current || !seriesRef.current) return
+    try {
+      const saved: SavedDrawing[] = lightweightState?.current.drawings ?? JSON.parse(drawingStorageKey ? localStorage.getItem(drawingStorageKey) ?? '[]' : '[]')
+      for (const d of saved) {
+        if (d.type === 'hline') {
+          const ref = seriesRef.current.createPriceLine({ color: '#e6edf3', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '', ...d.options, price: d.price })
+          drawingsRef.current.push({ type: 'hline', ref })
+        } else {
+          const marker = d.type === 'buymarker' || d.type === 'sellmarker'
+          const refs = (d.series ?? d.lines.map(data => ({ data } as SavedLine))).map((saved, index) => {
+            const ref = chartRef.current!.addLineSeries({ color: d.type === 'fibretracement' ? FIB_LEVELS[index]?.color ?? '#ffa657' : '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, lineVisible: !marker, ...saved.options })
+            ref.setData(saved.data)
+            const buy = d.type === 'buymarker'
+            const inferred: SeriesMarker<Time>[] = marker && saved.data[0] ? [{ time: saved.data[0].time, position: buy ? 'belowBar' : 'aboveBar', color: buy ? '#3b82f6' : '#f97316', shape: buy ? 'arrowUp' : 'arrowDown', text: buy ? 'Buy UL' : 'Sell UL', size: 2 }] : []
+            ref.setMarkers(saved.markers ?? inferred)
+            return ref
+          })
+          if (marker) { if (refs[0]) drawingsRef.current.push({ type: d.type as 'buymarker' | 'sellmarker', ref: refs[0] }) }
+          else drawingsRef.current.push({ type: d.type as 'trendline' | 'fibretracement' | 'channel' | 'rrindicator', refs })
+        }
+      }
+      setDrawingCount(drawingsRef.current.length)
+    } catch { /* Ignore invalid old local drawings. */ }
+  },[drawingStorageKey,lightweightState])
 
   // Both fetches run in parallel and are combined into a single series.setData()
   // call. This eliminates the race where a live tick's series.update(09:18) arrives
@@ -1003,6 +1066,7 @@ export default function Chart({
         const allCandles = mergeRecentTicksIntoHistory([...histCandles, ...preCandles], recentLiveTicksRef.current.values(), intervalMinutes)
         if (allCandles.length === 0) return
 
+        onCandleState?.(allCandles, true)
         series.setData(allCandles.map(toCandle))
         chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, allCandles.length - 150), to: allCandles.length - 1 })
         restoreInitialVisibleRange()
@@ -1095,6 +1159,7 @@ export default function Chart({
             : startWindowTs
         const priorCandles = patchedCandles.filter(c => c.time < cutoffTs)
 
+        onCandleState?.(priorCandles, true)
         series.setData(priorCandles.map(toCandle))
         publishIndicatorCandles(priorCandles.map(toIndicatorCandle))
         candleTimesRef.current = priorCandles.map(c => c.time)
@@ -1171,6 +1236,7 @@ export default function Chart({
 
   useEffect(() => {
     recentLiveTicksRef.current.clear()
+    for (const c of retainedCandles?.current.values() ?? []) recentLiveTicksRef.current.append({ ...c, type: 'tick' })
   }, [symbol, tradingDate, paneType, strike, expiry, right])
 
   useEffect(() => {
@@ -1219,6 +1285,7 @@ export default function Chart({
       }
 
       const current = liveWindowRef.current!
+      onCandleState?.([{ time: current.start, open: current.open, high: current.high, low: current.low, close: current.close }], false)
       series.update({ time: current.start as Time, open: current.open, high: current.high, low: current.low, close: current.close })
     } catch (err) {
       // Chart may be disposed or have out-of-order timestamps; skip this tick
@@ -1245,6 +1312,7 @@ export default function Chart({
     try {
       const chartWindowStart = Math.floor(completedBar.time / intervalSecs) * intervalSecs
       if (chartWindowStart !== completedBar.time) return
+      onCandleState?.([completedBar], false)
 
       series.update({
         time: completedBar.time as Time,
@@ -1330,24 +1398,31 @@ export default function Chart({
       return paneType === 'futures' ? o.expiry === expiry && !o.right : paneType === 'equity' ? !o.right : o.right === right && (o.strike == null || o.strike === strike) && (!o.expiry || o.expiry === expiry)
     })
 
-    const wanted = new Set(pending.map(order => order.order_id))
+    const wanted = new Set(pending.flatMap(order => pendingEdits.get(order.session_id,order.order_id)?[order.order_id,`pending:${order.order_id}`]:[order.order_id]))
     for (const [id, line] of orderPriceLinesRef.current) {
       if (!wanted.has(id)) { series.removePriceLine(line); orderPriceLinesRef.current.delete(id) }
     }
     for (const order of pending) {
-      const price = orderDisplayPrice(order)
+      const edit=pendingEdits.get(order.session_id,order.order_id)
+      const price = edit?.oldPrice ?? orderDisplayPrice(order)
+      if(edit){
+        const id=`pending:${order.order_id}`
+        const options={price:edit.requestedPrice,color:'#fbbf24',lineWidth:1 as const,lineStyle:LineStyle.Dashed,axisLabelVisible:true,title:edit.message}
+        const proposal=orderPriceLinesRef.current.get(id)
+        if(proposal)proposal.applyOptions(options);else orderPriceLinesRef.current.set(id,series.createPriceLine(options))
+      }
       let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
 
       if (isExitOrderForPosition(order, position)) {
-        const pnlStr = formatProjectedPnl(projectedOrderPnl(order, position), pnlPctMode, sessionCapital)
+        const pnlStr = formatProjectedPnl(projectedOrderPnl(edit?{...order,trigger_price:edit.oldPrice,limit_price:edit.oldPrice}:order, position), pnlPctMode, sessionCapital)
         label = `${orderLineTypeLabel(order)} ${pnlStr}`
       }
 
       try {
-        const options = { price, color: '#AAAAAA', lineWidth: 1 as const, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: label }
+        const options = { price, color: '#AAAAAA', lineWidth: 1 as const, lineStyle: edit?LineStyle.Solid:LineStyle.Dashed, axisLabelVisible: true, title: label }
         const line = orderPriceLinesRef.current.get(order.order_id)
         if (line) {
-          if (line.options().price !== options.price || line.options().title !== options.title) {
+          if (line.options().price !== options.price || line.options().title !== options.title || line.options().lineStyle !== options.lineStyle) {
             line.applyOptions(options)
             recordPerformance('order-line-update')
           }
@@ -1357,7 +1432,7 @@ export default function Chart({
         }
       } catch { /* disposed */ }
     }
-  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital])
+  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital, pendingRevision])
 
   // Running profit strategies use their own lines, separate from pending orders.
   useEffect(() => {

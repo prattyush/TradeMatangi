@@ -283,3 +283,23 @@ def test_old_clients_cannot_disable_protection_or_reset_the_delay():
     assert result["entry_auto_sl_enabled"] is True
     assert result["entry_auto_sl_delay_sec"] == 7
     table.update_item.assert_not_called()
+
+
+class TestWebsiteChartRenderer:
+    def test_old_settings_default_to_lightweight(self):
+        mock_resource, _ = _mock_db({"user_id": "user-123", "historical_days": 4})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            assert svc.get_settings("user-123")["website_chart_renderer"] == "lightweight"
+
+    def test_renderer_only_update_does_not_request_broker_switch(self):
+        with patch("app.services.user_settings_service.update_settings", return_value={"website_chart_renderer": "kline"}) as update:
+            response = client.put("/api/users/settings", json={"website_chart_renderer": "kline"})
+        assert response.status_code == 200
+        assert response.json()["website_chart_renderer"] == "kline"
+        update.assert_called_once_with(FIXED_USER_ID, {"website_chart_renderer": "kline"})
+
+    @pytest.mark.parametrize("renderer", ["unknown", "KLine", "", 123])
+    def test_invalid_renderer_rejected(self, renderer):
+        with patch("app.services.user_settings_service.update_settings") as update:
+            assert client.put("/api/users/settings", json={"website_chart_renderer": renderer}).status_code == 422
+        update.assert_not_called()

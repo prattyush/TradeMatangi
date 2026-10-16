@@ -428,6 +428,7 @@ class WalletResetRequest(ContractModel):
 # ── User Settings ─────────────────────────────────────────────────────────────
 
 class UserSettingsResponse(ContractModel):
+    website_chart_renderer: Literal["lightweight", "kline"] = "lightweight"
     real_execution_broker: Literal["kotak", "kite"] = "kotak"
     brokerage_per_order: float = 1.0
     strategy_interval_secs: Literal[120, 180, 300] = 180
@@ -469,6 +470,7 @@ class UserSettingsResponse(ContractModel):
 
 
 class UserSettingsUpdateRequest(ContractModel):
+    website_chart_renderer: Literal["lightweight", "kline"] | None = None
     real_execution_broker: Literal["kotak", "kite"] | None = None
     brokerage_per_order: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     strategy_interval_secs: Literal[120, 180, 300] | None = None

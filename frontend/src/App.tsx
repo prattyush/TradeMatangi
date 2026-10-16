@@ -1,3 +1,5 @@
+import { pendingOrderEdits } from '../../shared/charts/pendingOrderEdits'
+import TradingChartHost from './components/TradingChartHost'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import KotakTOTPModal from './components/KotakTOTPModal'
 import SwingChart from './components/SwingChart'
@@ -18,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
 import PatternLibrary from './pages/PatternLibrary'
 import ChartStructures from './pages/ChartStructures'
-import Chart, { ChartVisibleRange, PaneType } from './components/Chart'
+import type { ChartVisibleRange, PaneType } from './components/Chart'
 import ChartContextMenu, { ContextMenuAction } from './components/ChartContextMenu'
 import SessionControls, { OptionsReadyConfig } from './components/SessionControls'
 import TradePanel from './components/TradePanel'
@@ -223,6 +225,7 @@ export default function App() {
 
 function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenMessages:(id?:string)=>void; authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
+  useEffect(()=>{pendingOrderEdits.setScope(`${BACKEND_URL}:${authUser.userId}`)},[authUser.userId])
   const [showSwing, setShowSwing] = useState(false)
   const [showSwingKotakLogin,setShowSwingKotakLogin]=useState(false),[swingBrokerRevision,setSwingBrokerRevision]=useState(0)
   const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', body?: Record<string, unknown>) => {
@@ -1400,6 +1403,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       const grReason = (event.reason as string) ?? 'Trading paused by guardrail'
       setGuardrailPopup({ type: grType, reason: grReason })
     } else if (event.type === 'order_filled') {
+      if(sim.sessionId)pendingOrderEdits.terminal(sim.sessionId,event.order_id as string)
       sim.handleOrderFilled(event.order_id as string, event.right as string | null | undefined)
       captureSnapshot({
         type: 'order_filled',
@@ -1417,6 +1421,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       // in the open orders panel and the SL tab can be used after they fill.
       sim.addOpenOrder(event as unknown as import('./services/api').Order)
     } else if (event.type === 'order_cancelled') {
+      if(sim.sessionId)pendingOrderEdits.terminal(sim.sessionId,event.order_id as string)
       // Kotak rejected a forwarded order — remove it from open orders and credit wallet back
       sim.handleOrderCancelled(event.order_id as string)
     } else if (event.type === 'order_converted') {
@@ -1437,6 +1442,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       const snapshotSessionId = brokerSnapshotSessionId(event, simRef.current.sessionId)
       if (snapshotSessionId) {
         const snapshot = event as unknown as import('./services/api').BrokerSnapshot
+        pendingOrderEdits.reconcile(snapshotSessionId,snapshot.orders,snapshot)
         sim.applyBrokerSnapshot(snapshotSessionId, snapshot)
         setProtectionRecovery(previous => pruneRecoveryNotices(previous, simRef.current.symbol, snapshot.positions))
         setBrokerOrdersSnapshot({ sessionId: snapshotSessionId, orders: snapshot.orders })
@@ -1634,17 +1640,34 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     setRunningStrategies(prev => prev.filter(s => s.strategy_id !== strategyId))
   }, [sim.sessionId])
 
+  const strategyPricePendingRef = useRef(new Set<string>())
+  const [pendingStrategyIds, setPendingStrategyIds] = useState<ReadonlySet<string>>(new Set())
   const handleUpdateStrategyPrice = useCallback(async (strategyId: string, price: number) => {
-    if (!sim.sessionId) return
-    await api.updateStrategyPrice(strategyId, sim.sessionId, price)
-    strategySyncVersionRef.current++
-    setRunningStrategies(prev => prev.map(s =>
-      s.strategy_id === strategyId
-        ? { ...s, triggered: false, ...(s.strategy_type === 'TargetProfit'
-          ? { target_profit_value: price, target_profit_is_pct: false } : {}) }
-        : s
-    ))
+    const sessionId = sim.sessionId
+    if (!sessionId) return
+    const key = `${sessionId}:${strategyId}`
+    if (strategyPricePendingRef.current.has(key)) throw new Error('This strategy is updating; wait for it to finish')
+    strategyPricePendingRef.current.add(key)
+    setPendingStrategyIds(new Set(strategyPricePendingRef.current))
+    try {
+      await api.updateStrategyPrice(strategyId, sessionId, price)
+      if (simRef.current.sessionId !== sessionId) return
+      strategySyncVersionRef.current++
+      setRunningStrategies(prev => prev.map(s =>
+        s.strategy_id === strategyId
+          ? { ...s, price, triggered: false, ...(s.strategy_type === 'TargetProfit'
+            ? { target_profit_value: price, target_profit_is_pct: false } : {}) }
+          : s
+      ))
+    } finally {
+      strategyPricePendingRef.current.delete(key)
+      setPendingStrategyIds(new Set(strategyPricePendingRef.current))
+    }
   }, [sim.sessionId])
+
+  const chartPendingStrategyIds = useMemo(() => new Set(
+    [...pendingStrategyIds].filter(key => key.startsWith(`${sim.sessionId}:`)).map(key => key.slice(`${sim.sessionId}:`.length))
+  ), [pendingStrategyIds, sim.sessionId])
 
   const handleBulkUpdateSL = useCallback(async (triggerPrice: number, right: string | null) => {
     if (!sim.sessionId) return { updated: 0, orders: [] }
@@ -1938,7 +1961,13 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
             }}
           >✕</button>
         )}
-        <Chart
+        <TradingChartHost
+          realTrading={sim.sessionType==='real'}
+          onBrokerSnapshot={(sessionId,snapshot)=>{if(simRef.current.sessionId!==sessionId)return;sim.applyBrokerSnapshot(sessionId,snapshot);setBrokerOrdersSnapshot({sessionId,orders:snapshot.orders});setBrokerError(snapshot.wallet_error??null)}}
+          onOrderDrag={async (order,price)=>{ return await sim.updateOrder(order.order_id,order.order_type==='LIMIT'?undefined:price,order.order_type==='LIMIT'?price:undefined,targetDeviationPct) }}
+          pendingStrategyIds={chartPendingStrategyIds}
+          onStrategyDrag={handleUpdateStrategyPrice}
+          onStrategyCancel={handleCancelStrategy}
           key={`${chartSessionKey}:${pane.id}:${pane.type}:${pane.right ?? 'EQ'}:${pane.strike ?? ''}:${pane.expiry ?? ''}`}
           symbol={chartSymbol}
           tradingDate={chartDate}
@@ -2865,9 +2894,9 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
                   throw new Error(updated.broker_conversion.message ?? 'Kotak has not confirmed conversion; original type retained')
                 }
               }}
-              onUpdateOrder={(orderId, triggerPrice, limitPrice, quantity) =>
-                sim.updateOrder(orderId, triggerPrice, limitPrice, targetDeviationPct, quantity)
-              }
+              onUpdateOrder={async (orderId, triggerPrice, limitPrice, quantity) => {
+                await sim.updateOrder(orderId, triggerPrice, limitPrice, targetDeviationPct, quantity)
+              }}
               onRequestPricePick={orderId => {
                 setPricePickOrderId(orderId)
                 setInjectedEditPrice(null)

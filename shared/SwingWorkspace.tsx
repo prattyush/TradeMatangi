@@ -36,6 +36,7 @@ export interface SwingCandle {
   volume?: number;
 }
 export interface SwingChartProps {
+  refreshKey?: number
   pane: SwingPane;
   drawingScope: string;
   chartKind?: string;
@@ -285,6 +286,7 @@ function PaneChart({
   };
   return (
     <>
+      <SwingIconButton label="Refresh chart and drawings" icon="Refresh" onClick={() => setRetry(v=>v+1)} />
       {(surface !== "desktop" || error) && (
         <div className="swing-data-label">
           {surface !== "desktop" && (
@@ -307,6 +309,7 @@ function PaneChart({
       <Renderer
         key={`${paneKey(pane)}:${pane.interval}`}
         pane={pane}
+        refreshKey={retry}
         drawingScope={drawingScope}
         toolsContainer={toolsContainer}
         chartKind={chartKind}

@@ -1,3 +1,5 @@
+import { pendingOrderEdits } from '../../shared/charts/pendingOrderEdits'
+import { allIndicators, drawingTools, indicatorLabel } from '../../shared/charts/catalogue'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import { nativeSwingSubscribe } from "./swingStream";
 import { recordFeedReceipt, startPerformanceDiagnostics } from '../../frontend/src/services/performanceDiagnostics'
@@ -129,11 +131,6 @@ const reportOptionEntryDiagnostic = (payload: Record<string, unknown>) => {
 }
 const newTile = (): TileConfig => ({ id: crypto.randomUUID(), kind: 'spot', symbol: 'NIFTY', interval: '3', tradingDate: '2026-05-06', expiry: '', strike: '', right: 'CE' })
 const newScreen = (number: number): Screen => ({ id: crypto.randomUUID(), name: `Screen ${number}`, layout: '1', tiles: [newTile()] })
-const mainIndicators = ['MA', 'EMA', 'BOLL_TV', 'VWAP', 'SuperTrend', 'Ichimoku', 'MA_Ribbon', 'HMA', 'PivotPoints']
-const positionIndicator = 'PositionPnL'
-const subIndicators = ['RSI_TV', 'MACD_TV', 'Stochastic', 'CCI_TV']
-const allIndicators = [...mainIndicators, positionIndicator, ...subIndicators]
-const indicatorLabel = (name: string) => name === positionIndicator ? 'Position P&L levels' : name.replace('_TV', '').replace('_Ribbon', ' Ribbon')
 const placeNearPoint = (x: number, y: number, width: number, height: number) => {
   const preferredLeft = x + 10 + width <= window.innerWidth - 8 ? x + 10 : x - width - 10
   const preferredTop = y + 10 + height <= window.innerHeight - 8 ? y + 10 : y - height - 10
@@ -142,22 +139,6 @@ const placeNearPoint = (x: number, y: number, width: number, height: number) => 
     top: Math.max(56, Math.min(preferredTop, window.innerHeight - height - 8)),
   }
 }
-const drawingTools = [
-  { label: 'Horizontal line', icon: '━', tool: 'Horizontal' },
-  { label: 'Trend line', icon: '╱', tool: 'Trend' },
-  { label: 'Ray', icon: '↗', tool: 'ray' },
-  { label: 'Arrow', icon: '➜', tool: 'arrow' },
-  { label: 'Rectangle', icon: '▭', tool: 'rect' },
-  { label: 'Brush', icon: '✎', tool: 'brush' },
-  { label: 'Fibonacci retracement', icon: 'Φ', tool: 'Fib Retracement' },
-  { label: 'Fibonacci extension', icon: 'Φ+', tool: 'fibonacciExtension' },
-  { label: 'Fibonacci fan', icon: '◿', tool: 'fibonacciSpeedResistanceFan' },
-  { label: 'Parallel channel', icon: '∥', tool: 'parallelChannel' },
-  { label: 'Measure', icon: '⌁', tool: 'measure' },
-  { label: 'Gann box', icon: '▦', tool: 'gannBox' },
-  { label: 'Long position', icon: 'L', tool: 'longPosition' },
-  { label: 'Short position', icon: 'S', tool: 'shortPosition' },
-]
 
 const canonicalKey = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonicalKey).join(',')}]`
@@ -476,7 +457,7 @@ function DesktopTile({ refreshVersion, contextDays, config, catalogue, connectio
   useEffect(() => {
     if (config.kind === 'option' && tradingSnapshot && entryReason) reportOptionEntryDiagnostic({ tile_id: config.id, contract_key: tileContractKey, session_id: tradingSnapshot.session.session_id, session_state: tradingSnapshot.session.state, session_symbol: tradingSnapshot.session.symbol, reason: entryReason })
   }, [config.id, config.kind, tileContractKey, tradingSnapshot?.session.session_id, tradingSnapshot?.session.state, tradingSnapshot?.session.symbol, entryReason])
-  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={displayedCandles} loadOlder={loadOlder} viewportResetKey={`${historyVersion}:${refreshVersion}:${replayRunId ?? ''}`} loading={subscribedTile ? false : loading || replaySyncing} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : replaySyncing ? 'Attaching to replay...' : status} settings={settings} isReplaying={Boolean(replayCursor)} isLive={Boolean(subscribedTile)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} drawingRequest={drawingRequest} onDrawingError={onDrawingError} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={onActivate} trades={tradingSnapshot?.trades ?? []} openOrders={tileOrders} strategies={tileStrategies} position={tilePosition} levelsPosition={levelPosition} brokeragePerOrder={tradingSnapshot?.session.brokerage_per_order ?? 1} aggregatePnl={tradingSnapshot?.pnl.day} positionMarkPrice={positionMarkPrice} sessionCapital={tradingSnapshot?.session.session_capital ?? 0} lotSize={instrumentLotSize(config.kind, tradingSnapshot)} tradingSettings={tradingSnapshot?.settings ?? null} tradingEnabled={Boolean(tradingSnapshot)} orderEntryEnabled={equityEntryEnabled(config.kind, config.symbol, tradingSnapshot)} entryUnavailableReason={entryReason} shortEntryEnabled={config.kind === 'spot' && tradingSnapshot?.session.instrument_type === 'equity'} underlyingStrategyEnabled={Boolean(tradingSnapshot) && config.kind === 'spot' && tradingSnapshot?.session.instrument_type === 'options'} pricePickAction={pricePickAction} onPricePick={onPricePick} onOrderDrag={onOrderDrag} onStrategyDrag={onStrategyDrag} onStrategyTargetProfitPct={onStrategyTargetProfitPct} onStrategyCancel={onStrategyCancel} onOrderCancel={onOrderCancel} onOrderConvertRequest={onOrderConvertRequest} onOrderQuantityUpdate={onOrderQuantityUpdate} onChartOrderAction={(action, price, anchor) => onChartOrderAction?.(config, action, price, anchor)} swapTargets={swapTargets} /></div>
+  return <div className={`workspace-tile ${maximized ? 'is-maximized' : ''}`}><ChartTile shareDayDrawings drawingRefreshKey={refreshVersion} symbol={label} interval={`${config.interval}m`} supportedIntervals={catalogueInstrument.supported_intervals} onIntervalChange={onIntervalChange} candles={displayedCandles} loadOlder={loadOlder} viewportResetKey={`${historyVersion}:${refreshVersion}:${replayRunId ?? ''}`} loading={subscribedTile ? false : loading || replaySyncing} message={subscribedTile && subscribedTile.availability !== 'available' ? (subscribedTile.reason ?? subscribedTile.availability) : replaySyncing ? 'Attaching to replay...' : status} settings={settings} isReplaying={Boolean(replayCursor)} isLive={Boolean(subscribedTile)} replayDatasetKey={replayDatasetKey} instrument={chartInstrument} baseUrl={serverUrl} drawingRequest={drawingRequest} onDrawingError={onDrawingError} onConfigure={onConfigure} onMaximize={onMaximize} maximized={maximized} active={active} indicators={indicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={onActivate} trades={tradingSnapshot?.trades ?? []} openOrders={tileOrders} strategies={tileStrategies} position={tilePosition} levelsPosition={levelPosition} brokeragePerOrder={tradingSnapshot?.session.brokerage_per_order ?? 1} aggregatePnl={tradingSnapshot?.pnl.day} positionMarkPrice={positionMarkPrice} sessionCapital={tradingSnapshot?.session.session_capital ?? 0} lotSize={instrumentLotSize(config.kind, tradingSnapshot)} tradingSettings={tradingSnapshot?.settings ?? null} tradingEnabled={Boolean(tradingSnapshot)} orderEntryEnabled={equityEntryEnabled(config.kind, config.symbol, tradingSnapshot)} entryUnavailableReason={entryReason} shortEntryEnabled={config.kind === 'spot' && tradingSnapshot?.session.instrument_type === 'equity'} underlyingStrategyEnabled={Boolean(tradingSnapshot) && config.kind === 'spot' && tradingSnapshot?.session.instrument_type === 'options'} pricePickAction={pricePickAction} onPricePick={onPricePick} onOrderDrag={onOrderDrag} onStrategyDrag={onStrategyDrag} onStrategyTargetProfitPct={onStrategyTargetProfitPct} onStrategyCancel={onStrategyCancel} onOrderCancel={onOrderCancel} onOrderConvertRequest={onOrderConvertRequest} onOrderQuantityUpdate={onOrderQuantityUpdate} onChartOrderAction={(action, price, anchor) => onChartOrderAction?.(config, action, price, anchor)} swapTargets={swapTargets} /></div>
 }
 
 type Connection = 'connected' | 'reconnecting' | 'offline' | 'authentication_required'
@@ -602,7 +583,7 @@ export default function App() {
     let disposed = false;
     setNotificationAccount(null);
     if (connection === 'connected') void swingRequest<{ user_id?: string }>('capabilities', 'GET').then(value => {
-      if (!disposed && value.user_id) setNotificationAccount(value.user_id, `desktop:${serverUrl}:${assignedId ?? 'main'}`);
+      if (!disposed && value.user_id) {pendingOrderEdits.setScope(`${serverUrl}:${value.user_id}`);setNotificationAccount(value.user_id, `desktop:${serverUrl}:${assignedId ?? 'main'}`);}
     }).catch(() => undefined);
     return () => { disposed = true; setNotificationAccount(null); };
   }, [connection, serverUrl, browserToken, assignedId, swingRequest]);
@@ -2279,11 +2260,29 @@ function ScreenController(props: ScreenControllerProps) {
     setTradeTicket(null)
     setPricePickAction(null)
   }
+  useEffect(()=>{if(trading)pendingOrderEdits.prune(trading.session.session_id,trading.open_orders)},[trading?.session.session_id,trading?.open_orders])
   const updateOrderLine = async (order: DesktopOrder, price: number) => {
     if (!trading) return
-    const body = order.order_type === 'LIMIT' ? { limit_price: price } : { trigger_price: price }
-    const updated = await desktopTradingRequest<DesktopOrder>(`${trading.session.session_id}/orders/${order.order_id}`, 'PATCH', body)
-    setTrading(snapshot => snapshot ? { ...snapshot, open_orders: snapshot.open_orders.map(item => item.order_id === updated.order_id ? updated : item) } : snapshot)
+    const sessionId=trading.session.session_id
+    const brokerOwned=mode==='Real' && Boolean(order.broker_order_id ?? order.kotak_order_id)
+    if(brokerOwned && pendingOrderEdits.get(sessionId,order.order_id)) {reportTradingError(new Error('Refresh Trade History before editing this order again'));return}
+    if(brokerOwned)pendingOrderEdits.begin(order,price)
+    try {
+      const body = order.order_type === 'LIMIT' ? { limit_price: price } : { trigger_price: price }
+      const updated = await desktopTradingRequest<DesktopOrder>(`${sessionId}/orders/${order.order_id}`, 'PATCH', body)
+      setTrading(snapshot => snapshot?.session.session_id===sessionId ? { ...snapshot, open_orders: snapshot.open_orders.map(item => item.order_id === updated.order_id ? updated : item) } : snapshot)
+      if(brokerOwned){
+        pendingOrderEdits.acknowledged(sessionId,order.order_id,updated)
+        try {
+          const refreshed=await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/broker-refresh`,'POST')
+          if(refreshed.broker_orders)pendingOrderEdits.reconcile(sessionId,refreshed.broker_orders,{state_version:refreshed.broker_state_version,state_generation:refreshed.broker_state_generation})
+          setTrading(current=>current?.session.session_id===sessionId?refreshed:current)
+        }catch(error){reportTradingError(error)}
+      }
+    } catch(error) {
+      if(brokerOwned)pendingOrderEdits.failed(sessionId,order.order_id,false)
+      reportTradingError(error)
+    }
   }
   const updateOrderQuantity = async (order: DesktopOrder, quantity: number) => {
     if (!trading) return
@@ -2560,7 +2559,11 @@ function ScreenController(props: ScreenControllerProps) {
   const refreshBroker = async () => {
     if (!trading || realActionPending) return
     setRealActionPending(true)
-    try { setTrading(await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/broker-refresh`, 'POST')) }
+    try {
+      const snapshot=await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/broker-refresh`, 'POST')
+      if(snapshot.broker_orders)pendingOrderEdits.reconcile(snapshot.session.session_id,snapshot.broker_orders,{state_version:snapshot.broker_state_version,state_generation:snapshot.broker_state_generation})
+      setTrading(current=>current?.session.session_id===snapshot.session.session_id?snapshot:current)
+    }
     catch (error) { reportTradingError(error) }
     finally { setRealActionPending(false) }
   }

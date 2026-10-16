@@ -27,6 +27,12 @@
       ],
       "react-dom": [
         "node_modules/@types/react-dom"
+      ],
+      "klinecharts": [
+        "../windowsapp/node_modules/klinecharts"
+      ],
+      "react-klinecharts-ui/*": [
+        "../windowsapp/node_modules/react-klinecharts-ui/*"
       ]
     },
     "types": [

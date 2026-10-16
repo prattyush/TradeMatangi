@@ -687,11 +687,12 @@ export function useSimulation() {
   ) => {
     if (!state.sessionId) return
     const updated = await api.updateOrder(state.sessionId, orderId, triggerPrice, limitPrice, targetDeviationPct, quantity)
-    setState(s => ({
+    setState(s => s.sessionId === state.sessionId ? ({
       ...s,
       openOrders: s.openOrders.map(o => o.order_id === orderId ? updated : o),
       walletRefreshKey: s.walletRefreshKey + 1,
-    }))
+    }) : s)
+    return updated
   }, [state.sessionId])
 
   const splitOrder = useCallback(async (orderId: string, operationId: string) => {

@@ -19,6 +19,8 @@ export interface BrowseState { mode: 'browse'; anchorDate: string; interval: str
 export interface RunState { mode: 'live' | 'replay' | 'stepwise' | 'stopped'; date: string; cursor: number; interval: string; paused: boolean; speed?: number; barIndex?: number }
 
 export interface DesktopOrder {
+  broker_order_id?: string | null
+  kotak_order_id?: string | null
   order_id: string; session_id: string; user_id: string; symbol: string
   side: 'BUY' | 'SELL'; order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS'
   quantity: number; trigger_price: number; limit_price: number
@@ -80,6 +82,10 @@ export interface DesktopTradingSettings {
 }
 
 export interface DesktopTradingSnapshot {
+  broker_state_version?: number | null
+  broker_state_generation?: string | null
+  broker_orders?: import('../../shared/charts/pendingOrderEdits').BrokerLineReport[] | null
+  broker_snapshot_revision?: string | null
   broker_funds_updated_at?: number | null
   created_for_request?: boolean | null
   paper_status?: 'running' | 'stopped' | 'settled' | null
