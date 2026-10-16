@@ -1,0 +1,631 @@
+import { test, expect } from "@playwright/test";
+import assert from "node:assert/strict";
+
+test("Day and Swing chart rendering, release-only Real edits, drawings and renderer switching", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const patches = () =>
+    page.evaluate(
+      () =>
+        (window as any).requests.filter(
+          (r) => r.method === "PATCH" && r.url.includes("/api/orders/"),
+        ).length,
+    );
+  await page.goto("/tests/phase22/harness.html", {
+    waitUntil: "domcontentloaded",
+  });
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().at(-1)?.high === 109,
+  );
+  assert.equal(await patches(), 0);
+  const initial = await page.evaluate(() =>
+    (window as any).chart().getDataList().at(-1),
+  );
+  assert.equal(initial.open, 103);
+  assert.equal(initial.high, 109);
+  assert.equal(initial.close, 107);
+  console.log(
+    "PASS real chart initially uses the existing data APIs without order writes",
+  );
+  const position = await page.evaluate(() => {
+    const chart = (window as any).chart(),
+      rect = document.querySelector(".kline").getBoundingClientRect();
+    const p = chart.convertToPixel(
+      [{ timestamp: chart.getDataList().at(-1).timestamp, value: 105 }],
+      { paneId: "candle_pane" },
+    )[0];
+    return { x: rect.x + 350, y: rect.y + p.y };
+  });
+  await page.mouse.move(position.x, position.y);
+  await page.mouse.down();
+  await page.mouse.move(position.x, position.y - 35, { steps: 8 });
+  assert.equal(await patches(), 0);
+  await page.mouse.up();
+  await page.waitForFunction(() =>
+    (window as any).requests.some((r) => r.method === "PATCH"),
+  );
+  await page.waitForFunction(
+    () => (window as any).getPending()?.phase === "unconfirmed",
+  );
+  assert.equal(await patches(), 1);
+  const pending = await page.evaluate(() => (window as any).getPending());
+  assert.equal(pending.oldPrice, 105);
+  assert.notEqual(pending.requestedPrice, 105);
+  assert.equal(await page.locator(".order-line-label").count(), 2);
+  console.log(
+    "PASS physical drag sends one write only on release and shows old plus proposed prices",
+  );
+  await page.evaluate(() => {
+    (window as any).confirmBroker = true;
+    return (window as any).refreshBroker();
+  });
+  await page.waitForFunction(() => !(window as any).getPending());
+  console.log("PASS broker evidence resolves the pending line");
+  await page
+    .getByRole("button", { name: "Toggle drawing and indicator tools" })
+    .click();
+  await page
+    .locator(".website-kline-tools button")
+    .filter({ hasText: /^MA$/ })
+    .click();
+  await page
+    .getByRole("button", { name: "Horizontal line", exact: true })
+    .click();
+  const rect = await page.locator(".kline").boundingBox();
+  await page.mouse.click(rect.x + 400, rect.y + 250);
+  await page.waitForFunction(() =>
+    (window as any).requests.some(
+      (r) => r.method === "POST" && r.url.endsWith("/drawings"),
+    ),
+  );
+  assert.equal(await page.evaluate(() => (window as any).drawings.length), 1);
+  console.log(
+    "PASS a completed drawing persists to the existing drawing endpoint",
+  );
+  await page.getByTitle("delete selected drawing").click();
+  await page.waitForFunction(() => (window as any).drawings.length === 0);
+  console.log("PASS selected drawing deletion persists");
+  const writesBefore = await patches();
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForFunction(() => !document.querySelector(".website-kline"));
+  await page.evaluate(() => (window as any).switchRenderer("kline"));
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForTimeout(100);
+  assert.equal(await patches(), writesBefore);
+  await page
+    .getByRole("button", { name: "Toggle drawing and indicator tools" })
+    .click();
+  assert.equal(
+    await page
+      .locator(".website-kline-tools button")
+      .filter({ hasText: /^MA$/ })
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  console.log(
+    "PASS switching both ways preserves KLine indicator selection and sends no order writes",
+  );
+  await page.evaluate(() =>
+    (window as any).setProps({
+      onPriceSelect: (price) => ((window as any).picked = price),
+    }),
+  );
+  const nextRect = await page.locator(".kline").boundingBox();
+  await page.mouse.click(nextRect.x + nextRect.width - 100, nextRect.y + 100);
+  await page.waitForFunction(
+    () => Number.isFinite((window as any).picked) && (window as any).picked > 0,
+  );
+  console.log("PASS price picking works in chart space");
+  await page.evaluate(() =>
+    (window as any).setProps({
+      onPriceSelect: null,
+      historyMode: "replay",
+      paneType: "options",
+      right: "CE",
+      strike: 24000,
+      expiry: "2026-10-20",
+      markerSessionKey: "replay-case",
+      openOrders: [],
+    }),
+  );
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForTimeout(150);
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().at(-1)?.open === 103,
+  );
+  const replay = await page.evaluate(() =>
+    (window as any)
+      .chart()
+      .getDataList()
+      .map((c) => c.timestamp / 1000),
+  );
+  const cutoff = Date.parse("2026-10-16T09:24:00Z") / 1000;
+  assert(replay.every((time) => time <= cutoff));
+  assert(replay.includes(cutoff));
+  console.log(
+    "PASS replay full-day options history does not reveal future candles",
+  );
+  await page.evaluate(() =>
+    (window as any).setProps({
+      completedBar: {
+        time: Date.parse("2026-10-16T09:24:00Z") / 1000,
+        open: 103,
+        high: 120,
+        low: 99,
+        close: 110,
+      },
+    }),
+  );
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().at(-1).high === 120,
+  );
+  console.log("PASS Stepwise completed-bar correction survives batched ticks");
+  await page.evaluate(() =>
+    (window as any).setProps({
+      externalCandles: [
+        {
+          time: Date.parse("2026-10-15T09:15:00Z") / 1000,
+          open: 100,
+          high: 110,
+          low: 90,
+          close: 108,
+        },
+        {
+          time: Date.parse("2026-10-16T09:15:00Z") / 1000,
+          open: 108,
+          high: 112,
+          low: 100,
+          close: 110,
+        },
+      ],
+      swingChart: true,
+      intervalMinutes: 1440,
+      markerSessionKey: "swing-case",
+      paneType: "equity",
+      right: undefined,
+      strike: undefined,
+      expiry: undefined,
+    }),
+  );
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForTimeout(100);
+  assert.equal(
+    await page.evaluate(() => (window as any).chart().getDataList().length),
+    2,
+  );
+  console.log("PASS Swing external-candle rendering works");
+  await page.setViewportSize({ width: 800, height: 650 });
+  await page.waitForTimeout(100);
+  assert(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= (window as any).innerWidth,
+    ),
+  );
+  console.log("PASS resizing does not introduce horizontal overflow");
+  assert.deepEqual(errors, []);
+  console.log("PASS no browser runtime errors");
+});
+
+test("renderer switching waits for an outstanding modification and keeps its reconciliation state", async ({
+  page,
+}) => {
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().length > 0,
+  );
+  await page.evaluate(() => ((window as any).waitForEdit = true));
+  const position = await page.evaluate(() => {
+    const chart = (window as any).chart(),
+      rect = document.querySelector(".kline")!.getBoundingClientRect();
+    const p = chart.convertToPixel(
+      [{ timestamp: chart.getDataList().at(-1).timestamp, value: 105 }],
+      { paneId: "candle_pane" },
+    )[0];
+    return { x: rect.x + 350, y: rect.y + p.y };
+  });
+  await page.mouse.move(position.x, position.y);
+  await page.mouse.down();
+  await page.mouse.move(position.x, position.y - 30, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForFunction(
+    () => typeof (window as any).releaseEdit === "function",
+  );
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await expect(page.locator(".website-kline")).toHaveCount(1);
+  await page.evaluate(() => (window as any).releaseEdit());
+  await expect(page.locator(".website-kline")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).getPending()?.phase)).toBe(
+    "unconfirmed",
+  );
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).requests.filter((r: any) => r.method === "PATCH")
+          .length,
+    ),
+  ).toBe(1);
+});
+
+test("a definite broker rejection restores the confirmed line and clears the proposal", async ({
+  page,
+}) => {
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().length > 0,
+  );
+  await page.evaluate(() => ((window as any).rejectEdit = true));
+  const position = await page.evaluate(() => {
+    const chart = (window as any).chart(),
+      rect = document.querySelector(".kline")!.getBoundingClientRect();
+    const p = chart.convertToPixel(
+      [{ timestamp: chart.getDataList().at(-1).timestamp, value: 105 }],
+      { paneId: "candle_pane" },
+    )[0];
+    return { x: rect.x + 350, y: rect.y + p.y };
+  });
+  await page.mouse.move(position.x, position.y);
+  await page.mouse.down();
+  await page.mouse.move(position.x, position.y - 30, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator(".website-kline-error")).toContainText(
+    "Rejected for test",
+  );
+  expect(
+    await page.evaluate(() => (window as any).getPending()),
+  ).toBeUndefined();
+  await expect(page.locator(".order-line-label")).toHaveCount(1);
+});
+
+test("failed drawing creation stays visible and explicit refresh can reload saved state", async ({
+  page,
+}) => {
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().length > 0,
+  );
+  await page.evaluate(() => ((window as any).failDrawingSave = true));
+  await page
+    .getByRole("button", { name: "Toggle drawing and indicator tools" })
+    .click();
+  await page
+    .getByRole("button", { name: "Horizontal line", exact: true })
+    .click();
+  const rect = await page.locator(".kline").boundingBox();
+  await page.mouse.click(rect!.x + 400, rect!.y + 250);
+  await expect(page.locator(".website-kline-error")).toContainText(
+    "Drawing revision conflict",
+  );
+  expect(await page.evaluate(() => (window as any).drawings.length)).toBe(0);
+  const localDrawingCount = () =>
+    page.evaluate(
+      () =>
+        (window as any)
+          .chart()
+          .getOverlays()
+          .filter(
+            (o: any) =>
+              !o.extendData?.orderId &&
+              !o.extendData?.strategyId &&
+              o.name !== "desktopTradeMarker",
+          ).length,
+    );
+  expect(await localDrawingCount()).toBe(1);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "Refresh chart and drawings" })
+    .click();
+  await expect.poll(localDrawingCount).toBe(0);
+});
+
+test("failed drawing deletion retains both the saved drawing and its visible shape", async ({
+  page,
+}) => {
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().length > 0,
+  );
+  await page
+    .getByRole("button", { name: "Toggle drawing and indicator tools" })
+    .click();
+  await page
+    .getByRole("button", { name: "Horizontal line", exact: true })
+    .click();
+  const rect = await page.locator(".kline").boundingBox();
+  await page.mouse.click(rect!.x + 400, rect!.y + 250);
+  await page.waitForFunction(() => (window as any).drawings.length === 1);
+  await page.evaluate(() => ((window as any).failDrawingDelete = true));
+  await page.getByTitle("delete selected drawing").click();
+  await expect(page.locator(".website-kline-error")).toContainText(
+    "Drawing revision conflict",
+  );
+  expect(await page.evaluate(() => (window as any).drawings.length)).toBe(1);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any)
+          .chart()
+          .getOverlays()
+          .filter(
+            (o: any) =>
+              !o.extendData?.orderId &&
+              !o.extendData?.strategyId &&
+              o.name !== "desktopTradeMarker",
+          ).length,
+    ),
+  ).toBe(1);
+});
+
+test("website Day markers show the open cycle and can reveal closed cycles", async ({
+  page,
+}) => {
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().length > 0,
+  );
+  await page.evaluate(() => {
+    const base = Date.parse("2026-10-16T09:15:00Z") / 1000;
+    const fill = {
+      session_id: "session",
+      user_id: "owner",
+      symbol: "NIFTY",
+      side: "BUY",
+      quantity: 50,
+      price: 102,
+      timestamp: base,
+      commission: 1,
+    };
+    (window as any).setProps({
+      trades: [
+        { ...fill, trade_id: "closed-buy" },
+        {
+          ...fill,
+          trade_id: "closed-sell",
+          side: "SELL",
+          timestamp: base + 180,
+        },
+        { ...fill, trade_id: "open-buy", timestamp: base + 540 },
+      ],
+    });
+  });
+  const markerCount = () =>
+    page.evaluate(
+      () =>
+        (window as any)
+          .chart()
+          .getOverlays()
+          .filter((o: any) => o.name === "desktopTradeMarker").length,
+    );
+  await expect.poll(markerCount).toBe(1);
+  await page
+    .getByRole("button", { name: "Show closed trade markers", exact: true })
+    .click();
+  await expect.poll(markerCount).toBe(3);
+  expect(
+    await page.evaluate(() =>
+      (window as any).requests.some((r: any) => r.method === "PATCH"),
+    ),
+  ).toBe(false);
+});
+
+test("Swing Futures drawings retain their exact expiry and derivatives venue", async ({
+  page,
+}) => {
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.evaluate(() => {
+    const time = Date.parse("2026-10-16T09:15:00Z") / 1000;
+    (window as any).setProps({
+      swingChart: true,
+      liveChart: false,
+      externalCandles: [{ time, open: 100, high: 110, low: 95, close: 105 }],
+      paneType: "futures",
+      expiry: "2026-10-27",
+      intervalMinutes: 1440,
+      openOrders: [],
+      markerSessionKey: "future",
+    });
+  });
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().length === 1,
+  );
+  await page
+    .getByRole("button", { name: "Toggle drawing and indicator tools" })
+    .click();
+  await page
+    .getByRole("button", { name: "Horizontal line", exact: true })
+    .click();
+  const rect = await page.locator(".kline").boundingBox();
+  await page.mouse.click(rect!.x + 400, rect!.y + 150);
+  await page.waitForFunction(() => (window as any).drawings.length === 1);
+  expect(
+    await page.evaluate(() => (window as any).drawings[0].instrument),
+  ).toEqual({
+    kind: "future",
+    underlying: "NIFTY",
+    exchange: "NFO",
+    expiry: "2026-10-27",
+  });
+  expect(await page.locator(".candle-close").count()).toBe(0);
+});
+
+test("a drawing cannot be deleted before its pending creation is acknowledged", async ({
+  page,
+}) => {
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForFunction(
+    () => (window as any).chart().getDataList().length > 0,
+  );
+  await page.evaluate(() => ((window as any).waitForDrawingSave = true));
+  await page
+    .getByRole("button", { name: "Toggle drawing and indicator tools" })
+    .click();
+  await page
+    .getByRole("button", { name: "Horizontal line", exact: true })
+    .click();
+  const rect = await page.locator(".kline").boundingBox();
+  await page.mouse.click(rect!.x + 400, rect!.y + 250);
+  await page.waitForFunction(
+    () => typeof (window as any).releaseDrawingSave === "function",
+  );
+  await page.getByTitle("delete selected drawing").click();
+  await expect(
+    page.getByText("This drawing is saving; try again when it finishes."),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as any).requests.filter((r: any) => r.method === "DELETE")
+          .length,
+    ),
+  ).toBe(0);
+  await page.evaluate(() => (window as any).releaseDrawingSave());
+  await page.waitForFunction(() => (window as any).drawings.length === 1);
+  await page.getByTitle("delete selected drawing").click();
+  await page.waitForFunction(() => (window as any).drawings.length === 0);
+});
+
+test("Lightweight drawings and indicator choices return after switching renderers", async ({
+  page,
+}) => {
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await page.getByLabel("EMA 9/21", { exact: true }).uncheck();
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await page.getByTitle("Drawing tools", { exact: true }).click();
+  await page.getByText("─ Horizontal Line", { exact: true }).click();
+  const rect = await page.locator(".tv-lightweight-charts").boundingBox();
+  await page.mouse.click(rect!.x + rect!.width / 2, rect!.y + rect!.height / 2);
+  await expect(
+    page.getByRole("button", { name: "Clear", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() => (window as any).switchRenderer("kline"));
+  await page.waitForSelector(".website-kline canvas");
+  expect(await page.evaluate(() => (window as any).drawings.length)).toBe(0);
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
+  await expect(
+    page.getByRole("button", { name: "Clear", exact: true }),
+  ).toBeVisible();
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await expect(page.getByLabel("EMA 9/21", { exact: true })).not.toBeChecked();
+  expect(
+    await page.evaluate(() =>
+      (window as any).requests.some((r: any) => r.method === "PATCH"),
+    ),
+  ).toBe(false);
+});
+
+test('KLine respects authoritative and unavailable website P&L', async ({page}) => {
+  await page.goto('/tests/phase22/harness.html');
+  await page.waitForSelector('.website-kline canvas');
+  await page.waitForFunction(() => (window as any).chart().getDataList().length > 0);
+  await page.evaluate(() => (window as any).setProps({pnl:123.45,pnlAvailable:true}));
+  await expect(page.locator('.position-pnl-label')).toHaveText('+123.45');
+  await page.evaluate(() => (window as any).setProps({pnlAvailable:false,latestTick:null}));
+  await expect(page.locator('.position-pnl-label')).toHaveText('—');
+  await page.evaluate(() => (window as any).setProps({pnlAvailable:true,pnl:-50,pnlPctMode:true,sessionCapital:1000}));
+  await expect(page.locator('.position-pnl-label')).toHaveText('-5.00%');
+});
+
+test('inactive-pane tools activate their own chart before drawing', async ({page}) => {
+  await page.goto('/tests/phase22/harness.html');
+  await page.waitForSelector('.website-kline canvas');
+  await page.waitForFunction(() => (window as any).chart().getDataList().length > 0);
+  await page.evaluate(() => (window as any).setProps({isActive:false,onActivate:()=>{
+    (window as any).activations=((window as any).activations??0)+1;
+    (window as any).setProps({isActive:true});
+  }}));
+  await page.getByRole('button',{name:'Toggle drawing and indicator tools'}).click();
+  await page.getByRole('button',{name:'Horizontal line',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).activations??0)).toBeGreaterThan(0);
+  const rect=await page.locator('.kline').boundingBox();
+  await page.mouse.click(rect!.x+400,rect!.y+250);
+  await page.waitForFunction(()=>(window as any).drawings.length===1);
+});
+
+test('strategy edits block overlapping releases and recover after rejection', async ({page})=>{
+  await page.goto('/tests/phase22/harness.html');
+  await page.waitForSelector('.website-kline canvas');
+  await page.waitForFunction(()=>(window as any).chart().getDataList().length>0);
+  await page.evaluate(()=>(window as any).setProps({openOrders:[],strategyPaneActive:true,
+    targetProfitStrategies:[{strategy_id:'s1',strategy_type:'UnderlyingStoploss',status:'RUNNING',symbol:'NIFTY',right:null,price:104}],
+    onStrategyDrag:()=>{(window as any).strategyCalls=((window as any).strategyCalls??0)+1;return new Promise((_resolve,reject)=>{(window as any).rejectStrategy=()=>reject(new Error('Rejected strategy update'))})},
+  }));
+  await page.waitForFunction(()=>(window as any).chart().getOverlays().some((o:any)=>o.extendData?.strategyId));
+  const release=()=>page.evaluate(()=>{const o=(window as any).chart().getOverlays().find((o:any)=>o.extendData?.strategyId);o.onPressedMoveEnd({overlay:{id:o.id,points:[{value:103}]}})});
+  await release();await release();
+  await expect.poll(()=>page.evaluate(()=>(window as any).strategyCalls)).toBe(1);
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await expect(page.locator('.website-kline')).toHaveCount(1);
+  await page.evaluate(()=>(window as any).rejectStrategy());
+  await expect(page.locator('.website-kline')).toHaveCount(0);
+  await page.evaluate(()=>(window as any).switchRenderer('kline'));
+  await page.waitForSelector('.website-kline canvas');
+  await page.waitForFunction(()=>(window as any).chart().getOverlays().some((o:any)=>o.extendData?.strategyId));
+  await release();
+  await expect.poll(()=>page.evaluate(()=>(window as any).strategyCalls)).toBe(2);
+  await page.evaluate(()=>(window as any).rejectStrategy());
+});
+
+for(const drawing of [
+  {label:'▲ Buy Marker',clicks:1,marker:'arrowUp'},
+  {label:'▼ Sell Marker',clicks:1,marker:'arrowDown'},
+  {label:'─ Horizontal Line',clicks:1},
+  {label:'↗ Trend Line',clicks:2},
+  {label:'◫ Fib Retracement',clicks:2},
+  {label:'⊟ Parallel Channel',clicks:3},
+  {label:'⚡ Risk:Reward',clicks:2},
+])test(`Lightweight ${drawing.label} survives switching and Clear`,async({page})=>{
+  await page.goto('/tests/phase22/harness.html');
+  await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await page.waitForSelector('.tv-lightweight-charts');
+  await page.waitForFunction(()=>((window as any).lastCandles?.length??0)>0);
+  // Inspect real series without adding a production test interface.
+  await page.evaluate(async()=>{
+    const url=performance.getEntriesByType('resource').find(r=>/deps\/lightweight-charts/.test(r.name))!.name;
+    const {createChart}=await import(/* @vite-ignore */ url);
+    const element=document.createElement('div');document.body.append(element);
+    const chart=createChart(element,{width:10,height:10});
+    const proto=Object.getPrototypeOf(chart),add=proto.addLineSeries,remove=proto.removeSeries;
+    (window as any).capturedSeries=[];(window as any).invalidRemovals=0;
+    proto.addLineSeries=function(...args:any[]){const s=add.apply(this,args);(window as any).capturedSeries.push(s);return s};
+    proto.removeSeries=function(s:any){if(!s)(window as any).invalidRemovals++;return remove.call(this,s)};
+    chart.remove();element.remove();
+  });
+  await page.getByTitle('Drawing tools',{exact:true}).click();
+  await page.getByText(drawing.label,{exact:true}).click();
+  await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+  const rect=await page.locator('.tv-lightweight-charts').boundingBox();
+  for(let i=0;i<drawing.clicks;i++){
+    await page.mouse.click(rect!.x+rect!.width*(.4+i*.12),rect!.y+rect!.height*(.4+i*.1));
+    // Separate clicks so the chart does not interpret the second point as a double-click.
+    await page.waitForTimeout(550);
+  }
+  await expect(page.getByRole('button',{name:'Clear',exact:true})).toBeVisible();
+  const capture=()=>page.evaluate(()=>(window as any).capturedSeries.map((s:any)=>({data:s.data(),markers:s.markers(),color:s.options().color,lineVisible:s.options().lineVisible})));
+  const before=await capture();
+  await page.evaluate(()=>(window as any).switchRenderer('kline'));
+  await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>{(window as any).capturedSeries=[];return (window as any).switchRenderer('lightweight')});
+  await page.waitForSelector('.tv-lightweight-charts');
+  await expect(page.getByRole('button',{name:'Clear',exact:true})).toBeVisible();
+  const after=await capture();
+  for(const series of before)expect(after).toContainEqual(series);
+  if(drawing.marker)expect(after.some((s:any)=>s.markers.some((m:any)=>m.shape===drawing.marker))).toBe(true);
+  await page.getByRole('button',{name:'Clear',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Clear',exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=>(window as any).invalidRemovals)).toBe(0);
+});

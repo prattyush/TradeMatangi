@@ -4,9 +4,23 @@
 3. User can switch between KLine and Lightweight charts, add a Admin setting, or may be per Usser, which ever is convenient, basically, if one is not working, I am switch to the other (lightweight charts) which is tried and tested.
 4. Increase settings window size also, took many texts are present explaining setting meaning in the setting UI, can you shift them to tooltip.
 5. Any Line drawn on KLine should be saved to DDB as is being done with Desktop for day trading and swing trading.
-6. Show the same indicator and drawings are present in Day & Swing Trading in website, No need to add the current light weight charts indicators in KLine, use the same indicators and drawings as present in desktop. 
+6. Show the same indicator and drawings are present in Day & Swing Trading in website, No need to add the current light weight charts indicators in KLine, use the same indicators and drawings as present in desktop.
 7. The indicator and drawing should be collapsable whereever you want to place, for day trading at least you can place in the left side with minimal place, or where ever you think is best.
 8. The orders modificcation or Strategy modifications through lines in KLine should also work for real trading.
 9. In website, the Analysis and pattern and other can still use lightweight.
 10. Drawings and lines drawn in desktop should be visible in website for KLine and vice versa.
 11. Check in desktop and website a line drawn should be visible in all places where Kline is used for that particular syymbol.
+
+
+## Implementation
+
+See [Phase 22 implementation plan](spec-phase22-implementation-plan.md) for sprints, decisions, design, exclusions, verification commands and current status.
+
+Implementation began on **preprod**. The reviewed changes are on `feat/phase22-website-kline`, with a PR targeting **dev** at the latest request. Website Settings → General → Trading chart selects **Lightweight** (default) or **KLine** for Day and Swing. Swing also has a chart display settings gear. Switching does not restart the session or backend. Analysis/Patterns stay Lightweight.
+
+Day KLine covers Replay, Stepwise, Paper and Real, using existing website trading APIs. Existing Swing actions remain available. Shared KLine drawings load when opening/reopening or explicitly refreshing charts; no new continuous synchronization is added.
+
+Automated regression and browser interaction checks are implemented: 259 desktop/shared unit tests and 19 browser scenarios pass; both TypeScript checks and JavaScript production builds pass. The earlier broad backend run has 2,580 passes and the same five failures reproduced on unchanged preprod; see the linked document for exact results. Live broker and native Windows acceptance remain manual; merging and deployment remain manual.
+
+
+The follow-up review fixes unavailable/authoritative website P&L, overlapping strategy edits, inactive-pane drawing controls, and Lightweight drawing appearance/removal after switching renderers. It also fixes disposed drawing references during Strict Mode canvas recreation. See the linked implementation document for corrective sprint completion, current verification and remaining manual acceptance.

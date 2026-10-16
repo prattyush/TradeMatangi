@@ -1,5 +1,6 @@
+import ChartRendererSetting from "./ChartRendererSetting";
 import { useRef, useEffect, useState } from "react";
-import Chart from "./Chart";
+import TradingChartHost from "./TradingChartHost";
 import type { SwingChartProps } from "../../../shared/SwingWorkspace";
 export default function SwingChart(props: SwingChartProps) {
   const element = useRef<HTMLDivElement>(null);
@@ -24,11 +25,22 @@ export default function SwingChart(props: SwingChartProps) {
     <div
       ref={element}
       className="swing-renderer"
-      style={{ display: "flex", minHeight: 0, flex: 1 }}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+        flex: 1,
+      }}
     >
-      <Chart
+      <ChartRendererSetting />
+      <TradingChartHost
+        drawingRefreshKey={props.refreshKey}
+        liveChart={props.live && minutes !== 1440}
+        swingChart
+        chartKind={props.chartKind}
+        legacyDrawingScope={props.drawingScope}
         symbol={pane.symbol}
-        candleAnchorSeconds={pane.interval==='1D'?0:33300}
+        candleAnchorSeconds={pane.interval === "1D" ? 0 : 33300}
         defaultShowAllMarkers={props.showHistoricalTrades}
         externalTradeMarkers={props.showHistoricalTrades === true}
         tradingDate={pane.as_of_date}
@@ -53,6 +65,7 @@ export default function SwingChart(props: SwingChartProps) {
         openOrders={props.orders}
         onOrderSelect={props.onOrderSelect}
         onSwingOrderDrag={props.onOrderDrag}
+        onOrderDrag={props.onOrderDrag}
         onContextMenu={props.onChartContext}
         position={props.position}
         height={height}

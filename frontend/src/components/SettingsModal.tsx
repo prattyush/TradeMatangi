@@ -1,3 +1,5 @@
+import SettingHelp from './SettingHelp'
+import { useWebsiteChartRenderer } from '../hooks/useWebsiteChartRenderer'
 import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionSetting'
 import FuturesRiskSettings from "./FuturesRiskSettings"
 import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
@@ -340,6 +342,7 @@ interface Props {
 }
 
 export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
+  const renderer = useWebsiteChartRenderer()
   const [open, setOpen] = useState(false)
   const sharingRequest = useCallback(async (method: 'GET'|'PUT', emails?: string[]): Promise<HistorySharingState> => {
     const response = await fetch(`${BACKEND_URL}/api/users/real-history-sharing`, {method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='PUT'?JSON.stringify({emails}):undefined})
@@ -999,7 +1002,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         >
           <div role="dialog" aria-modal="true" aria-label="Settings" style={{
             background: '#161b22', border: '1px solid #30363d', borderRadius: 10,
-            padding: 24, width: 560, display: 'flex', flexDirection: 'column', gap: 16,
+            padding: 24, width: 'min(960px, calc(100vw - 32px))', display: 'flex', flexDirection: 'column', gap: 16,
             maxHeight: '90vh', boxSizing: 'border-box',
           }}>
             {/* Header */}
@@ -1062,6 +1065,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                Trading chart
+                <select aria-label="Website trading chart renderer" value={renderer}
+                  onChange={event => void savePreference({ website_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
+                  <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
+                </select>
+                <SettingHelp text={"Applies to website Day and Swing charts. Your session keeps running. Analysis and Patterns keep Lightweight. Choose Lightweight here if KLine fails."} />
+              </label>
+
 
             {/* P&L Display Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
@@ -1082,9 +1094,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </button>
                 ))}
               </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Pos P&L and Session P&L show % of session capital when enabled
-              </div>
+              <SettingHelp text={"Pos P&L and Session P&L show % of session capital when enabled"} />
             </div>
 
             {/* Historical Days */}
@@ -1126,9 +1136,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   Save
                 </button>
               </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Prior trading days of chart context loaded at session start
-              </div>
+              <SettingHelp text={"Prior trading days of chart context loaded at session start"} />
             </div>
 
             {/* Trading Chart Indicators */}
@@ -1160,9 +1168,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   ))}
                 </div>
               </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Selected ratio indicators share a compact band below each trading chart
-              </div>
+              <SettingHelp text={"Selected ratio indicators share a compact band below each trading chart"} />
             </div>
 
             {/* Override Previous Sessions */}
@@ -1195,9 +1201,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: '#e6edf3' }}>Prompt to override on duplicate session</div>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-                    When starting a session, checks for previous data with the same symbol, date, session, and instrument type
-                  </div>
+                  <SettingHelp text={"When starting a session, checks for previous data with the same symbol, date, session, and instrument type"} />
                 </div>
               </label>
             </div>
@@ -1664,9 +1668,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     Auto-start event capture on session start
                   </label>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                    When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)
-                  </div>
+                  <SettingHelp text={"When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)"} />
                 </div>
 
                 {/* Trade Labeling Mode (per session type) */}
@@ -1776,9 +1778,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     </div>
                     <div>
                       <div style={{ fontSize: 12, color: '#e6edf3' }}>Live pattern detection</div>
-                      <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-                        Detects chart patterns and behavioral signals in real-time during sessions
-                      </div>
+                      <SettingHelp text={"Detects chart patterns and behavioral signals in real-time during sessions"} />
                     </div>
                   </label>
                 </div>
@@ -1995,9 +1995,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     <span style={{ fontSize: 12, color: '#8b949e' }}>ticks (1–5)</span>
                   </div>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                    Extra ticks past target price before limit order triggers (each tick = ₹0.05)
-                  </div>
+                  <SettingHelp text={"Extra ticks past target price before limit order triggers (each tick = \u20b90.05)"} />
                 </div>
 
                 {/* Aggressive SL: only in profit */}
@@ -2012,9 +2010,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     <span style={{ fontSize: 12, color: '#e6edf3' }}>Only update SL when in profit</span>
                   </label>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                    Skip SL shift when bar closes below avg entry price
-                  </div>
+                  <SettingHelp text={"Skip SL shift when bar closes below avg entry price"} />
                 </div>
 
                 {/* Save button for all strategy settings */}
@@ -2389,11 +2385,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       </button>
                     ))}
                   </div>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                    Applies to all new paper and real sessions.
-                    Fyers supports NSE/BSE equities, indices, and F&O. Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token.
-                    Falls back to the next available source if the selected one is unavailable.
-                  </div>
+                  <SettingHelp text={"Applies to all new paper and real sessions. Fyers supports NSE/BSE equities, indices, and F&O. Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token. Falls back to the next available source if the selected one is unavailable."} />
 
                   {/* Show Kotak connection status inline when Kotak is selected */}
                   {streamSource === 'kotak' && (
