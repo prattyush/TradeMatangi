@@ -629,3 +629,51 @@ for(const drawing of [
   await expect(page.getByRole('button',{name:'Clear',exact:true})).toHaveCount(0);
   expect(await page.evaluate(()=>(window as any).invalidRemovals)).toBe(0);
 });
+
+test('one collapsible tools panel controls only the active KLine chart', async ({page})=>{
+  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({sharedTools:true}));
+  await expect(page.locator('.website-kline')).toHaveCount(2);
+  await page.waitForFunction(()=>(window as any).charts().every((c:any)=>c.getDataList().length>0));
+  await expect(page.getByRole('button',{name:'Toggle drawing and indicator tools'})).toHaveCount(1);
+  await page.getByRole('button',{name:'Toggle drawing and indicator tools'}).click();
+  await expect(page.locator('.website-chart-tools-name')).toHaveText('NIFTY');
+  await page.locator('.website-chart-tools button').filter({hasText:/^MA$/}).click();
+  const second=await page.locator('.kline').nth(1).boundingBox();await page.mouse.click(second!.x+100,second!.y+100);
+  await expect(page.locator('.website-chart-tools-name')).toContainText('24000 PE');
+  await expect(page.locator('.website-chart-tools button').filter({hasText:/^MA$/})).toHaveAttribute('aria-pressed','false');
+  await page.getByRole('button',{name:'Horizontal line',exact:true}).click();
+  await page.waitForFunction(()=>(window as any).charts()[1].getOverlays().length>0);
+  await page.waitForTimeout(550); // Keep activation and placement distinct from a chart double-click.
+  await page.mouse.click(second!.x+150,second!.y+180);
+  await page.waitForFunction(()=>(window as any).drawings.length===1);
+  expect(await page.evaluate(()=>(window as any).drawings[0].instrument.right)).toBe('PE');
+  const first=await page.locator('.kline').nth(0).boundingBox();await page.mouse.click(first!.x+100,first!.y+100);
+  await expect(page.locator('.website-chart-tools button').filter({hasText:/^MA$/})).toHaveAttribute('aria-pressed','true');
+  await page.getByRole('button',{name:'Toggle drawing and indicator tools'}).click();
+  await expect(page.locator('.website-kline-tools')).toBeHidden();
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await expect(page.getByRole('complementary',{name:'Active chart drawings and indicators'})).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test('Swing chart resizes and toggles the shared tools without ResizeObserver errors', async ({page})=>{
+  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({swingHarness:true}));
+  await page.waitForSelector('.swing-renderer .website-kline canvas');
+  for(const width of [760,1101,800,1200]){
+    await page.setViewportSize({width,height:700});
+    await page.getByRole('button',{name:'Toggle drawing and indicator tools'}).click();
+    await page.waitForTimeout(100);
+  }
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await page.waitForSelector('.tv-lightweight-charts');
+  for(const width of [800,1200]){await page.setViewportSize({width,height:750});await page.waitForTimeout(100)}
+  await page.evaluate(()=>(window as any).switchRenderer('kline'));
+  await page.waitForSelector('.website-kline canvas');
+  await page.waitForTimeout(300);
+  expect(errors).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});

@@ -10,6 +10,7 @@
 9. In website, the Analysis and pattern and other can still use lightweight.
 10. Drawings and lines drawn in desktop should be visible in website for KLine and vice versa.
 11. Check in desktop and website a line drawn should be visible in all places where Kline is used for that particular syymbol.
+12. Website KLine drawings and indicators use one collapsible left panel for all charts in the workspace, operating on the active chart rather than repeating controls per chart.
 
 
 ## Implementation
@@ -24,3 +25,10 @@ Automated regression and browser interaction checks are implemented: 259 desktop
 
 
 The follow-up review fixes unavailable/authoritative website P&L, overlapping strategy edits, inactive-pane drawing controls, and Lightweight drawing appearance/removal after switching renderers. It also fixes disposed drawing references during Strict Mode canvas recreation. See the linked implementation document for corrective sprint completion, current verification and remaining manual acceptance.
+
+
+### Shared website tools and resize follow-up
+
+Website Day and Swing now have one collapsible **✎** panel on the far left. Expand it for drawings and indicators, then click a chart to make it active; its instrument caption and controls appear in the panel. Indicator selections remain independent for each chart. Per-chart tool buttons are removed in the website workspace. The panel hides when using Lightweight. Desktop controls keep their existing layout.
+
+Website Day/Swing size observers and Lightweight chart/ratio widths now coalesce layout changes into animation frames, ignore unchanged dimensions, and cancel pending work on unmount. Browser regression coverage now totals **21 passing scenarios**, with **259 shared/desktop unit tests**, both TypeScript checks and the website production build passing. No global ResizeObserver error suppression is added; the reported warning still needs confirmation in the user's original deployed scenario.

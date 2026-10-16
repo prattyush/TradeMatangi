@@ -1,3 +1,5 @@
+import { createPortal } from "react-dom";
+import { useWebsiteChartTools } from "./WebsiteChartTools";
 import { beginChartActivity } from "../../../shared/charts/chartActivity";
 import {
   useCallback,
@@ -81,6 +83,11 @@ export default function WebsiteKLineChart(
     onFallback: () => void;
   },
 ) {
+  const sharedTools = useWebsiteChartTools();
+  const toolsName = `${props.symbol}${props.paneType === "options" ? ` ${props.strike} ${props.right} · ${props.expiry}` : props.paneType === "futures" ? ` FUT · ${props.expiry}` : ""}`;
+  useEffect(() => {
+    if (sharedTools && (props.isActive ?? true)) return sharedTools.register(toolsName);
+  }, [sharedTools, props.isActive, toolsName]);
   const [refresh, setRefresh] = useState(0);
   const { rows, loading, message } = useKLineCandles(
     { ...props, reloadKey: (props.reloadKey ?? 0) + refresh },
@@ -284,86 +291,8 @@ export default function WebsiteKLineChart(
         (o) => o.is_stoploss || o.order_type === "STOPLOSS",
       ),
     });
-  if (
-    props.paneType === "options" &&
-    (!props.strike || !props.expiry || !props.right)
-  )
-    return (
-      <div role="status">
-        Choose an exact option contract to display this chart.
-      </div>
-    );
-  if (props.paneType === "futures" && !props.expiry)
-    return (
-      <div role="status">
-        Choose an exact Futures contract to display this chart.
-      </div>
-    );
-  if (!props.chartKind && !symbolInfo)
-    return (
-      <div role="status">
-        {error || "Loading chart instrument…"}{" "}
-        <button onClick={props.onFallback}>Use Lightweight</button>
-      </div>
-    );
-  return (
-    <div className="website-kline" style={{ height: props.height ?? 350 }}>
-      <div className="website-kline-controls">
-        <button
-          aria-label="Toggle drawing and indicator tools"
-          aria-expanded={!collapsed}
-          onClick={() => setCollapsed((v) => !v)}
-        >
-          ✎
-        </button>
-        <button
-          aria-label="Refresh chart and drawings"
-          title="Refresh chart and drawings"
-          disabled={busy}
-          onClick={() => {
-            props.retained.current.clear();
-            setRefresh((v) => v + 1);
-            props.onManualRefresh?.();
-          }}
-        >
-          ↻
-        </button>
-        <button
-          title="Use Lightweight for this chart"
-          disabled={busy}
-          onClick={props.onFallback}
-        >
-          Lightweight
-        </button>
-        {props.onMaximize && (
-          <button
-            title={props.isMaximized ? "Restore chart" : "Maximize chart"}
-            onClick={props.onMaximize}
-          >
-            ⛶
-          </button>
-        )}
-        {props.swapTargets?.map((t) => (
-          <button key={t.dir} title="Move chart" onClick={t.onClick}>
-            {t.dir}
-          </button>
-        ))}
-        {busy && <span role="status">Updating…</span>}
-      </div>
-      {message && rows.length > 0 && (
-        <div role="status" className="website-kline-error">
-          {message}
-        </div>
-      )}
-      {error && (
-        <div role="alert" className="website-kline-error">
-          {error}
-          <button onClick={() => setError("")}>×</button>
-        </div>
-      )}
-      <div className="website-kline-body">
-        {!collapsed && (
-          <aside
+  const drawingAndIndicatorTools = (
+    <aside
             onPointerDownCapture={() => props.onActivate?.()}
             className="website-kline-tools"
             aria-label="KLine drawing and indicator tools"
@@ -426,7 +355,88 @@ export default function WebsiteKLineChart(
             ))}
             <button onClick={() => setIndicators([])}>Clear indicators</button>
           </aside>
+  );
+  if (
+    props.paneType === "options" &&
+    (!props.strike || !props.expiry || !props.right)
+  )
+    return (
+      <div role="status">
+        Choose an exact option contract to display this chart.
+      </div>
+    );
+  if (props.paneType === "futures" && !props.expiry)
+    return (
+      <div role="status">
+        Choose an exact Futures contract to display this chart.
+      </div>
+    );
+  if (!props.chartKind && !symbolInfo)
+    return (
+      <div role="status">
+        {error || "Loading chart instrument…"}{" "}
+        <button onClick={props.onFallback}>Use Lightweight</button>
+      </div>
+    );
+  return (
+    <div className="website-kline" style={{ height: props.height ?? 350 }}>
+      <div className="website-kline-controls">
+        {!sharedTools && <button
+          aria-label="Toggle drawing and indicator tools"
+          aria-expanded={!collapsed}
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          ✎
+        </button>}
+        <button
+          aria-label="Refresh chart and drawings"
+          title="Refresh chart and drawings"
+          disabled={busy}
+          onClick={() => {
+            props.retained.current.clear();
+            setRefresh((v) => v + 1);
+            props.onManualRefresh?.();
+          }}
+        >
+          ↻
+        </button>
+        <button
+          title="Use Lightweight for this chart"
+          disabled={busy}
+          onClick={props.onFallback}
+        >
+          Lightweight
+        </button>
+        {props.onMaximize && (
+          <button
+            title={props.isMaximized ? "Restore chart" : "Maximize chart"}
+            onClick={props.onMaximize}
+          >
+            ⛶
+          </button>
         )}
+        {props.swapTargets?.map((t) => (
+          <button key={t.dir} title="Move chart" onClick={t.onClick}>
+            {t.dir}
+          </button>
+        ))}
+        {busy && <span role="status">Updating…</span>}
+      </div>
+      {message && rows.length > 0 && (
+        <div role="status" className="website-kline-error">
+          {message}
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="website-kline-error">
+          {error}
+          <button onClick={() => setError("")}>×</button>
+        </div>
+      )}
+      <div className="website-kline-body">
+        {sharedTools
+          ? (props.isActive ?? true) && sharedTools.container && createPortal(drawingAndIndicatorTools, sharedTools.container)
+          : !collapsed && drawingAndIndicatorTools}
         <KLineChart
           symbol={
             props.paneType === "options"

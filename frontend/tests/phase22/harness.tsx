@@ -1,3 +1,5 @@
+import { WebsiteChartTools } from "../../src/components/WebsiteChartTools";
+import SwingChart from "../../src/components/SwingChart";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import TradingChartHost from "../../src/components/TradingChartHost";
@@ -227,7 +229,7 @@ function Harness() {
   w.directSwitch = (value: any) => publishRenderer(value, rendererAccountKey());
   w.refreshBroker = () => api.reconcileKotakOrders("session");
   w.getPending = () => pendingOrderEdits.get("session", "o1");
-  return (
+  const chart = (
     <TradingChartHost
       {...props}
       onBrokerSnapshot={(_session, snapshot) =>
@@ -248,6 +250,14 @@ function Harness() {
       }}
     />
   );
+  if (props.swingHarness) return <WebsiteChartTools><div style={{display:'flex',height:'70vh'}}>
+    <SwingChart pane={{symbol:'NIFTY',instrument_type:'equity',interval:'3m',as_of_date:'2026-10-16'}} drawingScope="test" chartKind="index" candles={today} loading={false} message="" live={false} active picking={false} orders={[]} onPick={()=>{}} onActivate={()=>{}} loadOlder={async()=>({candles:[],more:false})} />
+  </div></WebsiteChartTools>;
+  if (props.sharedTools) return <WebsiteChartTools><div style={{display:'flex',minWidth:0}}>
+    <div style={{flex:1,minWidth:0}}>{React.cloneElement(chart,{isActive:!props.activeIndex,onActivate:()=>setProps((p:any)=>({...p,activeIndex:0}))})}</div>
+    <div style={{flex:1,minWidth:0}}>{React.cloneElement(chart,{paneType:'options',right:'PE',strike:24000,expiry:'2026-10-20',openOrders:[],isActive:props.activeIndex===1,onActivate:()=>setProps((p:any)=>({...p,activeIndex:1}))})}</div>
+  </div></WebsiteChartTools>;
+  return chart;
 }
 createRoot(document.getElementById("test-root")!).render(
   <React.StrictMode>
@@ -260,3 +270,8 @@ w.chart = () => {
   return init(element);
 };
 w.ready = true;
+
+w.charts = () => [...document.querySelectorAll(".kline")].map(element => {
+  element.id = element.getAttribute("k-line-chart-id") ?? "";
+  return init(element as HTMLElement);
+});

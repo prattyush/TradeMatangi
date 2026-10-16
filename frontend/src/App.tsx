@@ -793,12 +793,19 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   }, [])
 
   useEffect(() => {
+    let frame: number | undefined
     const obs = new ResizeObserver(entries => {
       const h = entries[0]?.contentRect.height
-      if (h && h > 0) setColumnHeight(Math.max(160, h - 8))
+      if (!h || h <= 0) return
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        frame = undefined
+        const next = Math.max(160, Math.floor(h - 8))
+        setColumnHeight(previous => previous === next ? previous : next)
+      })
     })
     if (mainContentRef.current) obs.observe(mainContentRef.current)
-    return () => obs.disconnect()
+    return () => { obs.disconnect(); if (frame !== undefined) cancelAnimationFrame(frame) }
   }, [])
 
   useEffect(() => {

@@ -7,12 +7,19 @@ export default function SwingChart(props: SwingChartProps) {
   const [height, setHeight] = useState(350);
   useEffect(() => {
     if (!element.current) return;
+    let frame: number | undefined;
     const observer = new ResizeObserver((entries) => {
-      if (entries[0].contentRect.height > 0)
-        setHeight(Math.max(120, entries[0].contentRect.height - 38));
+      const available = entries[0]?.contentRect.height;
+      if (!available || available <= 0) return;
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        const next = Math.max(120, Math.floor(available - 38));
+        setHeight(previous => previous === next ? previous : next);
+      });
     });
     observer.observe(element.current);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); if (frame !== undefined) cancelAnimationFrame(frame); };
   }, []);
   const { pane } = props;
   const minutes =
