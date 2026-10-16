@@ -1,3 +1,4 @@
+import WebsiteChartAppearanceSettings from './WebsiteChartAppearanceSettings';
 import "./settingHelp.css";
 import { useState } from "react";
 import { useWebsiteChartRenderer } from "../hooks/useWebsiteChartRenderer";
@@ -37,6 +38,7 @@ export default function ChartRendererSetting() {
           <option value="kline">KLine</option>
         </select>
       </label>
+      <WebsiteChartAppearanceSettings />
     </details>
   );
 }

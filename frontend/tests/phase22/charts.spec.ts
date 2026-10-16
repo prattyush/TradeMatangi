@@ -434,7 +434,7 @@ test("Swing Futures drawings retain their exact expiry and derivatives venue", a
     });
   });
   await page.waitForFunction(
-    () => (window as any).chart().getDataList().length === 1,
+    () => document.querySelector(".kline") && (window as any).chart()?.getDataList().length === 1,
   );
   await page
     .getByRole("button", { name: "Toggle drawing and indicator tools" })
@@ -741,4 +741,42 @@ for(const right of ['CE','PE'])test(`production ${right} right-click menu and ti
   await page.getByRole('button',{name:'Limit',exact:true}).click();
   await page.getByRole('button',{name:'Qty 1',exact:true}).click();
   expect(await page.evaluate(()=>(window as any).submittedTicket)).toMatchObject({ticket:{sessionId:'session',paneId:1,right,strike:24000,expiry:'2026-10-20',orderType:'LIMIT'},quantity:1});
+});
+
+test('website appearance settings apply two moving averages and hide symbol/OHLC without trading writes', async ({ page }) => {
+  await page.goto('/tests/phase22/harness.html');
+  await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(() => (window as any).setProps({appearanceUI:true}));
+  await expect(page.getByRole('button',{name:'Save chart appearance'})).toBeEnabled();
+  await page.getByLabel('Show moving averages on website charts').check();
+  await page.getByLabel('KLine moving average type',{exact:true}).selectOption('EMA');
+  await page.getByLabel('KLine moving average periods',{exact:true}).fill('9,21');
+  await page.getByLabel('Show symbol and OHLC values').uncheck();
+  await page.getByRole('button',{name:'Save chart appearance'}).click();
+  await expect(page.getByRole('status')).toContainText('Chart appearance saved');
+  await page.waitForFunction(() => (window as any).chart().getIndicators().some((indicator:any) => indicator.name === 'EMA' && indicator.calcParams.join(',') === '9,21'));
+  await expect(page.locator('.chart-head > span').first()).not.toContainText('NIFTY');
+  expect(await page.evaluate(() => (window as any).chart().getStyles().candle.tooltip.showRule)).toBe('none');
+  expect(await page.evaluate(() => (window as any).appearance.trendLineColor)).toBe('#123456');
+  await page.getByLabel('KLine moving average periods',{exact:true}).fill('9,,21');
+  await page.getByRole('button',{name:'Save chart appearance'}).click();
+  await expect(page.getByRole('status')).toContainText('Enter 1–6 periods');
+  expect(await page.evaluate(() => (window as any).requests.filter((r:any) => r.method !== 'GET' && !r.url.endsWith('/chart-settings')).length)).toBe(0);
+});
+
+test('website replay countdown follows market time and live countdown ticks', async ({ page }) => {
+  await page.goto('/tests/phase22/harness.html');
+  await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(() => (window as any).setProps({historyMode:'replay',liveChart:false,currentSimTime:Date.parse('2026-10-16T09:16:10Z')/1000}));
+  await expect(page.getByLabel('Candle closes in 01:50')).toBeVisible();
+  await page.waitForTimeout(1100);
+  await expect(page.getByLabel('Candle closes in 01:50')).toBeVisible();
+  await page.evaluate(() => (window as any).setProps({currentSimTime:Date.parse('2026-10-16T09:17:59Z')/1000}));
+  await expect(page.getByLabel('Candle closes in 00:01')).toBeVisible();
+  await page.evaluate(() => (window as any).setProps({historyMode:'live',liveChart:true}));
+  const timer = page.locator('[aria-label^="Candle closes in"]');
+  const before = await timer.textContent();
+  await expect(timer).not.toHaveText(before!);
+  await page.evaluate(() => (window as any).setProps({intervalMinutes:1440}));
+  await expect(timer).toHaveCount(0);
 });

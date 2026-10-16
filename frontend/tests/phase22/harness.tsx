@@ -1,3 +1,4 @@
+import WebsiteChartAppearanceSettings from "../../src/components/WebsiteChartAppearanceSettings";
 import { buildDayChartContextMenu } from "../../src/services/dayChartContextMenu";
 import ChartContextMenu from "../../src/components/ChartContextMenu";
 import ChartEntryTicket, { type EntryTicket } from "../../src/components/ChartEntryTicket";
@@ -100,7 +101,10 @@ window.fetch = async (input: any, options: any = {}) => {
       ),
       as_of_time: url.searchParams.get("as_of_time"),
     };
-  else if (url.pathname.endsWith("/chart-settings")) data = { settings: {} };
+  else if (url.pathname.endsWith("/chart-settings")) {
+    if (method === "PUT") w.appearance = body.settings;
+    data = { settings: w.appearance ?? {background:"#0d1117", trendLineColor:"#123456"} };
+  }
   else if (url.pathname.includes("/drawings")) {
     if (method === "POST" && w.waitForDrawingSave)
       await new Promise((resolve) => (w.releaseDrawingSave = resolve));
@@ -256,6 +260,7 @@ function Harness() {
       }}
     />
   );
+  if (props.appearanceUI) return <><WebsiteChartAppearanceSettings />{chart}</>;
   if (props.menuHarness) {
     const flat={side:'FLAT',quantity:0};
     const pane={id:1,type:props.paneType??'equity',right:props.right,strike:props.strike,expiry:props.expiry};

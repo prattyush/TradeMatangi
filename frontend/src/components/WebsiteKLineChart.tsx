@@ -1,3 +1,4 @@
+import { chartAppearanceEvent } from './WebsiteChartAppearanceSettings';
 import { createPortal } from "react-dom";
 import { useWebsiteChartTools } from "./WebsiteChartTools";
 import { beginChartActivity } from "../../../shared/charts/chartActivity";
@@ -49,6 +50,7 @@ const defaults = {
   movingAverageType: "MA" as const,
   movingAveragePeriods: "9,21",
   showChartInfo: true,
+  websiteShowMovingAverage: undefined as boolean | undefined,
   horizontalLineColor: "#facc15",
   horizontalLineWidth: 2,
   trendLineColor: "#60a5fa",
@@ -155,13 +157,26 @@ export default function WebsiteKLineChart(
   }, []);
   useEffect(() => {
     let active = true;
+    const owner = rendererAccountKey();
+    let changed = false;
+    const apply = (next: Partial<typeof defaults> = {}) => {
+      if (!active || rendererAccountKey() !== owner) return;
+      setSettings({ ...defaults, ...next });
+      if (typeof next.websiteShowMovingAverage === "boolean") setIndicators(previous => next.websiteShowMovingAverage ? [...new Set([...previous, "MA"])] : previous.filter(name => name !== "MA"));
+    };
+    const onChange = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail.owner === owner) { changed = true; apply(detail.settings); }
+    };
+    window.addEventListener(chartAppearanceEvent, onChange);
     void drawingRequest("chart-settings", "GET")
       .then((data) => {
-        if (active) setSettings({ ...defaults, ...data.settings });
+        if (!changed) apply(data.settings);
       })
       .catch(() => {});
     return () => {
       active = false;
+      window.removeEventListener(chartAppearanceEvent, onChange);
     };
   }, []);
   const symbolInfo = catalogue.find((s) => s.symbol === props.symbol);
@@ -276,6 +291,7 @@ export default function WebsiteKLineChart(
         : (s.right ?? null) === (props.right ?? null)),
   );
   const chartSettings = {
+    desktop_hide_chart_labels: !settings.showChartInfo,
     desktop_pnl_display_mode: props.pnlPctMode ? "percent" : "currency",
   } as DesktopTradingSettings;
   const context = (price: number, x: number, y: number) =>
@@ -480,7 +496,8 @@ export default function WebsiteKLineChart(
           drawingRefreshKey={(props.drawingRefreshKey ?? 0) + refresh}
           settings={settings}
           isReplaying={props.historyMode === "replay"}
-          isLive={props.liveChart ?? props.historyMode === "live"}
+          isLive={props.intervalMinutes < 1440 && (props.liveChart ?? props.historyMode === "live")}
+          countdownTime={props.intervalMinutes < 1440 && props.historyMode !== "live" ? props.currentSimTime ?? props.latestTick?.time ?? undefined : undefined}
           instrument={instrument}
           baseUrl={BACKEND_URL}
           drawingRequest={drawingRequest}
