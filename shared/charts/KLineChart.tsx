@@ -336,6 +336,7 @@ export function KLineChart({
   settings,
   isReplaying,
   isLive,
+  countdownTime,
   instrument,
   baseUrl,
   drawingRequest,
@@ -415,6 +416,8 @@ export function KLineChart({
   settings: ChartSettings;
   isReplaying: boolean;
   isLive: boolean;
+  /** Replay market clock, in the same seconds used by candles. Omit for live wall clock. */
+  countdownTime?: number;
   replayDatasetKey?: string;
   instrument: Record<string, unknown>;
   baseUrl: string;
@@ -2147,7 +2150,7 @@ export function KLineChart({
     geometryVersion,
   ]);
   const closeCountdown = formatCandleCloseCountdown(
-    clock / 1000,
+    isLive ? clock / 1000 : countdownTime ?? clock / 1000,
     interval === "1D" ? 1440 : Number(interval.replace("m", "")),
   );
   const selectedOrder = openOrders.find(
@@ -2379,7 +2382,7 @@ export function KLineChart({
                 : (pricePickAction.label ?? "Pick price")}
             </span>
           )}
-          {isLive && (
+          {(isLive || (Number.isFinite(countdownTime) && countdownTime! > 0)) && (
             <span
               className="candle-close"
               aria-label={`Candle closes in ${closeCountdown}`}

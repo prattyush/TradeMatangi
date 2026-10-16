@@ -39,3 +39,9 @@ Website Day/Swing size observers and Lightweight chart/ratio widths now coalesce
 PR #676 also preserves the exact session, pane, option right, strike and expiry through chart menus, entry tickets, price picks and strategies. In options sessions, the underlying menu directs entries to CE/PE charts and retains underlying-specific strategies. Premium order changes target only the clicked contract. Renderer selection is exclusively in Settings; chart errors offer Retry and diagnostic details. Three-chart KLine replay layouts now use the space previously reserved for Lightweight toolbars, removing the unused bottom gap.
 
 Current verification: **27 browser scenarios, 278 desktop/shared unit tests and 18 focused backend tests pass**. See the linked implementation plan for sprint details, assumptions and manual acceptance limits.
+
+### Website KLine display parity
+
+Settings → General → **KLine chart appearance** now exposes a website moving-average toggle, MA/EMA type, comma-separated periods (default `9,21`, drawing two lines), and **Show symbol and OHLC values**. Swing exposes the same controls under its chart display gear. Saving updates all mounted website KLine charts; saved values reload on reopening. MA type/periods and OHLC visibility reuse the existing per-user desktop chart-settings record. Website symbol visibility follows this toggle; desktop's separate label setting is unchanged.
+
+Each intraday website KLine chart shows its bar-close countdown on the right. Live charts tick every second; Replay/Stepwise use the session market clock and therefore remain still when replay is paused. Daily/historical Swing charts have no live countdown. Lightweight display behavior is unchanged.

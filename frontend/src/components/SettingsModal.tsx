@@ -1,3 +1,4 @@
+import WebsiteChartAppearanceSettings from './WebsiteChartAppearanceSettings'
 import SettingHelp from './SettingHelp'
 import { useWebsiteChartRenderer } from '../hooks/useWebsiteChartRenderer'
 import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionSetting'
@@ -1074,6 +1075,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 <SettingHelp text={"Applies to website Day and Swing charts. Your session keeps running. Analysis and Patterns keep Lightweight. Choose Lightweight here if KLine fails."} />
               </label>
 
+
+            <WebsiteChartAppearanceSettings />
 
             {/* P&L Display Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
