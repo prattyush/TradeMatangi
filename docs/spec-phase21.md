@@ -2222,3 +2222,9 @@ Snapshot chip checks cover interval changes, resize and pan. A 63-cycle Stats
 fixture with only 50 loaded verifies direct inspection, grouped member choice,
 failure/Retry, rapid-selection ordering, close fencing and filter-change fencing
 on both hosts. No live orders or trading-data mutations were performed.
+
+### Desktop Day P&L journey height follow-up (2026-10-17)
+
+- Desktop Trades tab: the trades list determines the top row height; the adjacent Day P&L journey matches it and scrolls internally when needed, keeping the price charts directly below the trades list.
+- Website layout and narrow-screen stacked layout remain unchanged.
+- Validation: shared Day journey browser acceptance passed for both hosts, including desktop panel height/alignment and price-chart placement assertions; `git diff --check` passed.
