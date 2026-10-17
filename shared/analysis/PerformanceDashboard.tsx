@@ -1,3 +1,4 @@
+import DayPathBehavior from "./DayPathBehavior";
 import FuturesExecutionChart from "../FuturesExecutionChart";
 import SwingStats from "../SwingStats";
 import RealChargesEditor from "./RealChargesEditor";
@@ -9,6 +10,7 @@ import type { AnalysisTrade } from "./api";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   cyclesCsv,
+  type CycleIdentity,
   type Comparison,
   type PerformanceCycle,
   type PerformanceFilters,
@@ -281,6 +283,7 @@ export default function PerformanceDashboard(props: Props) {
   const [error, setError] = useState("");
   useAnalysisError(error, "PerformanceDashboard");
   const [detail, setDetail] = useState<PerformanceCycle | null>(null);
+  const [pendingIdentity,setPendingIdentity] = useState<CycleIdentity|null>(null);
   const [detailError, setDetailError] = useState("");
   useAnalysisError(detailError, "PerformanceDashboard");
   const [showChart, setShowChart] = useState(false);
@@ -307,6 +310,7 @@ export default function PerformanceDashboard(props: Props) {
     setDetail(null);
     setReport(null);
     setCycles([]);
+    setPendingIdentity(null);setDetail(null);setDetailBusy(false);setDetailError("");
     void Promise.all([
       getPerformance(filters, controller.signal),
       getPerformanceCycles(filters, 0, controller.signal),
@@ -332,9 +336,10 @@ export default function PerformanceDashboard(props: Props) {
   }, [filters, refresh, environment.dataRevision, tradingStyle]);
   const select = (key: string, dimension?: string) =>
     setFocus({ key, dimension });
-  const showDetail = async (c: PerformanceCycle, enrich = false) => {
+  const showDetail = async (c: PerformanceCycle | CycleIdentity, enrich = false) => {
     const revision = ++detailGeneration.current;
-    setDetail(c);
+    setPendingIdentity(c);
+    setDetail("executions" in c ? c : null);
     if (!enrich) setShowChart(false);
     setDetailBusy(true);
     setDetailError("");
@@ -1175,6 +1180,7 @@ export default function PerformanceDashboard(props: Props) {
             )}
             {view === "Behavior" && (
               <>
+                <DayPathBehavior paths={report.day_paths??[]} onSelect={identity=>void showDetail(identity)}/>
                 <section className="pa-card">
                   <h3>Patterns worth reviewing</h3>
                   {report.insights.length ? (
@@ -1226,11 +1232,17 @@ export default function PerformanceDashboard(props: Props) {
           </section>
         )}
       </main>
+      {!detail&&pendingIdentity&&(detailBusy||detailError)&&<aside className="pa-drawer" role="dialog" aria-label="Trade cycle details">
+        <button aria-label="Close trade details" onClick={()=>{detailGeneration.current++;setPendingIdentity(null);setDetailBusy(false);setDetailError("")}}>×</button>
+        {detailBusy?<p role="status">Reading trade details…</p>:<><p role="alert">{detailError}</p><button onClick={()=>void showDetail(pendingIdentity)}>Retry trade details</button></>}
+      </aside>}
       {detail && (
         <aside
           className="pa-drawer"
           role="dialog"
           aria-label="Trade cycle details"
+          data-cycle-id={detail.cycle_id}
+          data-session-id={detail.session_id}
         >
           <div className="pa-card-title">
             <div>
@@ -1246,7 +1258,7 @@ export default function PerformanceDashboard(props: Props) {
               aria-label="Close trade details"
               onClick={() => {
                 detailGeneration.current++;
-                setDetail(null);
+                setDetail(null);setPendingIdentity(null);setDetailBusy(false);
               }}
             >
               ×

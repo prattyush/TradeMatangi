@@ -1,0 +1,13 @@
+.analysis-trades-top { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; align-items: start; margin-bottom: 12px; }
+.analysis-trades-list { max-height: 410px; overflow: auto; min-width: 0; }
+.day-journey { min-width: 0; padding: 12px; border: 1px solid #303e52; border-radius: 6px; background: #111923; color: #e2e8f0; }
+.day-journey header { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.day-journey h3 { margin: 0; font-size: 14px; }.day-journey p,.day-journey small { font-size: 11px; color: #94a3b8; }
+.day-journey select,.day-paths select { background: #162030; color: #e2e8f0; border: 1px solid #435268; border-radius: 4px; padding: 3px 6px; }
+.day-journey svg { display: block; width: 100%; max-height: 260px; }.day-journey circle { cursor: pointer; }.day-journey circle:focus { stroke: #fff; stroke-width: 3; outline: none; }
+.day-journey-detail { min-height: 30px; font-size: 11px; margin-bottom: 5px; }.day-journey-empty { min-height: 160px; display: grid; place-items: center; }
+.day-paths { min-width: 0; }.day-paths .day-path-table { overflow-x: auto; }.day-paths table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.day-paths td,.day-paths th { text-align: left; padding: 7px; border-bottom: 1px solid #29384c; white-space: nowrap; }.day-paths button { cursor: pointer; }
+.day-sizing { display: flex; flex-wrap: wrap; gap: 14px; }.day-sizing > div { flex: 1; min-width: 135px; }.day-sizing strong,.day-sizing small { display: block; }
+.day-trend { width: 100%; height: 130px; }.day-path-note { color: #94a3b8; font-size: 12px; }
+@media (max-width: 1000px) { .analysis-trades-top { grid-template-columns: minmax(0,1fr); } }

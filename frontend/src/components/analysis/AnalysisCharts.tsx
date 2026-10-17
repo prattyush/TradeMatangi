@@ -1,3 +1,5 @@
+import { ChartHistoryStatus, type HistoryState } from '../../../../shared/analysis/ChartHistoryStatus'
+import { CandleInterval } from '../../../../shared/analysis/CandleInterval'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   createChart,
@@ -7,7 +9,7 @@ import {
   LineData,
   Time,
 } from 'lightweight-charts'
-import { useAnalysisApi } from '../../../../shared/analysis/environment'
+import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import type { AnalysisTrade, OHLCCandle } from '../../../../shared/analysis/api'
 function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
   if (!trade.right) return trade.side
@@ -57,6 +59,7 @@ function ChartToolbar({ title, isMaximized = false, onMaximize }: {
       borderBottom: '1px solid #21262d',
     }}>
       <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 600 }}>{title}</span>
+      <CandleInterval />
       {onMaximize && (
         <button
           onClick={onMaximize}
@@ -90,6 +93,10 @@ export function WebsiteAnalysisChart({
   getMarkerText?: (trade: AnalysisTrade) => string
 }) {
   const api = useAnalysisApi()
+  const { intervalMinutes = 3 } = useAnalysisEnvironment()
+  const [historyState,setHistoryState]=useState<HistoryState>('loading')
+  const [historyRetry,setHistoryRetry]=useState(0)
+  const [loadedInterval,setLoadedInterval]=useState<number|null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -160,6 +167,9 @@ export function WebsiteAnalysisChart({
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date) return
     let cancelled = false
+    setHistoryState('loading');setLoadedInterval(null)
+    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([])
+    tradeMarkerPoolRef.current.forEach(marker=>{try{chartRef.current?.removeSeries(marker)}catch{}});tradeMarkerPoolRef.current=[]
     ;(async () => {
       try {
         const toCandle = (c: OHLCCandle): CandlestickData => ({
@@ -167,8 +177,8 @@ export function WebsiteAnalysisChart({
           open: c.open, high: c.high, low: c.low, close: c.close,
         })
         const [histResp, tradingDayCandles] = await Promise.all([
-          api.getHistorical(symbol, date, 3, historicalDays),
-          api.getPreSession(symbol, date, '15:30:00', 3),
+          api.getHistorical(symbol, date, intervalMinutes, historicalDays),
+          api.getPreSession(symbol, date, '15:30:00', intervalMinutes),
         ])
         if (cancelled || !seriesRef.current) return
 
@@ -181,6 +191,7 @@ export function WebsiteAnalysisChart({
         const sorted = Array.from(byTime.values()).sort(
           (a, b) => (a.time as number) - (b.time as number)
         )
+        setLoadedInterval(intervalMinutes);setHistoryState(sorted.length?'ready':'empty')
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
 
@@ -199,10 +210,10 @@ export function WebsiteAnalysisChart({
           setCandles(sorted)
           chartRef.current?.timeScale().fitContent()
         }
-      } catch { /* ignore */ }
+      } catch { if(!cancelled)setHistoryState('error') }
     })()
     return () => { cancelled = true }
-  }, [symbol, date, historicalDays])
+  }, [api, symbol, date, historicalDays, intervalMinutes, historyRetry])
 
   const hasOptions = trades.some(t => t.right)
 
@@ -219,11 +230,11 @@ export function WebsiteAnalysisChart({
       ? trades
       : trades.filter(t => !t.right || t.right === markerFilter)
 
-    if (displayTrades.length === 0) {
+    if (historyState!=='ready'||loadedInterval!==intervalMinutes||displayTrades.length === 0) {
       return
     }
 
-    const intervalSecs = 3 * 60
+    const intervalSecs = intervalMinutes * 60
 
     for (const t of displayTrades) {
       const slot = Math.floor(t.timestamp / intervalSecs) * intervalSecs
@@ -264,10 +275,11 @@ export function WebsiteAnalysisChart({
         tradeMarkerPoolRef.current.push(markerSeries)
       } catch { /* disposed */ }
     }
-  }, [trades, candles, markerFilter])
+  }, [trades, candles, markerFilter, getMarkerText, intervalMinutes, historyState, loadedInterval])
 
   return (
     <div style={{
+      position: 'relative',
       width: '100%',
       height: isMaximized ? '100%' : 'auto',
       display: 'flex',
@@ -275,6 +287,7 @@ export function WebsiteAnalysisChart({
       borderRadius: 6,
       overflow: 'hidden'
     }}>
+      <ChartHistoryStatus state={historyState==='ready'&&loadedInterval!==intervalMinutes?'loading':historyState} interval={intervalMinutes} retry={()=>setHistoryRetry(n=>n+1)}/>
       <ChartToolbar title={title} isMaximized={isMaximized} onMaximize={onMaximize} />
       {hasOptions && (
         <div style={{ display: 'flex', gap: 4, padding: '4px 8px', background: '#161b22', flexShrink: 0 }}>
@@ -320,6 +333,10 @@ export function WebsiteOptionsChart({
   onMaximize?: () => void
 }) {
   const api = useAnalysisApi()
+  const { intervalMinutes = 3 } = useAnalysisEnvironment()
+  const [historyState,setHistoryState]=useState<HistoryState>('loading')
+  const [historyRetry,setHistoryRetry]=useState(0)
+  const [loadedInterval,setLoadedInterval]=useState<number|null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -388,13 +405,16 @@ export function WebsiteOptionsChart({
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
     let cancelled = false
+    setHistoryState('loading');setLoadedInterval(null)
+    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([])
+    tradeMarkerPoolRef.current.forEach(marker=>{try{chartRef.current?.removeSeries(marker)}catch{}});tradeMarkerPoolRef.current=[]
     ;(async () => {
       try {
         const toCandle = (c: OHLCCandle): CandlestickData => ({
           time: c.time as Time,
           open: c.open, high: c.high, low: c.low, close: c.close,
         })
-        const histResp = await api.getOptionsHistorical(symbol, date, strike, expiry, right, 3, historicalDays)
+        const histResp = await api.getOptionsHistorical(symbol, date, strike, expiry, right, intervalMinutes, historicalDays)
         if (cancelled || !seriesRef.current) return
 
         const byTime = new Map<number, CandlestickData>()
@@ -402,6 +422,7 @@ export function WebsiteOptionsChart({
         const sorted = Array.from(byTime.values()).sort(
           (a, b) => (a.time as number) - (b.time as number)
         )
+        setLoadedInterval(intervalMinutes);setHistoryState(sorted.length?'ready':'empty')
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
 
@@ -419,10 +440,10 @@ export function WebsiteOptionsChart({
 
           chartRef.current?.timeScale().fitContent()
         }
-      } catch { /* ignore */ }
+      } catch { if(!cancelled)setHistoryState('error') }
     })()
     return () => { cancelled = true }
-  }, [symbol, date, strike, expiry, right, historicalDays])
+  }, [api, symbol, date, strike, expiry, right, historicalDays, intervalMinutes, historyRetry])
 
   useEffect(() => {
     const chart = chartRef.current
@@ -433,11 +454,11 @@ export function WebsiteOptionsChart({
     }
     tradeMarkerPoolRef.current = []
 
-    if (trades.length === 0) {
+    if (historyState!=='ready'||loadedInterval!==intervalMinutes||trades.length === 0) {
       return
     }
 
-    const intervalSecs = 3 * 60
+    const intervalSecs = intervalMinutes * 60
 
     for (const t of trades) {
       const slot = Math.floor(t.timestamp / intervalSecs) * intervalSecs
@@ -460,10 +481,11 @@ export function WebsiteOptionsChart({
         tradeMarkerPoolRef.current.push(markerSeries)
       } catch { /* disposed */ }
     }
-  }, [trades])
+  }, [trades, intervalMinutes, historyState, loadedInterval])
 
   return (
     <div style={{
+      position: 'relative',
       width: '100%',
       height: isMaximized ? '100%' : 'auto',
       display: 'flex',
@@ -471,6 +493,7 @@ export function WebsiteOptionsChart({
       borderRadius: 6,
       overflow: 'hidden'
     }}>
+      <ChartHistoryStatus state={historyState==='ready'&&loadedInterval!==intervalMinutes?'loading':historyState} interval={intervalMinutes} retry={()=>setHistoryRetry(n=>n+1)}/>
       <ChartToolbar
         title={`${right} ${strike}`}
         isMaximized={isMaximized}

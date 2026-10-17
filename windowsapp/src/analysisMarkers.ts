@@ -1,14 +1,14 @@
 import type { AnalysisTrade } from '../../shared/analysis/api'
 import type { PerformanceCycle } from '../../shared/analysis/performance'
 export interface ExecutionMarker { key: string; timestamp: number; price: number; color: string; text: string; approximate: boolean; trades: AnalysisTrade[] }
-export function analysisMarkers(trades: AnalysisTrade[], candles: { time: number; close: number }[], contract?: { right: string; strike: number; expiry: string;exchange?:string;product?:string }, filter = 'all', getText?: (trade: AnalysisTrade) => string): ExecutionMarker[] {
+export function analysisMarkers(trades: AnalysisTrade[], candles: { time: number; close: number }[], contract?: { right: string; strike: number; expiry: string;exchange?:string;product?:string }, filter = 'all', getText?: (trade: AnalysisTrade) => string, intervalMinutes=3): ExecutionMarker[] {
   const closes = new Map(candles.map(c => [c.time, c.close]))
   const groups = new Map<string, ExecutionMarker>()
   for (const trade of trades) {
     if (contract && (trade.right !== contract.right || trade.strike !== contract.strike || trade.expiry !== contract.expiry || (contract.exchange!=null&&trade.exchange!==contract.exchange) || (contract.product!=null&&trade.product!==contract.product))) continue
     if (!contract && filter !== 'all' && trade.right && trade.right !== filter) continue
     if (!Number.isFinite(trade.timestamp) || !Number.isFinite(trade.price) || trade.price <= 0) continue
-    const timestamp = Math.floor(trade.timestamp / 180) * 180
+    const timestamp = Math.floor(trade.timestamp / (intervalMinutes*60)) * (intervalMinutes*60)
     const approximate = !contract && Boolean(trade.right) && !(Number(trade.underlying_price) > 0)
     const price = !contract && trade.right ? (Number(trade.underlying_price) > 0 ? Number(trade.underlying_price) : closes.get(timestamp)) : trade.price
     if (price == null || !Number.isFinite(price) || price <= 0) continue
