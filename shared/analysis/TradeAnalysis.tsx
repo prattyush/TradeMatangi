@@ -188,7 +188,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const sessionTypeLabel = group.session_type === 'paper' ? 'Paper' : group.session_type === 'real' ? 'Real' : group.session_type === 'stepwise' ? 'Stepwise' : 'Sim'
 
   return (
-    <div style={{
+    <div className={environment.desktop && group.trading_style !== 'swing' && expanded && activeTab === 'trades' ? 'desktop-day-trades-card' : undefined} style={{
       background: '#161b22', border: '1px solid #21262d', borderRadius: 8,
       overflow: 'hidden', marginBottom: 10,
     }}>
@@ -326,7 +326,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
       {detailError && <div role="alert">{detailError}<button onClick={() => { setDetailError(''); setExpanded(false); void handleExpand() }}>Retry</button></div>}
       {/* Expanded detail */}
       {expanded&&group.trading_style==='swing'&&group.portfolio_id&&!group.sessions[0]?.shared&&environment.swingRequest&&environment.charts?.SwingChart?(environment.active===false?null:<SwingHistory onDraftStateChange={state=>{swingDraft.current=state;onSwingDraftStateChange?.(state);environment.onDirtyChange?.(state.dirty);environment.onLabelSavingChange?.(state.saving)}} request={environment.swingRequest} portfolioId={group.portfolio_id} sessionId={group.sessions[0]?.session_id} Renderer={environment.charts.SwingChart as ComponentType<SwingChartProps>} onClose={()=>setExpanded(false)}/>):expanded && details.size > 0 && (
-        <div style={{ padding: '0 16px 16px', borderTop: '1px solid #21262d' }}>
+        <div className={environment.desktop && group.trading_style !== 'swing' && activeTab === 'trades' ? 'desktop-day-trades-content' : undefined} style={{ padding: '0 16px 16px', borderTop: '1px solid #21262d' }}>
           {/* Tab bar */}
           <div style={{ display: 'flex', gap: 0, marginTop: 12, marginBottom: 12 }}>
             <button
