@@ -90,3 +90,14 @@
 .desktop-analysis-chart header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .desktop-analysis-chart header button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .desktop-analysis-chart > small { position: absolute; bottom: 2px; left: 6px; background: #10131a; pointer-events: none; }
+
+/* Let the trades list determine the row height; journey details scroll within it. */
+@media (min-width: 1001px) {
+  .analysis-trades-top-desktop { position: relative; }
+  .analysis-trades-top-desktop > .day-journey {
+    position: absolute;
+    inset: 0 0 0 calc(50% + 7px);
+    box-sizing: border-box;
+    overflow: auto;
+  }
+}
