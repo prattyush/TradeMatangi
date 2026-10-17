@@ -72,6 +72,7 @@ class TradeSummary(BaseModel):
 
 
 class SessionDetail(SessionSummary):
+    cycles: list[dict] = []
     orders: list[dict] = []
     trades: list[TradeSummary] = []
 
