@@ -353,6 +353,7 @@ export default function WebsiteKLineChart(
               ))}
             </div>
             <strong>Indicators</strong>
+            <div className="website-kline-indicator-grid">
             {allIndicators.map((name) => (
               <button
                 key={name}
@@ -369,6 +370,7 @@ export default function WebsiteKLineChart(
               </button>
             ))}
             <button onClick={() => setIndicators([])}>Clear indicators</button>
+            </div>
           </aside>
   );
   if (
