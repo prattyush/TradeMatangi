@@ -49,6 +49,14 @@ try{
   assert.equal(await page.getByTestId('price-charts').count(),1)
   let columns=await page.locator('.analysis-trades-top').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length)
   assert.equal(columns,2)
+  if(host==='desktop'){
+   const listBox=await page.locator('.analysis-trades-list').boundingBox()
+   const journeyBox=await journey.boundingBox()
+   assert.ok(Math.abs(listBox.height-journeyBox.height)<1,'Desktop journey matches trades height')
+   assert.ok(Math.abs(listBox.y-journeyBox.y)<1,'Desktop top panels align')
+   const chartBox=await page.getByTestId('price-charts').boundingBox()
+   assert.ok(chartBox.y>=listBox.y+listBox.height&&chartBox.y<=listBox.y+listBox.height+13,'Journey does not push charts down')
+  }
   await page.setViewportSize({width:760,height:1000})
   columns=await page.locator('.analysis-trades-top').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length)
   assert.equal(columns,1)
