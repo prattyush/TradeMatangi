@@ -41,7 +41,7 @@ export const getPerformanceCycles = (
     next_offset: number | null;
   }>("/cycles", { ...filters, offset: String(offset) }, signal);
 export const getPerformanceDetail = (
-  cycle: PerformanceCycle,
+  cycle: Pick<PerformanceCycle, "session_id" | "cycle_id">,
   enrich = false,
   signal?: AbortSignal,
 ) =>

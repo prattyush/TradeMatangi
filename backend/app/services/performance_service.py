@@ -123,6 +123,7 @@ def build_cycles(session, executions):
                     or session.get("session_id"),
                     direction="LONG" if sign > 0 else "SHORT",
                     capital=capital,
+                    starting_capital=number(session.get("session_capital")),
                     entry_time=int(row["timestamp"]),
                     exit_time=None,
                     state="open",
@@ -296,6 +297,8 @@ def build_cycles(session, executions):
                 if not state["_lots"]:
                     state["state"] = "closed"
                     state["exit_time"] = int(row["timestamp"])
+                    precise = row.get("execution_sort_time")
+                    state["exit_sort_time"] = (int(precise) if precise is not None and int(precise) // 1_000_000 == state["exit_time"] else None)
                     books.pop(key)
     for state in cycles:
         state["open_quantity"] = sum(l["quantity"] for l in state["_lots"])
@@ -585,6 +588,7 @@ def behavior_groups(cycles):
 
 
 def report(cycles):
+    from app.services.day_journey import journeys
     closed = [c for c in cycles if c["state"] == "closed"]
     behavior = behavior_groups(cycles)
     peak = balance = drawdown = 0.0
@@ -666,6 +670,7 @@ def report(cycles):
         },
         comparisons=comparisons,
         behavior=behavior,
+        day_paths=journeys(cycles),
         curve=curve,
         daily=[dict(date=d, **v) for d, v in sorted(daily.items())],
         matrix=[

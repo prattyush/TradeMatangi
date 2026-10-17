@@ -78,6 +78,8 @@ def test_fee_change_updates_outcomes_detail_and_session_summary(db):
     summary=client.get('/api/analysis/sessions/nifty',headers=headers)
     assert summary.status_code==200,summary.text
     assert summary.json()['total_commission']==120
+    assert report.json()['day_paths'][0]['net_pnl']==-20
+    assert summary.json()['cycles'][0]['net_pnl']==-20
     assert sum(row['commission'] for row in summary.json()['trades'])==120
 
 

@@ -86,3 +86,7 @@
   .analysis-session-workspace:not(.navigator-collapsed) { grid-template-columns: minmax(0,1fr); }
 }
 .analysis-navigation-message { position: absolute; top: 42px; right: 12px; margin: 0; padding: 8px; background: #24334c; z-index: 3100; font-size: 12px; }
+.desktop-analysis-chart header { display: flex; align-items: center; gap: 6px; }
+.desktop-analysis-chart header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-analysis-chart header button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.desktop-analysis-chart > small { position: absolute; bottom: 2px; left: 6px; background: #10131a; pointer-events: none; }

@@ -2122,3 +2122,103 @@ Session cleanup now accepts `--email`, resolving the internal UUID through the
 existing `Users.EmailIndex` and confirming the base user record. Unknown,
 ambiguous or stale email mappings abort before any deletion. UUID input remains
 available as an alternative; maintenance examples now use email.
+
+### Analysis candle intervals and desktop chart controls
+
+Website and desktop Day analysis now offer 1m, 3m (default), 5m, 10m, 15m,
+30m and 60m candle intervals. The selection is shared across the current analysis
+workspace, including nested desktop Sessions/Stats providers, charts opened from
+execution/snapshot inspection and pattern comparisons. Changing interval requests
+existing historical APIs at that resolution and realigns execution/pattern markers;
+EMA calculations use the selected candles. Viewport cache identities include the
+interval so zoom state from one resolution cannot be applied to another.
+
+Snapshot views retain captured event prices/order levels. Desktop keeps exact-second
+reconstruction at the original 3m resolution; other intervals explicitly show the
+full historical event candle. Captured 3m OHLC is never reused as a 1m/5m/etc.
+bar. No backend schema, recording, trading flow or broker integration changes.
+
+Desktop Fit, Maximize and Restore controls now use SVG icons with accessible names
+and tooltips. Option contract selectors show only CE/PE and strike; expiry,
+exchange and product stay in tooltips and exact contract keys, so separate contracts
+are never combined merely because their visible labels match.
+
+Validation: all 236 desktop/shared unit tests passed, including interval-aligned
+execution markers, snapshot event buckets and short labels with distinct contract
+keys. Website and desktop production builds passed. Browser checks cover all seven
+interval choices across session, snapshot and comparison renderers, nested-provider
+synchronization, desktop icon controls/maximize/restore and strike labels/tooltips.
+The existing seven website renderer slots also passed in StrictMode. All history
+responses were mocked; no broker calls or trading-data changes were made.
+
+### Day P&L journey and sizing behavior — website and desktop
+
+The Day analysis Trades tab retains its full-width summary, with a scrollable
+trades/orders section on the left and a new cumulative P&L chart on the right.
+Price charts stay below; narrow windows stack the sections. The curve starts at
+zero and adds one point per completed position cycle, net of commission. Entries,
+additions and partial exits remain in that cycle until it closes. Hover/focus
+shows trade, time, individual outcome and cumulative result. The ₹/% selector
+defaults to percentage, and falls back to money if capital is unknown/invalid.
+
+Sessions in the selected group are combined by close time. Percentage denominator
+is the arithmetic average of starting capital, once per contributing session;
+the denominator is displayed explicitly. Canonical cycle identities prevent shared
+broker aliases from adding the same cycle twice. The overall summary remains
+unchanged; it can include realized amounts from unfinished cycles that the curve
+excludes. Existing actual Real fee corrections feed both the curve and summary.
+Website session detail now includes canonical cycles, matching desktop; no new
+endpoint, table, historical-market scan or recording requirement is introduced.
+
+Stats Behavior includes Day P&L path and sizing under the current filters:
+maximum zero/peak-to-trough drawdown, total downward movement (sum of completed
+losses), peak-to-final giveback, and median filled allocation/initial-risk percentages
+when entry-time realized day P&L was below, above or at zero. Percentages use entry
+capital for sizing and average starting session capital for the day path. Entries
+without metadata remain unknown; same-second close/entry ties are not guessed.
+Coverage/sample counts accompany comparisons, and down/up sizing ratios appear
+only when valid observations exist on both sides. A date table and selectable
+trend separate users, modes and broker accounts; missing values leave gaps.
+Clicking a Stats curve point uses the existing cycle drilldown. Observations do
+not assign maturity scores or infer emotions, and exclude open-position market
+P&L. These Day metrics leave Swing analytics unchanged.
+
+Validation: 113 focused backend analytics/session-detail/fee tests passed, followed
+by 15 targeted checks including full-report (>50 cycles) coverage and explicit
+website/desktop/actual-fee journey parity. All 244 desktop/shared unit tests and
+both production builds passed. Synthetic browser acceptance passed on both hosts
+for the combined-capital 4% → 2% → 6% path, ₹/% switching, keyboard inspection,
+responsive two-column/stacked layout, Behavior measurements, trend selection and
+existing cycle drilldown. Prior candle-interval controls remain included. No broker
+requests or local/production trading-data changes were made by validation.
+
+#### Review corrections before PR
+
+- Canonical cycles expose optional `exit_sort_time` only when the final closing
+  fill supplies a valid precise timestamp. Day journeys on both hosts and Stats
+  use this order. Same-second closes with missing/equal precision are grouped
+  instead of sorted by cycle hashes; every member identity/outcome remains
+  inspectable. Completed-trade counts stay independent of plotted-point counts.
+  Grouped paths explicitly state that intrasecond peaks/drawdowns are unavailable;
+  loss totals still include individual losing trades, even in a zero-net group.
+- Website analysis, options, snapshot and comparison charts clear old candles,
+  indicators and execution/pattern overlays for interval requests. Loading,
+  empty-data and error/Retry states identify the requested interval. Cancelled
+  responses cannot replace a newer interval. Chart instances remain mounted.
+- Stats journey inspection requests the existing detail endpoint directly with
+  session/cycle IDs, independent of the loaded cycle page. Grouped points offer
+  member selection. Loading, failure/Retry, closure, rapid selection and filter
+  changes use the detail request generation guard; pagination is not changed.
+- The website snapshot P&L chip shares the chart's positioned wrapper below the
+  interval toolbar. Coordinate updates are scheduled after layout/range changes
+  and ResizeObserver updates, so interval changes, resizing and panning preserve
+  its alignment.
+
+Review-fix validation: 120 focused backend tests and all 247 desktop/shared tests
+passed; website and desktop production builds passed. Browser checks inspect real
+chart series to verify failed/empty interval loads clear candles and overlays,
+Retry restores data, and delayed responses cannot overwrite newer intervals.
+Snapshot chip checks cover interval changes, resize and pan. A 63-cycle Stats
+fixture with only 50 loaded verifies direct inspection, grouped member choice,
+failure/Retry, rapid-selection ordering, close fencing and filter-change fencing
+on both hosts. No live orders or trading-data mutations were performed.
