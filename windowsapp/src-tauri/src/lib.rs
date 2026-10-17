@@ -742,7 +742,7 @@ async fn desktop_option_historical_page(
     symbol: String,
     trading_date: String,
     expiry: String,
-    strike: u32,
+    strike: f64,
     right: String,
     interval_minutes: u32,
     host: tauri::State<'_, HostState>,
@@ -1074,8 +1074,8 @@ async fn desktop_settings_request(
     if path.starts_with('/') || path.split('/').any(|segment| segment == ".." || segment == ".") || path.contains('?') || path.contains('#') {
         return Err("Invalid settings path".into());
     }
-    let token = host.access_token(&base_url).await?;
-    let client = reqwest::Client::new();
+    let token = tokio::time::timeout(Duration::from_secs(30), host.access_token(&base_url)).await.map_err(|_| "Account authentication timed out")??;
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
     let url = format!("{}/api/desktop/v1/settings/{}", base_url.trim_end_matches('/'), path);
     let request = match method.as_str() {
         "GET" => client.get(url),
@@ -1102,7 +1102,7 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
     if method != "GET" { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     match route {
-        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/cycles" | "performance/real-fees" |
+        "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
@@ -1161,7 +1161,7 @@ async fn desktop_drawing_request(
     }
     let token = if is_screen_request {
         tokio::time::timeout(Duration::from_secs(4), host.access_token(&base_url)).await.map_err(|_| "Screen authentication timed out")??
-    } else { host.access_token(&base_url).await? };
+    } else { tokio::time::timeout(Duration::from_secs(30), host.access_token(&base_url)).await.map_err(|_| "Trading authentication timed out")?? };
     let url = format!(
         "{}/api/desktop/v1/{}",
         base_url.trim_end_matches('/'),
@@ -1169,7 +1169,7 @@ async fn desktop_drawing_request(
     );
     let client = if is_screen_request {
         reqwest::Client::builder().timeout(Duration::from_secs(4)).build().map_err(|e| e.to_string())?
-    } else { reqwest::Client::new() };
+    } else { reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())? };
     let request = match method.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),
@@ -1863,9 +1863,13 @@ fn parse_sse_frame(frame: &str) -> (Option<u64>, Option<String>, Option<String>)
 }
 
 fn trading_event_wakes_renderer(key: &str, payload: &serde_json::Value) -> bool {
-    // Chart replay and quote ticks stay batched; committed trading changes wake
+    // Quote ticks stay batched; committed trading changes wake
     // only the owning renderer, which drains the ordered native event buffer.
     key.starts_with("paper:") && payload.get("type").and_then(|value| value.as_str()) != Some("tick")
+}
+
+fn replay_event_wakes_renderer(key: &str) -> bool {
+    key.starts_with("replay:")
 }
 
 #[tauri::command]
@@ -1944,9 +1948,12 @@ async fn start_desktop_stream(
                                         }));
                                     }
                                     let wake = trading_event_wakes_renderer(&stream_key, &payload);
+                                    let replay_wake = replay_event_wakes_renderer(&stream_key);
+                                    let swing_wake = stream_key.starts_with("swing:");
                                     stream_host.record_stream(&stream_key, event_id, payload);
-                                    if wake && stream_host.owns_stream(&stream_label, &stream_key) {
-                                        let _ = stream_app.emit_to(stream_label.as_str(), "desktop-trading-events-available", serde_json::json!({
+                                    if (wake || replay_wake || swing_wake) && stream_host.owns_stream(&stream_label, &stream_key) {
+                                        let event_name = if swing_wake { "desktop-swing-events-available" } else if replay_wake { "desktop-replay-events-available" } else { "desktop-trading-events-available" };
+                                        let _ = stream_app.emit_to(stream_label.as_str(), event_name, serde_json::json!({
                                             "key": &stream_key, "event_id": event_id,
                                         }));
                                     }
@@ -1966,8 +1973,9 @@ async fn start_desktop_stream(
                                             "bytes": snapshot.to_string().len(),
                                         }));
                                         stream_host.record_stream(&stream_key, event_id, snapshot);
-                                        if stream_key.starts_with("paper:") && stream_host.owns_stream(&stream_label, &stream_key) {
-                                            let _ = stream_app.emit_to(stream_label.as_str(), "desktop-trading-events-available", serde_json::json!({
+                                        if (stream_key.starts_with("paper:") || stream_key.starts_with("swing:")) && stream_host.owns_stream(&stream_label, &stream_key) {
+                                            let wake_event = if stream_key.starts_with("swing:") { "desktop-swing-events-available" } else { "desktop-trading-events-available" };
+                                            let _ = stream_app.emit_to(stream_label.as_str(), wake_event, serde_json::json!({
                                                 "key": &stream_key, "event_id": event_id,
                                             }));
                                         }
@@ -1987,6 +1995,10 @@ async fn start_desktop_stream(
                     stream_host.set_stream_connection(&stream_key, "authentication_required");
                 }
                 Ok(response) => {
+                    if stream_key.starts_with("swing:") && response.status().as_u16() == 404 && events_path.contains("/charts/watch/") {
+                        stream_host.record_stream(&stream_key, 0, serde_json::json!({"type":"chart_watch_expired"}));
+                        let _ = stream_app.emit_to(stream_label.as_str(), "desktop-swing-events-available", serde_json::json!({"key": &stream_key}));
+                    }
                     diagnostic_log(&format!("desktop stream connect failed: {}", response.status()));
                     stream_host.set_stream_connection(&stream_key, "offline");
                 }
@@ -2111,6 +2123,15 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn swing_performance_is_read_only_in_native_analysis() {
+        assert!(super::valid_analysis_path("performance/swing?portfolio_id=book", "GET"));
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            assert!(!super::valid_analysis_path("performance/swing", method));
+        }
+        assert!(!super::valid_analysis_path("performance/swing/extra", "GET"));
+    }
+
     use super::*;
 
     #[test]
@@ -2359,8 +2380,43 @@ mod screen_window_tests {
         assert!(trading_event_wakes_renderer("paper:one:session", &serde_json::json!({"session": {"session_id": "session"}})));
     }
 
+    #[test]
+    fn replay_snapshots_wake_the_renderer_independently_of_trading_changes() {
+        assert!(replay_event_wakes_renderer("replay:linked-pe:run"));
+        assert!(replay_event_wakes_renderer("replay:primary-ce:run"));
+        assert!(!replay_event_wakes_renderer("paper:linked-pe:session"));
+        assert!(!replay_event_wakes_renderer("browse-live:screen:stream"));
+    }
+
     fn opening(host: &HostState, id: &str, token: &str) {
         host.0.lock().unwrap().screen_windows.insert(id.into(), ScreenWindowState { token: token.into(), ready: false });
+    }
+    #[test]
+    fn day_and_swing_streams_keep_independent_buffers_and_cleanup() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let host = HostState::default();
+        let day = tokio::spawn(std::future::pending::<()>());
+        let swing = tokio::spawn(std::future::pending::<()>());
+        let chart = tokio::spawn(std::future::pending::<()>());
+        let day_key = "paper:day:session";
+        let swing_key = "swing:swing-primary:portfolio/events";
+        let chart_key = "swing:swing-primary:portfolio/charts/watch/viewer/events";
+        host.start_stream(day_key, day.abort_handle(), "main").unwrap();
+        host.start_stream(swing_key, swing.abort_handle(), "main").unwrap();
+        host.start_stream(chart_key, chart.abort_handle(), "main").unwrap();
+        host.record_stream(day_key, 1, serde_json::json!({"type":"tick", "close":100}));
+        host.record_stream(swing_key, 0, serde_json::json!({"type":"portfolio_snapshot", "pnl":20}));
+        host.record_stream(chart_key, 0, serde_json::json!({"type":"chart_quotes"}));
+        assert_eq!(host.stream_snapshot(day_key, "main").unwrap().latest_payload["close"], 100);
+        assert_eq!(host.stream_snapshot(swing_key, "main").unwrap().latest_payload["pnl"], 20);
+        host.stop_stream(swing_key, "main");
+        host.stop_stream(chart_key, "main");
+        host.record_stream(day_key, 2, serde_json::json!({"type":"tick", "close":110}));
+        assert_eq!(host.stream_snapshot(day_key, "main").unwrap().last_event_id, 2);
+        assert_eq!(host.stream_snapshot(day_key, "main").unwrap().latest_payload["close"], 110);
+        assert!(!host.0.lock().unwrap().streams.contains_key(swing_key));
+        host.stop_stream(day_key, "main");
     }
     #[test]
     fn stream_reports_buffer_loss_once_for_snapshot_recovery() {

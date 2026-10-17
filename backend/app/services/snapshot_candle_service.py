@@ -1,6 +1,7 @@
 """Reconstruct a snapshot's current candle from cached, observed seconds only."""
-from datetime import date
+
 import math
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -14,7 +15,11 @@ def reconstruct_candle(snapshot: dict, instrument: str) -> dict | None:
     symbol = snapshot.get("symbol")
     trading_date = snapshot.get("date", "")
     timestamp = float(snapshot.get("timestamp") or 0)
-    if symbol not in SUPPORTED_SYMBOLS or not math.isfinite(timestamp) or timestamp <= 0:
+    if (
+        symbol not in SUPPORTED_SYMBOLS
+        or not math.isfinite(timestamp)
+        or timestamp <= 0
+    ):
         return None
     event_time = pd.Timestamp(math.floor(timestamp), unit="s", tz="UTC")
     if event_time.date().isoformat() != trading_date:
@@ -23,10 +28,16 @@ def reconstruct_candle(snapshot: dict, instrument: str) -> dict | None:
     strike = expiry = right = None
     if instrument != "underlying":
         captured = snapshot.get("snapshot", {})
-        strike, expiry, right = captured.get(f"strike_{instrument.lower()}"), captured.get("expiry"), instrument
+        strike, expiry, right = (
+            captured.get(f"strike_{instrument.lower()}"),
+            captured.get("expiry"),
+            instrument,
+        )
         if snapshot.get("instrument_type") != "options" or not strike or not expiry:
             return None
-        strike = int(strike)
+        from app.services.instrument_identity import strike_number
+
+        strike = strike_number(strike)
         if strike <= 0:
             return None
         date.fromisoformat(expiry)
@@ -42,7 +53,11 @@ def reconstruct_candle(snapshot: dict, instrument: str) -> dict | None:
     frame = frame.rename(columns=str.lower)
     if not isinstance(frame.index, pd.DatetimeIndex) or "observed" not in frame:
         return None
-    frame.index = frame.index.tz_localize("UTC") if frame.index.tz is None else frame.index.tz_convert("UTC")
+    frame.index = (
+        frame.index.tz_localize("UTC")
+        if frame.index.tz is None
+        else frame.index.tz_convert("UTC")
+    )
     frame = frame.sort_index()
     # Filled minute rows must never be mistaken for genuine second observations.
     if not has_native_second_cadence(frame[frame["observed"].eq(True)]):
@@ -59,9 +74,15 @@ def reconstruct_candle(snapshot: dict, instrument: str) -> dict | None:
     values = window[columns].apply(pd.to_numeric, errors="coerce")
     if not np.isfinite(values.to_numpy()).all() or (values <= 0).any().any():
         return None
-    if ((values["low"] > values[["open", "close"]].min(axis=1)) |
-            (values["high"] < values[["open", "close"]].max(axis=1))).any():
+    if (
+        (values["low"] > values[["open", "close"]].min(axis=1))
+        | (values["high"] < values[["open", "close"]].max(axis=1))
+    ).any():
         return None
-    return {"time": bar_time, "open": float(values.iloc[0]["open"]),
-            "high": float(values["high"].max()), "low": float(values["low"].min()),
-            "close": float(values.iloc[-1]["close"])}
+    return {
+        "time": bar_time,
+        "open": float(values.iloc[0]["open"]),
+        "high": float(values["high"].max()),
+        "low": float(values["low"].min()),
+        "close": float(values.iloc[-1]["close"]),
+    }

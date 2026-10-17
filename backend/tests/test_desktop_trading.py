@@ -1512,13 +1512,13 @@ def test_website_missing_sl_real_equity_submits_to_broker_and_fills(side):
 def test_website_missing_sl_real_rejection_is_not_reported_as_protection():
     from unittest.mock import Mock
     from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
-    from app.services.kotak_service import KotakError
+    from app.services.kotak_service import KotakOrderRejected
     session = _equity_session(session_id="missing-sl-real-rejection")
     session.session_type = "real"
     trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
         quantity=100, symbol=session.symbol, user_id=session.user_id)
     broker = Mock()
-    broker.place_sl_order.side_effect = KotakError("rejected")
+    broker.place_sl_order.side_effect = KotakOrderRejected("rejected")
     request = MissingStoplossRequest(session_id=session.session_id, request_id="reject", trigger_price=90)
     try:
         with patch("app.services.kotak_service.get_service", return_value=broker):
@@ -1808,5 +1808,32 @@ def test_popup_replay_stoploss_http_request_after_filled_market_long(monkeypatch
         assert response.json()["trigger_price"] == 118
         assert response.json()["strike"] == 24000
         assert response.json()["quantity"] == 65
+    finally:
+        _clear()
+
+
+@pytest.mark.parametrize('mode',['sim','stepwise','paper'])
+def test_target_percent_market_fill_creates_only_the_original_protective_stop(mode,monkeypatch):
+    _clear()
+    session=_session();session.session_type=mode;session.session_capital=100000
+    contract=session.desktop_contracts[0]
+    quote={**contract,'price':100,'timestamp':int(session.current_time),'source':'synthetic'}
+    monkeypatch.setattr(desktop_trading,'_refresh_contract_quotes',lambda _:{contract['contract_key']:quote})
+    monkeypatch.setattr(desktop_trading,'_paper_chart_quote',lambda *a:quote)
+    monkeypatch.setattr('app.routers.orders._wallet_balance_for_session',lambda _:100000)
+    monkeypatch.setattr('app.services.user_settings_service.get_settings',lambda _:dict(target_deviation_pct=.01,stoploss_limit_gap_pct=.015))
+    try:
+        order=asyncio.run(desktop_trading.place_chart_order(session.session_id,
+            desktop_trading.ChartOrderIntent(symbol=session.symbol,side='BUY',intent='market',
+                right='CE',strike=24000,expiry=session.expiry,target_profit_pct=2,
+                sizing_target_price=110,entry_sl_price=90,group_id='target-size-fill'),session.user_id))
+        assert order.status==OrderStatus.FILLED and order.quantity==195 and order.filled_price==100
+        assert order.analytics['sizing_method']=='TARGET_PERCENT'
+        stops=[o for o in order_service.get_open_orders(session.session_id) if o.group_id=='target-size-fill']
+        assert len(stops)==1 and stops[0].is_stoploss
+        assert stops[0].quantity==195 and stops[0].trigger_price==90
+        assert not any(o.order_type==OrderType.TARGET for o in stops)
+        fills=trading_service.get_trades(session.session_id)
+        assert len(fills)==1 and fills[0].analytics['projected_target_profit']==1950
     finally:
         _clear()

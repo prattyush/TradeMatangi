@@ -35,7 +35,11 @@ class RoundTripTradeOut(BaseModel):
 
 class RoundTripOut(BaseModel):
     cycle_id: str | None = None
-    strike: int | None = None
+    state: str = "closed"
+    strike: int | float | None = None
+    expiry: str | None = None
+    cycle_id: str | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     index: int
     right: Optional[str]
@@ -45,6 +49,7 @@ class RoundTripOut(BaseModel):
 
 
 class LabelIn(BaseModel):
+    analytics_cycle_id: str | None = None
     session_id: str
     round_trip_index: int
     expected_category: str = ""

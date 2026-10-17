@@ -27,7 +27,7 @@ export interface Comparison extends Metrics {
   mean_interval?: number[] | null;
 }
 export interface Excursion {
-  interval_seconds?: number
+  interval_seconds?: number;
   status: string;
   reason?: string;
   mfe?: number;
@@ -38,28 +38,31 @@ export interface Excursion {
   coverage?: number;
 }
 export interface AnalyticsMetadata {
-  [key: string]: unknown
-  version?: number
-  capital?: number
-  calculated_quantity?: number
-  reference_price?: number
-  initial_risk?: number
-  lot_size?: number
-  margin_rate?: number
-  stop_source?: string
-  entry_method?: string
-  exit_method?: string
-  action_id?: string
-  exit_action_id?: string
-  strategy_id?: string
-  execution_type?: string
-  controller_history?: Array<Record<string, unknown>>
+  [key: string]: unknown;
+  version?: number;
+  capital?: number;
+  calculated_quantity?: number;
+  reference_price?: number;
+  initial_risk?: number;
+  lot_size?: number;
+  margin_rate?: number;
+  stop_source?: string;
+  entry_method?: string;
+  exit_method?: string;
+  action_id?: string;
+  exit_action_id?: string;
+  strategy_id?: string;
+  execution_type?: string;
+  controller_history?: Array<Record<string, unknown>>;
   sizing_method?: string;
   requested_pct?: number;
   initial_stop?: number;
   requested_budget?: number;
   effective_allocation_pct?: number;
   effective_risk_pct?: number;
+  sizing_target_price?: number;
+  projected_target_profit?: number;
+  effective_target_pct?: number;
   budget_exceeded?: boolean;
   strategy_interval_seconds?: number;
   requested_size?: string;
@@ -81,12 +84,12 @@ export interface EntryPosition {
   analytics: AnalyticsMetadata;
 }
 export interface MatchedPortion {
-  gross_pnl?: number
-  pnl_pct?: number | null
-  capital?: number | null
-  initial_risk?: number | null
-  entry_execution_id?: string
-  exit_execution_id?: string
+  gross_pnl?: number;
+  pnl_pct?: number | null;
+  capital?: number | null;
+  initial_risk?: number | null;
+  entry_execution_id?: string;
+  exit_execution_id?: string;
   entry_id: string;
   exit_id: string;
   quantity: number;
@@ -103,11 +106,19 @@ export interface MatchedPortion {
   requested_size?: string;
 }
 export interface PerformanceCycle {
-  fee_source?: string
+  instrument_type?: "equity" | "options" | "futures";
+  trading_style?: string;
+  portfolio_id?: string;
+  captured_margin?: number | null;
+  return_on_margin_pct?: number | null;
+  futures_category?: string | null;
+  execution_broker?: string | null;
+  broker_account_id?: string | null;
+  fee_source?: string;
 
-  shared?: boolean
-  owner_email?: string | null
-  user_id?: string
+  shared?: boolean;
+  owner_email?: string | null;
+  user_id?: string;
   cycle_id: string;
   session_id: string;
   symbol: string;
@@ -120,22 +131,33 @@ export interface PerformanceCycle {
   state: string;
   entry_time: number;
   exit_time: number | null;
+  exit_sort_time?: number | null;
   entry_count: number;
   exit_count: number;
   net_pnl: number;
   pnl_pct: number | null;
   fees: number;
   open_quantity: number;
-  capital?: number
-  exchange?: string
-  product?: string
-  exits?: Array<{ exit_id: string; exit_method: string; quantity: number; price: number; timestamp: number; analytics: AnalyticsMetadata }>
+  capital?: number;
+  starting_capital?: number;
+  exchange?: string;
+  product?: string;
+  exits?: Array<{
+    exit_id: string;
+    exit_method: string;
+    quantity: number;
+    price: number;
+    timestamp: number;
+    analytics: AnalyticsMetadata;
+  }>;
   executions: Array<{
-    role?: 'entry' | 'exit'
-    analytics?: AnalyticsMetadata
-    order_id?: string
-    kotak_order_id?: string
-    execution_sort_time?: number
+    role?: "entry" | "exit";
+    analytics?: AnalyticsMetadata;
+    order_id?: string;
+    execution_broker?: string | null;
+    broker_order_id?: string | null;
+    kotak_order_id?: string;
+    execution_sort_time?: number;
     trade_id: string;
     execution_id?: string;
     timestamp: number;
@@ -152,6 +174,7 @@ export interface PerformanceCycle {
   behavior?: { dimension: string; key: string }[];
 }
 export interface PerformanceReport {
+  day_paths?: import("./dayJourney").DayPath[];
   version: number;
   summary: Metrics & {
     realized_pnl: number;
@@ -189,6 +212,7 @@ export function cyclesCsv(cycles: PerformanceCycle[]): string {
     "cycle_id",
     "date",
     "mode",
+    "execution_broker",
     "symbol",
     "right",
     "strike",
@@ -211,4 +235,17 @@ export function cyclesCsv(cycles: PerformanceCycle[]): string {
   );
 }
 
-export interface RealFeesDay { date: string; accounts: Array<{ account_id: string; order_count: number; estimated_total: number; actual_total: number | null; updated_at: string | null; history_changed: boolean }> }
+export interface RealFeesDay {
+  date: string;
+  accounts: Array<{
+    execution_broker?: "kotak" | "kite";
+    account_id: string;
+    order_count: number;
+    estimated_total: number;
+    actual_total: number | null;
+    updated_at: string | null;
+    history_changed: boolean;
+  }>;
+}
+
+export type CycleIdentity = Pick<PerformanceCycle, "session_id" | "cycle_id">;

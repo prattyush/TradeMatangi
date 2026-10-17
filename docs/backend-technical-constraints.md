@@ -20,7 +20,9 @@
 - **Live/replay historical modes**: paper/real and desktop live chart history use the configured Breeze/Kite/Kotak provider, preferring complete Breeze caches only for prior dates. Today keeps provider caches separate. Replay/stepwise always use Breeze; minute frames cannot become replay ticks. Preserve mode and request policy through worker threads and include mode in coalescing keys. See [live history providers](live-history-providers.md).
 - **Kotak historical caches**: use `-kotak1m.parquet` names alongside separate `-kite1m` files. A read-only consumer-key client handles history/master lookup without TOTP or trading-client mutation. Atomic writes, per-key pacing and 429 cooldown are independent of order/live-feed paths. Past minute files written intraday require a complete-day refresh.
 - **Kite 1-min cache naming**: `data/ohlcdata/{SYMBOL}-{DD-MM-YYYY}-kite1m.parquet` for equity; `{SYMBOL}-{CE|PE}-{STRIKE}-{EXPIRY_COMPACT}-{DD-MM-YYYY}-kite1m.parquet` for options. The `-kite1m` suffix prevents sim mode from picking up 1-min data instead of Breeze 1-second data.
-- **Breeze incremental refresh**: today's stale/explicit refresh reuses the daily parquet and downloads from the 15-minute boundary containing its final timestamp minus one chunk, through current IST capped at close. Provider rows replace matching cached timestamps. Keep original bytes on failure, never mix native minute and second cadence, and coalesce overlapping explicit requests. Past dates still fetch the full day.
+- **Breeze incremental refresh**: today's stale/explicit refresh reuses the daily parquet and downloads from the 990-second boundary containing its final timestamp minus one chunk, through current IST capped at close. Provider rows replace matching cached timestamps. Keep original bytes on failure, never mix native minute and second cadence, and coalesce overlapping explicit requests. Past dates still fetch the full day.
+- **Breeze history HTTP timeout**: the authenticated client's SDK history GET uses a 10-second connect / 30-second read timeout. The narrow SDK transport wrapper preserves request validation, authentication, login, other HTTP endpoints and WebSocket behavior; it does not change the global Requests module. Three history workers and one-second request spacing remain process-wide.
+- **Swing streams and valuation**: portfolio and chart-watch SSE replace UI snapshot/quote polling. Reuse the market-data hub with independent Day/Swing/viewer subscriptions; cancelling a Swing stream must not cancel a Day feed. Paper last-known valuation marks are checkpointed in Sessions once/minute and at shutdown, off the event loop. Restored/history prices value the book only; they must never execute orders, settle Futures MTM or overwrite fresher live marks. History marks come only from already loaded current-view data, not scans or extra provider downloads.
 - **Today's parquet TTL**: `_TODAY_CACHE_TTL = 600` (10 min). Use `pq.stat().st_mtime` age check instead of `_MIN_DAY_ROWS` row-count — today's day is never complete so row-count always triggers re-fetch. Past dates still use the row-count gate.
 - **`validate_and_fill_gaps(partial=True)`**: skips the trailing gap check (today's data always stops before MARKET_CLOSE) and reindexes only from MARKET_OPEN to `sorted_idx[-1]`. Use `partial=is_today` when calling from broker_service.
 - **Test parquet isolation — patch `OHLCDATA_DIR`, not `DATA_DIR`**: Tests that need isolated parquet paths must patch `app.services.data_loader.OHLCDATA_DIR` (or `app.services.options_service.OHLCDATA_DIR`) to `tmp_path / "ohlcdata"`. Patching `DATA_DIR` alone no longer affects the parquet lookup. Keep the `DATA_DIR` patch alongside for pickle-fallback tests.
@@ -164,3 +166,90 @@
   action/order/strategy IDs remain strings. Broker snapshot encoding canonicalizes
   analytics back to DynamoDB numbers. Readers also handle existing numeric-string
   records, so a bulk migration is unnecessary.
+
+
+## Real Day/Swing ownership and funding
+
+- Broker/style slot ownership persists through pause, detach, outages and engine
+  lease expiry. Only verified closure atomically ends the book/funding participant
+  and releases its slot. Swing roots own slots; execution children never compete
+  for another slot. Missing parents/children and genuine conflicts remain pending.
+- Day slots carry an IST `trading_date` plus opened/updated/closed timestamps and
+  the engine lease. A previous-day Start may release the old Day row only after
+  fresh broker verification of a flat scope with no pending orders or closure-blocking submissions,
+  using the existing transactional closure. Timestamp age never deletes exposure
+  or expires Swing ownership. Session-link repairs require authenticated account
+  evidence and conditional ownership/funding checks; they never reset balances.
+- Claim/renew execution authority during restoration, but do not reconcile as empty,
+  submit orders or verify closure until all persisted portfolio contexts are loaded.
+  Do not expose an unregistered or unsuccessfully restored child in usable runtime.
+- Funding snapshots must derive their balance from the current participant baseline
+  inside conditional-write retries. Reservations represent unfilled opening units;
+  confirmed investment and pending order commitment cannot both debit the same fill.
+- Persist broker-attempt time before new placements. `broker_submission_at` uses
+  actual UTC milliseconds; intention/tick timestamps retain IST wall-clock encoding.
+  Intention age cannot prove an unknown submission occurred on an earlier day.
+- Undated unknown attempts require explicit owned-order acknowledgement and fresh
+  scope-flat/no-pending verification. Known current-day uncertainty still blocks
+  closure. Preserve the history warning and acknowledgement; never invent fills.
+
+Full decisions, exclusions and acceptance gates:
+[Phase 21 Swing plan](spec-phase21-swing-trading-plan.md#code-review-and-fix-checkpoint--2026-10-11).
+
+
+## Finalized Real Day analytics charges
+
+- Corrections are owner/date/broker/account scoped; missing broker in legacy
+  requests/rows means Kotak. Use broker-neutral order identities for Kite.
+- Legacy Kotak correction records may be read as a fallback; Kite must never
+  read that fallback. Reverting removes both legacy/current Kotak metadata
+  atomically, so a prior bill cannot reappear after a failed partial deletion.
+- Exclude Swing from both finalized-charge discovery and application. Its books
+  span execution dates; per-day Swing correction is deferred. Corrections apply
+  to analytics copies only, never Trades, execution journals, wallet/funding
+  balances, live sizing capital or guardrails.
+- Event-snapshot candle reconstruction must retain exact fractional strikes
+  and existing IST wall-clock timestamps; only observed cached seconds qualify.
+
+
+### Real Day presence and cross-release recovery
+
+Day renews every 180 seconds with 900-second durable/890-second local authority;
+shared slot helpers must retain Swing's existing lease cadence. Client presence
+is separate from engine health. Expiry never releases ownership or proves broker
+exposure flat. Dead tasks must not renew. Stale handoff fences execution before
+fresh verification and transactional closure; pending orders and uncertain
+current submissions block release.
+
+Legacy main Real Stop persisted Ended without verified closure. Recover its
+original identity/capital and require durable account/projection evidence before
+binding a missing account. Never reuse an ended UI group or apply a new allocation
+percentage to legacy capital. Old main must not execute concurrently against the
+same broker account because it lacks the new fence.
+
+
+### Real broker restrictions are Admin opt-in
+
+Default `enabled=false` in the shared Admin policy applies to Real Day and Swing.
+Off means observation only: retain DDB book records and 180-second heartbeats, but
+never gate Start/restore/order persistence or stop engines because canonical book
+relationships or lease/presence deadlines disagree. No mandatory shared-funding
+reconciliation is required at startup. Keep authentication, session ownership,
+uncertain-submission protection. Verified closure belongs to enforcement-on
+flows; unrestricted Stop preserves broker exposure and stops only the app runtime. New/resumed sessions adopt enforcement only when Admin opts in. Policy
+reads on execution hot paths must remain in-memory; persistence/refresh runs off-loop.
+
+Unrestricted Day Stop must never call the canonical `_finish`/slot update path.
+Persist the same Day identity and original capital for restart. Swing Stop uses
+`stopped`, retains its active portfolio pointer, and restores read-only display
+until explicit Resume. Neither Stop action implies flat positions or cancelled
+broker orders. Broker history refresh must return a full broker snapshot; closure
+verification reports must never replace client trading state.
+
+Swing order amendments/cancellations must resolve the authenticated portfolio and
+child order. Reuse its session edit lock and broker-first edit path; futures quote
+processing already owns this lock, so do not acquire it twice. Paper attempt
+windows retain their original instructions after amendment. Combined price/quantity
+entry amendments reserve the final amount once. Cancel means cancel the pending
+order, never delete executions or flatten a position. Keep Day quantity rules
+separate from portfolio-scoped Swing amendments.

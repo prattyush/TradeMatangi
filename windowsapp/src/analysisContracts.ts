@@ -6,8 +6,8 @@ export function contractTabs(trades: AnalysisTrade[]): ContractTab[] {
   for (const trade of trades) {
     if (!trade.right || trade.strike == null || !trade.expiry) continue
     const key = [trade.right, trade.strike, trade.expiry, trade.exchange ?? '', trade.product ?? ''].join(':')
-    if (!tabs.has(key)) tabs.set(key, {key, label: `${trade.right} ${trade.strike} · ${trade.expiry}${trade.exchange ? ` · ${trade.exchange}` : ''}${trade.product ? ` · ${trade.product}` : ''}`, right:trade.right,strike:trade.strike,expiry:trade.expiry,exchange:trade.exchange,product:trade.product,trades:[]})
+    if (!tabs.has(key)) tabs.set(key, {key, label: `${trade.right} ${trade.strike}`, right:trade.right,strike:trade.strike,expiry:trade.expiry,exchange:trade.exchange,product:trade.product,trades:[]})
     tabs.get(key)!.trades.push(trade)
   }
-  return [...tabs.values()].sort((a,b)=>a.label.localeCompare(b.label))
+  return [...tabs.values()].sort((a,b)=>a.right.localeCompare(b.right)||a.strike-b.strike||a.expiry.localeCompare(b.expiry)||a.key.localeCompare(b.key))
 }

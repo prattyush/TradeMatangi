@@ -24,10 +24,21 @@ def has_native_second_cadence(df: pd.DataFrame) -> bool:
     intentionally materialises missing seconds, which would otherwise make a
     minute-level provider response look like genuine second data.
     """
+    if len(df.index)==0:return False
+    declared=df.attrs.get("native_interval_seconds")
+    if declared in (1,60):return declared==1
     if len(df.index) < 2:
         return False
     index = df.index.sort_values()
     return any((right - left).total_seconds() == 1 for left, right in zip(index, index[1:]))
+
+
+def attach_observation_provenance(df: pd.DataFrame) -> pd.DataFrame:
+    """Mark provider rows before gap fill; keep the actual cadence in parquet metadata."""
+    df=df.copy()
+    df['observed']=True
+    df.attrs['native_interval_seconds']=1 if has_native_second_cadence(df) else 60
+    return df
 
 
 def parquet_path(symbol: str, date: str) -> Path:
@@ -129,8 +140,8 @@ def validate_and_fill_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
         )
 
     full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
-    observed = df["observed"].reindex(full_index).fillna(False).astype(bool) if "observed" in df else None
-    df = df.reindex(full_index).ffill().bfill()
+    observed = df["observed"].reindex(full_index).astype("boolean").fillna(False).astype(bool) if "observed" in df else None
+    df = df.drop(columns=["observed"],errors="ignore").reindex(full_index).ffill().bfill()
     if observed is not None:
         df["observed"] = observed
     return df

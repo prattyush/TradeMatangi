@@ -14,7 +14,7 @@ EMERGENCY_GAP = 0.03
 
 
 def targets(session):
-    equity = [{'right': None, 'strike': None, 'expiry': None}] if session.instrument_type == 'equity' else []
+    equity = [{'right': None, 'strike': None, 'expiry': session.expiry if session.instrument_type == 'futures' else None}] if session.instrument_type in ('equity','futures') else []
     keys = {(row['right'], row['strike'], row['expiry'])
             for row in trading.get_open_option_contracts(session.session_id, session.symbol)}
     for row in getattr(session, 'broker_positions', None) or []:
@@ -28,8 +28,9 @@ def position(session, target):
     if session.session_type == 'real' and facts is not None:
         matching = [row for row in facts if (row.get('right'), row.get('strike'), row.get('expiry')) ==
                     (target['right'], target['strike'], target['expiry']) and row.get('quantity', 0)]
-        if any(row.get('product', 'MIS').upper() != 'MIS' for row in matching):
-            raise ValueError('Exit all now supports MIS positions only; another product requires broker review')
+        expected = ('CNC' if session.instrument_type == 'equity' else 'NRML') if session.trading_style == 'swing' else 'MIS'
+        if any(row.get('product', 'MIS').upper() != expected for row in matching):
+            raise ValueError('Exit product differs from the owned trading book; broker review is required')
     return trading.get_position(session.session_id, session.symbol, **target, exact_contract=True)
 
 
@@ -53,24 +54,35 @@ async def quote(session, target):
 
 async def create_exit(session, target, side, quantity, price):
     from app.services.execution_analytics import snapshot
+    future_analytics = {}
+    if session.instrument_type == "futures":
+        from app.services.futures_risk import settings
+        provider = session.execution_broker
+        if session.session_type == "paper":
+            from app.services.swing_portfolio_store import owned
+            provider = owned(session.user_id, session.portfolio_id).get("paper_broker") or "kite"
+        future_analytics = {"futures": {"contract": session.future_contract, "provider": provider,
+            "fee_profile": settings().fees[provider].model_dump(mode="json"), "margin": 0,
+            "valid_date": session.date}}
     order = order_service.place_order(
         session_id=session.session_id, user_id=session.user_id, symbol=session.symbol,
         side=side, order_type=OrderType.LIMIT, quantity=quantity,
         created_at=int(session.current_time or 0), trading_date=session.date,
-        limit_price=limit_price(side, price, EMERGENCY_GAP), is_stoploss=True,
+        limit_price=limit_price(side, price, EMERGENCY_GAP, (getattr(session, "future_contract", None) or {}).get("tick_size", 0.05)), is_stoploss=True,
         market_order=False, quote_price=price, source='emergency_exit',
         wallet_ledger_id=session.wallet_ledger_id,
         wallet_ledger_kind='real' if session.session_type == 'real' else 'paper' if session.session_type == 'paper' else 'sim',
         analytics={**snapshot(session, quantity=quantity, price=price, side=side.value,
                               exit_method='LIMIT', size='Full'), 'emergency_exit': True,
-                   'emergency_offset_pct': EMERGENCY_GAP}, **target,
+                   'emergency_offset_pct': EMERGENCY_GAP, **future_analytics}, **target,
     )
     order.execution_role = 'exit'
     order.execution_gap_pct = EMERGENCY_GAP
     if session.session_type == 'real':
-        from app.services.kotak_service import get_service, KotakOrderRejected
+        from app.services.execution_broker import get_service
+        from app.services.kotak_service import KotakOrderRejected
         from app.services.broker_order_service import register_callbacks, persist_order_async
-        broker = get_service()
+        broker = get_service(session)
         # Persist an unconfirmed reservation before contacting the broker. An
         # ambiguous acknowledgement cannot become a local tick fill or a new retry.
         order.recovery_state = 'submitting'
@@ -94,7 +106,7 @@ async def create_exit(session, target, side, quantity, price):
             await persist_order_async(order, strict=True)
             emit(session, order)
             raise ValueError(f'Exit submission {order.recovery_state}: {exc}. Check broker orders before retrying.') from exc
-        order.kotak_order_id = broker_id
+        order.broker_order_id = broker_id
         order.recovery_state = 'acknowledged'
         session.kotak_order_map[order.order_id] = broker_id
         register_callbacks(session, order, broker, asyncio.get_running_loop())
@@ -129,7 +141,7 @@ async def exit_contract(session, target):
             raise ValueError('Existing exits exceed remaining position; refresh broker state before retrying')
         if any(order.recovery_state in ('prepared', 'submitting', 'unknown') for order in closing):
             raise ValueError('An exit acknowledgement is uncertain; refresh and verify broker orders before retrying')
-        urgent_price = limit_price(side, price, EMERGENCY_GAP)
+        urgent_price = limit_price(side, price, EMERGENCY_GAP, (getattr(session, "future_contract", None) or {}).get("tick_size", 0.05))
         for order in closing:
             if busy(order):
                 row['pending'].append(order.order_id)

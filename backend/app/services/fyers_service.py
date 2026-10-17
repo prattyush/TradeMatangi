@@ -11,6 +11,7 @@ Architecture:
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import asyncio
 import configparser
 import logging
@@ -72,7 +73,7 @@ def _fyers_index_symbol(symbol_key: str) -> str:
     return f"{exchange}:{name}-INDEX"
 
 
-def _fyers_options_symbol(symbol_key: str, expiry: str, strike: int, right: str) -> str:
+def _fyers_options_symbol(symbol_key: str, expiry: str, strike: int | float, right: str) -> str:
     info = _FYERS_SYMBOL_INFO.get(symbol_key)
     if info is None:
         raise ValueError(f"Unknown symbol: {symbol_key}")
@@ -82,7 +83,7 @@ def _fyers_options_symbol(symbol_key: str, expiry: str, strike: int, right: str)
         month = _MONTH_ABBR[dt.month - 1]
     except ValueError:
         raise ValueError(f"Invalid expiry date format: {expiry}")
-    return f"{info['exchange']}:{info['name']}{day}{month}{int(strike)}{right.upper()}"
+    return f"{info['exchange']}:{info['name']}{day}{month}{strike_number(strike)}{right.upper()}"
 
 
 def resolve_fyers_symbols(session) -> tuple[list[str], list[str | None]]:

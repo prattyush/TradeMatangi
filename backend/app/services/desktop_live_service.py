@@ -1,6 +1,9 @@
 """In-memory chart-only stream hub. It deliberately has no trading imports."""
 from __future__ import annotations
 
+from app.services import performance_diagnostics as diagnostics
+
+from app.services.instrument_identity import strike_number
 import asyncio
 from app.services.history_workers import run_history
 import logging
@@ -54,7 +57,7 @@ def get(user_id: str, stream_id: str) -> DesktopStream | None:
     return stream if stream and stream.user_id == user_id else None
 
 
-def option_quote(user_id: str, stream_id: str, symbol: str, expiry: str, strike: int, right: str, tile_id: str | None = None) -> dict | None:
+def option_quote(user_id: str, stream_id: str, symbol: str, expiry: str, strike: int | float, right: str, tile_id: str | None = None) -> dict | None:
     """The latest provider tick for one exact option in a user-owned chart stream."""
     stream = get(user_id, stream_id)
     if not stream or stream.stopped:
@@ -64,7 +67,7 @@ def option_quote(user_id: str, stream_id: str, symbol: str, expiry: str, strike:
         if tile_id is not None and tile.get("tile_id") != tile_id:
             continue
         if (instrument.get("kind") != "option" or instrument.get("underlying") != symbol
-            or instrument.get("expiry") != expiry or int(instrument.get("strike") or 0) != strike
+            or instrument.get("expiry") != expiry or strike_number(instrument.get("strike") or 0) != strike
             or instrument.get("right") != right or not tile.get("subscribed")):
             continue
         # Display history survives handover; execution requires a current feed quote.
@@ -227,8 +230,8 @@ async def _load_history(tile: dict) -> list[dict]:
         if instrument.get("kind") == "option":
             from app.services.options_service import fetch_options_historical, load_options_dataframe
             for day in (day for day in dates if day <= instrument["expiry"]):
-                await run_history(fetch_options_historical, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-                frame = await run_history(load_options_dataframe, instrument["underlying"], day, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                await run_history(fetch_options_historical, instrument["underlying"], day, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
+                frame = await run_history(load_options_dataframe, instrument["underlying"], day, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
                 if day == today:
                     candles.extend(_completed_current_candles(frame, interval))
                 else:
@@ -263,8 +266,8 @@ async def _load_current_date_seconds(tile: dict) -> list[dict]:
             if today > instrument["expiry"]:
                 return []
             from app.services.options_service import fetch_options_historical, load_options_dataframe
-            await run_history(fetch_options_historical, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
-            frame = await run_history(load_options_dataframe, instrument["underlying"], today, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+            await run_history(fetch_options_historical, instrument["underlying"], today, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
+            frame = await run_history(load_options_dataframe, instrument["underlying"], today, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
         else:
             from app.routers.data import _ensure_data
             from app.services.data_loader import load_dataframe
@@ -316,6 +319,11 @@ async def _consume(stream: DesktopStream, tile: dict, queue: asyncio.Queue) -> N
     """Keep an interval-neutral latest provider second for one desktop tile."""
     while not stream.stopped:
         tick = await queue.get()
+        if diagnostics.ENABLED:
+            diagnostics.observe("desktop_tick_queue_depth", queue.qsize())
+            queued_at = tick.pop("_diagnostic_queued_at", None)
+            if queued_at is not None:
+                diagnostics.observe("desktop_tick_queue_age_ms", (time.monotonic() - queued_at) * 1000)
         if tick.get("type") == "feed_status":
             await publish(stream, "feed_status", tile["tile_id"], stream.feed_group.status())
             continue

@@ -1,7 +1,7 @@
 import { forwardRef, useLayoutEffect, useRef, useState } from 'react'
 import type { SizingMode, FundsRatios, RiskRatios } from './SettingsModal'
 
-export type EntryOrderType = 'MARKET' | 'AUTO_STOP' | 'AUTO_STOP_LIMIT' | 'TARGET' | 'LIMIT'
+export type EntryOrderType = 'MARKET' | 'AUTO_STOP' | 'AUTO_STOP_LIMIT' | 'TARGET' | 'LIMIT' | 'TARGET_PERCENT'
 export interface EntryTicket {
   x: number; y: number; price: number; right?: 'CE' | 'PE'; strike?: number; expiry?: string
   side: 'BUY' | 'SELL' | null
@@ -15,13 +15,13 @@ interface Props {
   instrumentType: string
   sessionType: string
   onChange: (ticket: EntryTicket) => void
-  onSubmit: (ticket: EntryTicket, quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number) => void
+  onSubmit: (ticket: EntryTicket, quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number, targetProfitPct?: number) => void
   onClose: () => void
 }
 const choices = [
   ['MARKET', 'Market', 'Market'], ['LIMIT', 'Limit', 'Limit'],
   ['AUTO_STOP', 'AS', 'Auto Stop Order'], ['AUTO_STOP_LIMIT', 'ASL', 'Auto Stop Order Limit'],
-  ['TARGET', 'Target', 'Target'],
+  ['TARGET', 'Target', 'Target'], ['TARGET_PERCENT', 'Target %', 'Target %'],
 ] as const
 
 /** One compact ticket; the second selection submits through the existing handler. */
@@ -31,7 +31,8 @@ export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ tic
   const chooseDirection = useRef(ticket.side === null).current
   const [sizeKey, setSizeKey] = useState<string | null>(null)
   const [position, setPosition] = useState({ left: ticket.x, top: ticket.y })
-  const mode = ticket.sizingMode
+  const isTarget = ticket.orderType === 'TARGET_PERCENT'
+  const mode = isTarget ? 'riskRatio' : ticket.sizingMode
   useLayoutEffect(() => {
     const place = () => {
       if (!root.current) return
@@ -47,6 +48,7 @@ export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ tic
   const submit = (next: EntryTicket, key: string) => {
     if (!next.side || !next.orderType || submitted.current) return
     submitted.current = true
+    if (next.orderType === 'TARGET_PERCENT') {onSubmit(next, null, undefined, undefined, riskRatios[key as 'l' | 'm' | 'h']);return}
     if (next.sizingMode === 'quantity') onSubmit(next, Number(key))
     else {
       const preset = key as 'l' | 'm' | 'h'
@@ -59,13 +61,13 @@ export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ tic
     <div style={{ color: '#8b949e', marginBottom: 7 }}>SL ₹{ticket.price.toFixed(2)}</div>
     {chooseDirection && <div role="group" aria-label="Entry direction" style={{ display: 'flex', gap: 5, marginBottom: 7 }}>{(['BUY', 'SELL'] as const).map(side => <button key={side} aria-pressed={ticket.side === side} style={buttonStyle(ticket.side === side)} onClick={() => { setSizeKey(null); onChange({ ...ticket, side }) }}>{side === 'BUY' ? 'Buy' : 'Sell'}</button>)}</div>}
     <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 8 }}>
-      <section aria-label="Entry order type"><div style={{ color: '#8b949e', marginBottom: 5 }}>Order type</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 4 }}>{choices.map(([orderType, label, name]) => <button key={orderType} title={name} aria-label={name} aria-pressed={ticket.orderType === orderType} disabled={!ticket.side || submitted.current} style={{ ...buttonStyle(ticket.orderType === orderType), padding: '3px 4px', minHeight: 23 }} onClick={() => { const next = { ...ticket, orderType }; if (sizeKey) submit(next, sizeKey); else onChange(next) }}>{label}</button>)}</div></section>
+      <section aria-label="Entry order type"><div style={{ color: '#8b949e', marginBottom: 5 }}>Order type</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 4 }}>{choices.map(([orderType, label, name]) => <button key={orderType} title={name} aria-label={name} aria-pressed={ticket.orderType === orderType} disabled={!ticket.side || submitted.current} style={{ ...buttonStyle(ticket.orderType === orderType), padding: '3px 4px', minHeight: 23 }} onClick={() => { const next = { ...ticket, orderType }; if ((orderType === 'TARGET_PERCENT') !== isTarget) {setSizeKey(null);onChange(next);return} if (sizeKey) submit(next, sizeKey); else onChange(next) }}>{label}</button>)}</div></section>
       <section aria-label="Entry sizing">
-        {mode !== 'quantity' ? <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5, minHeight: 14 }}><span>Risk</span><button type="button" role="switch" aria-label="Use Capital % instead of Risk % for this order" aria-checked={mode === 'fundsRatio'} onClick={() => { setSizeKey(null); onChange({ ...ticket, sizingMode: mode === 'fundsRatio' ? 'riskRatio' : 'fundsRatio' }) }} style={{ width: 27, height: 15, border: 0, padding: 2, borderRadius: 10, background: mode === 'fundsRatio' ? '#1d4ed8' : '#475569', cursor: 'pointer' }}><span style={{ display: 'block', width: 11, height: 11, borderRadius: '50%', background: '#fff', transform: mode === 'fundsRatio' ? 'translateX(12px)' : undefined }}/></button><span>Capital %</span></div> : <div style={{ color: '#8b949e', marginBottom: 5 }}>Quantity</div>}
-        <div style={{ display: 'grid', gap: 5 }}>{(mode === 'quantity' ? ['1', '2', '3', '5', '10'] : ['l', 'm', 'h']).map(key => { const value = mode === 'quantity' ? key : (mode === 'riskRatio' ? riskRatios : fundsRatios)[key as 'l' | 'm' | 'h']; return <button key={key} aria-pressed={sizeKey === key} disabled={!ticket.side || submitted.current} style={buttonStyle(sizeKey === key)} onClick={() => { setSizeKey(key); if (ticket.orderType) submit(ticket, key) }}>{mode === 'quantity' ? `Qty ${value}` : `${mode === 'riskRatio' ? 'Risk' : 'Capital'} ${value}%`}</button> })}</div>
+        {isTarget ? <div style={{marginBottom:5}}>Target %</div> : mode !== 'quantity' ? <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5, minHeight: 14 }}><span>Risk</span><button type="button" role="switch" aria-label="Use Capital % instead of Risk % for this order" aria-checked={mode === 'fundsRatio'} onClick={() => { setSizeKey(null); onChange({ ...ticket, sizingMode: mode === 'fundsRatio' ? 'riskRatio' : 'fundsRatio' }) }} style={{ width: 27, height: 15, border: 0, padding: 2, borderRadius: 10, background: mode === 'fundsRatio' ? '#1d4ed8' : '#475569', cursor: 'pointer' }}><span style={{ display: 'block', width: 11, height: 11, borderRadius: '50%', background: '#fff', transform: mode === 'fundsRatio' ? 'translateX(12px)' : undefined }}/></button><span>Capital %</span></div> : <div style={{ color: '#8b949e', marginBottom: 5 }}>Quantity</div>}
+        <div style={{ display: 'grid', gap: 5 }}>{(mode === 'quantity' ? ['1', '2', '3', '5', '10'] : ['l', 'm', 'h']).map(key => { const value = mode === 'quantity' ? key : (mode === 'riskRatio' ? riskRatios : fundsRatios)[key as 'l' | 'm' | 'h']; return <button key={key} aria-pressed={sizeKey === key} disabled={!ticket.side || submitted.current} style={buttonStyle(sizeKey === key)} onClick={() => { setSizeKey(key); if (ticket.orderType) submit(ticket, key) }}>{mode === 'quantity' ? `Qty ${value}` : `${isTarget ? 'Target' : mode === 'riskRatio' ? 'Risk' : 'Capital'} ${value}%`}</button> })}</div>
       </section>
     </div>
-    <small style={{ display: 'block', color: '#8b949e', marginTop: 7, fontSize: 9 }}>Select order type and size in either order.</small>
-    {mode === 'riskRatio' && ['paper', 'sim', 'stepwise'].includes(sessionType) && <small style={{ display: 'block', color: '#f0883e', marginTop: 5, fontSize: 9 }}>Minimum one {instrumentType === 'options' ? 'lot' : 'share'} if funded, even above selected Risk %.</small>}
+    <small style={{ display: 'block', color: '#8b949e', marginTop: 7, fontSize: 9 }}>{isTarget ? 'Select Target %, then click the target price. Market entry with this SL; no target exit is created.' : 'Select order type and size in either order.'}</small>
+    {!isTarget && mode === 'riskRatio' && ['paper', 'sim', 'stepwise'].includes(sessionType) && <small style={{ display: 'block', color: '#f0883e', marginTop: 5, fontSize: 9 }}>Minimum one {instrumentType === 'options' ? 'lot' : 'share'} if funded, even above selected Risk %.</small>}
   </div>
 })

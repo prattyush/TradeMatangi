@@ -1,5 +1,113 @@
 # Phase 21 — Desktop UI implementation
 
+## Desktop toolbar scrollbar correction — 2026-10-12
+
+The main/preprod integration is merged in [PR #653](https://github.com/prattyush/TradeMatangi/pull/653)
+(preprod `0c82a7d`). Its Windows installer build is allowed to finish independently.
+
+The toolbar's invisible absolute tooltip pseudo-elements enlarged its scrollable
+width/height even when the controls fit. Remove those pseudo-elements and retain
+the buttons' existing native `title` hover labels and accessible names. The top
+workspace header clips vertical overflow while retaining horizontal `auto`
+scrolling for genuinely narrow windows; controls keep their order and dimensions.
+
+Browser reproduction: at 1,200px width, the old toolbar measured 1,334px scroll
+width and 67px scroll height against a 1,200×47px client area. The fixed toolbar
+measures 1,200×47px at rest, hover and focus. At 50px width, intentional horizontal
+overflow remains reachable. Desktop TypeScript and production build checks passed. The installer build for
+PR #653 completed successfully. This CSS-only fix requires no backend or trading
+behavior changes.
+
+## Main → preprod integration — 2026-10-12
+
+PR #652 is merged into preprod (`49e92c8`); authenticated acceptance is in
+progress, not declared complete. Integration work starts from that revision on
+`integration/main-into-preprod` and merges main `d10ab97` (which contains dev
+`dfa878d`). Main/dev source contents match; six older script executable-mode
+changes exist only in main and remain preserved. Main/dev are not modified.
+
+The integration brings authoritative website live-mode labels, finalized Real
+Day charges, event-second snapshot candles, retained snapshot viewport/zoom,
+option marker cleanup, sequential header errors, desktop strategy submenu/Take
+Profit actions and saved Paper/Real capital restoration. It retains preprod's
+Kite/Real execution, four broker/style slots, shared funding, Swing runtime,
+linked Replay refresh, toolbar icons/tooltips and compact date/time controls.
+
+Four textual conflicts are resolved by retaining both behaviors: this document,
+shared performance broker/account/fee-source fields, the desktop workspace's
+Real/companion routing and strategy callbacks, and both CSS additions. Automatic
+merges are reviewed for account-scoped ledgers, frozen sizing capital, fractional
+option identity and native analysis allowlists.
+
+Finalized-charge corrections are **Day-only** for now, as explicitly selected.
+Swing histories keep estimates and are excluded from charge discovery/application;
+per-day Swing billing remains deferred. Corrections are owner/date/broker/account
+scoped and analytics-only. Legacy Kotak requests/records remain supported; Kite
+uses explicit broker scope. Legacy/current correction metadata is deleted together
+so reverting cannot revive an older bill. No trading, wallet or funding records
+are altered by charge correction.
+
+Integration verification:
+
+- Backend: **2,189 passed**, with the two known local ICICI configuration failures
+  in options-start validation (`test_missing_strike_returns_400` and
+  `test_invalid_right_returns_400`). No new integration failures. The incoming
+  pattern-logger test setup removes the other two former local failures.
+- Desktop: **194 tests passed**. Website notification tests: **14 passed**.
+  Both TypeScript checks and production builds passed.
+- Native Linux Rust: `cargo check --locked --offline` passed; **19 library tests
+  passed**. This does not replace building/testing the Windows executable.
+- Mocked browser checks passed for Day charges (separate Kite/Kotak scopes),
+  strategy submenu/Take Profit controls, snapshot candles/viewport navigation,
+  header notifications, running mode labels and Real/linked Replay controls.
+  No page errors or live broker orders were produced.
+- Python compilation, reviewed new-service lint and diff checks passed.
+
+PR delivery is recorded below. Delivery targets
+preprod; deployment and native Windows/authenticated broker acceptance remain
+manual. The original testing checkout is not modified by integration work.
+
+## Current Swing review status — 2026-10-11
+
+The ownership/funding/recovery self-review and fixes are on
+`feature/phase21-swing-trading`. See the [authoritative current status and review
+checkpoint](spec-phase21-swing-trading-plan.md#current-review-status--2026-10-11).
+Four broker/style slots supersede the earlier one-Real-session-per-user restriction.
+Running books keep their broker/account when the default setting changes.
+
+The review fixed startup child adoption/readiness, interrupted-start persistence,
+concurrent funding edits, partial-fill commitments, pending entry checks, unknown
+submission timing and empty cash correction. Undated attempts require explicit
+owned-order acknowledgement plus verified-flat closure; current-day unknown
+attempts remain blocked. History warnings persist. Earlier delivery/checkpoint
+sections below describe their original revisions.
+
+Verification: **2,121 backend tests passed** with four known local ICICI
+configuration failures; **184 desktop tests passed**. Both client TypeScript
+checks/builds and mocked acknowledgement controls passed.
+
+The branch and all PRs target **preprod**. Backend/native live acceptance follows
+merge and deployment; main/dev promotion is manual. Linked Swing views, multi-day
+Replay, remaining Paper edges and live/native acceptance are not declared complete.
+
+## Current extension — Kite and desktop Real / linked screens
+
+The approved [complete extension specification and sprint plan](spec-phase21-real-trading-plan.md)
+records scope, exclusions, decisions, broker/books/session design, desktop UI and
+linked-window lifecycle, failure cases and acceptance gates. Sprint 0 writes this
+handoff before trading-code changes. All extension work and PRs target **preprod**;
+main/dev promotion is manual after acceptance. The original extension used one
+active Real session per user; the current Swing ownership revision above supersedes
+that limit and allows changing the default broker while books remain pinned. Funds and history stay
+broker-account separate. Earlier Kite/desktop Real deferrals and dev-delivery rules
+below describe the previous delivery and are superseded for this extension only.
+
+
+Extension implementation is on `feature/phase21-real-desktop` in ready-for-review
+[PR #632](https://github.com/prattyush/TradeMatangi/pull/632), targeting preprod.
+See the linked specification for delivered sprints, automated results and remaining
+Windows/native and live-broker acceptance gates. No main/dev promotion is included.
+
 ## Current delivery status — 2026-10-12
 
 PR #619 merged to dev on 2026-10-08 (merge e1938ce). Main includes that delivery
@@ -920,13 +1028,1197 @@ backend to apply; no client rebuild is needed.
 5) One other requirement in the edit options, which are present in the left panel, where I can change the quantity of already present orders. If you check in website, the similar option respects the option lot sizes, which are currently not respected in the left panel in desktop. That is with respect to scrolling. So if I scroll, the lot prices should change. Just look over into the website, edit options and how they're handled for options, or price change and quantity change, and try to duplicate that during edit options in left panel in desktop.
 
 ### Kite Broker For Real Trading
-Supporting Kite for Real Trading API's, all the their is feature parity with Kotak Neo. With exactly the same implementation.
+Supporting Kite for Real Trading API's, all the their is feature parity with Kotak Neo. With exactly the same implementation. The cancellation optimization present for Kotak Broker need not be applied in Kite Broker. Rest all the mechanism in which orders are placed, target, strategies should be same as currently with website and Kotak.
+
+The Admin can choose whether to use Kotak for real trading or Kite.
+
 
 ### Supporting Real Trading In Desktop Client
 Support Real Trading in Desktop Client, with same support as with Website Real Trading, like trade history refresh button and others.
 
+It should support all features currently supported in website for real trading. Do discuss if you find things need discussion.
+
+### Real Trading or All Trading in Option supporting multiple strike prices.
+1) We can have 2 CE Strike Prices, with orders and stoploss and target profit strategy at the same time.
+2) The 3 charts (One PE and 2 CE), can be in the 5 pane layout both desktop and website.
+3) For Kotak, with 2 strike prices, all optimizations, including auto cancellations handling should be done.
+4) For resume an old session which has open orders, during resuming a paper or real trading session, display definitely those open orders' Strike Prices. (one or 2).
+5) Support in website a similar seaerch feature as in desktop, to choose a chart with a specific strike price. It can be limited search, only for that underlying symbol. Or a much simpler can be just a dropdown to change strike price, or when search button cilck,  option to change the chart either a underlying or CE or PE with specific strike prices. This is required as currently during session starts
+the strike price is auto choosen based on under 50 rupees etc (current price), for 2 strike prices, it has to choosen manually.
+
+### Desktop Split Screen Trading
+ Support in Desktop, if split screen, both screens can have same session. So one option where user can clicks the current replay trading, or paper or real trading and ask it to  split screen, the second screen will be the same paper trading or replay trading. It may have different strike prices of CE /PE etc. We can plan to make it simple, such that no wallet shown or orders only in one. I am open to suggestions.
+
+
+## Nifty 100 and Swing implementation
+
+The approved decisions and sprint implementation record are in
+[the Swing Trading specification](spec-phase21-swing-trading-plan.md).
+All work and review PRs target preprod.
+
+### Expanding Supported Symbols to Nifty 100
+1) Support Nifty 100 symbols.
+2) Make sure it is supported for both website and desktop.
+3) Make sure it is supported for real trading brokers, Kite and Kotak and ICICI Direct for replay trading, paper trading and stepwise.
+4) Support in all forms of trading types, paper, real, step, replay.
+5) Generate scripts to whether you can get historical data for all 100 nifty symbols, in Kotak, Kite and ICICI to know that the symbols mapping is present. Just either fetch latest price or smallest historical data, to know that all symbols mapping are correct. For scripts credentials are present in ddb local.
+6) Extend the symbol chooser in both website and desktop to handle. Don't add dropdown, as we have 2 sectios now, indices and equity symbols. Further in both the symbol selection fields, make it type and options comes, like I type TATA and all tata symbols will come. For quick selection. Feel free for UI suggestions.
+7) Also, support Options if available for these 100 symbols. And you can fix it to NIFTY 100, no need of SENSEX 100. Only nifty is fine.
+
+### Swing Trading Support
+This requirement is for supporting positions across days, and also in multiple symbols, for now only equity, maybe options. Support right now is required right now for paper and real, and replay. Replay is secondary, paper and real are more required.
+
+The thought behind is testing swing trading strategies, that is taking a position in long. In Indian Stock Market short position cannot be across days. Or PE Contract Long in that symbol for taking benefit of bear movement in the stock. 
+
+The session can be long lived, and once a capital is captured, honor it for percentages. For real trading scenario, do the same or now. For real do give the option, for uer to change session capital.
+When system detects mismatch betwween capital and P&L and orders, specially decrease, incerase is fine, then ask user to update session capital. Required for perccentage postion and % P&L Calculation.
+
+Point to note in multiple day trades, there is no leverage in equity.
+
+
+### Real broker/style ownership and downtime recovery
+
+The 2026-10-11 revision in [the Swing implementation plan](spec-phase21-swing-trading-plan.md#real-ownership-and-outage-recovery-revision--2026-10-11-sprint-0)
+supersedes the earlier one-broker/one-operator assumptions. Real accounts permit
+one Day session and one Swing portfolio across users; one user can occupy all
+four Kite/Kotak style combinations. Each account has one shared capital pool.
+Unclosed books retain ownership through outages, pause and screen detach, and
+require reconciliation/verified closure before their slot can be reused. Paper
+and Replay restrictions are unchanged. Implementation and testing status remains
+in the linked document; Real Swing runtime acceptance is not implied by slot or
+funding-helper tests alone.
+
+
+### Ownership and recovery implementation checkpoint (2026-10-11)
+
+Real Day/Swing broker-style slots, shared account funding and Real Swing runtime
+are now connected on the existing feature branch. Website/desktop controls include
+broker reconciliation, opening inventory preview/import, selected funding edits,
+negative cash-correction preview and verified closure with history warnings.
+See the [full implementation checkpoint and exclusions](spec-phase21-swing-trading-plan.md#implementation-checkpoint--ownershiprecovery-revision-2026-10-11).
+Broader linked Swing charts, multi-day Replay and preprod/live acceptance remain
+explicitly outstanding; main/dev promotion remains manual after acceptance.
+
+
+### Swing Trading Improvements
+
+When I open swing trading I see a page with just numbers to enter or purchase without charts.
+1) Change the swing trading UI to support charts and maybe left panel has positions orders etc, or feel free to suggest great UI. Improve the UI, it literally has almost nothing, compared to day trading whicch is so great.
+2) The charts for swing need not be fine, so you can download from kite or kotak or icici breeze 1 minute candles.
+3) The charts would be in website and desktop both, in desktop it is KLine.
+4) I can take position from ccharts or at least use chart picker to pick entry (limit, target), stoploss etc.
+5) Positions should also some P&L.
+6) In swing charts, I can cchoose Day as a candle interval as well, at that time one has to download 1 min for 140 days right, depending on how many candles are to be shown. You can also be clever and download day level data for older days and store it or maybe 1 hour granularity and use it to show Day granularity candles. Feel free to optimize.
+
+### Swing improvements implementation plan
+
+The approved [Swing Improvements sprint/design record](spec-phase21-swing-improvements-plan.md)
+records portfolio-first 1–4 independent charts, confirmed chart picking, daily
+history, position P&L and backend-owned live pricing during 09:15–15:30 IST.
+This is a new sprint track; original Phase 21 status/history remains intact.
+
+
+### Swing Improvements implementation checkpoint — 2026-10-12
+
+Sprints 0–4 are implemented on `feature/swing-chart-workspace` for preprod.
+Sprint 5 automated review/build/browser checks are complete; broker and installed
+Windows acceptance follows preprod merge/deployment. See the [delivery decisions,
+interfaces, test evidence and remaining acceptance scope](spec-phase21-swing-improvements-plan.md#implementation-checkpoint--2026-10-12).
+Swing uses 09:15–15:30 IST for active Paper/Real pricing independently of screens;
+Paper expiry exits begin at 15:15. Main/dev promotion remains manual.
+
+### Linked Swing windows and analytics — 2026-10-12
+
+The approved [linked-window and Swing analytics plan](spec-phase21-swing-linked-analytics-plan.md)
+adds desktop portfolio companions and Swing-aware history, labels, Analysis and
+Stats. The previous chart workspace was merged through PR #655. This extension
+uses a new branch and targets preprod.
+
+
+### Linked windows and Swing Stats implementation checkpoint — 2026-10-12
+
+Desktop companions now share one exact portfolio with independent chart workspaces.
+Both clients have execution history, stable open/closed trade labels, Swing-aware
+Analysis and portfolio/trade/exposure Stats. See the [implementation details,
+accounting conventions and test/acceptance record](spec-phase21-swing-linked-analytics-plan.md#implementation-checkpoint--2026-10-12).
+Work is on the new `feature/swing-linked-analytics` branch targeting preprod;
+installed-Windows and authenticated broker acceptance follows merge/deployment.
+Multi-day Replay, website popups, new strategies and finalized Swing charges remain
+deferred; earlier linked-chart/history pending notes are superseded.
+
+
+PR #656 follow-up review corrections are recorded in the
+[linked Swing delivery record](spec-phase21-swing-linked-analytics-plan.md#pr-656-review-corrections--2026-10-12):
+History initialization, valuation chronology/import attribution, independent drawing
+scopes, label navigation, Day/Swing filters and a single native window close owner.
+Installed Windows and broker acceptance remain after preprod deployment.
+
+
+### Day ownership handover and practice wallet isolation — 2026-10-13
+
+Follow-up to merged PR #656, on `fix/real-day-handover-practice-wallet` from
+preprod `2b2b14a`; delivery PR targets preprod.
+
+“Done for the day” now waits for broker-confirmed flat positions, no pending or
+unresolved orders, durable closure of every live alias, authoritative Day slot
+release and funding participant completion before publishing the final day lock.
+Closed history cannot replace the active owner during verification. Aliases stop
+before releasing the owner, so the next user's session cannot be managed by an old
+viewer. A failed release remains pending and retries; a failed final day-lock write
+can complete after the runtime has ended, provided no outstanding current-day slot
+remains. The original user's IST-day entry barrier is retained.
+
+The daily close intent is persisted. Startup recognizes both closing day locks and
+legacy done locks with outstanding ownership, restores the owned session and
+resumes existing verified closure instead of creating entries. Status reads and
+repeated Done requests resume pending repair. A cross-user start also nudges repair
+when the former owner already requested day completion; it still returns 409 until
+ownership is actually released. Missing/unverifiable metadata retains ownership;
+there is no forced unlock, broad historical scan or new trading lock.
+
+Practice-wallet reset blocking now checks the specific dated ledger used by active
+Day practice sessions. Explicit saved wallet identity takes precedence, with a
+legacy fallback from session type/date. Real books, Swing portfolios, other dated
+wallets and chart-only Live Browse do not block a Day practice wallet. Active or
+paused sessions using that wallet still block it; Paper startup leases and wallet
+revision guards remain unchanged. Broker funds are never reset by this API.
+
+Desktop polls the daily status while closing, including after the session-end
+stream stops, so it can display final completion after ownership release.
+Regression coverage includes release failure/retry, live-owner selection over
+closed history, aliases, restart with closing/done locks, no-runtime outstanding
+ownership, shared Kotak account handover across users, and website/desktop practice
+wallet reads/resets while a separate Real book is active. Deployment to preprod
+and authorized broker acceptance remain required; no live orders were placed.
+
+
+Validation for this follow-up: **244 focused backend checks passed**; full backend
+**2,245 passed**, with the two existing local ICICI-configuration failures
+(`test_missing_strike_returns_400` and `test_invalid_right_returns_400`). Desktop:
+**206 tests passed**, TypeScript check/build passed, and portfolio-management
+browser acceptance passed. The broker handover fixture uses Moto and mocked broker
+reports; authenticated Kotak acceptance is still required after deployment.
+
+
+### Desktop Kotak authentication dialog — 2026-10-13
+
+Desktop Real toolbar previously only checked broker status, and Settings required
+an inline TOTP before its disabled Connect button could be used. Both now open a
+Kotak login dialog using the existing authenticated desktop settings login route.
+The dialog accepts six digits from the authenticator app, focuses the input,
+supports Enter/Cancel/Escape and keyboard focus containment, disables dismissal
+and duplicate submission while connecting, and shows retryable backend errors.
+Codes stay in component memory and are cleared on failure/success/dismissal;
+there is no new credential storage or broker API. The dialog uses a portal so
+Settings cannot accidentally submit/save its own form when login is submitted.
+
+Real startup refreshes authentication before preparing a session. If a cached Kotak
+connection has expired, it opens login and returns without starting a session.
+After login, the user explicitly starts Real trading; no entry/order is retried
+or submitted automatically. Toolbar status is refreshed after connection, and
+Kite retains its token-based connection flow without a Kotak code prompt.
+
+
+Validation: desktop TypeScript/production build and **206 tests passed**. The
+built-app Kotak browser check covers toolbar and Settings prompts, code validation,
+Cancel/Escape, retry and keyboard focus, duplicate/busy submissions, expired cached
+authentication, status refresh, no implicit settings save/session start and Kite
+isolation. Existing Real/Stepwise/Replay/Paper linked-trading browser checks passed.
+Broker responses are synthetic; installed desktop plus real Kotak login acceptance
+remains after preprod deployment. No real authentication codes or orders were used.
+
+
+### Swing connection controls and Day/Swing desktop windows — 2026-10-13
+
+Paper/Real selection is now visible in the main Swing chart toolbar instead of
+being hidden in portfolio management. Switching views saves the current workspace
+and leaves its portfolio, positions, cash, guardrails and backend protection active.
+Paper, Real Kite and Real Kotak retain separate books; changing the visible book
+never migrates positions or closes another portfolio. Dirty labels and failed
+workspace saves still guard navigation. Linked windows keep their pinned portfolio
+and cannot change mode/broker.
+
+The selected Real broker has a read-only authenticated status check through
+`GET /swing/portfolios/broker-status?execution_broker=kotak|kite`, also available
+through the existing desktop facade. It requires Real access and returns only the
+broker name/authenticated flag, without funds reads, slot claims or login. The
+status follows the Swing selection, independently of the user's default Day broker.
+Kotak login is available directly in Swing on desktop and website. Kite gives the
+existing Admin-token guidance. Authentication is rechecked before creating a Real
+portfolio; successful login refreshes status but does not create a portfolio or
+retry an order. Deploy the backend route before using the updated clients.
+
+Native desktop main Swing also offers **Pop out Swing**: open an owned, pinned
+window using existing handoff/preferences storage, then return the main window to
+its Day workspace after successful opening. Existing Day sessions remain mounted
+and running. The popped-out Swing book continues independently, so Day Paper and
+Swing Paper can be used side by side. Failed handoff leaves the main Swing view
+available. **Create linked window** remains for additional Swing views. Pop-out is
+native-desktop-only; closing a window does not close either trading book.
+
+
+Validation for this extension: **68 focused backend checks passed**, including
+selected-broker authentication/authorization and unchanged active Paper balances.
+Both client TypeScript checks/builds and **206 desktop tests passed**. Built desktop
+acceptance covers an open Paper book, direct Kotak login, explicit Real creation,
+return to the saved Paper layout and neither book closing. Shared workspace and
+linked analytics browser checks pass for both renderers, including Pop out Swing
+and pinned companion controls. Native hosting is mocked in browser tests; installed
+Windows handoff, concurrent Day/Swing execution and authorized broker acceptance
+remain after backend/client deployment. No live orders were sent.
 
 
 
+### Swing Trading Improvements
+
+Implementation: [full sprint design and status](spec-phase21-swing-futures-plan.md).
+Separate desktop Day/Swing screens and Swing pop-out are included; website retains
+existing view switching. View changes and window close never close trading books.
+
+1. Swing Trading Entries should support percentage entry, percentage of capital, session or portfolio capital.
+2. Does desktop has similar error display mechanism that website has which doesn't block the trading UI. If not add them.
+3. The chart lines or drawings done are saved and will be shown across day trading and Swing Trading.
+4. In desktop for the markets and indicators, can you take the row out of the charts and show similar to what we have in day trading, collapsable one. It is taking up space in the charts display. And no need of this line "kite · Live quote" It is also taking up space. Sorry adding requirements in runtime.
+5. Change Pick on chart to icon and Place intimidation to icon in desktop. Support Futures in both website and desktop. In desktop can you make the right panel collapsable and left panel too, so that we get more area for charts.
+
+### Supporting Futures Trading in Swing Trading.
+1. Support Futures contracts for current month and when 2 days away from expiry, next month as well.
+2. Currently all futures contracts are monthly expiry.
+3. Support Future contracts for all indices symbols, NIFTY, SENSEX and NIFTY 100 as well.
+4. Calculate the future margin required from web.
+5. Support Futures for paper trading and real trading for both brokers
+6. Support Futures in Stats as well.
 
 
+### Swing/Futures sprint progress — 2026-10-13
+
+[Full implementation status and decisions](spec-phase21-swing-futures-plan.md#actual-implementation-and-validation).
+Sprints 0–6 application work is implemented. Sprint 7 code review and automated
+regression are complete; installed Windows and actual broker acceptance remain
+manual after preprod deployment. Paper Futures is enabled by default for new
+settings; Kite and Kotak Real have independent Admin gates, disabled by default.
+
+Website and desktop support exact Futures contracts, long/short margin sizing,
+offline Paper intentions, official MTM, restart recovery, NRML routing/protection,
+selected-date markers and Futures Stats/Analysis. The linked plan records scope,
+design, review fixes, assumptions and intentionally left-out items. The agreed
+next-month entry window is seven calendar days before actual listed expiry; Nifty
+100 support means eligible constituent stocks, not an invented index contract.
+
+Latest post-review backend regression: **2,331 passed**. Both client TypeScript
+checks and production builds, **216 desktop tests**, shared workspace/linked
+Analytics, actual Day/Swing option drawing sharing, older desktop trading flows,
+website notification and built desktop Kotak login browser checks passed.
+Deploy backend before clients; no live broker orders were sent during validation.
+
+
+### Swing/Futures follow-up review — 2026-10-13
+
+PR #659 now includes fixes for overnight owned execution recovery, expired-entry
+renewal and reopened-position protection, Day/Swing option drawing namespace
+compatibility, and configured Futures SL buffers/ticks. The notification browser
+harness was repaired as well. [Detailed findings, decisions and validation](spec-phase21-swing-futures-plan.md#2026-10-13--follow-up-review-fixes-and-older-feature-regression)
+include **21 new backend regression cases**. Existing Real/Paper/Replay/Stepwise,
+linked PE candles after Fibonacci edits, labels/Stats and broker authentication UI
+passed the exercised regression checks. Installed Windows/live broker acceptance
+remain after preprod deployment; Real Futures gates default off.
+
+## Shared Kite feed load and freeze diagnostics — 2026-10-14
+
+Implemented and validated on dev after the preprod integration. Website Real
+prices/strategies and an independent desktop live browser were reported to pause
+together while website controls remained responsive. This points toward a shared
+feed/server delay, but live measurements are still required to establish the cause.
+
+### Sprint 1 — Quote batching: complete
+
+Kite raw prices still all enter the original one-second OHLC accumulator. Latest
+quote-cache updates now share a mailbox and one 100 ms drain per destination
+application loop: approximately 10 quote batches/second rather than one scheduled
+callback per incoming price/recipient. Completed candles use their existing direct
+publication path and do not wait for that timer. Strategy cadence, broker order
+updates, fills, cancellations and confirmations remain unchanged.
+
+Pending memory scales with active token/recipient registrations, including during
+an application-loop stall. Delivery checks registration identity and socket
+identity; removed/replaced subscriptions, closed loops and old sockets cannot
+revive quotes. Same-socket reconnect and shutdown invalidate pending batches.
+Each cache quote retains its actual receipt time; delayed publication cannot make
+an old quote appear freshly received. Older quote timestamps cannot replace newer
+cache data. The shared hub continues serving website and desktop consumers,
+including Paper/Real, underlying, CE/PE and other supported instruments. Replay
+and Stepwise execution behavior is unchanged.
+
+### Sprint 2 — Bounded diagnostics: complete
+
+Backend diagnostics remain opt-in through `TRADING_PERFORMANCE_DIAGNOSTICS=1`.
+Disabled diagnostics create no monitor task and skip operation timing/counters.
+Enabled diagnostics use fixed aggregate counters/maxima and a 30-second summary
+in `backend.log`; delay warnings are limited to one/category every 30 seconds.
+There are no per-tick logs, new broker requests, database writes or monitoring
+services. Ingress is counted by batch, callback duration sampled once/second,
+quote work measured at drains, and trading operations timed at existing boundaries.
+Existing diagnostic HTTP request timings now join the aggregate summaries instead
+of logging every request. Replacement pressure is inferred from ingress and delivered-quote counts rather
+than maintaining a costly per-quote replacement counter.
+
+| Evidence | Measurements |
+|---|---|
+| Upstream feed / local SDK thread | `kite_ticks`, `kite_batches`, `kite_arrival_gap_ms`, `kite_callback_ms`, `kite_reactor_lag_ms` |
+| Server scheduling / quote batching | `loop_lag_ms`, `quote_drains`, `quote_cache_deliveries`, `quote_pending`, `quote_delivery_ms`, `quote_drain_ms` |
+| Candle and consumer queues | `candle_publish_ms`, `tick_queue_age_ms`, `tick_queue_depth`, desktop equivalents |
+| Real engine / execution | `real_tick_processing_ms`, `broker_refresh_ms`, `real_ticks_suppressed_refresh`, `strategy_evaluation_ms`, `broker_submit_ms`, `order_db_write_ms` |
+| Website / desktop delivery | sampled event ID and UTC send/receipt times, receipt gap, next-frame delay, long tasks and chart-update duration |
+
+The monitor samples loop/reactor health once/second with only one outstanding
+reactor probe. Arrival-gap monitoring is restricted to an active connected Kite
+feed during regular market hours; recovery between monitor samples preserves the
+peak arrival gap. A gap is an investigation signal, not automatic proof of a
+broker fault or a reason to reconnect. A quiet instrument can be legitimate.
+Local delays over 500 ms and feed gaps over two seconds are warning candidates.
+Candle queue age is measured from actual enqueue time, excluding the normal
+one-second aggregation interval.
+
+Sampled SSE metadata is additive and never changes stored/replayed events. Website,
+desktop browse and desktop trading capture it in opt-in bounded client buffers;
+repeated native payloads are deduplicated. Native transport retains arbitrary JSON
+metadata. Client chart timings are sampled, and no observer/timer is created when
+client diagnostics are disabled. Cross-machine clock delta is approximate, not
+an exact network-latency measurement. Chart timestamps keep the existing IST-as-UTC
+convention; diagnostic clocks use real UTC/monotonic time.
+
+### Validation and operational use
+
+**622 backend test cases** exercised across focused feed, market-data repair,
+Paper/Real recovery/accounting, broker/strategy/protection, desktop trading and
+Phase 21 execution suites. A **239-check run with server diagnostics enabled**
+also passed, covering Take Profit, Real exits and desktop trading. **49 website tests** and **219 desktop tests** pass;
+both client TypeScript checks/production builds pass. Regression coverage includes
+10,000+ prices behind one pending drain with accurate OHLC, shared/separate owner
+loops, latest-quote recovery, immediate candle delivery, subscription/socket
+replacement, same-socket reconnect, failing consumers, preserved receipt age,
+bounded/deduplicated client data, disabled diagnostics, arrival-gap recovery and a
+stalled reactor with only one outstanding probe. Existing order/strategy suites
+verify preserved execution behavior. Artifacts: `.cache/live-feed-batching/`.
+
+`scripts/benchmark-kite-quote-batching.py` performs an isolated synthetic comparison
+without opening broker connections: 150,000 prices across three tokens, 500 ingress
+batches and ten owner-loop drains schedule ten quote callbacks rather than the
+previous calculated 150,000, plus 27 unchanged candle callbacks. The final
+candle-inclusive comparison measured **1.1% median CPU overhead** with diagnostics
+enabled and p95 scheduled-candle delay **40.8 ms disabled / 39.6 ms enabled**.
+The small timing difference should be treated as measurement noise, not a speedup.
+This satisfies the controlled <5% overhead / <=5 ms added p95 targets;
+it is not a live-server latency guarantee. The first per-quote diagnostic counter
+was removed after its benchmark exceeded the CPU budget.
+
+To investigate the next live occurrence:
+
+1. Start the backend with `TRADING_PERFORMANCE_DIAGNOSTICS=1` in its environment;
+   restart is required. The batching fix applies regardless of this flag.
+2. In each website/desktop WebView console, set
+   `localStorage.setItem('tradingPerformance', '1')`, then reload that client.
+   Download/copy `JSON.stringify(window.tradingPerformance)` after the occurrence.
+   Client measurements require the rebuilt website/desktop assets.
+3. Record the exact time, instrument/contract, and whether both clients paused.
+   Match client sampled UTC/event IDs against the backend summary window.
+4. Raw arrivals continuing with loop/queue delay implicates server processing;
+   delayed reactor probes implicate the local SDK thread. Missing arrivals with
+   healthy probes implicates the upstream feed/network path. Refresh suppression
+   or slow submission identifies the corresponding trading delay. Prompt server
+   delivery with delayed client receipt/painting points toward delivery/rendering.
+5. Disable server diagnostics and restart after capture; remove the client flag
+   with `localStorage.removeItem('tradingPerformance')` and reload each client.
+
+Broker-refresh safety suppression and synchronous submission behavior were measured,
+not rewritten. Any remaining freeze needs the captured evidence for a separate
+focused fix. Backend restart applies quote batching; rebuild clients for the new
+measurements. [PR #662](https://github.com/prattyush/TradeMatangi/pull/662) targets
+dev and awaits review; main merge/deployment remain manual.
+
+## Breeze second-level history optimization and live window probe — 2026-10-14
+
+Implemented and validated on latest dev after PR #662 merged. ICICI's published
+limits remain [100 API calls/minute and 5,000/day](https://api.icicidirect.com/breezeapi/documents/index.html).
+The [official SDK documentation](https://pypi.org/project/breeze-connect/) specifies
+1,000 candles per historical response; installed/latest PyPI SDK is 1.0.69.
+
+The authorized read-only live probe used the DDB Local Breeze token for NIFTY
+2026-10-13, with eight paced historical requests and one SDK authentication. No
+orders, sockets, cache writes or DynamoDB updates were performed. Sanitized evidence
+is retained in `docs/validation/breeze-history-window-2026-10-14.json`; reusable
+probe is `scripts/probe-breeze-history-window.py`. It records counts/timestamps and
+status, not credentials, account details or OHLC rows. Run standalone probes after
+market hours because they authenticate separately from the app's shared client.
+
+| Requested window from 09:15 | Returned rows | Returned timestamps | Result |
+|---|---:|---|---|
+| 15 minutes | 901 | 09:15:00–09:30:00 | Complete |
+| 16m30s | 991 | 09:15:00–09:31:30 | Complete; all reference seconds present |
+| 30 minutes | 1,000 | 09:28:21–09:45:00 | 801 earlier reference seconds missing |
+| One hour | 1,000 | 09:58:21–10:15:00 | 2,601 earlier reference seconds missing |
+| Full day | 1,000 | 14:58:21–15:15:00 | Only the latest 1,000 seconds |
+
+All eight history responses reported API status 200. A successful larger-window
+response does **not** prove complete history: this endpoint silently truncates to
+the latest 1,000 candles. Keep windows below the cap rather than requesting a full
+day and forward/back-filling its missing earlier prices.
+
+Both equity/index and options downloaders now use **990-second windows**, at most
+991 inclusive one-second candles. This reduces a current six-hour day from 24 to
+22 requests, and an older 375-minute day from 25 to 23. Today-cache tail overlap
+uses the same chunk size; previous cached data remains compatible. Existing cache
+coalescing, timestamp convention, observed flags, boundary deduplication and partial
+cache fallback remain unchanged.
+
+HTTP reads overlap on one shared **three-worker** chunk pool. Each download keeps
+at most three chunks submitted; completed results are assembled chronologically.
+One process-wide semaphore also limits other Breeze history readers to three
+in-flight calls. Requests still start no faster than **one/second** (approximately
+60/minute), leaving headroom below the published API ceiling. The pacer rechecks
+actual dispatch time after waking instead of reserving future slots that could
+burst when delayed workers recover. Auth/validation failures stop further chunk
+submission; queued work is cancelled and already-running reads drain before cache
+handling returns. Cancellation interrupts pacing waits. A reported rate limit
+retains the existing shared 60-second cooldown. The same authenticated SDK client
+is reused; no per-worker session generation or SDK upgrade is introduced.
+
+Parallelism hides slow HTTP responses; it does not bypass broker limits. When
+responses are already faster than one second, pacing still dominates, so the main
+benefit is fewer chunks. Daily allowance remains broker-enforced and includes other
+API usage; there is no new persistent quota ledger or multi-process coordinator.
+
+Validation: **242 focused backend tests** pass, covering global concurrency,
+chronological assembly despite reordered completion, failure/cancellation, paced
+starts, cooldown, inclusive row caps and full-day coverage before/after the changed
+market close, live/tail cache policy, snapshot boundaries and startup isolation.
+Final concurrency checks also pass after draining only non-cancelled running work.
+A mock latency benchmark (nine 50 ms responses, 10 ms scaled pacing) measured
+456 ms serial / 175 ms parallel, **2.61×** faster, with peak concurrency three.
+This is controlled overlap evidence, not a promised live speedup. Artifacts:
+`.cache/breeze-history/`. Backend restart applies the downloader change.
+
+## Swing workspace icons and adjacent panel toggles — 2026-10-14
+
+Implemented in the shared website/desktop workspace. Pause/Resume entries, Pop out
+Swing, Create linked window, Execution history, Swing Stats, Manage portfolio and
+Detach now use compact SVG icon buttons with explicit tooltips/accessibility names.
+The Portfolio and Trade ticket controls are also icons: each hide control is inside
+its panel's heading; each show control remains in a narrow strip beside the same
+panel when collapsed. Website now uses the existing saved `rail_open` preference
+as desktop does. Existing ticket/rail state and persistence are reused.
+
+Today/Maximize/Restore controls are icons on both clients. Desktop tool collapse,
+moving-average, Horizontal/Trend/Fibonacci drawing and Delete selected controls use
+icons too. Positions/Orders/Trades tabs and rows, Buy/Sell and confirmations retain
+readable labels. Buttons have fixed 32px hit targets, keyboard focus and stable
+hover geometry; handlers, disabled state and companion-window eligibility are
+preserved. No trading endpoint or order semantics changes.
+
+Validation: **49 website tests**, **219 desktop tests**, both TypeScript checks and
+production builds pass. Updated `scripts/swing-workspace-browser-check.mjs` exercises
+both actual chart renderers, verifying icon-only toolbar actions, labels/tooltips,
+Pop out/linked callbacks, panel-local hit targets, stable hover geometry, keyboard
+collapse/reopen, chart layout/maximize, sizing, Pause/Resume and price-pick flows;
+no page errors. Day/Swing shared drawing browser acceptance also passes after the
+desktop drawing controls changed. Rebuild both clients to apply.
+
+Both follow-ups are delivered in [PR #663](https://github.com/prattyush/TradeMatangi/pull/663),
+which targets dev and awaits review. Main merge and deployment remain manual.
+
+## Desktop Swing layout and chart-safe message history — 2026-10-14
+
+Implemented and added to the same PR #663, pending review into dev. Desktop Swing
+now places Workspace/Analysis/Swing navigation alongside the existing toolbar
+actions rather than reserving a separate row. Linked and popped-out Swing windows
+use the same toolbar placement; navigation remains available while no portfolio
+workspace is loaded.
+
+Funds, original session Capital and P&L move into a compact Portfolio summary in
+the desktop left panel, above Positions/Orders/Trades. Profit is green, loss red,
+and zero or unavailable P&L neutral. Percentage is omitted when capital is zero.
+This reuses existing snapshot values and calculations; website summary placement
+and all trading behavior remain unchanged.
+
+Connected desktop Day, Analysis and Swing headers now contain a small message
+history icon with an unread alert count. The fixed bottom-right launcher and its
+empty headline background no longer cover chart candles or the price scale.
+Clicking the icon opens the existing history with full messages, read state,
+filters and download controls. Login and screen-load failures retain their
+standalone history launcher so diagnostics remain accessible without a header.
+
+Validation: 49 website and 219 desktop tests, TypeScript checks and both production
+builds pass. The existing Swing browser acceptance checks both actual renderers,
+same-row desktop navigation/actions, summary placement, positive/negative/zero
+P&L and zero-capital handling, while preserving website layout and existing
+trading/chart flows. New `scripts/desktop-notification-icon-check.mjs` verifies
+the header-only launcher, an unobstructed chart price scale, unread counts,
+keyboard history access, full messages, download, read state and reload persistence.
+Both browser checks pass without page errors. Artifacts: `.cache/swing-layout/`.
+Rebuild the desktop client to apply these additional layout changes.
+
+## Breeze compatibility review and recovery fixes — 2026-10-14
+
+Review completed; fixes added to PR #663, pending review into dev. The installed
+Breeze SDK 1.0.69 history implementation builds request parameters and headers
+locally and reads the existing authenticated session. Concurrent reads therefore
+keep contract parameters separate without generating extra sessions or changing
+WebSocket callbacks. The existing authentication lock/cache still authenticates
+once for unchanged credentials and replaces the client when credentials change.
+Three-worker overlap, one-second global pacing, cancellation, chronological
+assembly, 990-second candle windows and cache preservation remain in effect.
+
+Two issues were corrected:
+
+- The SDK history GET omitted an HTTP timeout. A stalled connection could hold a
+  worker indefinitely, and three stalled reads could exhaust the shared history
+  pool. A narrow wrapper of the SDK module's transport reference now supplies a
+  **10-second connect / 30-second read timeout** only for the history endpoint.
+  These are connection/read-inactivity limits, not a strict total-request deadline.
+  It retains SDK validation and authenticated headers and leaves login, other HTTP
+  endpoints, global Requests functions and WebSocket calls unchanged. Timeout
+  failures cancel the batch through the existing error path; subsequent downloads
+  can use the workers again. No automatic session regeneration is introduced.
+- Equity history previously accepted some responses carrying an error with status
+  200, or an unsuccessful status without an error field. It now rejects either
+  condition, matching options history, rather than treating the chunk as empty
+  successful data. Existing cache fallback remains available on failed downloads.
+
+Validation: **236 distinct backend tests passed** (235 in the review selection plus the
+additional SDK options case), including eight new tests using
+the installed SDK with mocked HTTP for actual validation/header construction,
+concurrent contract isolation, exact options expiry/strike/right/exchange forwarding,
+timeout propagation and worker recovery, transport
+scope, unchanged-credential authentication reuse and credential replacement, and
+error-response rejection. Existing history pacing/cancellation/coverage, equity
+and options cache, provider isolation, snapshot boundaries and Breeze live-feed
+routing checks also pass. SDK 1.0.54 source (the minimum allowed version) has the
+same endpoint constants and transport call; no dependency upgrade is required.
+No new live broker authentication or streaming interruption was performed during
+this review. The earlier saved live window probe remains the candle-cap evidence.
+Desktop/website code was also reviewed; their previously passing tests and browser
+checks remain applicable because this review changes only backend behavior/docs.
+Test output: `.cache/swing-layout/breeze-review-tests.log` and
+`.cache/swing-layout/breeze-review-sdk-tests.log`. Restart the backend to
+apply these recovery fixes. Main merge and deployment remain manual.
+
+## Consistent website/desktop Swing Portfolio summary — 2026-10-14
+
+Implemented as a follow-up to PR #663, which is now merged into dev. Website
+Swing moves Funds, Capital and P&L from the top toolbar into the same Portfolio
+summary above the left-panel Positions/Orders/Trades tabs used by desktop.
+Both clients render one shared component: profit is green, loss red, and zero or
+unavailable P&L neutral (`₹—` when unavailable); percentage is omitted for zero
+capital. Collapsing the Portfolio panel hides its summary with the panel, and
+reopening it restores both. Existing snapshot values and wallet calculations
+are unchanged.
+
+Validation: website TypeScript check passes. Updated Swing browser acceptance
+checks both actual renderers for summary placement, removal from the top row,
+profit/loss/zero/unavailable P&L, zero capital and existing panel/chart/trading
+behavior. No backend change or migration is required; rebuild the website to apply.
+Browser output: `.cache/swing-layout/shared-summary-browser.log`.
+
+## Swing SSE delivery and Paper valuation after redeployment — 2026-10-14
+
+Implemented in the same follow-up [PR #664](https://github.com/prattyush/TradeMatangi/pull/664),
+pending review into dev. Website and desktop no longer poll active portfolio
+snapshots or chart quotes every two seconds. The existing owned portfolio SSE
+endpoint delivers positions, orders, wallet/P&L and portfolio changes. One new
+owned chart-watch SSE endpoint delivers quotes/candle ranges for all watched
+panes. Historical candles, initial portfolio discovery and user actions retain
+their ordinary request/response APIs. No timer polls full snapshots while connected.
+
+Connections deliver an initial snapshot and reconnect with backoff; bounded
+portfolio/native-buffer overflow requests an authoritative refresh. Mutations
+publish to other attached windows too. A newer streamed snapshot prevents an
+older HTTP response from overwriting it, without invalidating unrelated user
+operations. Lost chart-watch identities after backend restart are recreated.
+Streams send 15-second keepalive comments while idle and disable proxy buffering.
+Market close stops quote subscriptions; keepalives maintain idle connections
+without repeated snapshot GETs or synthetic ticks. Disconnect/unmount cancels
+the client stream and removes its owned subscribers/watch subscriptions.
+
+Day trading and Swing remain independent. Desktop reuses the existing native
+authenticated SSE reader with separate `swing:<screen>:<path>` identities,
+buffers and renderer wakeups. Swing cleanup cannot stop Day stream keys. Website
+uses authenticated streaming fetch, including current headers on reconnection.
+Swing portfolio updates and all chart panes use two connections per workspace;
+Day uses its existing streams. Broker feeds remain shared through the existing
+market-data hub, with independently releasable Day/Swing/viewer consumers and no
+additional Breeze authentication or broker sessions for UI streams.
+
+The missing Paper P&L after deploying/restarting was caused by restoring execution
+positions while clearing their quote state. Paper Swing now checkpoints compact
+last-known valuation marks in the existing Sessions rows once per minute and at
+graceful shutdown, with storage work off the event loop. Equity, exact option
+contracts (including fractional strikes) and Futures restore their marks alongside
+the execution book. Other session writes retain the marks. Abrupt termination
+can retain prices up to one checkpoint interval old; the UI identifies last-known
+valuation rather than presenting it as live.
+
+Older books without saved marks can reuse the latest price from chart history
+already loaded for today's view, avoiding extra history requests or scans. This
+only changes valuation, never triggers orders, recovery, margin changes or MTM
+settlement, and cannot overwrite newer live marks. Older-date charts and backward
+pagination do not change current valuation. Missing prices or unconfirmed Real
+reconciliation/settlement still remain unavailable; entry-price markers are not
+used to invent current prices. Real execution/recovery rules are unchanged.
+
+Validation: **221 backend tests**, **225 desktop tests**, **49 website tests** and
+**21 native Rust tests** pass. New cases cover Paper equity/options/Futures restart
+valuation, exact contracts, no executions/settlements from restored/history marks,
+SSE ownership and disconnect cleanup, split UTF-8/framing, authenticated reconnect,
+expired watches and native startup/unmount races. Concurrent Day/Swing/viewer
+tests verify one shared broker feed with independent release; native tests verify
+separate event buffers and that stopping Swing leaves Day receiving updates.
+Both clients' TypeScript checks and production builds pass. Actual Swing renderer
+browser acceptance verifies streamed P&L changes, no periodic snapshot/watch GETs,
+and existing panel/chart/trading behavior. Linked desktop-window/website analytics
+acceptance also passes using the actual authenticated browser SSE transport and
+a synthetic streaming server: an order submitted in the linked window and later
+position changes reach the main window without polling; no page errors.
+Artifacts: `.cache/swing-layout/`.
+Restart the backend and rebuild both clients to apply; no migration or SDK upgrade.
+The separate repeating `Real recovery remains pending` warning belongs to Real
+session recovery, not Paper Swing polling, and is unaffected by this change.
+
+## Real Day session-link repair and dated ownership recovery — 2026-10-15
+
+Implemented in [PR #665](https://github.com/prattyush/TradeMatangi/pull/665),
+merged into dev as `8d0bc0a` after PR #664. Settings → Your Real
+sessions now offers **Repair session link** beside Reconcile with broker, shared
+by website and desktop. The backend verifies the authenticated broker account,
+session owner and canonical Day ownership row before restoring missing identity
+metadata. A conflicting nonempty saved account needs independent matching funding
+evidence; conflicting old funding, another account/user, active engine leases and
+ambiguous ownership remain blocked with a specific explanation. The repair is a
+conditional transaction, so concurrent ownership/funding changes cannot partially
+rebind a book. It changes no capital, trades, positions, orders or funding amounts.
+The startup error points to this action and logs mismatch categories without
+credentials or account identifiers.
+
+Day ownership rows now explicitly retain `trading_date`, `opened_at`, `updated_at`,
+`engine_until` and `closed_at`. Successful closure marks the existing DynamoDB row
+closed and invalidates its lease; the next claim can replace that released row.
+No new table, TTL deletion job or periodic historical scan is added. Legacy rows
+use their referenced Session date during recovery.
+
+Starting Real Day trading now checks an owned previous-day book before claiming
+today's slot. It verifies the original account, recovers its existing ownership
+and reads current broker exposure. If the old Day scope is flat with no pending
+orders or closure-blocking submissions, it archives the book through the existing transactional
+closure path and allows today's normal claim. Older local intentions are cancelled
+only after broker verification; archived executions/capital remain unchanged and
+retain the older-history/P&L warning. Concurrent starts cannot close the book twice
+or claim duplicate execution engines.
+
+Age alone never discards exposure. Open positions, pending orders, current or
+unacknowledged undated submissions, conflicting identities or unavailable broker reports keep
+the prior row occupied and direct the user to reconciliation. Today's books and
+other users' books are unchanged. Swing ownership does not expire at the date
+boundary; tests confirm its slot and funding survive Day rollover. Account-level
+funding and the separate manual Real day closing/done controls remain intact.
+
+Validation: **97 focused backend tests pass**, including metadata repair/API
+authorization wiring, Kotak/Kite aliases, idempotency, private ownership, missing
+and conflicting identity/funding evidence, atomic race rollback, dated slot reuse,
+automatic Start rollover, broker failure, uncertain exposure, concurrent closure,
+Day/Swing funding separation and existing Real execution/recovery checks. Website
+and desktop TypeScript checks and production builds pass. The real session-list
+browser check verifies Repair → Reconcile, unchanged capital and useful retry
+errors with no page errors. No live broker orders or production database repairs
+were performed. Artifacts: `.cache/swing-layout/real-link-*`.
+Restart the backend and rebuild clients to apply; no migration is required.
+
+
+## Real Day reconnect, legacy cutover and presence — 2026-10-15
+
+Delivered in [PR #666](https://github.com/prattyush/TradeMatangi/pull/666), merged into dev as `4076850`.
+The enforcement behavior below is now opt-in; see the Admin policy follow-up.
+
+Follow-up to merged PR #665. Compatibility was checked against GitHub `main` at
+`d10ab97`, verified against the remote branch. Its Real Stop persists Ended while
+preserving trading state and does not create canonical ownership slots. Ended is
+therefore not proof of broker-verified closure when moving from main to dev.
+
+| Sprint | Delivery | Status |
+|---|---|---|
+| 1 | Legacy account verification; restore original session/capital; reconnect controls | Implemented |
+| 2 | 3-minute heartbeat, 15-minute expiry, failed-engine recovery and safe stale handoff | Implemented |
+| 3 | Regression coverage, client checks and documentation | Complete |
+
+**Restore and compatibility.** Start and read-only broker status use the existing
+user index to discover the latest dated legacy Day candidates, including stopped
+records. Only matching latest-date candidates are strongly reread; no new table
+scan or periodic history job is added. Multiple candidates are not arbitrarily
+selected. Missing account metadata requires saved account evidence or a matching
+saved broker-projection hash; a same-broker login alone is insufficient. Unbound
+slot metadata and its Session are repaired together. Today's original session ID,
+capital, positions, orders and history are retained. Legacy funding migration does
+not apply a new allocation percentage to the original session capital. Prior-day
+books use existing verified-flat closure; newer completed books prevent revival
+of older legacy dates.
+
+Website restoration preserves workspace references on temporary errors and offers
+Retry recovery. Owned broker status can restore a missing workspace. Authenticated
+Day recover/heartbeat services are shared with desktop. Rebuilt books do not reuse
+ended UI groups. Start/Stop/restore controls have finite client deadlines; Real
+Start checks status after timeout without submitting another Start, and Stop
+retains its UI session until backend closure is confirmed. SSE reconnect probes
+can recover Real books; unexpected execution-task termination emits recovery
+status rather than false session completion and immediately initiates recovery.
+
+**Timing.** Day engine/preparation heartbeat: **180 seconds**; durable lease:
+**900 seconds**; local execution authority: **890 seconds**. Client presence is
+separate and acknowledged immediately on attach/reconnect and every 180 seconds.
+Website Real group members keep presence when another member is selected. Ticks
+and order processing do not wait for heartbeats. Swing keeps its existing lease
+cadence and cannot renew Day client presence. Dead tasks cannot renew authority;
+expired or replaced authority cannot revive itself with a late renewal.
+
+**Stale handoff.** Another authorized user's Start may verify a book after 15
+minutes without client presence. Conditional fencing rejects racing heartbeats
+or ownership changes. Release requires fresh verified-flat broker scope, no
+pending application orders and no closure-blocking submissions/conversion/split
+work. Existing transactional closure releases Day funding and preserves Swing
+and history. Verification failure keeps the original owner and attempts recovery
+of its management; it never cancels orders or liquidates merely to free the slot.
+A live engine on another server must expire first. Handoff markers can be cleared
+after their own 15-minute timeout and authority expiry, preventing permanent
+blockage after a crash. Missing legacy presence is not abandonment evidence.
+Manual Done for day restrictions remain intact. Only failures/recovery transitions
+are logged; successful heartbeats do not create repetitive log entries.
+
+**Deployment.** Stop the old main backend before running dev against the shared
+broker account/database: old main does not participate in the new ownership fence.
+No new table or bulk migration is needed. Restart the backend and rebuild both
+clients. Automated validation uses mocked brokers, without live orders or
+production database repairs.
+
+
+**Interfaces and validation.** Added authenticated
+`POST /api/brokers/{session_id}/recover` and `/heartbeat`, with desktop equivalents
+under `/api/desktop/v1/trading/broker/{session_id}`. Session responses now include
+additive `real_closing`; both clients show pending closure on reattachment.
+Desktop restores saved Real screens through recovery and offers **Recover Real**
+for an outstanding book instead of disabling Start indefinitely. Prior-day
+reconnection only verifies/archives a flat book; it does not request liquidation.
+An ended Paper workspace does not enter the Real recovery path.
+
+Validation: **322 backend tests pass**, including **31 new recovery regressions**;
+**225 desktop/shared tests pass**. Website and desktop production builds/type
+checks and native `cargo check --offline` pass. Mocked website browser checks
+verify original capital/session restoration, immediate and 3-minute presence,
+transient errors, timed-out Start status checks without duplicate Start, and
+isolation of ended Paper sessions. The desktop Real browser acceptance verifies
+Recover Real, no new Start request, heartbeat delivery, three retained charts,
+order entry/editing and uncertainty fencing, with no browser errors.
+Browser entrypoints: `scripts/real-day-recovery-browser-check.mjs` and
+`REAL_RECOVERY_CHECK=1 scripts/phase21-real-linked-check.mjs`; desktop artifacts:
+`.cache/real-day-recovery/desktop/`. Existing build bundle-size and Python dependency
+deprecation warnings remain; no live broker orders or production data were touched.
+
+
+## Admin opt-in for Real broker restrictions — 2026-10-15
+
+**Default: disabled**, for both Real Day and Real Swing on website and desktop.
+Admin → **Enforce Real broker session restrictions (Day and Swing)** is shared by
+both clients and saved through admin-only APIs. Enabling applies the prior
+broker-wide ownership/legacy relationship, expiry and mandatory reconciliation
+checks when sessions start or resume. Disabling removes those startup barriers;
+there is no wait for a 15-minute expiry and no forced reconciliation merely
+because another book or stale ownership record exists.
+
+DynamoDB records and **3-minute observation heartbeats remain enabled**. Per-book
+observation rows share the existing WalletLedgers table, so simultaneous users'
+Day/Swing records do not overwrite one another. They record owner, book, broker,
+account, style, trading date, heartbeat timestamps and state. With enforcement off,
+expired/missed heartbeats, conflicting canonical slots and failed observation
+writes do not reject Start or stop execution. The background ownership recovery
+loop does not perform adoption, stale handoff or forced recovery while disabled.
+The policy is cached in memory: live quotes/order hot paths do not fetch it from
+DynamoDB. Admin updates persist before changing the cache.
+
+Day starts use their existing user/context session for idempotent resume, retaining
+original capital and history, without proving links to other books. Swing starts
+and restores skip shared-participant enrollment and mandatory book reconciliation.
+Normal broker wallet/position/order updates continue; unrestricted Swing shows
+broker wallet funds instead of requiring a shared funding participant. Existing
+funding/history records are retained. Per-user session ownership, authentication,
+manual Done for day and protections against
+resubmitting genuinely uncertain broker orders remain intact. An old Day workspace
+is not silently restarted for a new date. Desktop does not force attachment to an
+unrelated observed Day book when Start is unrestricted.
+
+APIs: `GET/PUT /api/admin/real-broker-restrictions`, mirrored under
+`/api/desktop/v1/settings/admin/real-broker-restrictions`; payload `{enabled:false}`
+by default. Broker status adds `restrictions_enabled`. No new table or manual
+migration is required. Restart the backend and rebuild website/desktop clients.
+
+Validation for the Admin opt-in change: 333 focused backend tests passed before
+final resume coverage was added; the final policy/options-resume run passed all
+26 cases. Website and desktop production builds and 225 desktop/shared tests
+passed. Browser checks passed for Admin default-off/save/retry behavior and
+unrestricted desktop Real startup with an existing observed book, linked charts,
+order controls and no browser errors. No live broker orders were submitted.
+
+Separate follow-up requested: reuse the same Real Day book after Stop/Start and
+simplify Stop (no empty-book confirmation or closure-verification holding flow).
+These changes were deliberately excluded from the Admin policy PR #667 (merged).
+They are implemented in the follow-up below.
+
+
+## Simple unrestricted Real lifecycle and Trade History Refresh — 2026-10-15
+
+**Implemented; [PR #668](https://github.com/prattyush/TradeMatangi/pull/668) open against dev.** Admin restrictions remain disabled by
+default. This supersedes the earlier verified-closure Stop behavior only when
+that setting is off, on both website and desktop.
+
+- **Day Stop** saves the book and stops the application runtime immediately. It
+  does not submit exits, cancel broker orders, verify flatness, or update a
+  canonical ownership lock. This fixes the reported `ConditionalCheckFailedException`
+  from `/api/simulation/stop` trying to close a lock that observation mode never
+  claimed. There is no Stop confirmation popup or Closing holding screen.
+- **Day Start** resumes the same saved user/account/date/context session, including
+  an earlier verified-closed record, preserving its original capital, positions,
+  orders and trades. Old closing/recovery flags do not force a new book or label
+  this book's trades as previous-session history. Other dates/accounts remain
+  separate; authentication and user ownership checks remain.
+- **Swing Stop portfolio** preserves the parent/child IDs, capital, positions,
+  orders and history, persists `state=stopped`, and stops its runtime. Loading the
+  page restores saved display data without trading subscriptions or automatic
+  restart. **Resume portfolio** starts that same book without recalculating
+  capital from today's broker cash. Legacy `closing` state becomes stopped when
+  loaded unrestricted. No table migration is needed.
+- Broker positions and orders remain at the broker after Stop. **Exit all now**
+  remains the explicit exit action. **Done for day** stops Day runtimes and records
+  the user's daily entry lock directly, without exits or verified-closure waiting.
+- DDB observations record stopped state; stopped books are excluded from active
+  observations. Running books retain 180-second heartbeats. Observation failures
+  and stale recovery/ownership records do not gate lifecycle actions. Actual
+  uncertain submissions retain duplicate-order protection. Admin-on behavior
+  keeps the existing ownership and verified-closure workflow.
+
+**Refresh crash:** the website treated `/api/brokers/{id}/reconcile`'s verification
+report as a complete state snapshot, replacing arrays with missing fields and
+causing a rendering failure. Trade History now uses
+`POST /api/brokers/{id}/refresh`, returning the complete broker snapshot used by
+SSE (trades, positions, broker/application orders, version and wallet fields).
+The explicit Settings verification action keeps its separate response. The new
+refresh checks owned sessions; Admin-on canonical ownership remains enforced.
+HTTP and SSE snapshots are checked before replacing UI state. Failed/malformed
+HTTP refreshes retain the visible state and surface an error; requests have a
+30-second deadline. Charts remain mounted and session capital stays unchanged.
+
+Interfaces: close summaries and Swing snapshots include `restrictions_enabled`;
+Swing adds the `stopped` state and resumes through its existing Start route.
+Deploy the backend and rebuild both clients together. Local dev was aligned with
+GitHub dev after PR #667; the duplicate local commit was preserved on a backup
+branch, without force-pushing remote dev.
+
+Regression coverage includes empty/populated Stop, repeated Stop, original IDs
+and capital, persisted positions/orders after restoration, stopped Swing reload,
+unknown-order protection, Done for day, Admin-on closure, and website refresh
+success/malformed/503 behavior. Browser checks use synthetic APIs and submit no
+live broker orders.
+
+Validation: **223 focused backend tests**, **225 desktop/shared tests**, and six
+website snapshot/P&L tests passed. Website and desktop production builds passed.
+Browser acceptance passed for website refresh success/malformed/503 handling and
+popup-free Stop, shared Swing Stop/reload/Resume, and desktop Real order/linked
+chart controls plus immediate Stop without confirmation or Closing state. Existing
+bundle-size/dependency warnings remain. Swing resume retains the same runtime's
+SSE subscribers so subsequent updates continue without reconnecting the view.
+
+## Website login attaches without restarting stopped Real books — 2026-10-15
+
+Implemented after PR #668. Login now reads active session metadata rather than
+POSTing Real recovery from broker observations. The saved-workspace fallback also
+attaches only to an existing engine. Missing/ended sessions (404/410), including
+stale group members, return to idle without a recovery banner or restarting the
+saved book. Start Real and explicit Settings recovery remain user actions; genuine
+backend failures still surface for retry. Explicit recovery errors include HTTP
+status even when the response is non-JSON.
+
+Validation: the website hook/browser acceptance covers live attachment with zero
+recovery POSTs, stale observations/groups and saved sessions (404/410), visible
+503 failures, explicit recovery success and non-JSON HTTP 502 errors. Existing
+refresh/Stop, capital and heartbeat checks also pass. Website production build
+passed. No backend changes or live broker operations are involved.
+
+## Swing order Edit and Cancel controls — 2026-10-15
+
+**Implemented for Paper and Real Swing, website and desktop.** The shared Orders
+panel previously only selected the chart, management exposed Cancel alone, and
+both chart renderers drew order lines without action callbacks.
+
+- Pending order rows now have accessible Edit and Cancel icons in the left panel;
+  portfolio management exposes both actions. Clicking the row still selects the
+  exact instrument. Clicking an order line opens Edit order / Cancel order actions.
+- One shared editor changes LIMIT price or TARGET/STOPLOSS trigger and eligible
+  total quantity. Filled and remaining quantities are displayed separately;
+  calculated execution limits remain separate from trigger input. No type
+  conversion or permanent history deletion is included. Cancel preserves trades
+  and any open position, allowing a separate stoploss to be placed afterwards.
+- Both clients use owned `PATCH /swing/portfolios/{portfolio_id}/orders/{order_id}`
+  with `{price?, quantity?}` and the existing POST cancellation route. These routes
+  remain under the existing desktop/API Swing prefixes. PATCH is supported by
+  both browser transports and the existing desktop native request bridge.
+- The backend resolves the owned portfolio/child/order and reuses existing order
+  edits, broker amendments/cancellations, persistence and wallet reservations.
+  Positive prices, ticks, contract lots, filled quantities and exact-contract exit
+  coverage are validated. Futures entries require cancel-and-replace with a new
+  margin preview; eligible futures exits can be amended. Stopped portfolios must
+  be resumed before order actions. Closing portfolios retain cancellation access.
+- Older Paper exits preserve their valid DAY attempt windows. Price/quantity
+  amendments start a new attempt rather than rewriting earlier instructions.
+  Existing unresolved-attempt guards apply to edit and cancel, with the reason
+  shown in the UI; normal Paper recovery resolves these from observed history.
+  Paper quote processing and order actions share the existing context edit lock
+  (futures retain their existing internal lock). No historical scans are added.
+- Combined Swing entry price/quantity amendments reserve the final amount once,
+  so insufficient funds do not leave a partially applied price change. Day order
+  quantity rules stay unchanged. Real broker refusal or uncertain response retains
+  the last confirmed order and reports the error; a racing fill is preserved.
+- Successful actions publish the existing portfolio snapshot/SSE update. Editors
+  retain values on failure, prevent duplicate submission while pending, and close
+  via the fixed close button, Escape, or backdrop. Chart objects/zoom remain in
+  place. There is no stoploss conversion action, as explicitly agreed.
+
+Verification: 89 focused backend tests and 225 desktop/shared tests passed.
+Actual-renderer browser coverage passes for desktop/website × Paper/Real: left
+panel editing, rejected edit/retry, clicking the actual chart order line, cancelling
+and retaining chart canvases. The built desktop Swing flow also verifies management
+cancellation/refunds, listed fractional options, pause, reset and detach/reconnect.
+Both client production builds pass. All broker behavior is mocked; no live broker
+orders or production data were changed.
+Final review also verified eligible futures exit editing and futures-entry
+cancel/re-preview behavior: all 23 focused amendment/futures tests passed after
+that check. Real broker refusal, cancellation refusal, refresh-in-progress and
+fill-during-edit paths retain the latest confirmed order state.
+
+### Swing chart order interaction parity — 2026-10-15
+
+Status: implemented; review PR targets `dev`. Applies to website and desktop,
+Paper and Real, equities, listed options and futures.
+
+- Pending order lines can be dragged: LIMIT changes its limit; TARGET/STOPLOSS
+  changes its trigger and recalculates the execution limit through the existing
+  order path. Prices snap to the contract tick. A drag sends one amendment on
+  release, while clicking opens Edit/Cancel. In-flight changes prevent duplicate
+  submissions. Rejections restore the latest confirmed line without replacing the
+  chart, resetting zoom or losing drawings.
+- The shared order editor has LTP and Pick on chart. LTP uses only a fresh quote
+  for the exact contract from the existing chart-watch SSE, including expiry and
+  option right/strike. Missing, stale and closed-market quotes disable LTP; no
+  snapshot polling or new quote requests are added. Picking selects the matching
+  chart and changes the draft only; Save remains explicit.
+- Chart right-click offers supported LIMIT/TARGET entries and LIMIT/STOPLOSS
+  exits, prefilled in the existing ticket with exact contract, side and price.
+  It never places an order immediately. Equity/options retain long-only entry
+  rules; futures support both directions. No strategy migration, order-type
+  conversion, MARKET flow or new shorting support is included.
+- Futures entry amendments now use an owned POST
+  `/{portfolio_id}/orders/{order_id}/amend-preview`, then the existing PATCH with
+  `capital_revision`, `approved_budget`, `fee_hash` and `order_fingerprint`.
+  This supersedes the cancel-and-replace limitation recorded in the preceding
+  order-management update. The dialog shows margin, fees, required funds,
+  existing reservation and additional funds before confirmation. The application
+  order ID is preserved. Futures exit edits continue through the direct path.
+- Confirmation refreshes margin/fees under the existing edit lock and rejects
+  changed order/draft, fills, capital, fee profile or insufficient approved funds.
+  Paper cash and the amended order persist atomically, reserving/refunding only
+  the difference. Real uses broker acknowledgement and existing reservations;
+  definitive refusal retains prior terms and ambiguous responses retain an
+  unconfirmed state until an authoritative broker refresh. Broker-held LIMITs
+  created by triggered Targets are amended rather than cancelled. A racing fill
+  is preserved. Remaining-quantity reservations and margins captured for prior
+  fills survive partial-fill amendments. Other pending exits remain included in
+  held-position coverage checks.
+
+Validation: 147 focused backend regression tests and 226 desktop/shared unit
+tests passed. Both production builds passed. Actual-renderer browser verification
+passed all 36 combinations of website/desktop × Paper/Real × equity/options/futures
+× LIMIT/Target/Stoploss, including drag/click separation, tick snapping, rejected
+drag rollback, exact/fresh/stale LTP, draft-only picking, explicit Futures margin
+confirmation, right-click ticket prefilling, cancellation and retained chart
+canvases. The built desktop Swing acceptance flow also passed entry/refund,
+listed options, pause, capital reset, detach/reconnect and close checks.
+Broker traffic in tests is synthetic; live broker execution still requires manual
+acceptance. No live orders or production data were changed by verification.
+
+### Day Trading Target % sizing — 2026-10-15
+
+Status: implemented across website and desktop; verification recorded below.
+This is a Day Trading entry-sizing choice for Paper, Real, Replay and Stepwise;
+Swing and existing Target execution orders retain their existing behavior.
+
+- In the right-click “Use as SL” entry ticket, choose **Target %**, select a saved
+  Risk percentage preset, then click a target price on the same chart. Selecting
+  this choice clears a previously chosen Capital/Risk/fixed size. No independent
+  settings or presets are added. Escape, session stop/change and chart/contract
+  changes cancel the pending pick; duplicate clicks cannot submit it twice.
+- The original right-click price remains the protective SL. The final click sends
+  a market-style entry with that SL and group identity. It does **not** create a
+  take-profit exit or strategy. Target % and ordinary Target are distinct choices.
+- Desired gross profit is `session_capital × percentage / 100`. Divide by
+  `target − current_quote` for BUY or `current_quote − target` for SELL. The
+  backend resolves the exact contract quote; playback cannot use a future quote.
+  Equity leverage affects funding only, never the profit-derived quantity.
+  For ₹1,00,000 capital, ₹100 quote, ₹110 target and 2%, the raw size is 200 units:
+  ₹2,000 projected gross profit, or 2% of session starting capital.
+- Capital sizing and Target sizing share whole-unit/lot rounding and funded
+  minimum behavior. Exact Target lot boundaries use decimal arithmetic. Existing
+  affordable minimum-option-lot behavior applies; equity minimum-share rules and
+  insufficient-funds rejection remain as for Capital sizing. Quantity is not
+  silently reduced to fit funds. Existing guardrails and shorting rules apply.
+- Shared order requests and desktop chart-order intents accept paired optional
+  `target_profit_pct` (percentage points, so 2 means 2%) and `sizing_target_price`.
+  They require market-style LIMIT execution and a protective SL, and reject
+  conflicting quantity/Capital/Risk sizing. No new broker execution enum, database
+  table, migration, feed subscription or quote polling is introduced.
+- Existing order/trade analytics store sizing method `TARGET_PERCENT`, displayed
+  as **Target %**. Market remains the execution method. Stats record requested
+  percentage/profit budget, sizing target/reference quote, quantity and projected
+  target profit/percentage alongside allocation and initial risk. Fill prices and
+  partial-fill grouping update projected profit; metadata normalization preserves
+  it across persistence/reload. Stats filters, sizing comparisons and entry details
+  support the new method. Existing historical entries are unchanged. Projections
+  are before charges and can differ after rounding, market movement and fills.
+
+Validation: 373 focused backend tests and 227 desktop/shared tests passed; both
+production builds passed. Backend coverage includes website/desktop × all four
+Day modes × equity/options, directional sizing, exact lot boundaries, quote and
+session guards, conflicting sizing, insufficient funds, fill projections and stats
+aggregation. Immediate Paper/Replay/Stepwise fill tests verify the protective SL
+and absence of an automatic target exit. Website browser checks verify Target %
+presets, clearing previous sizing, fixed-size-mode compatibility and existing
+entry choices. Built desktop acceptance passes Target % selection, one chart-click
+submission, captured SL/contract, cancellation and the existing order/edit flows
+in Paper, Replay and Stepwise (including multi-chart layouts). Real broker traffic
+is mocked; live execution remains a manual acceptance check. No live orders or
+production trading data were changed by verification.
+
+### Real Day duplicate-session cleanup and DynamoDB backups
+
+Implemented offline maintenance tools to inspect Real Day sessions by user/date,
+list trades and orders, explicitly delete one selected session, and restore its
+verified mandatory backup. Cleanup covers session-owned records and exclusive
+broker projection revisions; shared projections and wallet balances are preserved.
+A separate full-database backup/restore command includes all tables and records.
+Replay cascade deletion now handles pagination, actual primary keys, numeric keys
+and unprocessed batch writes, and propagates storage failures before root removal.
+See [DynamoDB maintenance](ddb-maintenance.md) for commands, recovery and limits.
+
+Validation: 30 focused maintenance, cascade-cleanup and session-restart tests
+passed against mocks/Moto. Coverage includes backup integrity and write failures,
+partial-delete recovery, shared projection ownership, retained sessions/wallets,
+numeric and binary/set values, paginated reads, secondary-index/empty-table
+restoration, conflict refusal and interactive CLI deletion/restoration. Compilation
+and diff checks passed. No local or production trading records were changed.
+
+Session cleanup now accepts `--email`, resolving the internal UUID through the
+existing `Users.EmailIndex` and confirming the base user record. Unknown,
+ambiguous or stale email mappings abort before any deletion. UUID input remains
+available as an alternative; maintenance examples now use email.
+
+### Analysis candle intervals and desktop chart controls
+
+Website and desktop Day analysis now offer 1m, 3m (default), 5m, 10m, 15m,
+30m and 60m candle intervals. The selection is shared across the current analysis
+workspace, including nested desktop Sessions/Stats providers, charts opened from
+execution/snapshot inspection and pattern comparisons. Changing interval requests
+existing historical APIs at that resolution and realigns execution/pattern markers;
+EMA calculations use the selected candles. Viewport cache identities include the
+interval so zoom state from one resolution cannot be applied to another.
+
+Snapshot views retain captured event prices/order levels. Desktop keeps exact-second
+reconstruction at the original 3m resolution; other intervals explicitly show the
+full historical event candle. Captured 3m OHLC is never reused as a 1m/5m/etc.
+bar. No backend schema, recording, trading flow or broker integration changes.
+
+Desktop Fit, Maximize and Restore controls now use SVG icons with accessible names
+and tooltips. Option contract selectors show only CE/PE and strike; expiry,
+exchange and product stay in tooltips and exact contract keys, so separate contracts
+are never combined merely because their visible labels match.
+
+Validation: all 236 desktop/shared unit tests passed, including interval-aligned
+execution markers, snapshot event buckets and short labels with distinct contract
+keys. Website and desktop production builds passed. Browser checks cover all seven
+interval choices across session, snapshot and comparison renderers, nested-provider
+synchronization, desktop icon controls/maximize/restore and strike labels/tooltips.
+The existing seven website renderer slots also passed in StrictMode. All history
+responses were mocked; no broker calls or trading-data changes were made.
+
+### Day P&L journey and sizing behavior — website and desktop
+
+The Day analysis Trades tab retains its full-width summary, with a scrollable
+trades/orders section on the left and a new cumulative P&L chart on the right.
+Price charts stay below; narrow windows stack the sections. The curve starts at
+zero and adds one point per completed position cycle, net of commission. Entries,
+additions and partial exits remain in that cycle until it closes. Hover/focus
+shows trade, time, individual outcome and cumulative result. The ₹/% selector
+defaults to percentage, and falls back to money if capital is unknown/invalid.
+
+Sessions in the selected group are combined by close time. Percentage denominator
+is the arithmetic average of starting capital, once per contributing session;
+the denominator is displayed explicitly. Canonical cycle identities prevent shared
+broker aliases from adding the same cycle twice. The overall summary remains
+unchanged; it can include realized amounts from unfinished cycles that the curve
+excludes. Existing actual Real fee corrections feed both the curve and summary.
+Website session detail now includes canonical cycles, matching desktop; no new
+endpoint, table, historical-market scan or recording requirement is introduced.
+
+Stats Behavior includes Day P&L path and sizing under the current filters:
+maximum zero/peak-to-trough drawdown, total downward movement (sum of completed
+losses), peak-to-final giveback, and median filled allocation/initial-risk percentages
+when entry-time realized day P&L was below, above or at zero. Percentages use entry
+capital for sizing and average starting session capital for the day path. Entries
+without metadata remain unknown; same-second close/entry ties are not guessed.
+Coverage/sample counts accompany comparisons, and down/up sizing ratios appear
+only when valid observations exist on both sides. A date table and selectable
+trend separate users, modes and broker accounts; missing values leave gaps.
+Clicking a Stats curve point uses the existing cycle drilldown. Observations do
+not assign maturity scores or infer emotions, and exclude open-position market
+P&L. These Day metrics leave Swing analytics unchanged.
+
+Validation: 113 focused backend analytics/session-detail/fee tests passed, followed
+by 15 targeted checks including full-report (>50 cycles) coverage and explicit
+website/desktop/actual-fee journey parity. All 244 desktop/shared unit tests and
+both production builds passed. Synthetic browser acceptance passed on both hosts
+for the combined-capital 4% → 2% → 6% path, ₹/% switching, keyboard inspection,
+responsive two-column/stacked layout, Behavior measurements, trend selection and
+existing cycle drilldown. Prior candle-interval controls remain included. No broker
+requests or local/production trading-data changes were made by validation.
+
+#### Review corrections before PR
+
+- Canonical cycles expose optional `exit_sort_time` only when the final closing
+  fill supplies a valid precise timestamp. Day journeys on both hosts and Stats
+  use this order. Same-second closes with missing/equal precision are grouped
+  instead of sorted by cycle hashes; every member identity/outcome remains
+  inspectable. Completed-trade counts stay independent of plotted-point counts.
+  Grouped paths explicitly state that intrasecond peaks/drawdowns are unavailable;
+  loss totals still include individual losing trades, even in a zero-net group.
+- Website analysis, options, snapshot and comparison charts clear old candles,
+  indicators and execution/pattern overlays for interval requests. Loading,
+  empty-data and error/Retry states identify the requested interval. Cancelled
+  responses cannot replace a newer interval. Chart instances remain mounted.
+- Stats journey inspection requests the existing detail endpoint directly with
+  session/cycle IDs, independent of the loaded cycle page. Grouped points offer
+  member selection. Loading, failure/Retry, closure, rapid selection and filter
+  changes use the detail request generation guard; pagination is not changed.
+- The website snapshot P&L chip shares the chart's positioned wrapper below the
+  interval toolbar. Coordinate updates are scheduled after layout/range changes
+  and ResizeObserver updates, so interval changes, resizing and panning preserve
+  its alignment.
+
+Review-fix validation: 120 focused backend tests and all 247 desktop/shared tests
+passed; website and desktop production builds passed. Browser checks inspect real
+chart series to verify failed/empty interval loads clear candles and overlays,
+Retry restores data, and delayed responses cannot overwrite newer intervals.
+Snapshot chip checks cover interval changes, resize and pan. A 63-cycle Stats
+fixture with only 50 loaded verifies direct inspection, grouped member choice,
+failure/Retry, rapid-selection ordering, close fencing and filter-change fencing
+on both hosts. No live orders or trading-data mutations were performed.

@@ -16,6 +16,7 @@ _NUMERIC_METADATA_FIELDS = frozenset({
     "position_quantity", "selected_quantity", "timestamp", "placement_time",
     "filled_quantity", "filled_value", "quote_price", "quote_timestamp",
     "execution_gap_pct", "requested_entry_stop", "closed_fraction",
+    "sizing_target_price", "projected_target_profit", "effective_target_pct",
 })
 
 
@@ -142,6 +143,14 @@ def from_request(session, request, quantity, price, margin_rate=1.0, sizing_stop
         if request.entry_sl_price is not None
         else "sizing_default" if risk is not None else None
     )
+    if getattr(request, 'target_profit_pct', None) is not None:
+        result.update(sizing_method='TARGET_PERCENT', requested_pct=request.target_profit_pct,
+                      requested_budget=result['capital'] * request.target_profit_pct / 100,
+                      sizing_target_price=request.sizing_target_price,
+                      reference_price=request.quote_price)
+        from app.services.target_sizing import projected
+        projected(result, request.quote_price, quantity)
+        result['budget_exceeded'] = result['projected_target_profit'] > result['requested_budget'] + .0001
     return result
 
 
@@ -182,6 +191,9 @@ def order_snapshot(order, session=None, *, new_order=False):
             )
     meta.update(
         order_id=order.order_id,
+        execution_broker=getattr(order, "execution_broker", None),
+        broker_order_id=getattr(order, "broker_order_id", None),
+        broker_account_id=getattr(order, "broker_account_id", None),
         placement_time=order.created_at,
         execution_type=order.order_type.value,
         quote_price=order.quote_price,
@@ -227,7 +239,10 @@ def filled(meta, price, quantity):
     )
     risk = abs(price - stop) * quantity if valid_stop else None
     budget = meta.get("requested_budget")
-    actual = risk if meta.get("sizing_method") == "RISK" else allocation
+    from app.services.target_sizing import projected
+    projected(meta, price, quantity)
+    actual = (meta.get('projected_target_profit') if meta.get('sizing_method') == 'TARGET_PERCENT'
+              else risk if meta.get("sizing_method") == "RISK" else allocation)
     meta["budget_exceeded"] = bool(
         budget is not None and actual is not None and actual > budget + 0.0001
     )
@@ -300,6 +315,10 @@ def applied_controller(order):
 def created(order, session):
     active = _active_strategy.get()
     session = active[1] if active else session
+    if session is not None and getattr(session, "session_type", None) == "real":
+        from app.services.execution_broker import name
+        order.execution_broker = name(session)
+        order.broker_account_id = getattr(session, "broker_account_id", None)
     order.analytics = order_snapshot(order, session, new_order=True)
     if active and active[0].strategy_type != "AutoStop":
         applied_controller(order)

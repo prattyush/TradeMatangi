@@ -1,3 +1,8 @@
+import { browserSwingSubscribe } from "../../shared/swingStream";
+import KotakTOTPModal from './components/KotakTOTPModal'
+import SwingChart from './components/SwingChart'
+import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfolioPanel'
+import { _authHeaders } from './services/api'
 import ChartEntryTicket, { type EntryTicket as ContextMenuEntryTicket } from './components/ChartEntryTicket'
 import TradingSafetyActions from './components/TradingSafetyActions'
 import NotificationCenter, { NotificationHeadline, type HistoryRequest } from './components/NotificationCenter'
@@ -33,10 +38,10 @@ import { useMultiSSE } from './hooks/useSSE'
 import { activeSessionSubscriptions } from './services/sessionSubscriptions'
 import { useRecording } from './hooks/useRecording'
 import { useSnapshot } from './hooks/useSnapshot'
-import api, { OHLCCandle } from './services/api'
+import api, { ApiError, OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/optionsRoc'
 import { selectPaperResumePanes } from './paperResume'
-import { brokerSnapshotSessionId } from './brokerSnapshot'
+import { isBrokerSnapshot, brokerSnapshotSessionId } from './brokerSnapshot'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
 
@@ -73,6 +78,7 @@ interface WorkspaceSnapshot {
   view?: WorkspaceView
   analysisOpen?: boolean
   sessionId?: string | null
+  sessionType?: string
   panes?: PaneConfig[]
   layoutPreset?: LayoutPreset
   activePaneId?: number | null
@@ -217,6 +223,18 @@ export default function App() {
 
 function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenMessages:(id?:string)=>void; authUser: { userId: string; email: string; isAdmin: boolean; accountName?: string }; onLogout: () => void; setAuthUser: React.Dispatch<React.SetStateAction<{ userId: string; email: string; isAdmin: boolean; accountName?: string } | null>> }) {
   const sim = useSimulation()
+  const [showSwing, setShowSwing] = useState(false)
+  const [showSwingKotakLogin,setShowSwingKotakLogin]=useState(false),[swingBrokerRevision,setSwingBrokerRevision]=useState(0)
+  const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', body?: Record<string, unknown>) => {
+    const response = await fetch(`${BACKEND_URL}/api/swing/portfolios${path ? '/' + path : ''}`, {
+      method, headers: { ..._authHeaders(), 'Content-Type': 'application/json' },
+      body: method === 'GET' ? undefined : JSON.stringify(body ?? {})
+    })
+    if (!response.ok) throw new Error((await response.json()).detail ?? `Swing request failed (${response.status})`)
+    return response.json() as Promise<T>
+  }, [])
+  const swingSubscribe = useMemo(() => browserSwingSubscribe(`${BACKEND_URL}/api/swing/portfolios`, _authHeaders), []);
+  const swingSymbols = useCallback(() => api.getSymbols(), [])
   const workspaceStorageKey = `tradematangi_workspace_${authUser.userId}`
   const chartRangeStorageKey = `${workspaceStorageKey}_ranges`
   const [chartRanges, setChartRanges] = useState<Record<string, ChartVisibleRange>>(() => {
@@ -232,6 +250,8 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     }
   })
   const workspaceRestoredRef = useRef(false)
+  const [workspaceRestoreError, setWorkspaceRestoreError] = useState<string | null>(null)
+  const [workspaceRestoreAttempt, setWorkspaceRestoreAttempt] = useState(0)
   const workspaceReadySessionRef = useRef<string | null>(null)
   const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
   const simRef = useRef(sim)
@@ -298,6 +318,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   } | null>(null)
 
   // ── Trade Analysis modal ────────────────────────────────────────────────────
+  const [swingAnalysisPortfolio,setSwingAnalysisPortfolio]=useState<string|undefined>()
   const [showAnalysis, setShowAnalysis] = useState(false)
 
   // ── Account name backfill popup for old accounts ─────────────────────────────
@@ -354,15 +375,17 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [missingSlPick, setMissingSlPick] = useState<{ sessionId: string; paneId: number; right?: string; strike?: number; expiry?: string; quantity: number; requestId: string } | null>(null)
   const missingSlSubmitting = useRef(false)
   useEffect(() => {
-    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape') setMissingSlPick(null) }
+    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape') {setMissingSlPick(null);setContextMenuOrderPick(null);setContextMenuEntryTicket(null)} }
     window.addEventListener('keydown', cancel)
     return () => window.removeEventListener('keydown', cancel)
   }, [])
   const [contextMenuOrderPick, setContextMenuOrderPick] = useState<{
-    side: 'BUY' | 'SELL'; orderType: 'TARGET' | 'LIMIT'; slPrice: number;
+    sessionId: string; side: 'BUY' | 'SELL'; orderType: 'TARGET' | 'LIMIT' | 'TARGET_PERCENT'; targetProfitPct?: number; slPrice: number;
     quantity: number | null; fundsRatioPct?: number; riskRatioPct?: number; right?: string; strike?: number; expiry?: string;
   } | null>(null)
   const [contextMenuEntryTicket, setContextMenuEntryTicket] = useState<ContextMenuEntryTicket | null>(null)
+  useEffect(() => {setContextMenuOrderPick(null);setContextMenuEntryTicket(null)}, [sim.sessionId, sim.sessionState, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
+  const contextMenuOrderSubmitting = useRef(false)
   const contextMenuEntryTicketRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -527,7 +550,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [openOptionContracts, setOpenOptionContracts] = useState<OpenOptionContract[]>([])
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(2)
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
-  useEffect(() => { setMissingSlPick(null) }, [sim.sessionId, activePaneId, panes])
+  useEffect(() => { setMissingSlPick(null);setContextMenuOrderPick(null);setContextMenuEntryTicket(null) }, [sim.sessionId, activePaneId, panes])
   const [maximizedPaneId, setMaximizedPaneId] = useState<number | null>(null)
   useEffect(startPerformanceDiagnostics, [])
   const [paneCandles, setPaneCandles] = useState<Record<number, IndicatorCandle[]>>({})
@@ -567,16 +590,26 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   useEffect(() => {
     let cancelled = false
     const restore = async () => {
+      workspaceRestoredRef.current = false
+      setWorkspaceRestoreError(null)
+      let failed = false
       try {
         const raw = localStorage.getItem(workspaceStorageKey)
-        const saved = raw ? JSON.parse(raw) as WorkspaceSnapshot : {}
+        let saved: WorkspaceSnapshot = {}
+        try {
+          const parsed: unknown = raw ? JSON.parse(raw) : {}
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid workspace')
+          saved = parsed as WorkspaceSnapshot
+        }
+        catch { localStorage.removeItem(workspaceStorageKey) }
 
         let attached = false
-        let attachedSession = await sim.restoreActiveGroup().catch(() => null)
+        let attachedSession = await sim.restoreActiveGroup()
         if (attachedSession) {
           attached = true
         } else if (saved.sessionId) {
-          attachedSession = await sim.attachToActiveSession(saved.sessionId).catch(() => null)
+          try { attachedSession = await sim.attachToActiveSession(saved.sessionId) }
+          catch (error) { if (!(error instanceof ApiError) || ![404, 410].includes(error.status)) throw error }
           attached = !!attachedSession
         }
 
@@ -586,6 +619,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           return
         }
 
+        if (cancelled) return
         if (saved.view === 'patterns') setShowPatternLibrary(true)
         if (saved.view === 'structures') setShowChartStructures(true)
         if (saved.analysisOpen || saved.view === 'analysis') setShowAnalysis(true)
@@ -607,16 +641,16 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
             setPanes(restoredPanes)
           }
         }
-      } catch {
-        localStorage.removeItem(workspaceStorageKey)
-        resetWorkspaceToIdle()
+      } catch (error) {
+        failed = true
+        if (!cancelled) setWorkspaceRestoreError(`Session restoration needs attention: ${String(error)}`)
       } finally {
-        if (!cancelled) workspaceRestoredRef.current = true
+        if (!cancelled && !failed) workspaceRestoredRef.current = true
       }
     }
     restore()
     return () => { cancelled = true }
-  }, [workspaceStorageKey, resetWorkspaceToIdle]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [workspaceStorageKey, resetWorkspaceToIdle, workspaceRestoreAttempt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!workspaceRestoredRef.current) return
@@ -633,6 +667,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       view,
       analysisOpen: showAnalysis,
       sessionId: sim.sessionId,
+      sessionType: sim.sessionType,
       panes,
       layoutPreset,
       activePaneId,
@@ -1351,6 +1386,9 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     if (event.type === 'tick') {
       sim.setLatestTick(event as unknown as Parameters<typeof sim.setLatestTick>[0])
       if (!isActiveSessionEvent) return
+    } else if (event.type === 'real_session_status' && isActiveSessionEvent) {
+      if (typeof event.closing === 'boolean') sim.setRealClosing(event.closing)
+      if (event.message) setBrokerError(String(event.message))
     } else if (event.type === 'session_ended') {
       sim.handleSessionEnded(eventSessionId)
       if (!isActiveSessionEvent) return
@@ -1395,6 +1433,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     } else if (event.type === 'position_snapshot') {
       sim.applyPositionSnapshot(event as unknown as import('./services/positionAccounting').PositionSnapshot)
     } else if (event.type === 'broker_snapshot') {
+      if (!isBrokerSnapshot(event)) { setBrokerError('Incomplete broker history response; existing trading state retained'); return }
       const snapshotSessionId = brokerSnapshotSessionId(event, simRef.current.sessionId)
       if (snapshotSessionId) {
         const snapshot = event as unknown as import('./services/api').BrokerSnapshot
@@ -1444,9 +1483,10 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const handleSSEReconnect = useCallback((sessionId?: string) => {
     if (sessionId && sessionId !== sim.sessionId) return
     sim.refreshSessionData()
+    if (sim.sessionId && sim.sessionType === 'real') void api.realHeartbeat(sim.sessionId).catch(error => flashError(error, 'Session connection'))
     if (sim.sessionId) void refreshRunningStrategies(sim.sessionId)
     setPanes(prev => prev.map(p => ({ ...p, reloadKey: (p.reloadKey ?? 0) + 1 })))
-  }, [sim.refreshSessionData, sim.sessionId, refreshRunningStrategies])
+  }, [sim.refreshSessionData, sim.sessionId, sim.sessionType, refreshRunningStrategies])
 
   const handleSSEUnavailable = useCallback((sessionId: string) => {
     sim.handleSessionEnded(sessionId)
@@ -1456,7 +1496,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     }
   }, [sim.handleSessionEnded, sim.sessionId])
 
-  useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect, handleSSEUnavailable)
+  useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect, handleSSEUnavailable, [...(sim.group?.members.filter(member => member.session_type === 'real').map(member => member.session_id) ?? []), ...(sim.sessionType === 'real' && sim.sessionId ? [sim.sessionId] : [])])
 
   // Fetch round-trips and labels for trade history when session is active
   useEffect(() => {
@@ -1515,7 +1555,9 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       setInjectedLpPrice(price)
       setLpPickActive(false)
     } else if (contextMenuOrderPick) {
+      if (contextMenuOrderSubmitting.current) return
       const p = contextMenuOrderPick
+      if (p.sessionId !== sim.sessionId) {setContextMenuOrderPick(null);return}
       if (sim.sessionType === 'paper' && p.right &&
           (p.strike !== (p.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE) || p.expiry !== sim.sessionExpiry)) {
         setBrokerError('Select a live option contract before placing an order')
@@ -1527,17 +1569,22 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
         group_id: crypto.randomUUID(),
       }
       if (p.right) opts.right = p.right
-      if (sim.sessionType === 'paper' && p.right) { opts.strike = p.strike; opts.expiry = p.expiry }
+      if ((sim.sessionType === 'paper' || p.orderType === 'TARGET_PERCENT') && p.right) { opts.strike = p.strike; opts.expiry = p.expiry }
       if (p.fundsRatioPct != null) opts.funds_ratio_pct = p.fundsRatioPct
       if (p.riskRatioPct != null) opts.risk_pct = p.riskRatioPct
       if (p.orderType === 'TARGET') opts.target_deviation_pct = targetDeviationPct
-      sim.placeOrder(p.side, p.orderType, price, p.quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(error => setBrokerError(String(error)))
+      if (p.orderType === 'TARGET_PERCENT') {
+        opts.target_profit_pct = p.targetProfitPct; opts.sizing_target_price = price;
+        opts.market_order = true; opts.execute_immediately = sim.sessionType === 'real';
+      }
+      contextMenuOrderSubmitting.current = true
+      sim.placeOrder(p.side, p.orderType === 'TARGET_PERCENT' ? 'LIMIT' : p.orderType, price, p.quantity, opts as Parameters<typeof sim.placeOrder>[4]).catch(error => setBrokerError(String(error))).finally(() => {contextMenuOrderSubmitting.current=false})
       setContextMenuOrderPick(null)
     } else if (pricePickOrderId) {
       setInjectedEditPrice({ orderId: pricePickOrderId, price })
       setPricePickOrderId(null)
     }
-  }, [missingSlPick, sim.refreshOpenOrders, pricePickOrderId, tpPickActive, utpPickActive, lpPickActive, contextMenuOrderPick, targetDeviationPct, sim.placeOrder, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
+  }, [missingSlPick, sim.sessionId, sim.refreshOpenOrders, pricePickOrderId, tpPickActive, utpPickActive, lpPickActive, contextMenuOrderPick, targetDeviationPct, sim.placeOrder, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
 
   // ── Strategy callbacks ────────────────────────────────────────────────────────
   const handleStartStrategy = useCallback(async (
@@ -1617,7 +1664,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     return res
   }, [sim.sessionId, sim.bulkUpdateOrders])
 
-  const submitContextMenuEntry = useCallback((ticket: ContextMenuEntryTicket, quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number) => {
+  const submitContextMenuEntry = useCallback((ticket: ContextMenuEntryTicket, quantity: number | null, fundsRatioPct?: number, riskRatioPct?: number, targetProfitPct?: number) => {
     if (!sim.sessionId || !ticket.side || !ticket.orderType) return
     if (sim.sessionType === 'paper' && ticket.right &&
         (ticket.strike !== (ticket.right === 'CE' ? sim.sessionStrikeCE : sim.sessionStrikePE) || ticket.expiry !== sim.sessionExpiry)) {
@@ -1648,7 +1695,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
         quantity: quantity ?? undefined,
       }).catch(error => setBrokerError(String(error)))
     } else {
-      setContextMenuOrderPick({ side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, right: ticket.right, strike: ticket.strike, expiry: ticket.expiry })
+      setContextMenuOrderPick({ sessionId: sim.sessionId, side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, targetProfitPct, right: ticket.right, strike: ticket.strike, expiry: ticket.expiry })
     }
     setContextMenuEntryTicket(null)
   }, [sim.sessionId, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, targetDeviationPct, autostopTriggerType, autostopDeviationPct])
@@ -1934,13 +1981,13 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           strategyPosition={pane.type === 'equity' ? sim.position : pane.right === 'CE' ? sim.positionCE : sim.positionPE}
           strategyPositionCE={sim.positionCE}
           strategyPositionPE={sim.positionPE}
-          onPriceSelect={((missingSlPick?.paneId === pane.id && missingSlPick.sessionId === sim.sessionId) || pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || contextMenuOrderPick)
+          onPriceSelect={((missingSlPick?.paneId === pane.id && missingSlPick.sessionId === sim.sessionId) || pricePickOrderId || tpPickActive || utpPickActive || lpPickActive || (contextMenuOrderPick && (contextMenuOrderPick.orderType !== 'TARGET_PERCENT' || (pane.id === activePaneId && (!contextMenuOrderPick.right || (pane.right === contextMenuOrderPick.right && pane.strike === contextMenuOrderPick.strike && pane.expiry === contextMenuOrderPick.expiry))))))
             ? (price) => {
                 setActivePaneId(pane.id)
                 handleChartPriceSelect(price)
               }
             : null}
-          pricePickLabel={missingSlPick?.paneId === pane.id ? `Click stop-loss price for ${missingSlPick.quantity}` : contextMenuOrderPick ? `⊕ Click for ${contextMenuOrderPick.orderType === 'TARGET' ? 'Target' : 'Limit'} Price` : undefined}
+          pricePickLabel={missingSlPick?.paneId === pane.id ? `Click stop-loss price for ${missingSlPick.quantity}` : contextMenuOrderPick ? `⊕ Click for ${contextMenuOrderPick.orderType === 'TARGET_PERCENT' ? 'Sizing Target (market entry)' : contextMenuOrderPick.orderType === 'TARGET' ? 'Target' : 'Limit'} Price` : undefined}
           onContextMenu={draft ? undefined : (price, screenX, screenY, ctx) => handleChartContextMenu(price, screenX, screenY, ctx, pane.id)}
           historicalDays={historicalDays}
           onMaximize={() => setMaximizedPaneId(isMaximized ? null : pane.id)}
@@ -2127,6 +2174,8 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
 
+  if (showSwing) return <><SwingPortfolioPanel key={authUser.userId} request={swingRequest} subscribe={swingSubscribe} brokerRevision={swingBrokerRevision} onConnectBroker={broker=>{if(broker==='kotak')setShowSwingKotakLogin(true)}} loadSymbols={swingSymbols} renderChart={SwingChart} surface="website" onAnalyse={id=>{setSwingAnalysisPortfolio(id);setShowAnalysis(true)}} onDetach={() => {setShowSwing(false);setShowAnalysis(false)}} />{showSwingKotakLogin&&<KotakTOTPModal onCancel={()=>setShowSwingKotakLogin(false)} onSuccess={()=>{setShowSwingKotakLogin(false);setSwingBrokerRevision(n=>n+1)}}/>}{showAnalysis&&<TradeAnalysis key={swingAnalysisPortfolio} initialPortfolioId={swingAnalysisPortfolio} onClose={()=>setShowAnalysis(false)} historicalDays={historicalDays}/>}</>
+
   if (showPatternLibrary) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -2162,6 +2211,10 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      {sim.realClosing && <div role="status" style={{ padding: '8px 20px', background: '#442b16', color: '#ffd8a8' }}>Closing Real session… Waiting for broker confirmation.</div>}
+      {workspaceRestoreError && <div role="alert" style={{ padding: '8px 20px', background: '#442b16', color: '#ffd8a8' }}>
+        {workspaceRestoreError} <button onClick={() => setWorkspaceRestoreAttempt(value => value + 1)}>Retry recovery</button>
+      </div>}
       {/* Header */}
       <div style={{
         padding: '10px 20px', background: '#161b22', borderBottom: '1px solid #30363d',
@@ -2198,6 +2251,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
             )}
           </div>
         )}
+        <button title="Open Swing portfolio" onClick={() => setShowSwing(true)}>Swing</button>
         {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
           <button
@@ -2412,6 +2466,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           isRealTradingUser={isRealTradingUser}
           sessionActive={sim.sessionState === 'running' || sim.sessionState === 'paused'}
           onWalletReset={sim.incrementWalletRefreshKey}
+          onAttachRealSession={async id => { await sim.attachToActiveSession(id, true) }}
           onSizingModeChange={(mode, fr, rr, slPct) => {
             setSizingMode(mode)
             setFundsRatios(fr)

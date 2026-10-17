@@ -1,4 +1,5 @@
 """Sprint 4 chart-only live routes, separate from trading sessions."""
+from app.services import performance_diagnostics as diagnostics
 import asyncio
 import json
 import logging
@@ -150,11 +151,11 @@ async def live_events(
                 yield f"id: {stream.event_id}\nevent: snapshot\ndata: {json.dumps(live.snapshot(stream))}\n\n"
             else:
                 for event in buffered:
-                    yield f"id: {event['event_id']}\nevent: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                    yield f"id: {event['event_id']}\nevent: {event['type']}\ndata: {diagnostics.sample_sse(json.dumps(event), event['event_id'], 'desktop:' + stream.stream_id)}\n\n"
             while not stream.stopped:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield f"id: {event['event_id']}\nevent: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                    yield f"id: {event['event_id']}\nevent: {event['type']}\ndata: {diagnostics.sample_sse(json.dumps(event), event['event_id'], 'desktop:' + stream.stream_id)}\n\n"
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
         finally:

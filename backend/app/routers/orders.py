@@ -46,7 +46,7 @@ def _reservation_ledger_id(session) -> str | None:
 
 
 def _uses_equity_intraday_margin(session, order_right: str | None = None) -> bool:
-    if order_right is not None or session.instrument_type != "equity":
+    if getattr(session, "trading_style", "intraday") == "swing" or order_right is not None or session.instrument_type != "equity":
         return False
     return session.session_type in ("sim", "stepwise", "paper", "real")
 
@@ -71,7 +71,7 @@ def _get_closing_orders(session, right: str | None) -> list[Order]:
 def _stoploss_available_quantity(
     session,
     right: str | None,
-    strike: int | None,
+    strike: int | float | None,
     expiry: str | None,
     exclude_order_id: str | None = None,
 ) -> tuple[int, int]:
@@ -161,7 +161,7 @@ class MissingStoplossRequest(BaseModel):
     trigger_price: float = Field(gt=0, allow_inf_nan=False)
     request_id: str = Field(min_length=1, max_length=100)
     right: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
 
 
@@ -280,10 +280,23 @@ async def _place_order_locked(req: PlaceOrderRequest):
         order_strike = req.strike if req.strike is not None else (session.strike_ce if order_right == "CE" else session.strike_pe)
         order_expiry = req.expiry if req.expiry is not None else session.expiry
 
+    target_sizing = req.target_profit_pct is not None or req.sizing_target_price is not None
+    if target_sizing:
+        if session.state == sim_svc.SimulationState.ENDED:
+            raise HTTPException(409, 'Trading session has ended')
+        if getattr(session, 'trading_style', 'intraday') == 'swing':
+            raise HTTPException(422, 'Target % sizing is for Day Trading')
+        if req.target_profit_pct is None or req.sizing_target_price is None:
+            raise HTTPException(422, 'Provide both Target % and its sizing target price')
+        if not req.market_order or req.is_stoploss or req.order_type != OrderType.LIMIT or req.entry_sl_price is None:
+            raise HTTPException(422, 'Target % requires a market entry and its protective stoploss')
+        if any(v is not None for v in (req.quantity, req.funds_ratio_pct, req.risk_pct, req.risk_ratio_pct)):
+            raise HTTPException(422, 'Target % cannot be combined with another sizing method')
+
     if req.market_order:
         if req.order_type != OrderType.LIMIT:
             raise HTTPException(status_code=400, detail="Market execution requires a LIMIT order")
-        if session.session_type == "real":
+        if session.session_type == "real" or target_sizing:
             from app.services.execution_price_service import gap_for, limit_price
             # Read the exact contract quote on the server; do not trust a client price.
             quote = (getattr(session, "desktop_contract_quotes", {}) or {}).get(
@@ -299,6 +312,8 @@ async def _place_order_locked(req: PlaceOrderRequest):
             req.quote_price = current
             req.quote_timestamp = int(quote.get("timestamp", session.current_time)) if quote else int(session.current_time)
             req.quote_source = str(quote.get("source", "server_quote")) if quote else "session_quote"
+            if target_sizing and session.session_type in ('sim', 'stepwise') and req.quote_timestamp > int(session.current_time):
+                raise HTTPException(409, 'The target sizing quote is ahead of the replay clock')
             req.limit_price = limit_price(req.side, current, gap_for(session.user_id))
 
     # Naked short margin check for options sessions
@@ -350,7 +365,21 @@ async def _place_order_locked(req: PlaceOrderRequest):
 
     sizing_stop = req.entry_sl_price
     # Resolve quantity: either from funds_ratio_pct (FundsRatio mode) or explicit quantity
-    if req.funds_ratio_pct is not None:
+    if target_sizing:
+        from app.services.target_sizing import quantity as target_quantity
+        entry = req.quote_price
+        if (req.side == TradeSide.BUY and req.entry_sl_price >= entry) or (req.side == TradeSide.SELL and req.entry_sl_price <= entry):
+            raise HTTPException(400, 'Long stop must be below market entry; short stop must be above it')
+        try:
+            quantity = target_quantity(symbol=session.symbol, capital=session.session_capital,
+                target_pct=req.target_profit_pct, entry=entry, target=req.sizing_target_price,
+                side=req.side.value, reservation_price=req.limit_price,
+                wallet=_wallet_balance_for_session(session), lot_size=lot_size, margin_rate=order_margin_rate)
+        except InsufficientFundsError as exc:
+            raise HTTPException(402, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    elif req.funds_ratio_pct is not None:
         if req.funds_ratio_pct <= 0 or req.funds_ratio_pct > 1:
             raise HTTPException(status_code=400, detail="funds_ratio_pct must be between 0 and 1")
         # Price for quantity computation: trigger for TARGET/SL, limit for LIMIT
@@ -490,7 +519,7 @@ async def _place_order_locked(req: PlaceOrderRequest):
             from app.services.broker_order_service import submit_immediate
             submit_immediate(session, order, asyncio.get_running_loop())
         except Exception as exc:
-            if not order.kotak_order_id:
+            if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
                 order_service.cancel_order(session.session_id, order.order_id, session.date)
             raise HTTPException(status_code=502, detail=f"Broker placement failed: {exc}") from exc
 
@@ -499,7 +528,8 @@ async def _place_order_locked(req: PlaceOrderRequest):
         try:
             sim_svc._register_kotak_sl_for_order(session, order, asyncio.get_running_loop())
         except Exception as exc:
-            order_service.cancel_order(session.session_id, order.order_id, session.date)
+            if not order.broker_order_id and order.recovery_state not in ("submitting", "unknown"):
+                order_service.cancel_order(session.session_id, order.order_id, session.date)
             logger.warning("broker_exit_place_failed session=%s order=%s: %s", session.session_id, order.order_id, exc)
             raise HTTPException(status_code=502, detail=f"Broker exit placement failed: {exc}") from exc
 
@@ -586,7 +616,7 @@ async def _place_order_locked(req: PlaceOrderRequest):
                 except Exception:
                     pass
             except Exception as exc:
-                if extra_order and not extra_order.kotak_order_id:
+                if extra_order and not extra_order.broker_order_id:
                     order_service.cancel_order(session.session_id, extra_order.order_id, session.date)
                 logger.warning("broker_split_exit_failed session=%s quantity=%d: %s", session.session_id, extra_qty, exc)
                 session.queue.put_nowait(json.dumps({"type": "broker_error", "message": f"Additional exit chunk ({extra_qty}) failed: {exc}"}))
@@ -618,12 +648,12 @@ async def _cancel_order_locked(order_id, session_id, session):
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or already closed")
     _require_confirmed_recovery(existing)
-    if existing.kotak_order_id:
+    if existing.broker_order_id:
         from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
         previous = await suppress(session, existing, max(0, existing.quantity - existing.broker_filled_quantity))
         try:
-            from app.services.kotak_service import get_service as get_kotak
-            await asyncio.to_thread(get_kotak().cancel_order, existing.kotak_order_id, initiator="user", purpose="user_cancel", context={"session_id": session_id, "order_id": order_id, "user_id": session.user_id})
+            from app.services.execution_broker import get_service as get_kotak
+            await asyncio.to_thread(get_kotak(session).cancel_order, existing.broker_order_id, initiator="user", purpose="user_cancel", context={"session_id": session_id, "order_id": order_id, "user_id": session.user_id})
         except Exception as exc:
             if definitive_refusal(exc):
                 await rollback_suppression(existing, previous)
@@ -738,14 +768,14 @@ async def update_order(order_id: str, req: UpdateOrderRequest, session_id: str =
         return await _update_order_locked(session, order_id, req, session_id)
 
 
-async def _update_order_locked(session, order_id, req, session_id):
+async def _update_order_locked(session, order_id, req, session_id, *, swing_amendment=False):
     existing = order_service.get_order(session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
     _require_confirmed_recovery(existing)
     if req.trigger_price is None and req.limit_price is None and req.quantity is None:
         raise HTTPException(status_code=400, detail="Provide trigger_price, limit_price, or quantity to update")
-    if req.quantity is not None and req.quantity != existing.quantity:
+    if req.quantity is not None and req.quantity != existing.quantity and not (swing_amendment and session.trading_style == "swing"):
         if not (existing.is_stoploss or existing.order_type == OrderType.STOPLOSS):
             raise HTTPException(status_code=400, detail="Quantity can only be updated for pending stop-loss orders")
         lot_size = LOT_SIZES.get(session.symbol, 1) if existing.right else 1
@@ -798,9 +828,9 @@ async def _update_order_locked(session, order_id, req, session_id):
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found or not pending")
 
-    order.kotak_order_id = candidate.kotak_order_id
+    order.broker_order_id = candidate.broker_order_id
     order.execution_role = candidate.execution_role
-    await persist_order_async(order)
+    await persist_order_async(order, strict=swing_amendment)
     return order
 
 

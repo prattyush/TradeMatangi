@@ -1,6 +1,7 @@
 """Shared chart-only replay clock; deliberately independent of trading sessions."""
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import asyncio
 import time
 import uuid
@@ -44,9 +45,9 @@ def prepare_tiles(tiles: list[dict], date: str, interval_seconds: int) -> dict[s
                     prepared[tile["tile_id"]] = []
                     continue
                 from app.services.options_service import load_options_dataframe
-                frame = load_options_dataframe(instrument["underlying"], date, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                frame = load_options_dataframe(instrument["underlying"], date, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
                 from app.services.desktop_preparation import trim_leading_option_frame
-                frame = trim_leading_option_frame(frame, instrument["underlying"], date, int(instrument["strike"]), instrument["expiry"], instrument["right"])
+                frame = trim_leading_option_frame(frame, instrument["underlying"], date, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
             else:
                 frame = load_dataframe(instrument["symbol"], date)
             prepared[tile["tile_id"]] = candles_to_records(frame)

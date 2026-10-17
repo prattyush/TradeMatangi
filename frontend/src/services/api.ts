@@ -1,3 +1,4 @@
+import { isBrokerSnapshot } from '../brokerSnapshot'
 import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
 import type { PositionSnapshot } from './positionAccounting'
@@ -103,6 +104,10 @@ export interface BarCandle {
 export interface SymbolInfo {
   symbol: string
   display_name: string
+  nse_symbol?: string
+  chart_type?: string
+  option_eligible?: boolean
+  strike_interval?: number
 }
 
 export interface ConversionResult { order_id: string; state: string; message?: string | null }
@@ -151,6 +156,8 @@ export interface SimulationStartRequest {
   brokerage_per_order?: number  // flat brokerage per order (default 1)
   strategy_interval_secs?: number  // candle interval for all strategies (180=3min, 300=5min)
   session_type?: 'sim' | 'paper' | 'real' | 'stepwise'
+  execution_broker?: 'kotak' | 'kite'
+  allocation_pct?: number
   stepwise?: boolean
   override?: boolean
   group_id?: string
@@ -158,6 +165,7 @@ export interface SimulationStartRequest {
 }
 
 export interface UserSettingsResponse {
+  real_execution_broker?: "kotak" | "kite"
   brokerage_per_order?: number
   strategy_interval_secs?: 120 | 180 | 300
   autostop_trigger_type?: 'bar' | 'deviation'
@@ -234,6 +242,9 @@ export interface StartStrategyRequest {
 }
 
 export interface SimulationStartResponse {
+  real_closing?: boolean
+  execution_broker?: string | null
+  broker_account_id?: string | null
   session_id: string
   symbol: string
   date: string
@@ -410,6 +421,7 @@ export interface AdminTokensResponse {
 // ── Analysis types ──────────────────────────────────────────────────────────
 
 export interface SessionSummary {
+  trading_style?: 'intraday'|'swing'; portfolio_id?:string; entry_date?:string|null;exit_date?:string|null;
   snapshot_session_ids?: string[]
   shared?: boolean
   owner_email?: string | null
@@ -433,6 +445,8 @@ export interface SessionSummary {
 }
 
 export interface AnalysisTrade {
+  execution_broker?: string | null
+  broker_order_id?: string | null
   captured_only?: boolean
   stored_trade_id?: string
   analysis_cycle_id?: string
@@ -488,6 +502,7 @@ export interface RoundTrip {
 }
 
 export interface TradeLabel {
+  analytics_cycle_id?:string;
   session_id: string
   round_trip_index: number
   expected_category: string
@@ -637,6 +652,10 @@ export class InsufficientFundsError extends Error {
 }
 
 export interface Trade {
+  instrument_type?: "equity" | "options" | "futures"
+  execution_broker?: string | null
+  broker_order_id?: string | null
+  broker_account_id?: string | null
   trade_id: string
   user_id: string
   symbol: string
@@ -831,7 +850,38 @@ export interface EmergencyExitResult {
 }
 export interface RealTradingDayStatus { date: string; state: 'active' | 'closing' | 'done'; message?: string }
 
+const CONTROL_DEADLINE_MS = 30_000
+const controlSignal = () => AbortSignal.timeout(CONTROL_DEADLINE_MS)
+
 const api = {
+  async executionBrokerStatus(): Promise<{ broker: 'kotak' | 'kite'; authenticated: boolean; active_session_id?: string | null; restrictions_enabled?: boolean }> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/status`, { signal: controlSignal(),
+      headers: _authHeaders() })
+    if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).detail || 'Could not load execution broker status', res.status)
+    return res.json()
+  },
+  async realHeartbeat(sessionId: string): Promise<void> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/heartbeat`, {
+      method: 'POST', headers: _authHeaders(), signal: controlSignal(),
+    })
+    if (!res.ok) throw new ApiError('Real session presence could not be confirmed; reconnect to check its status', res.status)
+  },
+  async recoverRealSession(sessionId: string): Promise<SimulationStartResponse> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/recover`, {
+      method: 'POST', headers: _authHeaders(), signal: controlSignal(),
+    })
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => ({}))).detail
+      const message = typeof detail === 'string' && detail.trim() ? detail : 'Real recovery failed'
+      throw new ApiError(`${message} (HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''})`, res.status)
+    }
+    return res.json()
+  },
+  async realCloseSummary(sessionId: string): Promise<{ position_count: number; pending_order_count: number; restrictions_enabled?: boolean }> {
+    const res = await fetch(`${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/close-summary`, { signal: controlSignal(), headers: _authHeaders() })
+    if (!res.ok) throw new ApiError('Could not inspect Real positions before confirmation', res.status)
+    return res.json()
+  },
   async exitAllPositions(sessionId: string): Promise<EmergencyExitResult> {
     const response = await fetch(`${BACKEND_URL}/api/trades/sessions/${encodeURIComponent(sessionId)}/exit-all`, { method: 'POST', headers: _authHeaders() })
     if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not request all exits', response.status)
@@ -942,11 +992,24 @@ const api = {
 
   async startSimulation(req: SimulationStartRequest = {}): Promise<SimulationStartResponse> {
     const body = { symbol: 'NIFTY', date: '2026-05-06', start_time: '09:15:00', speed: 1.0, ...req }
-    const res = await fetch(`${BACKEND_URL}/api/simulation/start`, {
+    const signal = controlSignal()
+    let res: Response
+    try { res = await fetch(`${BACKEND_URL}/api/simulation/start`, {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify(body),
-    })
+    }) } catch (error) {
+      if (req.session_type === 'real' && signal.aborted) {
+        const status = await api.executionBrokerStatus().catch(() => null)
+        if (status?.active_session_id) {
+          const existing = await api.getActiveSimulation(status.active_session_id).catch(() => null)
+          if (existing && existing.symbol === body.symbol && existing.date === body.date && existing.instrument_type === (body.instrument_type ?? 'equity')) return existing
+        }
+        throw new Error('Real Start timed out; its outcome is still being checked. Use recovery or retry Start to reconnect to the same book.')
+      }
+      throw error
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
       throw new Error(body.detail || `Start simulation failed: ${res.status}`)
@@ -957,6 +1020,7 @@ const api = {
   async getActiveSimulation(session_id: string): Promise<SimulationStartResponse> {
     const qs = new URLSearchParams({ session_id })
     const res = await fetch(`${BACKEND_URL}/api/simulation/active?${qs}`, {
+      signal: controlSignal(),
       headers: _authHeaders(),
     })
     if (!res.ok) {
@@ -967,7 +1031,8 @@ const api = {
   },
 
   async getActiveSessionGroup(): Promise<SessionGroupResponse | null> {
-    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/active`, { headers: _authHeaders() })
+    const res = await fetch(`${BACKEND_URL}/api/simulation/groups/active`, { signal: controlSignal(),
+      headers: _authHeaders() })
     if (res.status === 404 || res.status === 204) return null
     if (!res.ok) throw new Error(`Active group fetch failed: ${res.status}`)
     return res.json()
@@ -1014,12 +1079,23 @@ const api = {
     return res.json()
   },
 
-  async stopSimulation(session_id: string): Promise<void> {
-    await fetch(`${BACKEND_URL}/api/simulation/stop`, {
+  async stopSimulation(session_id: string): Promise<{ status?: string }> {
+    const signal = controlSignal()
+    let response: Response
+    try { response = await fetch(`${BACKEND_URL}/api/simulation/stop`, {
       method: 'POST',
+      signal,
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ session_id }),
-    })
+    }) } catch (error) {
+      if (signal.aborted) {
+        await api.executionBrokerStatus().catch(() => null)
+        throw new Error('Stop timed out. The server may still be closing the session; reconnect to check its status.')
+      }
+      throw error
+    }
+    if (!response.ok) throw new ApiError((await response.json().catch(() => ({}))).detail || 'Could not stop session', response.status)
+    return response.json()
   },
 
   async pauseSimulation(session_id: string): Promise<void> {
@@ -1076,7 +1152,7 @@ const api = {
   },
 
   async getTrades(session_id: string): Promise<Trade[]> {
-    const res = await fetch(`${BACKEND_URL}/api/trades?session_id=${session_id}`)
+    const res = await fetch(`${BACKEND_URL}/api/trades?session_id=${session_id}`, { signal: controlSignal() })
     if (!res.ok) throw new Error(`Get trades failed: ${res.status}`)
     return res.json()
   },
@@ -1098,7 +1174,7 @@ const api = {
   },
 
   async getPositionSnapshot(sessionId: string): Promise<PositionSnapshot> {
-    const response = await fetch(`${BACKEND_URL}/api/trades/position-snapshot?session_id=${encodeURIComponent(sessionId)}`, { headers: _authHeaders() })
+    const response = await fetch(`${BACKEND_URL}/api/trades/position-snapshot?session_id=${encodeURIComponent(sessionId)}`, { signal: controlSignal(), headers: _authHeaders() })
     if (!response.ok) throw new Error(`Position snapshot failed: ${response.status}`)
     return response.json()
   },
@@ -1108,7 +1184,7 @@ const api = {
     if (right) url += `&right=${right}`
     if (strike != null) url += `&strike=${strike}`
     if (expiry) url += `&expiry=${encodeURIComponent(expiry)}`
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: controlSignal() })
     if (!res.ok) throw new Error(`Get position failed: ${res.status}`)
     return res.json()
   },
@@ -1131,7 +1207,7 @@ const api = {
     order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantityOrRatio: number | null,
-    opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
+    opts: { target_profit_pct?: number; sizing_target_price?: number; market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; right?: string; strike?: number; expiry?: string; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string } = {},
   ): Promise<Order> {
     const settings = await api.getUserSettings()
     opts = { ...opts, target_deviation_pct: settings.target_deviation_pct ?? 0.01 }
@@ -1142,7 +1218,10 @@ const api = {
     } else {
       body.trigger_price = price  // TARGET and STOPLOSS both use trigger_price
     }
-    if (opts.risk_pct != null) {
+    if (opts.target_profit_pct != null) {
+      body.target_profit_pct = opts.target_profit_pct
+      body.sizing_target_price = opts.sizing_target_price
+    } else if (opts.risk_pct != null) {
       body.risk_pct = opts.risk_pct
     } else if (opts.risk_ratio_pct != null) {
       body.risk_ratio_pct = opts.risk_ratio_pct
@@ -1272,7 +1351,7 @@ const api = {
 
   async getOrders(session_id: string, open_only = true): Promise<Order[]> {
     const res = await fetch(`${BACKEND_URL}/api/orders?session_id=${session_id}&open_only=${open_only}`, {
-      headers: _authHeaders(),
+      signal: controlSignal(), headers: _authHeaders(),
     })
     if (!res.ok) throw new Error(`Get orders failed: ${res.status}`)
     return res.json()
@@ -1384,6 +1463,15 @@ const api = {
     return res.json()
   },
 
+  async realBrokerRestrictions(method: 'GET' | 'PUT', body?: { enabled: boolean }): Promise<{ enabled: boolean }> {
+    const response = await fetch(`${BACKEND_URL}/api/admin/real-broker-restrictions`, {
+      method, signal: controlSignal(), headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: method === 'PUT' ? JSON.stringify(body) : undefined,
+    })
+    if (!response.ok) throw new ApiError('Could not load/save Real broker restrictions', response.status)
+    return response.json()
+  },
+
   async getAdminTokens(): Promise<AdminTokensResponse> {
     const res = await fetch(`${BACKEND_URL}/api/admin/tokens`, {
       headers: _authHeaders(),
@@ -1405,6 +1493,8 @@ const api = {
   // ── Analysis ───────────────────────────────────────────────────────────────
 
   async getAnalysisSessions(opts: {
+    tradingStyle?: string
+    portfolioId?:string
     symbol?: string
     startDate?: string
     endDate?: string
@@ -1412,6 +1502,8 @@ const api = {
     sessionType?: string
   } = {}): Promise<SessionSummary[]> {
     const params = new URLSearchParams({include_shared:'true'})
+    if(opts.tradingStyle)params.set('trading_style',opts.tradingStyle)
+    if(opts.portfolioId)params.set('portfolio_id',opts.portfolioId)
     if (opts.symbol) params.set('symbol', opts.symbol)
     if (opts.startDate) params.set('start_date', opts.startDate)
     if (opts.endDate) params.set('end_date', opts.endDate)
@@ -1670,14 +1762,16 @@ const api = {
 
   async reconcileKotakOrders(sessionId: string): Promise<BrokerSnapshot> {
     const res = await fetch(
-      `${BACKEND_URL}/api/kotak/reconcile?session_id=${sessionId}`,
-      { method: 'POST', headers: _authHeaders() }
+      `${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/refresh`,
+      { method: 'POST', signal: controlSignal(), headers: _authHeaders() }
     )
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
       throw new Error(typeof error.detail === 'string' ? error.detail : `Kotak reconcile failed: ${res.status}`)
     }
-    return res.json()
+    const snapshot = await res.json()
+    if (!isBrokerSnapshot(snapshot)) throw new Error('Incomplete broker history response; existing trading state retained')
+    return snapshot
   },
 
   async checkRealTradingAccess(): Promise<{ has_access: boolean }> {
@@ -1738,6 +1832,16 @@ const api = {
     return res.json()
   },
 
+  async getFuturesRisk(): Promise<Record<string, any>> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/futures-risk`, {headers:_authHeaders()})
+    if (!res.ok) throw new Error(`Futures settings fetch failed (${res.status})`)
+    return res.json()
+  },
+  async setFuturesRisk(settings: Record<string, any>): Promise<Record<string, any>> {
+    const res = await fetch(`${BACKEND_URL}/api/admin/futures-risk`, {method:'PUT',headers:{'Content-Type':'application/json',..._authHeaders()},body:JSON.stringify(settings)})
+    if (!res.ok) {const error=await res.json().catch(()=>({}));throw new Error(error.detail??`Futures settings save failed (${res.status})`)}
+    return res.json()
+  },
   async getStreamSource(): Promise<{ source: 'fyers' | 'kite' | 'kotak' | 'breeze' }> {
     const res = await fetch(`${BACKEND_URL}/api/admin/stream-source`, {
       headers: _authHeaders(),

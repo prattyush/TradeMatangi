@@ -141,6 +141,35 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await page.mouse.down();assert.deepEqual(await close.boundingBox(),closeBefore);await page.mouse.up()
  await order.waitFor({state:'hidden'})
 
+ // Target % is a market-entry sizing choice: percentage then a separate target click.
+ const ceChart=page.locator('.kline').nth(1),ceBox=await ceChart.boundingBox();
+ await page.mouse.click(ceBox.x+ceBox.width*.3,ceBox.y+ceBox.height-55,{button:'right'});
+ await page.locator('.chart-context-menu').getByRole('button',{name:'Buy entry',exact:true}).click();
+ const ticket=page.locator('.trade-ticket-sizing');await ticket.waitFor();
+ const selectedSl=Number(await ticket.locator('.ticket-row b').innerText());
+ assert(selectedSl<100,'Synthetic SL must be below the quote');
+ const targetBefore=submissions.length;
+ await ticket.getByRole('button',{name:'Target %',exact:true}).click();
+ assert.equal(await ticket.getByRole('switch').count(),0);
+ await ticket.getByRole('button',{name:'Target 2%',exact:true}).click();
+ await ticket.waitFor({state:'hidden'});
+ await page.getByText('Click sizing target price (market entry)',{exact:true}).waitFor();
+ assert.equal(submissions.length,targetBefore);
+ await page.mouse.click(ceBox.x+ceBox.width*.35,ceBox.y+ceBox.height*.3);
+ await page.waitForTimeout(120);
+ assert.equal(submissions.length,targetBefore+1,'One target click sends one market entry');
+ const targetBody=submissions.at(-1);
+ assert.equal(targetBody.intent,'market');assert.equal(targetBody.target_profit_pct,2);
+ assert(targetBody.sizing_target_price>100);assert.equal(targetBody.entry_sl_price,selectedSl);
+ assert.equal(targetBody.quantity,undefined);assert.equal(targetBody.risk_pct,undefined);assert.equal(targetBody.funds_ratio_pct,undefined);
+ assert.equal(targetBody.strike,71700);assert.equal(targetBody.right,'CE');assert.equal(targetBody.expiry,date);
+ // Cancelling the target pick never submits.
+ await page.mouse.click(ceBox.x+ceBox.width*.3,ceBox.y+ceBox.height-55,{button:'right'});
+ await page.locator('.chart-context-menu').getByRole('button',{name:'Buy entry',exact:true}).click();
+ await ticket.getByRole('button',{name:'Target %',exact:true}).click();await ticket.getByRole('button',{name:'Target 1%',exact:true}).click();
+ await page.keyboard.press('Escape');await page.getByText('Click sizing target price (market entry)',{exact:true}).waitFor({state:'hidden'});
+ assert.equal(submissions.length,targetBefore+1);
+
  const sl=page.locator('.desktop-open-order').filter({hasText:'SELL · SL'})
  await sl.getByRole('button',{name:'Edit',exact:true}).click()
  const qty=sl.getByLabel('Order quantity');await qty.focus();await page.mouse.move(...Object.values(await qty.boundingBox()).slice(0,2).map((v,i)=>v+5));await page.mouse.wheel(0,-100);assert.equal(await qty.inputValue(),'60')
@@ -166,7 +195,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await closePicker.waitFor({state:'hidden'})
  // Max-price picker captures and displays the search time before applying.
  await page.locator('.chart').nth(1).getByRole('button',{name:'Choose instrument'}).click()
- const picker=page.getByRole('dialog',{name:'Select chart instrument'});await picker.getByLabel('Strike selection').selectOption('max_price');await picker.getByLabel('Symbol',{exact:true}).selectOption('NIFTY');const presets=picker.getByRole('group',{name:'Premium cap presets'});assert.deepEqual(await presets.getByRole('button').allTextContents(),['₹30','₹50','₹75','₹100','₹125','₹150']);await presets.getByRole('button',{name:'₹30',exact:true}).click();assert.equal(await picker.getByLabel('Premium cap',{exact:true}).inputValue(),'30');await picker.getByLabel('Symbol',{exact:true}).selectOption('BSESEN');await picker.getByLabel('Premium cap',{exact:true}).fill('50');await picker.getByRole('button',{name:'Find strike'}).click();await picker.getByText('Selected CE 71800',{exact:false}).waitFor();await picker.getByRole('button',{name:'Apply to chart'}).click();await picker.waitFor({state:'hidden'})
+ const picker=page.getByRole('dialog',{name:'Select chart instrument'});await picker.getByLabel('Strike selection').selectOption('max_price');await picker.getByRole('combobox',{name:'Symbol',exact:true}).fill('NIFTY');await picker.getByRole('option',{name:'NIFTY 50',exact:true}).click();const presets=picker.getByRole('group',{name:'Premium cap presets'});assert.deepEqual(await presets.getByRole('button').allTextContents(),['₹30','₹50','₹75','₹100','₹125','₹150']);await presets.getByRole('button',{name:'₹30',exact:true}).click();assert.equal(await picker.getByLabel('Premium cap',{exact:true}).inputValue(),'30');await picker.getByRole('combobox',{name:'Symbol',exact:true}).fill('BSESEN');await picker.getByRole('option',{name:'SENSEX',exact:true}).click();await picker.getByLabel('Premium cap',{exact:true}).fill('50');await picker.getByRole('button',{name:'Find strike'}).click();await picker.getByText('Selected CE 71800',{exact:false}).waitFor();await picker.getByRole('button',{name:'Apply to chart'}).click();await picker.waitFor({state:'hidden'})
  await page.getByRole('button',{name:'Order',exact:true}).click();await order.getByRole('button',{name:'CE 71800',exact:true}).waitFor()
  await page.setViewportSize({width:600,height:650});await page.waitForTimeout(100);const bounded=await order.boundingBox();assert(bounded.x>=0&&bounded.x+bounded.width<=600)
  await page.screenshot({path:resolve(artifacts,`phase21-${mode.toLowerCase()}${five?'-five':emptyStopped?'-empty':''}.png`)})
@@ -174,7 +203,7 @@ async function scenario(mode='Stepwise', five=false, emptyStopped=false) {
  await order.getByRole('button',{name:'PE 71300',exact:true}).click();await order.getByRole('button',{name:'Market',exact:true}).click();await order.getByLabel('New order quantity',{exact:true}).fill('1');uncertain=true
  await order.getByRole('button',{name:'Submit BUY',exact:true}).click();await order.getByRole('button',{name:'Refresh submission status'}).waitFor();assert(await order.getByRole('button',{name:'Submit BUY',exact:true}).isDisabled());await order.getByRole('button',{name:'Close order window'}).click();await page.getByRole('button',{name:'Order',exact:true}).click();assert(await order.getByRole('button',{name:'Submit BUY',exact:true}).isDisabled())
  assert.deepEqual(errors,[])
- results.push({mode,emptyStopped,panes:expectedPanes,checks:'startup rollback/removal, chart retention, non-modal orders, exact-contract draft price picks, edit LTP/chart picks, stationary edge close hitbox, lot/price edits, premium picker, dragging/clamping, uncertainty fencing',errors})
+ results.push({mode,emptyStopped,panes:expectedPanes,checks:'startup rollback/removal, chart retention, non-modal orders, Target % market-entry sizing and cancellation, exact-contract draft price picks, edit LTP/chart picks, stationary edge close hitbox, lot/price edits, premium picker, dragging/clamping, uncertainty fencing',errors})
  await page.close()
 }
 try {for(const mode of ['Stepwise','Replay','Paper'])await scenario(mode);await scenario('Stepwise',true);await scenario('Paper',false,true);await writeFile(resolve(artifacts,'phase21-browser-summary.json'),JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2))}finally{await browser.close();server.close()}

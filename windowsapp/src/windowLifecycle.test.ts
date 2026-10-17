@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { bounded, closeAfterSave, controlledScreens, journalKey, recoverState, SAVE_TIMEOUT_MS } from './windowLifecycle'
+import { createWindowCloser, bounded, closeAfterSave, controlledScreens, journalKey, recoverState, SAVE_TIMEOUT_MS } from './windowLifecycle'
 
 afterEach(() => vi.useRealTimers())
 describe('window close and screen recovery', () => {
@@ -67,3 +67,46 @@ describe('window handoff and automatic close', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 })
+
+describe("single window close owner", () => {
+  it("deduplicates native close, detach and repeated requests", async () => {
+    let resolveSave!: () => void;
+    const save = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const finish = vi.fn(async () => {});
+    const request = createWindowCloser(save, finish, vi.fn());
+    const first = request();
+    const second = request();
+    await Promise.resolve();
+    resolveSave();
+    await Promise.all([first, second]);
+    await request();
+    expect(save).toHaveBeenCalledOnce();
+    expect(finish).toHaveBeenCalledOnce();
+  });
+  it("honors dirty/saving label navigation guards before saving", async () => {
+    const save = vi.fn(async () => {}),
+      finish = vi.fn(async () => {});
+    await createWindowCloser(save, finish, vi.fn(), () => false)();
+    expect(save).not.toHaveBeenCalled();
+    expect(finish).not.toHaveBeenCalled();
+  });
+  it("allows retry after native closure fails", async () => {
+    const finish = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("native"))
+      .mockResolvedValueOnce(undefined);
+    const request = createWindowCloser(
+      vi.fn(async () => {}),
+      finish,
+      vi.fn(),
+    );
+    await request();
+    await request();
+    expect(finish).toHaveBeenCalledTimes(2);
+  });
+});

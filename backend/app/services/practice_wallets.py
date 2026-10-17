@@ -97,11 +97,24 @@ def claims(user, date):
 
 
 def blocked(user, date, kind):
-    """Reset is allowed unless this user has a session on; no history scans."""
+    """Only an active Day run using this dated practice ledger blocks reset."""
     from app.services import simulation
-    if any(session.user_id == user and session.state != simulation.SimulationState.ENDED
-           for session in list(simulation._sessions.values())):
-        return "Wallet cannot be changed while a session is on; stop it first"
+
+    target = f"{kind}:{date}"
+    for session in list(simulation._sessions.values()):
+        if (
+            session.user_id != user
+            or session.state == simulation.SimulationState.ENDED
+            or session.session_type == "real"
+            or getattr(session, "trading_style", "intraday") == "swing"
+        ):
+            continue
+        ledger = getattr(session, "wallet_ledger_id", None)
+        if not ledger:
+            session_kind = "paper" if session.session_type == "paper" else "sim"
+            ledger = f"{session_kind}:{session.date}"
+        if ledger == target:
+            return "Wallet cannot be changed while a session is on; stop it first"
     return None
 
 
@@ -153,20 +166,23 @@ def reset(user, date, kind, amount):
             "ConditionExpression": "activity_revision = :old OR (attribute_not_exists(activity_revision) AND :old = :zero)",
             "ExpressionAttributeValues": encode({":amount": value, ":now": int(time.time() * 1000), ":old": revision, ":zero": 0, ":next": revision + 1})}}]
         if kind == "paper":
-            from app.config import SUPPORTED_SYMBOLS
-            symbols = set(SUPPORTED_SYMBOLS) | {row["ledger_id"].split(":session:", 1)[1] for row in claims(user, date)}
-            for symbol in symbols:
-                # Clearing expired start tokens also fences a late startup that
-                # otherwise could resume after a successful reset with old funds.
-                tx.append({"Update": {"TableName": "WalletLedgers", "Key": encode({"user_id": user, "ledger_id": f"paper:{date}:session:{symbol}"}),
-                    "UpdateExpression": "REMOVE claim_token, claim_until",
-                    "ConditionExpression": "(attribute_not_exists(claim_until) OR claim_until < :now) AND (attribute_not_exists(engine_until) OR engine_until < :now)",
-                    "ExpressionAttributeValues": encode({":now": int(time.time())})}})
+            now = int(time.time())
+            for claim in claims(user, date):
+                if int(claim.get('claim_until') or 0) >= now or int(claim.get('engine_until') or 0) >= now:
+                    raise HTTPException(409, "Paper session is starting or running; stop it before resetting")
+                if claim.get('claim_token'):
+                    # Only actual expired preparations need cleanup. Clearing a
+                    # token fences its late owner before the wallet CAS; a new
+                    # claimant changes activity_revision and makes reset fail.
+                    table().update_item(Key={'user_id':user,'ledger_id':claim['ledger_id']},
+                        UpdateExpression='REMOVE claim_token, claim_until',
+                        ConditionExpression='claim_token = :token AND claim_until < :now',
+                        ExpressionAttributeValues={':token':claim['claim_token'],':now':now})
         get_dynamodb_client().transact_write_items(TransactItems=tx)
         wallet_service._ledgers[(user, f"{kind}:{date}")] = float(value)
         return float(value)
     except ClientError as exc:
-        if exc.response["Error"]["Code"] == "TransactionCanceledException":
+        if exc.response["Error"]["Code"] in ("TransactionCanceledException", "ConditionalCheckFailedException"):
             raise HTTPException(409, "Wallet/session changed during reset; refresh and retry after stopping any session") from exc
         storage_error(exc)
     except HTTPException:

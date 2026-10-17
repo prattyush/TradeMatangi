@@ -1,3 +1,4 @@
+import { snapSwingPrice, swingOrderTick } from '../../../shared/swingOrderPrice'
 import { flashError } from '../services/notifications'
 import { recordPerformance } from '../services/performanceDiagnostics'
 import { openPositionTrades, RecentLiveTicks, reconcileChartObjects } from '../services/tradingChartState'
@@ -34,6 +35,15 @@ export interface ChartVisibleRange {
 }
 
 interface Props {
+  candleAnchorSeconds?:number
+  defaultShowAllMarkers?:boolean
+  externalTradeMarkers?: boolean
+  externalCandles?: { time: number; open: number; high: number; low: number; close: number }[]
+  externalLoading?: boolean
+  externalMessage?: string
+  externalLoadOlder?: (before: number) => Promise<unknown>
+  drawingStorageKey?: string
+
   historyMode?: 'live' | 'replay'
   symbol: string
   tradingDate: string
@@ -44,7 +54,7 @@ interface Props {
   onPriceUpdate?: (price: number) => void
   height?: number
   // Options pane config
-  paneType?: PaneType
+  paneType?: PaneType | "futures"
   strike?: number
   expiry?: string
   right?: 'CE' | 'PE'
@@ -56,6 +66,8 @@ interface Props {
   markerSessionKey?: string
   onRatioIndicatorsChange?: (keys: RocComparisonKey[]) => void
   // Open order price lines
+  onSwingOrderDrag?: (order: Order, price: number) => Promise<void>
+  onOrderSelect?: (order: Order) => void
   openOrders?: Order[]
   targetProfitStrategies?: StrategyResponse[]
   strategyPosition?: Position
@@ -261,7 +273,7 @@ function orderLineTypeLabel(order: Order): string {
   return order.order_type === 'LIMIT' ? 'L' : 'T'
 }
 
-function indicatorKeysForPane(paneType: PaneType, right?: 'CE' | 'PE'): RocComparisonKey[] {
+function indicatorKeysForPane(paneType: PaneType | "futures", right?: 'CE' | 'PE'): RocComparisonKey[] {
   if (paneType === 'equity') return ['underlying_ce', 'underlying_pe', 'ce_ul_pe_ul']
   if (right === 'CE') return ['underlying_ce', 'ce_pe', 'ce_ul_pe_ul']
   if (right === 'PE') return ['underlying_pe', 'ce_pe', 'ce_ul_pe_ul']
@@ -408,6 +420,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 }
 
 export default function Chart({
+  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right,
@@ -416,6 +429,8 @@ export default function Chart({
   markerSessionKey,
   onRatioIndicatorsChange,
   openOrders,
+  onOrderSelect,
+  onSwingOrderDrag,
   targetProfitStrategies,
   strategyPosition,
   strategyPositionCE,
@@ -464,11 +479,24 @@ export default function Chart({
   const drawModeRef = useRef<DrawMode>('none')
   const drawPtsRef = useRef<{ time: number; price: number }[]>([])
   const drawingsRef = useRef<Drawing[]>([])
+  useEffect(() => {
+    if (!drawingStorageKey) return
+    const save = () => {
+      const drawings = drawingsRef.current.map(d => d.type==='hline'?{type:d.type,price:d.ref.options().price}:{type:d.type,lines:('refs' in d?d.refs:[d.ref]).map(ref=>ref.data())})
+      try { localStorage.setItem(drawingStorageKey,JSON.stringify(drawings)) } catch { /* Storage can be disabled. */ }
+    }
+    const timer=setInterval(save,1000)
+    return ()=>{clearInterval(timer);save()}
+  },[drawingStorageKey])
   const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef(new Map<string, { object: ISeriesApi<'Line'>; signature: string }>())
-  const [showAllMarkers, setShowAllMarkers] = useState(false)
-  const visibleTrades = useMemo(() => showAllMarkers ? trades : openPositionTrades(trades), [trades, showAllMarkers])
-  useEffect(() => { setShowAllMarkers(false) }, [markerSessionKey, symbol, paneType, right, strike, expiry])
+  const [showAllMarkers, setShowAllMarkers] = useState(defaultShowAllMarkers)
+  const visibleTrades = useMemo(() => (externalTradeMarkers || showAllMarkers) ? trades : openPositionTrades(trades), [trades, showAllMarkers, externalTradeMarkers])
+  useEffect(() => { setShowAllMarkers(defaultShowAllMarkers) }, [markerSessionKey, symbol, paneType, right, strike, expiry])
+  const orderSelectionRef = useRef({orders: openOrders, onSelect: onOrderSelect, onDrag:onSwingOrderDrag})
+  orderSelectionRef.current = {orders: openOrders, onSelect: onOrderSelect, onDrag:onSwingOrderDrag}
+  const swingDragPending = useRef(new Set<string>())
+  const swingClickUntil = useRef(0)
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
@@ -483,11 +511,13 @@ export default function Chart({
   const onVisibleRangeChangeRef = useRef(onVisibleRangeChange)
   onVisibleRangeChangeRef.current = onVisibleRangeChange
 
-  const [showEma, setShowEma] = useState(true)
+  const readSwingIndicators = () => {try{return drawingStorageKey?JSON.parse(localStorage.getItem(`${drawingStorageKey}:indicators`)??'{}'):{}}catch{return {}}}
+  const [showEma, setShowEma] = useState<boolean>(()=>readSwingIndicators().showEma??true)
   const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>([])
   const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(null)
   const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
-  const [showPositionLevels, setShowPositionLevels] = useState(false)
+  const [showPositionLevels, setShowPositionLevels] = useState<boolean>(()=>readSwingIndicators().showPositionLevels??false)
+  useEffect(()=>{if(drawingStorageKey)try{localStorage.setItem(`${drawingStorageKey}:indicators`,JSON.stringify({showEma,showPositionLevels}))}catch{/* Storage can be disabled. */}},[drawingStorageKey,showEma,showPositionLevels])
   const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
@@ -627,7 +657,7 @@ export default function Chart({
     ema21Ref.current = e21
 
     chart.subscribeClick((param: MouseEventParams) => {
-      if (!param.point || !seriesRef.current) return
+      if (!param.point || !seriesRef.current || Date.now() < swingClickUntil.current) return
       // Absorb the click that activated the draw mode (e.g. dropdown item click)
       if (ignoreNextClickRef.current) { ignoreNextClickRef.current = false; return }
       const price = seriesRef.current.coordinateToPrice(param.point.y)
@@ -637,6 +667,14 @@ export default function Chart({
       if (onPriceSelectRef.current) {
         onPriceSelectRef.current(price)
         return
+      }
+
+      if (drawModeRef.current === 'none' && orderSelectionRef.current.onSelect) {
+        const hit = [...orderPriceLinesRef.current].map(([id, line]) => ({id, y: seriesRef.current!.priceToCoordinate(line.options().price)}))
+          .filter(item => item.y !== null && Math.abs(item.y - param.point!.y) <= 7)
+          .sort((a, b) => Math.abs(a.y! - param.point!.y) - Math.abs(b.y! - param.point!.y))[0]
+        const order = hit && orderSelectionRef.current.orders?.find(item => item.order_id === hit.id)
+        if (order) { orderSelectionRef.current.onSelect(order); return }
       }
 
       if (!param.time) return  // drawing modes need a time reference
@@ -817,6 +855,58 @@ export default function Chart({
       })
     }
     container!.addEventListener('contextmenu', handleContextMenu)
+    // Capture only a pending Swing order line; ordinary chart panning stays untouched.
+    let drag: {id: string; startY: number; moved: boolean; price: number} | null = null
+    let mounted = true
+    const restore = (id: string) => {
+      if (!mounted) return
+      const latest = orderSelectionRef.current.orders?.find(o => o.order_id === id)
+      if (latest) orderPriceLinesRef.current.get(id)?.applyOptions({price:orderDisplayPrice(latest)})
+    }
+    const dragStart = (event: MouseEvent) => {
+      if (event.button !== 0 || drawModeRef.current !== 'none' || onPriceSelectRef.current || !orderSelectionRef.current.onDrag) return
+      const rect = container.getBoundingClientRect()
+      const x = event.clientX - rect.left, y = event.clientY - rect.top
+      if (x < 0 || x > chart.timeScale().width()) return
+      const hit = [...orderPriceLinesRef.current].map(([id,line]) => ({id,y:series.priceToCoordinate(line.options().price)}))
+        .filter(item => item.y !== null && Math.abs(item.y-y) <= 7)
+        .sort((a,b) => Math.abs(a.y!-y)-Math.abs(b.y!-y))[0]
+      if (!hit) return
+      event.preventDefault(); event.stopImmediatePropagation()
+      if (swingDragPending.current.has(hit.id)) return
+      const order = orderSelectionRef.current.orders?.find(o => o.order_id === hit.id)
+      if (order) drag={id:hit.id,startY:event.clientY,moved:false,price:orderDisplayPrice(order)}
+    }
+    const dragMove = (event: MouseEvent) => {
+      if (!drag) return
+      event.preventDefault(); event.stopImmediatePropagation()
+      const value = series.coordinateToPrice(event.clientY-container.getBoundingClientRect().top)
+      const order = orderSelectionRef.current.orders?.find(o => o.order_id === drag!.id)
+      if (value === null || !order) return
+      if (Math.abs(event.clientY-drag.startY)>3) drag.moved=true
+      if (drag.moved) {
+        drag.price=snapSwingPrice(value,swingOrderTick(order))
+        if (drag.price>0) orderPriceLinesRef.current.get(drag.id)?.applyOptions({price:drag.price})
+      }
+    }
+    const dragEnd = (event: MouseEvent) => {
+      if (!drag) return
+      event.preventDefault(); event.stopImmediatePropagation()
+      const finished=drag; drag=null; swingClickUntil.current=Date.now()+400
+      const order=orderSelectionRef.current.orders?.find(o => o.order_id === finished.id)
+      if (!order) return
+      if (!finished.moved) {orderSelectionRef.current.onSelect?.(order); return}
+      if (finished.price<=0 || finished.price===orderDisplayPrice(order)) {restore(finished.id);return}
+      swingDragPending.current.add(finished.id)
+      void Promise.resolve(orderSelectionRef.current.onDrag?.(order,finished.price)).catch(() => {}).finally(() => {
+        swingDragPending.current.delete(finished.id);restore(finished.id)
+      })
+    }
+    const abortDrag = () => { if (drag) {restore(drag.id);drag=null} }
+    container.addEventListener('mousedown',dragStart,true)
+    window.addEventListener('mousemove',dragMove,true)
+    window.addEventListener('mouseup',dragEnd,true)
+    window.addEventListener('blur',abortDrag)
 
     const ro = new ResizeObserver(entries => {
       // Skip when the container is hidden (display:none during maximize of another pane)
@@ -828,6 +918,11 @@ export default function Chart({
 
     return () => {
       ro.disconnect()
+      mounted=false
+      container.removeEventListener('mousedown',dragStart,true)
+      window.removeEventListener('mousemove',dragMove,true)
+      window.removeEventListener('mouseup',dragEnd,true)
+      window.removeEventListener('blur',abortDrag)
       container.removeEventListener('contextmenu', handleContextMenu)
       tradeMarkerPool.current.clear()
       orderPriceLinesRef.current.clear()
@@ -848,13 +943,18 @@ export default function Chart({
   }, [showEma])
 
   // ── Historical + pre-session — equity only ───────────────────────────────────
+  useEffect(() => {
+    if (!drawingStorageKey || !chartRef.current || !seriesRef.current) return
+    try { const saved=JSON.parse(localStorage.getItem(drawingStorageKey)??'[]');for(const d of saved){if(d.type==='hline'){const ref=seriesRef.current.createPriceLine({price:d.price,color:'#e6edf3',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:''});drawingsRef.current.push({type:'hline',ref})}else{const refs=d.lines.map((data:LineData<Time>[])=>{const ref=chartRef.current!.addLineSeries({color:'#ffa657',lineWidth:1,priceLineVisible:false,lastValueVisible:false});ref.setData(data);return ref});drawingsRef.current.push({type:d.type,refs} as Drawing)}}setDrawingCount(saved.length)} catch { /* Ignore invalid old local drawings. */ }
+  },[drawingStorageKey])
+
   // Both fetches run in parallel and are combined into a single series.setData()
   // call. This eliminates the race where a live tick's series.update(09:18) arrives
   // before getPreSession resolves; a subsequent series.update(09:15) would throw
   // "Cannot update oldest data". With setData() the combined history is committed
   // atomically before any live tick can cause an ordering conflict.
   useEffect(() => {
-    if (paneType === 'options') return
+    if (externalCandles !== undefined || paneType === 'options') return
     const series = seriesRef.current
     const e9 = ema9Ref.current
     const e21 = ema21Ref.current
@@ -954,7 +1054,7 @@ export default function Chart({
   // ── Historical data — options (full trading day, loads when session starts) ──
   // Backend caches options data during session start, so we wait for startTime.
   useEffect(() => {
-    if (paneType !== 'options' || !strike || !expiry || !right) return
+    if (externalCandles !== undefined || paneType !== 'options' || !strike || !expiry || !right) return
     if (!startTime) return
     const series = seriesRef.current
     const e9 = ema9Ref.current
@@ -1038,6 +1138,33 @@ export default function Chart({
       .catch(error => { if (!cancelled) flashError(error, 'Charts'); console.error(error) })
     return () => { cancelled = true }
   }, [historyMode, symbol, tradingDate, intervalMinutes, paneType, strike, expiry, right, startTime, liveFromTs, effectiveReloadKey, publishIndicatorCandles])
+
+  const externalDatasetRef = useRef('')
+  const externalFirstRef = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (externalCandles === undefined || !seriesRef.current || !chartRef.current) return
+    const key = `${symbol}:${tradingDate}:${intervalMinutes}:${right}:${strike}:${expiry}`
+    const same = externalDatasetRef.current === key
+    const range = same ? chartRef.current.timeScale().getVisibleLogicalRange() : null
+    const previousFirst = externalFirstRef.current
+    const addedBefore = same && previousFirst !== undefined ? externalCandles.filter(row => row.time < previousFirst).length : 0
+    externalFirstRef.current = externalCandles[0]?.time
+    externalDatasetRef.current = key
+    seriesRef.current.setData(externalCandles.map(row => ({...row,time:row.time as Time})))
+    candleTimesRef.current = externalCandles.map(row => row.time)
+    const calculate = (period: number) => {let ema: number | null=null;const k=2/(period+1);return externalCandles.map(row=>{ema=ema===null?row.close:ema+(row.close-ema)*k;return{time:row.time as Time,value:ema}})}
+    ema9Ref.current?.setData(calculate(9));ema21Ref.current?.setData(calculate(21))
+    if (range) chartRef.current.timeScale().setVisibleLogicalRange({from:range.from+addedBefore,to:range.to+addedBefore})
+    else if(externalCandles.length) chartRef.current.timeScale().fitContent()
+  }, [externalCandles,symbol,tradingDate,intervalMinutes,right,strike,expiry])
+  useEffect(() => {
+    if (!externalLoadOlder || !chartRef.current) return
+    let loading=false
+    const chart=chartRef.current
+    const load = (range: {from:number;to:number}|null) => { if(range&&range.from<5&&!loading&&candleTimesRef.current[0]){loading=true;void externalLoadOlder(candleTimesRef.current[0]).catch(error=>flashError(error,'Swing charts')).finally(()=>{loading=false})} }
+    chart.timeScale().subscribeVisibleLogicalRangeChange(load)
+    return ()=>chart.timeScale().unsubscribeVisibleLogicalRangeChange(load)
+  }, [externalLoadOlder])
 
   // ── Live tick processing — latestTick is already filtered by caller ─────────
   const intervalSecs = CANDLE_INTERVAL_SECS(intervalMinutes)
@@ -1170,13 +1297,13 @@ export default function Chart({
     const chart = chartRef.current
     if (!chart) return
     const inputs = visibleTrades.filter(t => {
-      const matches = paneType === 'equity' ? !t.right || t.underlying_price !== undefined
+      const matches = paneType === 'futures' ? t.instrument_type === 'futures' && t.expiry === expiry : paneType === 'equity' ? t.instrument_type !== 'futures' && (!t.right || t.underlying_price !== undefined)
         : t.right === right && t.strike === strike && (!t.expiry || t.expiry === expiry)
       const price = paneType === 'equity' && t.right ? t.underlying_price : t.price
       return matches && Number.isFinite(t.timestamp) && typeof price === 'number' && Number.isFinite(price)
     }).map(t => {
       const price = paneType === 'equity' && t.right && t.underlying_price !== undefined ? t.underlying_price : t.price
-      const time = Math.floor(t.timestamp / intervalSecs) * intervalSecs as Time
+      const time = (Math.floor((t.timestamp-candleAnchorSeconds) / intervalSecs) * intervalSecs+candleAnchorSeconds) as Time
       const style = paneType === 'equity' && t.right ? crossChartMarkerStyle(t.right, t.side)
         : { color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF', text: t.side === 'BUY' ? 'B' : 'S' }
       const input = { time, price, ...style }
@@ -1200,7 +1327,7 @@ export default function Chart({
 
     const pending = (openOrders ?? []).filter(o => {
       if (o.status !== 'PENDING') return false
-      return paneType === 'equity' ? !o.right : o.right === right && (o.strike == null || o.strike === strike) && (!o.expiry || o.expiry === expiry)
+      return paneType === 'futures' ? o.expiry === expiry && !o.right : paneType === 'equity' ? !o.right : o.right === right && (o.strike == null || o.strike === strike) && (!o.expiry || o.expiry === expiry)
     })
 
     const wanted = new Set(pending.map(order => order.order_id))
@@ -1415,7 +1542,7 @@ export default function Chart({
   // Pane header label
   const paneLabel = paneType === 'options' && strike && expiry && right
     ? `${right} ${strike} | Exp: ${expiry}`
-    : `${symbol} ${intervalMinutes}m`
+    : `${symbol} ${intervalMinutes===1440?'1D':intervalMinutes+'m'}`
 
   const borderColor = isActive ? '#58a6ff' : '#30363d'
   const toggleRatioIndicator = (key: RocComparisonKey) => {
@@ -1644,13 +1771,13 @@ export default function Chart({
             {dir}
           </button>
         ))}
-        <button
+        {!externalTradeMarkers && <button
           onClick={e => { e.stopPropagation(); setShowAllMarkers(value => !value) }}
           title={showAllMarkers ? 'Hide closed-trade markers; show open positions only' : 'Show all executed-trade markers'}
           aria-label="All markers"
           aria-pressed={showAllMarkers}
           style={toolbarBtnStyle(showAllMarkers)}
-        >All markers</button>
+        >All markers</button>}
         {onMaximize && (
           <button
             onClick={e => { e.stopPropagation(); onMaximize() }}
@@ -1734,6 +1861,6 @@ export default function Chart({
           {fmtPnlValue()}
         </div>
       )}
-    </div>
+    {externalCandles!==undefined&&externalLoading&&<div className="chart-loading">Loading Swing history…</div>}{externalCandles!==undefined&&externalMessage&&<div className="chart-loading chart-message">{externalMessage}</div>}</div>
   )
 }

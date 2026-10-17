@@ -343,7 +343,8 @@ class TestCheckOrdersSkipsKotak:
 
 class TestRealSessionStartup:
     @pytest.fixture(autouse=True)
-    def isolated_groups(self):
+    def isolated_groups(self, monkeypatch):
+        monkeypatch.setattr("app.services.real_trading_day.market_date", lambda: "2026-05-19")
         # Startup now resolves groups before broker-access guards.
         with patch("app.services.session_group_service.get_active_group", return_value=None), \
              patch("app.services.session_group_service._save"):
@@ -551,6 +552,7 @@ class TestStrategySLModification:
         session = MagicMock()
         session.broker_refresh_events = None
         session.session_type = "real"
+        session.execution_broker = "KotakNeo"
         session.session_id = "sess_real"
         session.date = "2026-05-26"
 
@@ -576,6 +578,7 @@ class TestStrategySLModification:
         session = MagicMock()
         session.broker_refresh_events = None
         session.session_type = "real"
+        session.execution_broker = "KotakNeo"
         session.session_id = "sess_real"
         session.date = "2026-05-26"
 
@@ -626,6 +629,7 @@ class TestReconcileOpenOrders:
 
         mock_session = MagicMock()
         mock_session.session_type = "real"
+        mock_session.execution_broker = "KotakNeo"
         mock_session.symbol = "NIFTY"          # needed for external order symbol check
         mock_session.instrument_type = "equity"
         mock_session.kotak_order_map = {}

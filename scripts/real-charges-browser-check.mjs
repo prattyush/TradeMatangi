@@ -14,11 +14,11 @@ await build({ stdin: { contents: `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import Editor from '${root}/shared/analysis/RealChargesEditor';
 import {AnalysisProvider} from '${root}/shared/analysis/environment';
-let actual=null; window.calls=[]; window.refreshes=0;
-const response=date=>({date,accounts:date==='2026-10-09'?[{account_id:'account-A',order_count:2,estimated_total:3,actual_total:actual,history_changed:false}]:[]});
+const actual={kotak:null,kite:null}; window.calls=[]; window.refreshes=0;
+const response=date=>({date,accounts:date==='2026-10-09'?['kotak','kite'].map(execution_broker=>({execution_broker,account_id:'account-A',order_count:2,estimated_total:3,actual_total:actual[execution_broker],history_changed:false})):[]});
 const performance={getRealFees:async date=>response(date),
-saveRealFees:async(date,account,amount)=>{window.calls.push({date,account,amount});if(amount===99)throw Error('Storage unavailable');actual=amount;return response(date)},
-deleteRealFees:async(date,account)=>{window.calls.push({date,account,remove:true});actual=null;return response(date)}};
+saveRealFees:async(date,account,amount,broker='kotak')=>{window.calls.push({date,account,amount,broker});if(amount===99)throw Error('Storage unavailable');actual[broker]=amount;return response(date)},
+deleteRealFees:async(date,account,broker='kotak')=>{window.calls.push({date,account,remove:true,broker});actual[broker]=null;return response(date)}};
 createRoot(document.getElementById('root')).render(<AnalysisProvider value={{performance,api:{},onDataChanged:()=>window.refreshes++}}><Editor initialDate='2026-10-09' onSaved={()=>window.refreshes++} onClose={()=>document.body.dataset.closed='yes'}/></AnalysisProvider>);
 `, resolveDir: root+'/frontend', loader:'tsx' }, alias:{react:root+'/frontend/node_modules/react','react-dom':root+'/frontend/node_modules/react-dom'}, jsx:'automatic',bundle:true,outfile:dir+'/app.js',logLevel:'silent'});
 await writeFile(dir+'/index.html','<html><body><div id="root"></div><script src="/app.js"></script></body></html>');
@@ -34,7 +34,7 @@ try {
  await page.getByRole('button',{name:'Save actual charges'}).click();
  await page.getByText('Actual charges saved; per-trade amounts are allocated',{exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>window.refreshes),2);
- assert.deepEqual(await page.evaluate(()=>window.calls[0]),{date:'2026-10-09',account:'account-A',amount:12.34});
+ assert.deepEqual(await page.evaluate(()=>window.calls[0]),{date:'2026-10-09',account:'account-A',amount:12.34,broker:'kotak'});
  await page.getByRole('button',{name:'Use estimate'}).click();
  await page.getByText('Estimated charges restored',{exact:true}).waitFor();
  assert.equal(await page.getByLabel('Actual total charges',{exact:true}).inputValue(),'');
@@ -46,12 +46,19 @@ try {
  await page.getByRole('button',{name:'Save actual charges'}).click();
  await page.getByRole('alert').filter({hasText:'Storage unavailable'}).waitFor();
  assert.equal(await page.evaluate(()=>window.refreshes),6);
+ await page.getByLabel('Charges broker account').selectOption('kite:account-A');
+ await page.getByLabel('Actual total charges',{exact:true}).fill('5');
+ await page.getByRole('button',{name:'Save actual charges'}).click();
+ await page.getByText('Actual charges saved; per-trade amounts are allocated',{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>window.calls.at(-1).broker),'kite');
+ await page.getByLabel('Charges broker account').selectOption('kotak:account-A');
+ assert.equal(await page.getByLabel('Actual total charges',{exact:true}).inputValue(),'0');
  await page.getByLabel('Charges trading date').fill('2026-10-08');
- await page.getByText(/No Real broker-account trades found/).waitFor();
+ await page.getByText(/No Real Day broker-account trades found/).waitFor();
  assert(await page.getByRole('button',{name:'Save actual charges'}).isDisabled());
  await page.screenshot({path:artifacts+'/charges-editor.png',fullPage:true});
  await page.getByRole('button',{name:'Close charges'}).click();
  assert.equal(await page.evaluate(()=>document.body.dataset.closed),'yes');
  assert.deepEqual(errors,[]);
- console.log('PASS shared Real charges editor: save, exact account/date, revert, zero, storage failure, empty date, close; no page errors');
+ console.log('PASS shared Real charges editor: Day-only labels, save, separate Kite/Kotak account scopes, exact account/date, revert, zero, storage failure, empty date, close; no page errors');
 } finally {await browser.close();await new Promise(resolve=>server.close(resolve))}
