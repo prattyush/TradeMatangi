@@ -357,7 +357,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
 
           {activeTab === 'trades' ? (
             <>
-              <div className={group.trading_style==='swing'?undefined:"analysis-trades-top"}><div className={group.trading_style==='swing'?undefined:"analysis-trades-list"}>
+              <div className={group.trading_style==='swing'?undefined:`analysis-trades-top${environment.desktop ? ' analysis-trades-top-desktop' : ''}`}><div className={group.trading_style==='swing'?undefined:"analysis-trades-list"}>
               {group.sessions.map((s, idx) => {
                 const d = details.get(s.session_id)
                 if (!d) return null
