@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, type ComponentType, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
 import type { OHLCCandle } from './api'
 import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
@@ -20,7 +20,7 @@ export interface AnalysisEnvironment {
     deleteRealFees?: (date: string, account: string, broker?: "kotak" | "kite") => Promise<RealFeesDay>
     getPerformance: (filters: PerformanceFilters, signal?: AbortSignal) => Promise<PerformanceReport>
     getPerformanceCycles: (filters: PerformanceFilters, offset?: number, signal?: AbortSignal) => Promise<{ items: PerformanceCycle[]; total: number; next_offset: number | null }>
-    getPerformanceDetail: (cycle: PerformanceCycle, enrich?: boolean, signal?: AbortSignal) => Promise<PerformanceCycle>
+    getPerformanceDetail: (cycle: Pick<PerformanceCycle, "session_id" | "cycle_id">, enrich?: boolean, signal?: AbortSignal) => Promise<PerformanceCycle>
   }
   // Each adapter implements the existing chart's public props. The heterogeneous
   // snapshot/pattern inputs are normalized inside the desktop renderer boundary.
@@ -28,6 +28,8 @@ export interface AnalysisEnvironment {
   reportError?: (error: string, source: string) => void
   active?: boolean
   desktop?: boolean
+  intervalMinutes?: number
+  setIntervalMinutes?: (minutes: number) => void
   historicalDays?: number
   dataRevision?: number
   onDataChanged?: () => void
@@ -39,7 +41,9 @@ export interface AnalysisEnvironment {
 }
 const Context = createContext<AnalysisEnvironment | null>(null)
 export function AnalysisProvider({ value, children }: { value: AnalysisEnvironment; children: ReactNode }) {
-  return <Context.Provider value={value}>{children}</Context.Provider>
+  const parent = useContext(Context)
+  const [intervalMinutes, setIntervalMinutes] = useState(3)
+  return <Context.Provider value={{...value, intervalMinutes: parent?.intervalMinutes ?? intervalMinutes, setIntervalMinutes: parent?.setIntervalMinutes ?? setIntervalMinutes}}>{children}</Context.Provider>
 }
 export function useAnalysisEnvironment(): AnalysisEnvironment {
   const value = useContext(Context)

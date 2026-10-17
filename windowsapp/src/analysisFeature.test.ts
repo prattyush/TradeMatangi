@@ -56,3 +56,17 @@ describe('complete CSV traversal',()=>{
     await expect(completeCycleExport([cycle('a')],1,2,async()=>({items:[cycle('b')],total:2,next_offset:null}),controller.signal)).rejects.toMatchObject({name:'AbortError'})
   })
 })
+
+it('uses the selected snapshot interval without relabelling the captured OHLC',()=>{
+  const event=Date.parse('2026-10-15T09:33:13Z')/1000
+  for(const minutes of [1,3,5,10,15,30,60]){
+    const slot=Math.floor(event/(minutes*60))*(minutes*60)
+    expect(snapshotBarTime(event,event-13,'2026-10-15',minutes)).toBe(slot)
+  }
+})
+it('shortens contract labels while preserving distinct expiry/exchange/product identities',()=>{
+  const tabs=contractTabs([trade(),trade({expiry:'2026-10-15'}),trade({exchange:'nse_fo'}),trade({product:'MIS'})])
+  expect(tabs).toHaveLength(4)
+  expect(new Set(tabs.map(tab=>tab.key)).size).toBe(4)
+  expect(tabs.every(tab=>tab.label===`CE ${tab.strike}`)).toBe(true)
+})

@@ -48,6 +48,11 @@ def test_reports_and_session_detail_match_website(client, database):
     assert sum(t['quantity'] for t in body['trades']) == 80
     assert body['net_pnl'] == 398
     assert body['cycles'][0]['matches'][0]['quantity'] == 40
+    web_detail = client.get('/api/analysis/sessions/session', headers={'X-User-Id':'alice'})
+    assert web_detail.status_code == 200, web_detail.text
+    assert web_detail.json()['cycles'][0]['cycle_id'] == body['cycles'][0]['cycle_id']
+    assert web_detail.json()['cycles'][0]['net_pnl'] == 398
+    assert desktop['day_paths'][0]['net_pnl'] == 398
 
 
 def test_reversal_is_one_physical_fill_with_two_roles(client, database):

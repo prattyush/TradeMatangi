@@ -1,5 +1,8 @@
 export function ToolbarIcon({ name }: { name: string }) {
   const paths: Record<string, string> = {
+    Fit: 'M3 8V3h5 M16 3h5v5 M21 16v5h-5 M8 21H3v-5 M8 8h8v8H8z',
+    Maximize: 'M8 3H3v5 M16 3h5v5 M3 16v5h5 M21 16v5h-5',
+    Restore: 'M8 8h13v13H8z M16 8V3H3v13h5',
     Play: 'M8 4l12 8-12 8z',
     Pause: 'M7 4v16 M17 4v16',
     Stop: 'M5 5h14v14H5z',
