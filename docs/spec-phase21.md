@@ -2225,6 +2225,7 @@ on both hosts. No live orders or trading-data mutations were performed.
 
 ### Desktop Day P&L journey height follow-up (2026-10-17)
 
-- Desktop Trades tab: the trades list determines the top row height; the adjacent Day P&L journey matches it and scrolls internally when needed, keeping the price charts directly below the trades list.
+- Desktop Day analysis → Trades: the top row now fits the complete Day P&L journey, including axes and inspection details, without an internal journey scrollbar. The adjacent trades/order list scrolls within the same height. This replaces the initial absolute-positioned, scrolling journey fix.
+- The selected session fills the available height and the price charts expand into the remaining space instead of staying at a fixed 450px. The journey graph scales with window height; small windows can scroll the page to retain readable charts and details. Existing chart instances and resize handling are retained.
 - Website layout and narrow-screen stacked layout remain unchanged.
-- Validation: shared Day journey browser acceptance passed for both hosts, including desktop panel height/alignment and price-chart placement assertions; `git diff --check` passed.
+- Validation: shared Day journey browser acceptance passed for both hosts, including equal desktop panel heights, complete journey visibility and price charts filling the remaining height at 1920×1080 and 1366×768, plus narrow-screen stacking. Desktop production build (TypeScript + Vite) and `git diff --check` passed.
