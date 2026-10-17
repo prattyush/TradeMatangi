@@ -28,7 +28,7 @@ export default function AnalysisPanels({ symbol, date, allTrades, historicalDays
     </div>
     {tabs.length>0 && <>
       <div className="analysis-chart-separator" role="separator" aria-label="Resize chart split" aria-orientation="vertical" aria-valuemin={25} aria-valuemax={75} aria-valuenow={ratio} tabIndex={0} onKeyDown={e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();setRatio(n=>Math.max(25,Math.min(75,n+(e.key==='ArrowLeft'?-5:5))))}}} onPointerDown={e=>e.currentTarget.setPointerCapture(e.pointerId)} onPointerMove={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId))drag(e.clientX)}} />
-      <div className="analysis-option-pane" hidden={max==='underlying'}><nav aria-label="Exact option contracts">{tabs.map(t=><button key={t.key} aria-pressed={tab?.key===t.key} onClick={()=>{setSelected(t.key);environment.onSelectionContextChange?.()}}>{t.label}</button>)}</nav>
+      <div className="analysis-option-pane" hidden={max==='underlying'}><nav aria-label="Exact option contracts">{tabs.map(t=><button key={t.key} title={`${t.right} ${t.strike} · ${t.expiry} · ${t.exchange??''} · ${t.product??''}`} aria-pressed={tab?.key===t.key} onClick={()=>{setSelected(t.key);environment.onSelectionContextChange?.()}}>{t.label}</button>)}</nav>
         {tab && environment.active !== false && <DesktopAnalysisChart symbol={symbol} date={date} trades={tab.trades} right={tab.right} strike={tab.strike} expiry={tab.expiry} exchange={tab.exchange} product={tab.product} historicalDays={historicalDays} getMarkerText={getMarkerText} isMaximized={max==='option'} onMaximize={()=>setMax(value=>value==='option'?null:'option')} />}
       </div>
     </>}

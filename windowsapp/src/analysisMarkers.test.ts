@@ -35,3 +35,13 @@ it('preserves underlying CE/PE labels and coincident counts', () => {
   expect(markers.map(marker => marker.text)).toEqual(['CE B','PE S'])
   expect(analysisMarkers([fill({underlying_price:25001}),fill({trade_id:'second',underlying_price:25001})],[])[0].text).toBe('2')
 })
+
+it.each([1,3,5,10,15,30,60])('aligns executions and approximate underlying prices to %im candles', interval => {
+  const seconds=interval*60
+  const trade=fill({timestamp:Date.parse('2026-10-15T09:33:13Z')/1000})
+  const slot=Math.floor(trade.timestamp/seconds)*seconds
+  const markers=analysisMarkers([trade],[{time:slot,close:25001}],undefined,'all',undefined,interval)
+  expect(markers[0].timestamp).toBe(slot)
+  expect(markers[0].price).toBe(25001)
+  expect(markers[0].trades[0].timestamp).toBe(trade.timestamp)
+})

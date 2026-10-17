@@ -1,3 +1,5 @@
+import DayJourneyChart from './DayJourneyChart'
+import { sessionJourney } from './dayJourney'
 import SwingHistory from '../SwingHistory'
 import type {SwingChartProps} from '../SwingWorkspace'
 import type {ComponentType} from 'react'
@@ -355,6 +357,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
 
           {activeTab === 'trades' ? (
             <>
+              <div className={group.trading_style==='swing'?undefined:"analysis-trades-top"}><div className={group.trading_style==='swing'?undefined:"analysis-trades-list"}>
               {group.sessions.map((s, idx) => {
                 const d = details.get(s.session_id)
                 if (!d) return null
@@ -386,6 +389,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 )
               })}
 
+              </div>{group.trading_style!=='swing'&&<DayJourneyChart journey={sessionJourney([...details.values()].flatMap(d=>d.cycles??[]),new Map(group.sessions.map(s=>[s.session_id,s.session_capital])))} />}</div>
               <AnalysisChartPanel
                 symbol={group.symbol}
                 date={group.date}

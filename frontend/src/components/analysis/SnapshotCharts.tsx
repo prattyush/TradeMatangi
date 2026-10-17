@@ -1,3 +1,5 @@
+import { ChartHistoryStatus, type HistoryState } from '../../../../shared/analysis/ChartHistoryStatus'
+import { CandleInterval } from '../../../../shared/analysis/CandleInterval'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   createChart,
@@ -9,7 +11,7 @@ import {
   Time,
   LineStyle,
 } from 'lightweight-charts'
-import { useAnalysisApi } from '../../../../shared/analysis/environment'
+import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import type { OHLCCandle } from '../../../../shared/analysis/api'
 // ── EMA helpers ──────────────────────────────────────────────────────────────
 
@@ -45,11 +47,12 @@ function crossChartMarkerStyle(tradeRight: string, side: 'BUY' | 'SELL'): { colo
 // ── Snapshot Chart ─────────────────────────────────────────────────────────
 
 export function WebsiteSnapshotChart({
-  symbol, date, barTime, barOhlc, currentPrice, openOrders, position, filledTrades,
+  symbol, date, barTime: recordedBarTime, barOhlc: capturedBarOhlc, snapshotEventTime, currentPrice, openOrders, position, filledTrades,
 }: {
   symbol: string; date: string
   sessionId?: string
   observationResolution?: number
+  snapshotEventTime?: number
   barTime: number
   barOhlc: { open: number; high: number; low: number; close: number } | null
   currentPrice: number
@@ -58,10 +61,21 @@ export function WebsiteSnapshotChart({
   filledTrades: { trade_id: string; side: 'BUY' | 'SELL'; price: number; timestamp: number; right?: string; strike?: number; underlying_price?: number; quantity: number }[]
 }) {
   const api = useAnalysisApi()
+  const { intervalMinutes = 3 } = useAnalysisEnvironment()
+  const [historyState,setHistoryState]=useState<HistoryState>('loading')
+  const [historyRetry,setHistoryRetry]=useState(0)
+  const [loadedInterval,setLoadedInterval]=useState<number|null>(null)
+  const eventTime = snapshotEventTime ?? recordedBarTime
+  const barTime = Math.floor(eventTime / (intervalMinutes * 60)) * intervalMinutes * 60
+  // Captured OHLC is a 3-minute bar; never present it as another interval.
+  const barOhlc = intervalMinutes === 3 && barTime === recordedBarTime ? capturedBarOhlc : null
+  const [dataRevision, setDataRevision] = useState(0)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const emaSeriesRef = useRef<ISeriesApi<'Line'>[]>([])
+  const schedulePnlUpdate = useRef<()=>void>(()=>{})
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -85,10 +99,11 @@ export function WebsiteSnapshotChart({
     const ro = new ResizeObserver(entries => {
       const { width: cw, height: ch } = entries[0].contentRect
       chart.applyOptions({ width: cw, height: Math.max(250, ch) })
+      schedulePnlUpdate.current()
     })
     ro.observe(containerRef.current)
 
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null }
+    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null; emaSeriesRef.current = [] }
   }, [])
 
   // Load OHLC data — fetched once per symbol+date, not re-fetched on every event
@@ -96,37 +111,42 @@ export function WebsiteSnapshotChart({
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date) return
     let cancelled = false
+    setHistoryState('loading');setLoadedInterval(null);seriesRef.current.setData([]);baseDataRef.current=[];emaSeriesRef.current.forEach(series=>series.setData([]))
     ;(async () => {
       try {
         const toCandle = (c: OHLCCandle): CandlestickData => ({
           time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
         })
         const [histResp, tradingDayCandles] = await Promise.all([
-          api.getHistorical(symbol, date, 3, 2),
-          api.getPreSession(symbol, date, '15:30:00', 3),
+          api.getHistorical(symbol, date, intervalMinutes, 2),
+          api.getPreSession(symbol, date, '15:30:00', intervalMinutes),
         ])
         if (cancelled || !seriesRef.current) return
         const all = [...histResp.candles.map(toCandle), ...tradingDayCandles.map(toCandle)]
         const byTime = new Map<number, CandlestickData>()
         all.forEach(c => byTime.set(c.time as number, c))
         const sorted = Array.from(byTime.values()).sort((a, b) => (a.time as number) - (b.time as number))
+        setLoadedInterval(intervalMinutes);setHistoryState(sorted.length?'ready':'empty')
         baseDataRef.current = sorted
         seriesRef.current.setData(sorted)
+        setDataRevision(value => value + 1)
 
         const closes = sorted.map(c => c.close)
         const ema9Vals = computeEMA(closes, 9)
         const ema21Vals = computeEMA(closes, 21)
-        const e9 = chartRef.current?.addLineSeries({
+        const e9 = emaSeriesRef.current[0] ?? chartRef.current?.addLineSeries({
           color: '#f0883e', lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
         })
-        const e21 = chartRef.current?.addLineSeries({
+        const e21 = emaSeriesRef.current[1] ?? chartRef.current?.addLineSeries({
           color: '#79c0ff', lineWidth: 1, lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
         })
+        emaSeriesRef.current = [e9, e21].filter((series): series is ISeriesApi<'Line'> => Boolean(series))
         const e9d = sorted.map((c, i) => ({ time: c.time, value: ema9Vals[i] })).filter((d): d is LineData => d.value !== null)
         const e21d = sorted.map((c, i) => ({ time: c.time, value: ema21Vals[i] })).filter((d): d is LineData => d.value !== null)
         e9?.setData(e9d)
         e21?.setData(e21d)
 
+        if(!sorted.length)return
         const lastTime = sorted[sorted.length - 1].time as number
         const firstTime = Math.max(sorted[0].time as number, lastTime - 5400)
         try {
@@ -137,16 +157,16 @@ export function WebsiteSnapshotChart({
         } catch {
           chartRef.current?.timeScale().fitContent()
         }
-      } catch { /* ignore */ }
+      } catch { if(!cancelled)setHistoryState('error') }
     })()
     return () => { cancelled = true }
-  }, [symbol, date])
+  }, [api, symbol, date, intervalMinutes, historyRetry])
 
   // Per-event: replace the bar at the snapshot moment with in-progress OHLC
   // using series.update() so zoom/scroll is preserved across events
   useEffect(() => {
     const series = seriesRef.current
-    if (!series || barTime <= 0 || !barOhlc || baseDataRef.current.length === 0) return
+    if (historyState!=='ready'||loadedInterval!==intervalMinutes||!series || barTime <= 0 || !barOhlc || baseDataRef.current.length === 0) return
     try {
       series.update({
         time: barTime as Time,
@@ -156,12 +176,12 @@ export function WebsiteSnapshotChart({
         close: barOhlc.close,
       })
     } catch { /* ignore */ }
-  }, [barTime, barOhlc])
+  }, [barTime, barOhlc, dataRevision, historyState, loadedInterval])
 
   // Draw snapshot overlays — cleaned up when snapshot changes
   useEffect(() => {
     const chart = chartRef.current
-    if (!chart || !barTime) return
+    if (!chart || !barTime || historyState!=='ready'||loadedInterval!==intervalMinutes) return
 
     const overlaySeries: ISeriesApi<'Line'>[] = []
     const priceLines: IPriceLine[] = []
@@ -207,7 +227,7 @@ export function WebsiteSnapshotChart({
           title: 'LTP',
         })
         if (pl) priceLines.push(pl)
-      } catch { /* ignore */ }
+      } catch { /* disposed overlay */ }
     }
 
     // Open order lines
@@ -225,7 +245,7 @@ export function WebsiteSnapshotChart({
           title: label,
         })
         if (pl) priceLines.push(pl)
-      } catch { /* ignore */ }
+      } catch { /* disposed overlay */ }
     }
 
     // Position entry marker
@@ -246,13 +266,13 @@ export function WebsiteSnapshotChart({
           size: 0.8,
         }])
         chipPositionPnlRef.current = position
-      } catch { /* ignore */ }
+      } catch { /* disposed overlay */ }
     } else {
       chipPositionPnlRef.current = null
     }
 
     // Trade markers — B/S circles for filled trades up to this event time
-    const intervalSecs = 3 * 60
+    const intervalSecs = intervalMinutes * 60
     const paneTrades = (filledTrades ?? []).filter(t => !t.right || t.underlying_price !== undefined)
     for (const t of paneTrades) {
       try {
@@ -298,7 +318,7 @@ export function WebsiteSnapshotChart({
       }
       setPnlCoord(null)
     }
-  }, [barTime, barOhlc, currentPrice, openOrders, position, filledTrades])
+  }, [barTime, barOhlc, currentPrice, openOrders, position, filledTrades, intervalMinutes, dataRevision, historyState, loadedInterval])
 
   const chipPositionPnlRef = useRef<{ side: string; quantity: number; avg_entry_price: number; pnl: number; pnl_pct: number } | null>(null)
   const [pnlCoord, setPnlCoord] = useState<{ x: number; y: number } | null>(null)
@@ -307,19 +327,20 @@ export function WebsiteSnapshotChart({
   const updatePnlOverlay = useCallback(() => {
     const chart = chartRef.current
     const pos = chipPositionPnlRef.current
-    if (!chart || !barTime || !pos || pos.side === 'FLAT') { setPnlCoord(null); return }
+    if (!chart || !barTime || !pos || pos.side === 'FLAT'||historyState!=='ready'||loadedInterval!==intervalMinutes) { setPnlCoord(null); return }
     const x = chart.timeScale().timeToCoordinate(barTime as Time)
     const y = chartRef.current ? seriesRef.current?.priceToCoordinate(barOhlc?.high ?? currentPrice) : null
     if (x != null && y != null) setPnlCoord({ x: x - 30, y: y - 14 })
-  }, [barTime, barOhlc, currentPrice])
+  }, [barTime, barOhlc, currentPrice, historyState, loadedInterval, intervalMinutes, dataRevision])
 
   useEffect(() => {
-    updatePnlOverlay()
     const chart = chartRef.current
     if (!chart) return
-    const handler = () => updatePnlOverlay()
+    let frame=0
+    const handler = () => {cancelAnimationFrame(frame);frame=requestAnimationFrame(updatePnlOverlay)}
+    schedulePnlUpdate.current=handler;handler()
     chart.timeScale().subscribeVisibleLogicalRangeChange(handler)
-    return () => { try { chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler as any) } catch {} }
+    return () => { cancelAnimationFrame(frame);schedulePnlUpdate.current=()=>{};try { chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler as any) } catch {} }
   }, [updatePnlOverlay])
 
   const pos = chipPositionPnlRef.current
@@ -327,6 +348,9 @@ export function WebsiteSnapshotChart({
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      <div style={{height:26,display:'flex',alignItems:'center',gap:8}}><CandleInterval />{intervalMinutes!==3&&<small style={{color:'#8b949e'}}>Full historical event candle</small>}</div>
+      <ChartHistoryStatus state={historyState==='ready'&&loadedInterval!==intervalMinutes?'loading':historyState} interval={intervalMinutes} retry={()=>setHistoryRetry(n=>n+1)}/>
+      <div style={{position:'relative',height:'calc(100% - 26px)'}}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       {pos && pos.side !== 'FLAT' && pnlCoord && (
         <div style={{
@@ -340,6 +364,7 @@ export function WebsiteSnapshotChart({
           {pos.pnl >= 0 ? '+' : ''}{pos.pnl.toFixed(2)} ({pos.pnl_pct > 0 ? '+' : ''}{pos.pnl_pct}%)
         </div>
       )}
+      </div>
     </div>
   )
 }
@@ -347,12 +372,13 @@ export function WebsiteSnapshotChart({
 // ── Options variant of SnapshotChart ─────────────────────────────────────────
 
 export function WebsiteSnapshotOptionsChart({
-  symbol, date, barTime, barOhlc, currentPrice, openOrders,
+  symbol, date, barTime: recordedBarTime, barOhlc: capturedBarOhlc, snapshotEventTime, currentPrice, openOrders,
   strike, expiry, right, filledTrades,
 }: {
   symbol: string; date: string
   sessionId?: string
   observationResolution?: number
+  snapshotEventTime?: number
   barTime: number
   barOhlc: { open: number; high: number; low: number; close: number } | null
   currentPrice: number
@@ -362,6 +388,15 @@ export function WebsiteSnapshotOptionsChart({
   filledTrades: { trade_id: string; side: 'BUY' | 'SELL'; price: number; timestamp: number; right?: string; strike?: number; underlying_price?: number; quantity: number }[]
 }) {
   const api = useAnalysisApi()
+  const { intervalMinutes = 3 } = useAnalysisEnvironment()
+  const [historyState,setHistoryState]=useState<HistoryState>('loading')
+  const [historyRetry,setHistoryRetry]=useState(0)
+  const [loadedInterval,setLoadedInterval]=useState<number|null>(null)
+  const eventTime = snapshotEventTime ?? recordedBarTime
+  const barTime = Math.floor(eventTime / (intervalMinutes * 60)) * intervalMinutes * 60
+  // Captured OHLC is a 3-minute bar; never present it as another interval.
+  const barOhlc = intervalMinutes === 3 && barTime === recordedBarTime ? capturedBarOhlc : null
+  const [dataRevision, setDataRevision] = useState(0)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -395,12 +430,13 @@ export function WebsiteSnapshotOptionsChart({
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
     let cancelled = false
+    setHistoryState('loading');setLoadedInterval(null);seriesRef.current.setData([])
     ;(async () => {
       try {
         const toCandle = (c: OHLCCandle): CandlestickData => ({
           time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close,
         })
-        const histResp = await api.getOptionsHistorical(symbol, date, strike, expiry, right, 3, 2)
+        const histResp = await api.getOptionsHistorical(symbol, date, strike, expiry, right, intervalMinutes, 2)
         if (cancelled || !seriesRef.current) return
         const byTime = new Map<number, CandlestickData>()
         histResp.candles.map(toCandle).forEach(c => byTime.set(c.time as number, c))
@@ -421,8 +457,10 @@ export function WebsiteSnapshotOptionsChart({
           }
         }
 
+        setLoadedInterval(intervalMinutes);setHistoryState(sorted.length?'ready':'empty')
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
+        setDataRevision(value => value + 1)
 
           const lastTime = sorted[sorted.length - 1].time as number
           const firstTime = Math.max(sorted[0].time as number, lastTime - 5400)
@@ -435,15 +473,15 @@ export function WebsiteSnapshotOptionsChart({
             chartRef.current?.timeScale().fitContent()
           }
         }
-      } catch { /* ignore */ }
+      } catch { if(!cancelled)setHistoryState('error') }
     })()
     return () => { cancelled = true }
-  }, [symbol, date, strike, expiry, right])
+  }, [api, symbol, date, strike, expiry, right, intervalMinutes, historyRetry])
 
   // Snapshot overlays — cleaned up when snapshot changes
   useEffect(() => {
     const chart = chartRef.current
-    if (!chart || !barTime) return
+    if (!chart || !barTime || historyState!=='ready'||loadedInterval!==intervalMinutes) return
 
     const overlaySeries: ISeriesApi<'Line'>[] = []
     const priceLines: IPriceLine[] = []
@@ -479,7 +517,7 @@ export function WebsiteSnapshotOptionsChart({
     }
 
     // Trade markers — B/S circles for filled trades matching this pane's right+strike
-    const intervalSecs = 3 * 60
+    const intervalSecs = intervalMinutes * 60
     const paneTrades = (filledTrades ?? []).filter(t => t.right === right && t.strike === strike)
     for (const t of paneTrades) {
       try {
@@ -509,11 +547,15 @@ export function WebsiteSnapshotOptionsChart({
         try { seriesRef.current?.removePriceLine(pl) } catch { /* removed */ }
       }
     }
-  }, [barTime, barOhlc, currentPrice, openOrders, right, filledTrades])
+  }, [barTime, barOhlc, currentPrice, openOrders, right, filledTrades, intervalMinutes, dataRevision, historyState, loadedInterval])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      <div style={{height:26,display:'flex',alignItems:'center',gap:8}}><CandleInterval />{intervalMinutes!==3&&<small style={{color:'#8b949e'}}>Full historical event candle</small>}</div>
+      <ChartHistoryStatus state={historyState==='ready'&&loadedInterval!==intervalMinutes?'loading':historyState} interval={intervalMinutes} retry={()=>setHistoryRetry(n=>n+1)}/>
+      <div style={{position:'relative',height:'calc(100% - 26px)'}}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      </div>
     </div>
   )
 }

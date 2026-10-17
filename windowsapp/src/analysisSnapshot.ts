@@ -5,10 +5,10 @@ export function snapshotCandles(rows:OHLCCandle[],barTime?:number,barOhlc?:Omit<
   if(barTime!=null&&barOhlc)result.push({...barOhlc,time:barTime})
   return [...new Map(result.map(c=>[c.time,c])).values()].sort((a,b)=>a.time-b.time)
 }
-export function snapshotBarTime(eventTime:number|undefined, recordedTime:number|undefined, date:string):number|undefined {
+export function snapshotBarTime(eventTime:number|undefined, recordedTime:number|undefined, date:string, intervalMinutes=3):number|undefined {
   const eventDate=new Date((eventTime??NaN)*1000)
-  if(eventTime!=null&&eventTime>0&&Number.isFinite(eventDate.getTime())&&eventDate.toISOString().slice(0,10)===date)return Math.floor(eventTime/180)*180
-  return recordedTime
+  if(eventTime!=null&&eventTime>0&&Number.isFinite(eventDate.getTime())&&eventDate.toISOString().slice(0,10)===date)return Math.floor(eventTime/(intervalMinutes*60))*(intervalMinutes*60)
+  return recordedTime!=null&&intervalMinutes!==3 ? Math.floor(recordedTime/(intervalMinutes*60))*(intervalMinutes*60) : recordedTime
 }
 export function resolveSnapshotExecutions(captured:AnalysisTrade[],canonical:AnalysisTrade[]):AnalysisTrade[] {
   return captured.map(trade=>{

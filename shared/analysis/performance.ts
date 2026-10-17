@@ -131,6 +131,7 @@ export interface PerformanceCycle {
   state: string;
   entry_time: number;
   exit_time: number | null;
+  exit_sort_time?: number | null;
   entry_count: number;
   exit_count: number;
   net_pnl: number;
@@ -138,6 +139,7 @@ export interface PerformanceCycle {
   fees: number;
   open_quantity: number;
   capital?: number;
+  starting_capital?: number;
   exchange?: string;
   product?: string;
   exits?: Array<{
@@ -172,6 +174,7 @@ export interface PerformanceCycle {
   behavior?: { dimension: string; key: string }[];
 }
 export interface PerformanceReport {
+  day_paths?: import("./dayJourney").DayPath[];
   version: number;
   summary: Metrics & {
     realized_pnl: number;
@@ -244,3 +247,5 @@ export interface RealFeesDay {
     history_changed: boolean;
   }>;
 }
+
+export type CycleIdentity = Pick<PerformanceCycle, "session_id" | "cycle_id">;

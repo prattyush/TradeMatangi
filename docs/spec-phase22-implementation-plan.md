@@ -232,3 +232,19 @@ PR #676 has been merged. This follow-up is implemented on `fix/website-kline-dis
 - Added browser checks for two actual EMA lines with periods 9/21, hidden symbol/OHLC, preserved unrelated settings, invalid-input rejection, replay countdown pause/boundary updates, live ticking and daily suppression. Tests perform no trading writes. An existing Futures test now waits for the chart remount before inspecting it, matching the asynchronous identity-reset lifecycle.
 
 Verification for this follow-up: **29 browser scenarios**, **278 shared/desktop unit tests**, both client TypeScript checks and both production JavaScript builds. Existing bundle-size advisories remain. No backend behavior changed; backend and native/live-broker acceptance were not repeated for this display-only follow-up.
+
+## Dev → preprod integration — 2026-10-17
+
+Integration branch: `integration/dev-into-preprod-20261017`. Base preprod: `ecf903727a2f5adb06b3f315a475a9ae356dff07`; incoming dev: `957574134602a78e4b27485ea07237da04fc89d5` (PR #679, implementation `124dd77`). A normal merge retains both histories. No conflicts or files modified on both sides were found. Incoming changes cover analysis candle intervals, Day P&L journeys and sizing behavior, with desktop analysis controls and associated regression coverage. Preprod's Phase 22 KLine tools, display preferences, countdown, contract-safe order interactions and responsive indicator tiles are retained.
+
+The actual merge tree, before this documentation addition, is `f8b431567a864111979d5eb78f1812f6d8dbbedc`, identical to the temporary combined snapshot validated during planning. No application changes were made beyond the normal merge. No dependency changes, migrations or broker order execution modifications are introduced by this integration.
+
+Combined-tree verification:
+
+- Both client TypeScript checks and production JavaScript builds passed; existing bundle-size advisories remain.
+- All **298 desktop/shared unit tests** and **29 Phase 22 browser regressions** passed.
+- Incoming synthetic analysis browser checks passed for eight website/desktop chart modes, all supported interval choices, synchronized nested providers, history failure/Retry and stale-response fencing, desktop controls, Day journey units/capital/keyboard/responsive behavior, sizing metrics and Stats cycle inspection beyond the loaded page, including grouped closes and selection fencing.
+- **55 focused backend tests** passed: Day journeys, Real analysis fees and Phase 22 presentation/cutoff regressions. **13 desktop analysis tests** also passed with application startup isolated in the test runner. A separate 37-test subset passed but overlaps the 55 and is not an additional count.
+- Ordinary startup-dependent desktop API verification was interrupted because local DynamoDB at `localhost:8000` is unavailable. The isolated desktop run validates API behavior with mocked persistence, not real startup recovery or deployed database connectivity. No test harness changes were committed.
+
+PR targets **preprod**. Deployment, native Windows acceptance, chosen live-broker acceptance and promotion to main remain manual. Automated verification used synthetic/mocked data and performed no live broker writes.

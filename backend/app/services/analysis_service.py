@@ -152,16 +152,17 @@ def get_session_summary_with_trades(session_id: str) -> dict | None:
         if not session:
             return None
         trades = get_trades_for_session(session_id)
-        cycles = None
-        if session.get("session_type") == "real":
-            from app.services.performance_service import load_session_cycles
-            cycles = load_session_cycles(session, include_labels=False)
+        from app.services.performance_service import load_session_cycles, build_cycles
+        cycles = (load_session_cycles(session, include_labels=False)
+                  if session.get("session_type") == "real" or session.get("trading_style") == "swing"
+                  else build_cycles(session, trades))
         summary = compute_session_summary(session, trades, cycles)
         if session.get("session_type") == "real":
             from app.services.real_analysis_fees import apply_rows
             trades = apply_rows(session, trades)
         summary["trades"] = [_serialize_trade(t) for t in trades]
         summary["orders"] = get_stored_orders(session)
+        summary["cycles"] = cycles
         
         return summary
     except Exception:
