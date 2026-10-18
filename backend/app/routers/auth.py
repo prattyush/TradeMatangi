@@ -179,7 +179,10 @@ async def set_account_name_endpoint(
     """Set the account_name for the current user. Used for Google sign-in users who haven't set one yet."""
     if not req.account_name.strip():
         raise HTTPException(status_code=400, detail="account_name is required")
-    result = set_account_name(user_id, req.account_name.strip())
+    try:
+        result = set_account_name(user_id, req.account_name.strip())
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
     if not result:
         raise HTTPException(status_code=404, detail="User not found")
     return AuthResponse(

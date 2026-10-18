@@ -248,3 +248,18 @@ Combined-tree verification:
 - Ordinary startup-dependent desktop API verification was interrupted because local DynamoDB at `localhost:8000` is unavailable. The isolated desktop run validates API behavior with mocked persistence, not real startup recovery or deployed database connectivity. No test harness changes were committed.
 
 PR targets **preprod**. Deployment, native Windows acceptance, chosen live-broker acceptance and promotion to main remain manual. Automated verification used synthetic/mocked data and performed no live broker writes.
+
+## Account-name popup correction — 2026-10-18
+
+Reported: the tablet's “Set Account Name” dialog stayed open after Save without explanation. Inspection confirmed that save exceptions were discarded, popup visibility was latched before the asynchronous profile refresh, and confirmed saves were not persisted to the browser profile cache. The original tablet request/response was not captured; its exact transport/database failure remains unknown.
+
+Implemented decisions:
+
+- One profile owner handles server refresh and name saves, keeping the existing login/profile shape and API endpoints. Popup visibility follows the current profile, so a server-provided existing name dismisses it. The popup remains mounted outside the trading workspace and does not recreate an active session.
+- Confirmed names are saved to React state and the existing `auth_user` cache. Browser storage write failure does not turn server success into save failure. Profile/name responses are fenced by account identity and a request version so logout, account switching or a newer save cannot be overwritten by a late refresh. Existing notification account initialization is preserved.
+- Save errors appear inside the modal, typed input survives failures and retry is explicit. Empty/whitespace input is rejected and duplicate submissions are suppressed. Responsive width and 16px text input improve tablet usability. No bypass, fake local success or automatic order/trading action is introduced.
+- The backend account-name update uses DynamoDB `ALL_NEW` instead of an immediate eventually consistent follow-up read. A conditional update prevents creating an incomplete record for an unknown user. Unknown user remains 404; database failures now return an actionable 500 error instead of a misleading 404. The endpoint and successful response format are unchanged.
+
+Verification: **7 tablet-sized browser scenarios passed**, exercising the production profile hook and popup (not the full trading controller), including delayed existing profiles, failed saves/retry/cache/reload, late refresh after save, offline operation, blocked storage writes, whitespace, duplicate submits and account/logout response fencing. **8 focused backend tests and 3 existing login tests passed**. Website TypeScript and production build passed with the existing bundle-size advisory. A broader authentication run was interrupted after an existing registration test failed trying to access unavailable DynamoDB at `localhost:8000`; that registration path is unchanged. No live broker requests or real account writes were used by verification.
+
+Delivery: new fix branch and PR targeting preprod. The user's uncommitted `docs/spec-phase22.md` requirements addition is intentionally excluded. After deployment, repeat the original tablet save; if it fails, the dialog now shows its response instead of silently remaining open.
