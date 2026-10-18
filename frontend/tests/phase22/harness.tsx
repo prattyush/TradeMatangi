@@ -1,3 +1,4 @@
+import { ChartMenuGesture } from "../../../shared/charts/ChartMenuGesture";
 import WebsiteChartAppearanceSettings from "../../src/components/WebsiteChartAppearanceSettings";
 import { buildDayChartContextMenu } from "../../src/services/dayChartContextMenu";
 import ChartContextMenu from "../../src/components/ChartContextMenu";
@@ -288,7 +289,7 @@ function Harness() {
 }
 createRoot(document.getElementById("test-root")!).render(
   <React.StrictMode>
-    <Harness />
+    <ChartMenuGesture.Provider value={new URLSearchParams(location.search).get("menuGesture") === "doubleclick" ? "doubleclick" : "contextmenu"}><Harness /></ChartMenuGesture.Provider>
   </React.StrictMode>,
 );
 w.chart = () => {

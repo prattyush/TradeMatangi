@@ -1,3 +1,4 @@
+import { bindChartMenu, ChartMenuButton, useChartMenuGesture, type MenuPoint } from "./ChartMenuGesture";
 import { beginChartActivity } from "./chartActivity";
 import { usePendingOrderEdits } from "./pendingOrderEdits";
 import { snapSwingPrice, swingOrderTick } from "../swingOrderPrice";
@@ -506,6 +507,7 @@ export function KLineChart({
   const initialTimeRangeRef = useRef(initialTimeRange);
   const [geometryVersion, setGeometryVersion] = useState(0);
   const viewportResetRef = useRef(viewportResetKey);
+  const menuGesture = useChartMenuGesture();
   const candlesRef = useRef(candles);
   const renderedCandlesRef = useRef<Candle[]>([]);
   const subscribeBarRef = useRef<((data: KLineData) => void) | null>(null);
@@ -607,6 +609,7 @@ export function KLineChart({
   const drawingSavesRef = useRef(new Set<string>());
   const [drawingNotice, setDrawingNotice] = useState("");
   const drawingGestureRef = useRef(false);
+  const menuEditingUntil = useRef(0);
   const gestureEndRef = useRef<(() => void) | null>(null);
   const setDrawingGesture = (active: boolean) => {
     drawingGestureRef.current = active;
@@ -822,7 +825,7 @@ export function KLineChart({
         onPricePickRef.current?.(Number(value.toFixed(2)));
       }
     };
-    const openContext = (event: MouseEvent) => {
+    const openContext = (event: MenuPoint) => {
       if (
         (!tradingEnabledRef.current &&
           !swingInteractions.current.onSwingChartContext) ||
@@ -835,9 +838,9 @@ export function KLineChart({
         [{ x: event.clientX - rect.left, y: event.clientY - rect.top }],
         { paneId: "candle_pane" },
       );
-      const value = Array.isArray(point) ? point[0]?.value : undefined;
+      const bars = candlesRef.current;
+      const value = event.currentPrice ? bars[bars.length - 1]?.close : Array.isArray(point) ? point[0]?.value : undefined;
       if (typeof value !== "number" || !Number.isFinite(value)) return;
-      event.preventDefault();
       if (swingInteractions.current.onSwingChartContext) {
         swingInteractions.current.onSwingChartContext(
           value,
@@ -854,11 +857,11 @@ export function KLineChart({
     };
     container.addEventListener("mousedown", rememberPointer);
     container.addEventListener("click", pickPrice);
-    container.addEventListener("contextmenu", openContext);
+    const removeMenu = bindChartMenu(container, menuGesture, openContext, () => menuGesture === "doubleclick" && (Boolean(pricePickActionRef.current) || drawingGestureRef.current || Date.now() < menuEditingUntil.current));
     return () => {
       container.removeEventListener("mousedown", rememberPointer);
       container.removeEventListener("click", pickPrice);
-      container.removeEventListener("contextmenu", openContext);
+      removeMenu();
       subscribeBarRef.current = null;
       renderedCandlesRef.current = [];
       chartRef.current = null;
@@ -1338,8 +1341,9 @@ export function KLineChart({
             ),
         },
       },
-      onSelected: (event: any) => setSelected(event.overlay.id),
+      onSelected: (event: any) => { menuEditingUntil.current = Date.now() + 500; setSelected(event.overlay.id); },
       onPressedMoveStart: () => {
+        menuEditingUntil.current = Date.now() + 500;
         setDrawingGesture(true);
       },
       onPressedMoveEnd: saveMovedDrawing,
@@ -1572,6 +1576,7 @@ export function KLineChart({
         circle: { color: fillColor },
       },
       onPressedMoveStart: () => {
+        menuEditingUntil.current = Date.now() + 500;
         setDrawingGesture(true);
       },
       onPressedMoveEnd: saveMovedDrawing,
@@ -1848,6 +1853,7 @@ export function KLineChart({
           : undefined,
         extendData: { orderId: order.order_id, label },
         onSelected: () => {
+          menuEditingUntil.current = Date.now() + 500;
           if (readOnlyOrders) return;
           setSelectedOrderId(order.order_id);
           setSelectedOrderAnchor(lastPointerRef.current);
@@ -1862,6 +1868,7 @@ export function KLineChart({
           setSelectedOrderAnchor(null);
         },
         onPressedMoveStart: () => {
+          menuEditingUntil.current = Date.now() + 500;
           if (onOrderSelect)
             swingDragGesture.current.set(order.order_id, {
               price: orderPrice(order),
@@ -1881,6 +1888,7 @@ export function KLineChart({
           }
         },
         onPressedMoveEnd: (event: any) => {
+          menuEditingUntil.current = Date.now() + 500;
           const value = event.overlay.points[0]?.value;
           const inputs = tradingOverlayInputsRef.current;
           const latest = inputs.openOrders.find(
@@ -1987,6 +1995,7 @@ export function KLineChart({
             projectedLabel ?? `${strategy.strategy_type} @ ${price.toFixed(2)}`,
         },
         onSelected: () => {
+          menuEditingUntil.current = Date.now() + 500;
           const inputs = tradingOverlayInputsRef.current;
           const latest = inputs.strategies.find(
             (item) => item.strategy_id === strategy.strategy_id,
@@ -2037,6 +2046,7 @@ export function KLineChart({
           setTargetProfitPctDraft(String(initialPct));
         },
         onPressedMoveEnd: (event: any) => {
+          menuEditingUntil.current = Date.now() + 500;
           const value = event.overlay.points[0]?.value;
           const callback = tradingOverlayInputsRef.current.onStrategyDrag;
           const snapped = snapSwingPrice(value);
@@ -2375,6 +2385,7 @@ export function KLineChart({
           {tradingSettings?.desktop_hide_chart_labels ? "" : " · IST"}
         </span>
         <span className="chart-actions">
+          <ChartMenuButton chart={element} visible={tradingEnabled || Boolean(onSwingChartContext)} />
           {pricePickAction && (
             <span className="candle-close">
               {pricePickAction.missingSl

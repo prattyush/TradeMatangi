@@ -147,7 +147,7 @@ export default function LoginScreen({ onLogin }: Props) {
       <div style={{
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        height: '100vh', background: '#0d1117',
+        height: 'var(--app-height, 100vh)', background: '#0d1117',
       }}>
         <div style={{
           width: 360, padding: 32,
@@ -189,7 +189,7 @@ export default function LoginScreen({ onLogin }: Props) {
     <div style={{
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      height: '100vh', background: '#0d1117',
+      height: 'var(--app-height, 100vh)', background: '#0d1117',
     }}>
       <div style={{
         width: 360, padding: 32,

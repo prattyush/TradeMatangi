@@ -1206,7 +1206,7 @@ export default function SwingPortfolioPanel({
         color: "#e5e7eb",
         background: "#0d1117",
         minHeight: 360,
-        height: surface === "website" || navigationControls ? "100vh" : "calc(100vh - 48px)",
+        height: surface === "website" ? "var(--app-height, 100vh)" : navigationControls ? "100vh" : "calc(100vh - 48px)",
         overflowY: chartWorkspace ? "hidden" : "auto",
         boxSizing: "border-box",
       }}
