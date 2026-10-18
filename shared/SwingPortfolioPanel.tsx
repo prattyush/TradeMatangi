@@ -1,3 +1,4 @@
+import { AppWindowControls } from "./AppWindowControls";
 import { snapSwingPrice, swingOrderTick } from './swingOrderPrice';
 import SwingOrderActions from './SwingOrderActions';
 import { SwingIconButton } from './SwingIcon';
@@ -1273,6 +1274,7 @@ export default function SwingPortfolioPanel({
         )}
         <header style={{ display: "flex", gap: 16, alignItems: "center" }}>
           <h2>{mode === "real" ? "Real" : "Paper"} Swing</h2>
+          {!chartWorkspace && <AppWindowControls />}
           <button
             title="Detach screen; keep portfolio running"
             onClick={onDetach}

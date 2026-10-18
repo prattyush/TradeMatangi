@@ -57,3 +57,5 @@ Can you create a web app for trademantagi, with all features as that present in 
 Implementation: see [Installable webapp](spec-phase22-webapp.md) for the shared-code design, chart gestures, hosting, verification and manual acceptance.
 
 The website login screen and trading header now offer **Install app**. The normal frontend startup scripts serve both the website at `/` and the webapp at `/webapp/` on port 5173 for preprod testing. Installation leaves the website tab unchanged; the installed app launches `/webapp/`. See the linked webapp document for startup and acceptance details.
+
+The webapp no longer reserves a separate app-title/install/fullscreen row. Fullscreen uses a compact icon in existing headers and a top-edge floating exit on desktop (or the header restore icon on touch). Installation controls remain on the website only. See the webapp implementation document for behavior and verification.

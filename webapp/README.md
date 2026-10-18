@@ -30,7 +30,9 @@ Tests require Playwright Chromium or Google Chrome (`PLAYWRIGHT_CHROMIUM_EXECUTA
 
 - Double-click or double-tap a chart price to open its trading menu. Opening a menu never places an order. A **Chart menu** button opens at the latest candle/tick price and also works with a keyboard.
 - Touch and drag the chart background to pan. Pinch zoom continues to use the chart library. Drag an editable order/drawing line to move that line; updates retain existing release-only behavior. Drawing and price-pick modes take priority over menu recognition.
-- Use **Full screen** where supported, and Escape or **Exit full screen** to leave it. Install from Chromium's app menu or Safari's Add to Home Screen for a standalone window. Browser and OS support varies; standalone does not require Fullscreen API support.
+- The webapp has no additional title/install/fullscreen row. Its first trading row is the existing TradeMatangi header and controls; the workspace uses the viewport height, respecting device safe areas.
+- Use the compact **Full screen** icon in the existing header (or login title) where supported. On desktop, move the pointer to the top eight pixels to reveal a floating **×** at the top center. It stays while hovered/focused and hides 1.5 seconds after leaving. Escape and browser exits also work. Touch devices keep a compact restore icon in their existing header while fullscreen.
+- Install from the website at `/`. No installation button is rendered inside `/webapp/`, whether it is opened in a browser, installed window or fullscreen. The app does not need to detect installation to enforce this.
 - Desktop and tablets from 768 CSS pixels wide are supported; no separate phone layout is provided.
 
 ## Hosting
@@ -75,7 +77,7 @@ Same-origin hosting uses the existing backend identity, browser storage and Goog
 
 Both production-built pages register the same worker, scoped only to `/webapp/`. Registration from `/` does not make the worker control the website. It stores only `offline.html` under the `tradematangi-webapp-offline-*` cache prefix. API requests, streams, trading mutations and account data never enter worker caching or background queues. Existing website local-storage preferences/session recovery remain in use.
 
-An offline launch shows a static connection page with Retry. An open app retains its workspace and the existing API/SSE recovery behavior. The connection label reports browser network availability; it does not certify backend/broker health or order acknowledgement. Closing an app window does not stop server-side trading strategies.
+An offline launch shows a static connection page with Retry. An open app retains its workspace and the existing API/SSE recovery behavior. Connection-loss messages use the existing notification area and report browser network availability; it does not certify backend/broker health or order acknowledgement. Closing an app window does not stop server-side trading strategies.
 
 New workers wait for existing controlled windows to close. No `skipWaiting`, forced reload, or `clients.claim` is used. Bump the offline cache version when changing the offline page. Browser HTTP caching of ordinary application assets follows the server headers above.
 
