@@ -23,6 +23,18 @@ export default defineConfig({
     },
   },
   plugins: [react()],
+  preview: {
+    host: true,
+    allowedHosts: ["tradematangi.co.in"],
+    port: 5173,
+    strictPort: true,
+    // Revalidate worker/manifest/HTML during preprod installation testing.
+    headers: { "Cache-Control": "no-cache" },
+    proxy: {
+      "/api": { target: process.env.WEBAPP_API_PROXY ?? "http://127.0.0.1:8700", changeOrigin: true },
+      "/ai": { target: process.env.WEBAPP_AI_PROXY ?? "http://127.0.0.1:8701", changeOrigin: true },
+    },
+  },
   server: {
     allowedHosts: ["tradematangi.co.in"],
     hmr: disableHmr

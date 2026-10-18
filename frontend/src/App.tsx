@@ -1,3 +1,4 @@
+import { InstallAppControl } from '../../webapp/src/InstallApp'
 import AccountNamePopup from './components/AccountNamePopup'
 import { useAccountProfile, type AccountProfile } from './hooks/useAccountProfile'
 import { buildDayChartContextMenu, type DayChartMenuContext } from "./services/dayChartContextMenu";
@@ -174,7 +175,7 @@ function defaultPanesForLayout(preset: LayoutPreset, current: PaneConfig[]): Pan
   return [...current, ...extras]
 }
 
-export default function App() {
+export default function App({ showInstall = false }: { showInstall?: boolean }) {
   const [messageHistory,setMessageHistory]=useState<HistoryRequest|null>(null)
   const openMessages=useCallback((id?:string)=>{setMessageHistory({notificationId:id})},[])
   // ── Auth state ──────────────────────────────────────────────────────────────
@@ -187,13 +188,13 @@ export default function App() {
   const handleLogout = useCallback(() => { setNotificationAccount(null); logout() }, [logout])
 
   if (!authUser) {
-    return <><LoginScreen onLogin={handleLogin} /><NotificationCenter /></>
+    return <><LoginScreen onLogin={handleLogin} showInstall={showInstall} /><NotificationCenter /></>
   }
 
-  return <><AppInner authUser={authUser} onLogout={handleLogout} onOpenMessages={openMessages} /><AccountNamePopup key={authUser.userId} user={authUser} onSave={saveAccountName} /><NotificationCenter key={authUser.userId} request={messageHistory} onRequestChange={setMessageHistory} showLauncher={false} /></>
+  return <><AppInner showInstall={showInstall} authUser={authUser} onLogout={handleLogout} onOpenMessages={openMessages} /><AccountNamePopup key={authUser.userId} user={authUser} onSave={saveAccountName} /><NotificationCenter key={authUser.userId} request={messageHistory} onRequestChange={setMessageHistory} showLauncher={false} /></>
 }
 
-function AppInner({ authUser, onLogout, onOpenMessages }: { onOpenMessages:(id?:string)=>void; authUser: AccountProfile; onLogout: () => void }) {
+function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showInstall: boolean; onOpenMessages:(id?:string)=>void; authUser: AccountProfile; onLogout: () => void }) {
   const sim = useSimulation()
   const websiteChartRenderer = useWebsiteChartRenderer()
   useEffect(()=>{pendingOrderEdits.setScope(`${BACKEND_URL}:${authUser.userId}`)},[authUser.userId])
@@ -2335,6 +2336,7 @@ function AppInner({ authUser, onLogout, onOpenMessages }: { onOpenMessages:(id?:
             )}
           </div>
         )}
+        {showInstall && <InstallAppControl />}
         <SettingsModal
           date={sim.date}
           isAdmin={authUser.isAdmin}

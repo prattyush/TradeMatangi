@@ -6,6 +6,7 @@
 - Per the clarified requirement, implementation and review target `preprod`, the testing branch containing the current website/KLine work. No merge to `dev` or `main`, deployment or real-order testing is performed automatically.
 - `webapp` imports the website application composition directly. It inherits every website feature and existing shared/desktop browser-safe chart implementation; there are no duplicated screens, API clients, session engines or persistence schemas.
 - Double-click/double-tap opens chart trading menus. Touch-drag on the background pans; native pinch zoom remains with the chart library. Editing drawings/order lines and price picking take priority. A keyboard-accessible Chart menu button uses the latest candle/tick price. Website and desktop retain right-click by default.
+- The existing website at `/` offers installation on its login screen and trading header, linking the same manifest as `/webapp/`. Installation leaves the website tab at `/`; launching the installed app opens `/webapp/`.
 - Fullscreen uses the browser Fullscreen API where supported. Installation opens a standalone app window; fullscreen rejection/absence does not block trading or installation.
 
 ## Implementation
@@ -16,7 +17,7 @@ Shared chart components consume an optional `ChartMenuGesture` context, defaulti
 
 Deployment uses the same `/api` and `/ai` paths as the website, with optional build-time endpoint overrides. Local Vite development proxies to localhost backend/AI services independently of the website's `.env`. There are no backend, DDB or public HTTP API changes. Build dependency versions match the website lockfile.
 
-The production-only worker controls `/webapp/` and caches only a static offline page. It never caches account responses or trading data, intercepts API/stream traffic, queues orders, forces reloads, or claims existing clients. Updates wait until old controlled windows close. Activation removes only obsolete `tradematangi-webapp-offline-*` caches. Existing application local-storage behavior and stream/session recovery remain in use.
+The production-built website and app register the same worker, which controls only `/webapp/` and caches only a static offline page. It never caches account responses or trading data, intercepts API/stream traffic, queues orders, forces reloads, or claims existing clients. Updates wait until old controlled windows close. Activation removes only obsolete `tradematangi-webapp-offline-*` caches. Existing application local-storage behavior and stream/session recovery remain in use.
 
 ## Verification
 
@@ -26,13 +27,13 @@ Existing website browser checks and desktop/shared unit tests cover the reused t
 
 Verified on 2026-10-18:
 
-- Webapp: **16 browser scenarios pass**, including production-build PWA lifecycle tests and real chart-library touch interactions.
+- Webapp and website installation: **19 browser scenarios pass**, including production-build PWA lifecycle tests, real chart-library touch interactions and native Chromium installability diagnostics.
 - Existing website: **36 browser scenarios pass**.
 - Desktop/shared: **298 unit tests pass** across 43 files.
 - Webapp and website TypeScript checks/production builds pass; desktop TypeScript check passes. Vite reports the existing large-bundle advisory.
 - Shell scripts and worker syntax checks pass; `git diff --check` passes.
 
-Commands: `npm run build --prefix webapp`, `npm test --prefix webapp`; from `frontend`, `node node_modules/typescript/bin/tsc --noEmit && node node_modules/vite/bin/vite.js build` and `node node_modules/@playwright/test/cli.js test`; from `windowsapp`, `node node_modules/vitest/vitest.mjs run` and `node node_modules/typescript/bin/tsc --noEmit`.
+Commands: `bash scripts/build-frontend-with-webapp.sh`, `npm test --prefix webapp`; from `frontend`, `node node_modules/typescript/bin/tsc --noEmit && node node_modules/vite/bin/vite.js build` and `node node_modules/@playwright/test/cli.js test`; from `windowsapp`, `node node_modules/vitest/vitest.mjs run` and `node node_modules/typescript/bin/tsc --noEmit`.
 
 See [webapp setup and hosting](../webapp/README.md) for startup scripts, build/test commands, nginx configuration and cache headers.
 
@@ -42,3 +43,11 @@ See [webapp setup and hosting](../webapp/README.md) for startup scripts, build/t
 - Verify Google sign-in and broker connection flows on the deployed HTTPS origin, including popup behavior.
 - Verify live feeds, background/resume recovery and concurrent website/installed-app windows against the intended test environment. The browser connectivity label is not broker-health or order-acknowledgement evidence.
 - Obtain explicit authorization before any real-order acceptance test. Deployment and merging remain manual.
+
+## Installation from the existing website follow-up
+
+The frontend startup scripts build both applications and serve the combined `frontend/dist/` artifact on the existing port 5173 using Vite preview for preprod testing. The root page remains the website; `/webapp/` serves the installed app. EC2 HTTPS backend settings and date-stamped logs are preserved. The stop script targets the recorded preview PID instead of stopping every Vite process. Direct Vite development and the separate port-5174 webapp script remain available; installation tests use the production-style combined build.
+
+Shared installation state survives switching from the login screen to the authenticated trading header, retains the browser's one-shot prompt, prevents duplicate prompt requests and hides controls in standalone mode or after installation. Unsupported/private browsers receive instructions and a separate Open webapp link. A normal Chromium profile verifies native installability diagnostics; isolated browser tests check manifest identity, launch URL, installation controls and worker scope.
+
+Follow-up verification on 2026-10-18: all **19 installation/webapp browser scenarios** and **5 focused existing website chart regressions** pass. The combined build passes both TypeScript checks and both production builds. The real startup script serves `/`, `/webapp/`, the manifest and the worker on port 5173 with revalidation headers. Stopping the managed frontend leaves an independently running Vite process available. Shell syntax and whitespace checks pass. The earlier 36 website browser/298 shared-unit results above are the original implementation baseline; no broad backend/full-suite rerun was needed for this follow-up.

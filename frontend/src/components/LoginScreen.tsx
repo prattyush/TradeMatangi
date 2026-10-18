@@ -1,8 +1,10 @@
+import { InstallAppControl } from '../../../webapp/src/InstallApp'
 import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect, useCallback } from 'react'
 import api from '../services/api'
 
 interface Props {
+  showInstall?: boolean
   onLogin: (userId: string, email: string, isAdmin?: boolean, accountName?: string) => void
 }
 
@@ -27,7 +29,7 @@ declare global {
   }
 }
 
-export default function LoginScreen({ onLogin }: Props) {
+export default function LoginScreen({ onLogin, showInstall = false }: Props) {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -297,6 +299,7 @@ export default function LoginScreen({ onLogin }: Props) {
           )}
         </div>
 
+        {showInstall && <div style={{ marginTop: 16, textAlign: 'center' }}><InstallAppControl /></div>}
       </div>
     </div>
   )

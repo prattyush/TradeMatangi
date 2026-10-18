@@ -1,18 +1,17 @@
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { resolve, extname } from 'node:path'
-const root = resolve('dist')
+const root = resolve('../frontend/dist')
 const mime = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.svg': 'image/svg+xml' }
 createServer(async (request, response) => {
   const pathname = new URL(request.url, 'http://localhost').pathname
-  if (pathname === '/') { response.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html><title>Existing website</title>Existing website'); return }
+  if (pathname === '/outside-scope.html') { response.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html><title>Outside app scope</title>Outside app scope'); return }
   // Keep tests independent of a real broker/backend.
   if (pathname.startsWith('/api/') || pathname.startsWith('/ai/')) {
     response.writeHead(503, { 'Content-Type': 'application/json' }).end('{"detail":"Test backend unavailable"}')
     return
   }
-  if (!pathname.startsWith('/webapp/')) { response.writeHead(404).end(); return }
-  const file = resolve(root, pathname.slice('/webapp/'.length) || 'index.html')
+  const file = resolve(root, pathname.endsWith('/') ? `${pathname.slice(1)}index.html` : pathname.slice(1))
   if (!file.startsWith(`${root}/`)) { response.writeHead(403).end(); return }
   try {
     let data = await readFile(file)
