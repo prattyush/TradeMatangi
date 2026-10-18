@@ -2074,7 +2074,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             ← Back to Trading
           </button>
           <NotificationHeadline onOpenHistory={onOpenMessages} />
-          <span style={{ fontSize: 12, color: '#484f58' }}>{authUser.accountName || authUser.email}</span>
+          <span style={{ fontSize: 12, color: '#484f58' }}>{authUser.accountName?.trim() || authUser.email}</span>
           <button onClick={onLogout}
             style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}>
             Sign out
@@ -2374,7 +2374,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           }}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#484f58' }}>
-          <span>{authUser.accountName || authUser.email}</span>
+          <span>{authUser.accountName?.trim() || authUser.email}</span>
           <button
             onClick={onLogout}
             style={{ background: 'none', border: '1px solid #30363d', color: '#8b949e', borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer' }}

@@ -5,8 +5,9 @@ export default function AccountNamePopup({ user, onSave }: { user: AccountProfil
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [dismissed, setDismissed] = useState(false)
   const pending = useRef(false)
-  if (user.accountName?.trim()) return null
+  if (dismissed || user.accountName?.trim()) return null
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (pending.current) return
@@ -18,8 +19,11 @@ export default function AccountNamePopup({ user, onSave }: { user: AccountProfil
   }
   return <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', padding: 16, overflowY: 'auto' }}>
     <div role="dialog" aria-modal="true" aria-labelledby="account-name-title" style={{ width: '100%', maxWidth: 380, boxSizing: 'border-box', padding: 28, background: '#161b22', border: '1px solid #30363d', borderRadius: 12 }}>
-      <h2 id="account-name-title" style={{ fontSize: 18, color: '#58a6ff', margin: '0 0 6px' }}>Set Account Name</h2>
-      <p style={{ fontSize: 13, color: '#8b949e', marginBottom: 18 }}>Your account ({user.email}) needs a display name. This will be shown in the app instead of your email.</p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <h2 id="account-name-title" style={{ fontSize: 18, color: '#58a6ff', margin: '0 0 6px' }}>Set Account Name</h2>
+        <button type="button" aria-label="Close account name popup" onClick={() => setDismissed(true)} style={{ minWidth: 44, minHeight: 44, background: 'transparent', border: 0, color: '#e6edf3', fontSize: 24, cursor: 'pointer' }}>×</button>
+      </div>
+      <p style={{ fontSize: 13, color: '#8b949e', marginBottom: 18 }}>Choose a display name, or close this popup to continue using your email ({user.email}).</p>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <input aria-label="Account name" aria-describedby={error ? 'account-name-error' : undefined} value={name} onChange={event => { setName(event.target.value); setError('') }} placeholder="Your display name" required autoFocus disabled={saving} style={{ width: '100%', padding: '10px 12px', background: '#0d1117', border: '1px solid #30363d', borderRadius: 8, color: '#e6edf3', fontSize: 16, boxSizing: 'border-box' }} />
         {error && <p id="account-name-error" role="alert" style={{ color: '#f85149', margin: 0, overflowWrap: 'anywhere' }}>{error}</p>}

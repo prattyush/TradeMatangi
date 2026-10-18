@@ -149,9 +149,10 @@ async def get_me(user_id: str = Depends(get_request_user_id)):
     info = get_user_info(user_id)
     if not info:
         raise HTTPException(status_code=404, detail="User not found")
+    # Legacy partial user rows may lack email; clients retain their signed-in email.
     return AuthResponse(
         user_id=info["user_id"],
-        email=info["email"],
+        email=info.get("email") or "",
         is_admin=bool(info.get("is_admin", False)),
         account_name=info.get("account_name"),
     )
