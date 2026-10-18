@@ -2053,7 +2053,7 @@ function AppInner({ authUser, onLogout, onOpenMessages }: { onOpenMessages:(id?:
 
   if (showPatternLibrary) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: 'var(--app-height, 100vh)', overflow: 'hidden' }}>
         {/* Minimal header for Pattern Library */}
         <div style={{
           padding: '8px 16px', background: '#161b22', borderBottom: '1px solid #30363d',
@@ -2085,13 +2085,13 @@ function AppInner({ authUser, onLogout, onOpenMessages }: { onOpenMessages:(id?:
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'var(--app-height, 100vh)', overflow: 'hidden' }}>
       {sim.realClosing && <div role="status" style={{ padding: '8px 20px', background: '#442b16', color: '#ffd8a8' }}>Closing Real session… Waiting for broker confirmation.</div>}
       {workspaceRestoreError && <div role="alert" style={{ padding: '8px 20px', background: '#442b16', color: '#ffd8a8' }}>
         {workspaceRestoreError} <button onClick={() => setWorkspaceRestoreAttempt(value => value + 1)}>Retry recovery</button>
       </div>}
       {/* Header */}
-      <div style={{
+      <div className="website-header" style={{
         padding: '10px 20px', background: '#161b22', borderBottom: '1px solid #30363d',
         display: 'flex', alignItems: 'center', gap: 12,
       }}>

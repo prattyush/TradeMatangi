@@ -47,3 +47,11 @@ Settings → General → **KLine chart appearance** now exposes a website moving
 Each intraday website KLine chart shows its bar-close countdown on the right. Live charts tick every second; Replay/Stepwise use the session market clock and therefore remain still when replay is paused. Daily/historical Swing charts have no live countdown. Lightweight display behavior is unchanged.
 
 Website KLine indicator controls (including Clear indicators) use wrapping tiles in a responsive grid: two columns in the narrow tools rail and three on wider displays. The expanded rail grows from 178px to at most 248px; the collapsed rail remains 34px. Indicator selection and desktop controls are unchanged.
+
+
+
+
+## Web App For TradeMatangi.
+Can you create a web app for trademantagi, with all features as that present in website.
+
+Implementation: see [Installable webapp](spec-phase22-webapp.md) for the shared-code design, chart gestures, hosting, verification and manual acceptance.

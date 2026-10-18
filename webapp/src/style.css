@@ -1,0 +1,23 @@
+*, *::before, *::after { box-sizing: border-box; }
+:root { color-scheme: dark; --app-height: calc(100dvh - var(--app-bar-height, 40px)); }
+body { margin: 0; background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+.webapp-shell { height: 100dvh; display: flex; flex-direction: column; }
+.webapp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 5px max(12px, env(safe-area-inset-right)) 5px max(12px, env(safe-area-inset-left)); background: #161b22; border-bottom: 1px solid #30363d; font-size: 12px; flex-shrink: 0; }
+.webapp-name { font-weight: 600; }
+.webapp-connection { flex: 1; color: #ffd8a8; }
+.webapp-bar button, .webapp-workspace button[aria-label="Chart trading menu"] { color: #e6edf3; background: #21262d; border: 1px solid #484f58; border-radius: 5px; padding: 6px 10px; cursor: pointer; }
+.webapp-help { flex-basis: 100%; padding: 5px 0; }
+.webapp-workspace { flex: 1; min-height: 0; min-width: 0; overflow: auto; padding-bottom: env(safe-area-inset-bottom); }
+.webapp-workspace .chart-head { flex-wrap: wrap; }
+.webapp-workspace .chart-actions { flex-wrap: wrap; }
+.webapp-workspace .notification-standalone { top: calc(var(--app-bar-height, 40px) + 12px); }
+.webapp-workspace button:focus-visible { outline: 2px solid #58a6ff; outline-offset: 2px; }
+@media (max-width: 1100px) {
+  .webapp-workspace .website-header { flex-wrap: wrap; max-height: 28dvh; overflow: auto; gap: 8px !important; padding: 8px !important; }
+}
+@media (max-width: 760px) {
+  .webapp-workspace .swing-workspace { min-height: var(--app-height); }
+}
+@media (pointer: coarse) {
+  .webapp-shell button, .webapp-shell select { min-height: 32px; }
+}

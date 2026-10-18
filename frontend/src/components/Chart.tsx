@@ -1,3 +1,4 @@
+import { bindChartMenu, ChartMenuButton, useChartMenuGesture, type MenuPoint } from '../../../shared/charts/ChartMenuGesture'
 import { usePendingOrderEdits } from '../../../shared/charts/pendingOrderEdits'
 import { snapSwingPrice, swingOrderTick } from '../../../shared/swingOrderPrice'
 import { flashError } from '../services/notifications'
@@ -92,7 +93,7 @@ export interface Props {
   onCancelPricePick?: () => void
   onPriceSelect?: ((price: number) => void) | null
   pricePickLabel?: string
-  // Right-click context menu
+  // The PWA uses double-click/tap; other surfaces retain right-click.
   onContextMenu?: (price: number, screenX: number, screenY: number, ctx: {
     paneType: string; right?: 'CE' | 'PE'; hasPosition: boolean; hasOpenOrders: boolean; hasSLOrders: boolean
   }) => void
@@ -501,6 +502,7 @@ export default function Chart({
   initialVisibleRange,
   onVisibleRangeChange,
 }: Props) {
+  const menuGesture = useChartMenuGesture()
   recordPerformance('chart-render')
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -733,7 +735,7 @@ export default function Chart({
           .filter(item => item.y !== null && Math.abs(item.y - param.point!.y) <= 7)
           .sort((a, b) => Math.abs(a.y! - param.point!.y) - Math.abs(b.y! - param.point!.y))[0]
         const order = hit && orderSelectionRef.current.orders?.find(item => item.order_id === hit.id)
-        if (order) { orderSelectionRef.current.onSelect(order); return }
+        if (order) { if (menuGesture === 'doubleclick') swingClickUntil.current = Date.now() + 400; orderSelectionRef.current.onSelect(order); return }
       }
 
       if (!param.time) return  // drawing modes need a time reference
@@ -895,15 +897,16 @@ export default function Chart({
       }
     })
 
-    // Right-click context menu
+    // The PWA uses double-click/tap; other surfaces retain right-click.
     const container = containerRef.current
-    const handleContextMenu = (e: MouseEvent) => {
-      e.preventDefault()
+    const handleContextMenu = (e: MenuPoint) => {
       if (!seriesRef.current || !chartRef.current) return
       const chartRect = container!.getBoundingClientRect()
       const y = e.clientY - chartRect.top
-      const price = seriesRef.current.coordinateToPrice(y)
-      if (price === null) return
+      const bars = seriesRef.current.data()
+      const last = bars[bars.length - 1]
+      const price = e.currentPrice ? latestTickRef.current?.close ?? (last && 'close' in last ? last.close : null) : seriesRef.current.coordinateToPrice(y)
+      if (price == null || !Number.isFinite(price)) return
 
       onContextMenuRef.current?.(price, e.clientX, e.clientY, {
         paneType: paneType || 'equity',
@@ -913,7 +916,7 @@ export default function Chart({
         hasSLOrders: false,
       })
     }
-    container!.addEventListener('contextmenu', handleContextMenu)
+    const removeMenu = bindChartMenu(container!, menuGesture, handleContextMenu, () => menuGesture === 'doubleclick' && (drawModeRef.current !== 'none' || Boolean(onPriceSelectRef.current) || Date.now() < swingClickUntil.current))
     // Capture only a pending Swing order line; ordinary chart panning stays untouched.
     let drag: {id: string; startY: number; moved: boolean; price: number} | null = null
     let mounted = true
@@ -962,9 +965,23 @@ export default function Chart({
       })
     }
     const abortDrag = () => { if (drag) {restore(drag.id);drag=null} }
-    container.addEventListener('mousedown',dragStart,true)
-    window.addEventListener('mousemove',dragMove,true)
-    window.addEventListener('mouseup',dragEnd,true)
+    // Pointer input adds touch line editing in the PWA; background events go to the chart.
+    const downEvent = menuGesture === 'doubleclick' ? 'pointerdown' : 'mousedown'
+    const moveEvent = menuGesture === 'doubleclick' ? 'pointermove' : 'mousemove'
+    const upEvent = menuGesture === 'doubleclick' ? 'pointerup' : 'mouseup'
+    const lineTouch = (event: TouchEvent) => {
+      if (!drag) return
+      if (event.touches.length > 1) { abortDrag(); return }
+      event.preventDefault(); event.stopImmediatePropagation()
+    }
+    container.addEventListener(downEvent,dragStart,true)
+    window.addEventListener(moveEvent,dragMove,true)
+    window.addEventListener(upEvent,dragEnd,true)
+    if (menuGesture === 'doubleclick') {
+      container.addEventListener('touchstart',lineTouch,{capture:true,passive:false})
+      container.addEventListener('touchmove',lineTouch,{capture:true,passive:false})
+      window.addEventListener('pointercancel',abortDrag)
+    }
     window.addEventListener('blur',abortDrag)
 
     let resizeFrame: number | undefined
@@ -985,11 +1002,14 @@ export default function Chart({
       ro.disconnect()
       if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
       mounted=false
-      container.removeEventListener('mousedown',dragStart,true)
-      window.removeEventListener('mousemove',dragMove,true)
-      window.removeEventListener('mouseup',dragEnd,true)
+      container.removeEventListener(downEvent,dragStart,true)
+      window.removeEventListener(moveEvent,dragMove,true)
+      window.removeEventListener(upEvent,dragEnd,true)
+      container.removeEventListener('touchstart',lineTouch,true)
+      container.removeEventListener('touchmove',lineTouch,true)
+      window.removeEventListener('pointercancel',abortDrag)
       window.removeEventListener('blur',abortDrag)
-      container.removeEventListener('contextmenu', handleContextMenu)
+      removeMenu()
       tradeMarkerPool.current.clear()
       orderPriceLinesRef.current.clear()
       strategyPriceLinesRef.current.clear()
@@ -1684,6 +1704,7 @@ export default function Chart({
         paddingRight: 36,
         background: '#161b22', borderBottom: '1px solid #21262d', flexWrap: 'wrap',
       }}>
+        <ChartMenuButton chart={containerRef} visible={Boolean(onContextMenu)} />
         <span style={{ fontSize: 11, color: isActive ? '#58a6ff' : '#79c0ff', marginRight: 4 }}>
           {paneLabel}
         </span>

@@ -48,3 +48,5 @@ backend.log
 # Browser regression artifacts
 /frontend/test-results/
 /frontend/playwright-report/
+/webapp/test-results/
+/webapp/playwright-report/
