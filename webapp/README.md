@@ -7,19 +7,24 @@ An installable PWA at `/webapp/`. It renders `frontend/src/WebsiteApp.tsx` direc
 ```bash
 bash scripts/start-backend.sh
 # Optional AI service: bash scripts/start-aihelper.sh
-bash scripts/start-webapp.sh
+bash scripts/start-frontend.sh
 ```
 
-Open `http://localhost:5174/webapp/`. Vite proxies `/api` to port 8700 and `/ai` to 8701. Copy `.env.example` to `.env.local` for overrides. Unlike the website's development config, the webapp defaults to local backend services. Dependency installation uses `npm ci --no-bin-links` for WSL compatibility. Stop only the webapp with `bash scripts/stop-webapp.sh`.
+Open `http://localhost:5173/` for the website, then choose **Install app**. The installed app launches `http://localhost:5173/webapp/`; the website tab stays at `/`. The two pages share the same manifest/app identity and existing backend. The button is available on the login screen and trading header. If the browser does not offer a native prompt (including private browsing), it shows instructions and an **Open webapp** link. On iPad, open that link in Safari before choosing **Share → Add to Home Screen**.
+
+The normal frontend script builds both applications, copies the webapp into `frontend/dist/webapp/`, then serves the combined artifact with Vite preview on port 5173 for preprod testing. Re-run it after code changes; it does not use HMR. Stop it with `bash scripts/stop-frontend.sh`. The stop script uses its recorded PID and leaves other Vite processes alone. When upgrading from the old scripts, stop the old frontend process/service once before using the new scripts; the previous version did not record a PID.
+
+Local preview proxies `/api` to port 8700 and `/ai` to 8701. `WEBAPP_API_PROXY` and `WEBAPP_AI_PROXY` override those targets. Export `VITE_API_BASE_URL` / `VITE_AI_HELPER_URL` before building to use explicit endpoints in both applications. The original website `.env` remains supported for its build. `start-frontend-ec2.sh` preserves the existing HTTPS endpoint settings, logging and port 5173; the existing domain proxy can continue forwarding `/` to that port, including `/webapp/`.
+
+For webapp-only hot development, `bash scripts/start-webapp.sh` still serves `http://localhost:5174/webapp/` with no service worker. Stop it with `bash scripts/stop-webapp.sh`. The frontend's direct Vite development command also remains available for website work; use the combined startup script for root-site installation testing.
 
 ```bash
-cd webapp
-npm ci --no-bin-links
-npm run build
-npm test
+# From the repository root; installs missing dependencies with --no-bin-links.
+bash scripts/build-frontend-with-webapp.sh
+npm test --prefix webapp
 ```
 
-Tests require Playwright Chromium or Google Chrome (`PLAYWRIGHT_CHROMIUM_EXECUTABLE` overrides the executable). The tests start their own servers on ports 5174/5175, so stop the development server first. Production offline tests require a fresh build. To regenerate installation icons from the checked-in SVG, run `npm run icons`.
+Tests require Playwright Chromium or Google Chrome (`PLAYWRIGHT_CHROMIUM_EXECUTABLE` overrides the executable). They start their own servers on ports 5174/5175, so stop the webapp-only development server first. Build both applications before running the tests. A fresh, normal Chromium profile checks the website's native installability diagnostics; other browser scenarios use isolated private contexts. To regenerate installation icons from the checked-in SVG, run `npm run icons --prefix webapp`.
 
 ## Interaction
 
@@ -30,11 +35,17 @@ Tests require Playwright Chromium or Google Chrome (`PLAYWRIGHT_CHROMIUM_EXECUTA
 
 ## Hosting
 
-Build from the whole repository: webapp imports `frontend`, `shared` and browser-safe desktop chart modules. Upload only `webapp/dist/` to the existing HTTPS origin under `/webapp/`. Keep the existing website at `/` and existing backend/AI reverse proxies at `/api` and `/ai`. Do not expose Vite as the production server.
+Build from the whole repository: webapp imports `frontend`, `shared` and browser-safe desktop chart modules. For preprod testing, the startup scripts serve both builds on port 5173 behind the existing HTTPS proxy. For static production hosting, run the combined build script and deploy all of `frontend/dist/` to the site root. Keep the existing backend/AI reverse proxies at `/api` and `/ai`. Vite preview is the preprod testing server; use a static web server for production.
 
-For example, with the artifact copied to `/srv/tradematangi/webapp/`, add these locations to the existing nginx server (preserving its other locations):
+For example, with the combined artifact copied to `/srv/tradematangi/`, add these locations to the existing nginx server (preserving backend/AI locations):
 
 ```nginx
+location / {
+    root /srv/tradematangi;
+    add_header Cache-Control "no-cache" always;
+    try_files $uri $uri/ /index.html;
+}
+
 location = /webapp { return 308 /webapp/; }
 
 location = /webapp/sw.js {
@@ -62,7 +73,7 @@ Same-origin hosting uses the existing backend identity, browser storage and Goog
 
 ## Offline and updates
 
-The production-only worker is scoped to `/webapp/`. It stores only `offline.html` under the `tradematangi-webapp-offline-*` cache prefix. API requests, streams, trading mutations and account data never enter worker caching or background queues. Existing website local-storage preferences/session recovery remain in use.
+Both production-built pages register the same worker, scoped only to `/webapp/`. Registration from `/` does not make the worker control the website. It stores only `offline.html` under the `tradematangi-webapp-offline-*` cache prefix. API requests, streams, trading mutations and account data never enter worker caching or background queues. Existing website local-storage preferences/session recovery remain in use.
 
 An offline launch shows a static connection page with Retry. An open app retains its workspace and the existing API/SSE recovery behavior. The connection label reports browser network availability; it does not certify backend/broker health or order acknowledgement. Closing an app window does not stop server-side trading strategies.
 

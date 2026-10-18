@@ -55,3 +55,5 @@ Website KLine indicator controls (including Clear indicators) use wrapping tiles
 Can you create a web app for trademantagi, with all features as that present in website.
 
 Implementation: see [Installable webapp](spec-phase22-webapp.md) for the shared-code design, chart gestures, hosting, verification and manual acceptance.
+
+The website login screen and trading header now offer **Install app**. The normal frontend startup scripts serve both the website at `/` and the webapp at `/webapp/` on port 5173 for preprod testing. Installation leaves the website tab unchanged; the installed app launches `/webapp/`. See the linked webapp document for startup and acceptance details.

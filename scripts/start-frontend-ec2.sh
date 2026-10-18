@@ -9,6 +9,14 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND="$REPO_ROOT/frontend"
+PID_FILE="$REPO_ROOT/.cache/frontend/preview.pid"
+if [ -f "$PID_FILE" ]; then
+    read -r FRONTEND_PID < "$PID_FILE"
+    if [[ "$FRONTEND_PID" =~ ^[0-9]+$ ]] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
+        echo "Frontend PID $FRONTEND_PID is already running. Stop it before starting again."
+        exit 1
+    fi
+fi
 
 # Resolve backend IP: env override → IMDSv2 → IMDSv1 → fail
 if [ -n "$BACKEND_IP" ]; then
@@ -45,12 +53,8 @@ echo "Backend URL:   $VITE_API_BASE_URL"
 echo "AI Helper URL: $VITE_AI_HELPER_URL"
 echo "HMR:           disabled (VITE_DISABLE_HMR=true)"
 
+bash "$REPO_ROOT/scripts/build-frontend-with-webapp.sh"
 cd "$FRONTEND"
-
-if [ ! -d "node_modules" ]; then
-    echo "Installing npm dependencies..."
-    npm install
-fi
 
 # Resolve LOG_DIR from accesskeys.ini — mirrors config.py logic
 INI="$REPO_ROOT/data/accesskeys.ini"
@@ -65,8 +69,10 @@ mkdir -p "$LOG_DIR"
 DATED_LOG="$LOG_DIR/frontend.log.$(date +%Y-%m-%d)"
 ln -sf "$DATED_LOG" "$LOG_DIR/frontend.log"
 
-echo "Starting frontend on http://$PUBLIC_IP:5173 ..."
-nohup node node_modules/vite/bin/vite.js --host \
+mkdir -p "$REPO_ROOT/.cache/frontend"
+echo "Starting website and /webapp/ on http://$PUBLIC_IP:5173 ..."
+nohup node "$FRONTEND/node_modules/vite/bin/vite.js" preview --host 0.0.0.0 --port 5173 --strictPort \
   >> "$DATED_LOG" 2>&1 &
+echo $! > "$PID_FILE"
 
 echo "Frontend started (PID $!). Log: $DATED_LOG"

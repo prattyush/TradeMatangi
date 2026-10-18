@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND="$REPO_ROOT/frontend"
 
-cd "$FRONTEND"
-
-if [ ! -d "node_modules" ]; then
-  echo "Installing npm dependencies (no-bin-links for WSL compatibility)..."
-  npm install --no-bin-links
+PID_FILE="$REPO_ROOT/.cache/frontend/preview.pid"
+if [ -f "$PID_FILE" ]; then
+  read -r FRONTEND_PID < "$PID_FILE"
+  if [[ "$FRONTEND_PID" =~ ^[0-9]+$ ]] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
+    echo "Frontend PID $FRONTEND_PID is already running. Stop it before starting again."
+    exit 1
+  fi
 fi
-
-export VITE_DISABLE_HMR="true"
-
-echo "Starting frontend on http://localhost:5173 ..."
-node node_modules/vite/bin/vite.js --host
+bash "$REPO_ROOT/scripts/build-frontend-with-webapp.sh"
+mkdir -p "$REPO_ROOT/.cache/frontend"
+echo $$ > "$PID_FILE"
+cd "$FRONTEND"
+echo "Website: http://localhost:5173/ · Webapp: http://localhost:5173/webapp/"
+exec node "$FRONTEND/node_modules/vite/bin/vite.js" preview --host 127.0.0.1 --port 5173 --strictPort
