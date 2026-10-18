@@ -66,3 +66,34 @@ def test_empty_name_is_rejected_without_write():
         response = TestClient(app).post("/api/auth/account-name", headers={"X-User-Id":"owner"}, json={"account_name":"   "})
     assert response.status_code == 400
     write.assert_not_called()
+
+
+@pytest.mark.parametrize("email", [USER["email"], None])
+def test_save_against_dynamodb_engine(email):
+    """Exercise real DynamoDB expressions instead of mocking update_item."""
+    import boto3
+    from moto import mock_aws
+    with mock_aws():
+        database = boto3.resource("dynamodb", region_name="ap-south-1")
+        table = database.create_table(
+            TableName="Users",
+            KeySchema=[{"AttributeName":"user_id", "KeyType":"HASH"}],
+            AttributeDefinitions=[{"AttributeName":"user_id", "AttributeType":"S"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        item = {"user_id":"owner"}
+        if email is not None:
+            item["email"] = email
+        table.put_item(Item=item)
+        with patch("app.services.db.get_dynamodb_resource", return_value=database):
+            client = TestClient(app)
+            before = client.get("/api/auth/me", headers={"X-User-Id":"owner"})
+            assert before.status_code == 200, before.text
+            assert before.json()["email"] == (email or "")
+            response = client.post("/api/auth/account-name", headers={"X-User-Id":"owner"}, json={"account_name":" Tablet "})
+            after = client.get("/api/auth/me", headers={"X-User-Id":"owner"})
+            assert after.status_code == 200, after.text
+            assert after.json()["account_name"] == "Tablet"
+        assert response.status_code == 200, response.text
+        assert response.json()["account_name"] == "Tablet"
+        assert table.get_item(Key={"user_id":"owner"}, ConsistentRead=True)["Item"]["account_name"] == "Tablet"

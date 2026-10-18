@@ -332,9 +332,10 @@ def set_account_name(user_id: str, account_name: str) -> dict | None:
         logger.exception("Failed to set account_name for %s", user_id)
         raise RuntimeError("Could not save account name. Please retry.") from error
     info = response["Attributes"]
+    # A legacy row without email must not turn a successful name write into a 500.
     return {
         "user_id": info["user_id"],
-        "email": info["email"],
+        "email": info.get("email") or "",
         "is_admin": bool(info.get("is_admin", False)),
         "account_name": info.get("account_name"),
     }

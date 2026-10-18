@@ -93,3 +93,31 @@ for(const action of ['Sign out','Other account'])test(`pending profile and name 
   await expect(page.getByLabel('Current profile')).toHaveText(action==='Sign out'?':':'other:Other')
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
+
+for (const fail of [false, true]) test(`tablet can close account name popup${fail ? ' after a 500' : ''} and use email`, async ({page}) => {
+  await page.route('**/api/auth/me', route => route.fulfill({json:profile()}))
+  await page.route('**/api/auth/account-name', route => route.fulfill({status:500,json:{detail:'Could not save account name. Please retry.'}}))
+  await page.goto('/tests/phase22/account-profile.html')
+  if (fail) {
+    await page.getByLabel('Account name',{exact:true}).fill('Tablet')
+    await page.getByRole('button',{name:'Save',exact:true}).click()
+    await expect(page.getByRole('alert')).toContainText('Could not save')
+  }
+  await page.getByRole('button',{name:'Close account name popup'}).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByLabel('Display name')).toHaveText(owner.email)
+  await page.getByRole('button',{name:'Other account',exact:true}).click()
+  await expect(page.getByLabel('Display name')).toHaveText('Other')
+})
+
+test('legacy backend profile without email preserves signed-in email and saves name', async ({page}) => {
+  await page.route('**/api/auth/me', route => route.fulfill({json:{...profile(), email:''}}))
+  await page.route('**/api/auth/account-name', route => route.fulfill({json:{...profile('Tablet'), email:''}}))
+  await page.goto('/tests/phase22/account-profile.html')
+  await expect(page.getByLabel('Display name')).toHaveText(owner.email)
+  await page.getByLabel('Account name',{exact:true}).fill('Tablet')
+  await page.getByRole('button',{name:'Save',exact:true}).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByLabel('Display name')).toHaveText('Tablet')
+  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('auth_user')!).email)).toBe(owner.email)
+})
