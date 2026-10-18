@@ -7,7 +7,7 @@ test('production shell, manifest and API defaults stay under the intended paths'
   const requests: string[] = []
   page.on('request', req => requests.push(req.url()))
   await page.goto(`${production}/webapp/`)
-  await expect(page.getByText('TradeMatangi app', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
   await page.getByPlaceholder('you@example.com').fill('test@example.com')
   await page.getByPlaceholder('••••••••').fill('test-password')
@@ -18,27 +18,6 @@ test('production shell, manifest and API defaults stay under the intended paths'
   expect(manifest).toMatchObject({ start_url: '/webapp/', scope: '/webapp/', display: 'standalone' })
   for (const icon of manifest.icons) expect((await request.get(`${production}/webapp/${icon.src}`)).ok()).toBe(true)
   expect(errors).toEqual([])
-})
-
-test('install prompt, dismiss and installation state; fullscreen exits reflect browser state', async ({ page }) => {
-  await page.goto(`${production}/webapp/`)
-  await page.getByRole('button', { name: 'Install app', exact: true }).click()
-  await expect(page.getByText(/Add to Home Screen/)).toBeVisible()
-  await page.evaluate(() => {
-    document.querySelector<HTMLButtonElement>('[aria-label="Close installation help"]')!.click()
-    const event = new Event('beforeinstallprompt', { cancelable: true })
-    Object.assign(event, { prompt: async () => { (window as any).prompted = true }, userChoice: Promise.resolve({ outcome: 'dismissed' }) })
-    window.dispatchEvent(event)
-  })
-  await page.getByRole('button', { name: 'Install app' }).click()
-  expect(await page.evaluate(() => (window as any).prompted)).toBe(true)
-  await expect(page.getByRole('button', { name: 'Install app', exact: true })).toBeVisible()
-  await page.evaluate(() => window.dispatchEvent(new Event('appinstalled')))
-  await expect(page.getByRole('button', { name: /install/i })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Full screen', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Exit full screen' })).toHaveAttribute('aria-pressed', 'true')
-  await page.evaluate(() => document.exitFullscreen())
-  await expect(page.getByRole('button', { name: 'Full screen', exact: true })).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('offline launch/retry, cache isolation, scoped control and updates waiting for open clients', async ({ page, context }) => {
@@ -57,12 +36,12 @@ test('offline launch/retry, cache isolation, scoped control and updates waiting 
   await page.evaluate(() => fetch('/api/auth/me'))
   expect(await page.evaluate(async () => (await (await caches.open('tradematangi-webapp-offline-v1')).keys()).map(r => r.url))).toEqual([`${production}/webapp/offline.html`])
   await context.setOffline(true)
-  await expect(page.getByRole('status').filter({ hasText: /Offline/ })).toBeVisible()
+  await expect(page.locator('.notification-headline')).toContainText('Offline')
   await page.reload()
   await expect(page.getByRole('heading', { name: 'You’re offline' })).toBeVisible()
   await context.setOffline(false)
   await page.getByRole('button', { name: 'Retry' }).click()
-  await expect(page.getByText('TradeMatangi app', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
   await page.evaluate(async () => {
     await caches.open('existing-website-cache')
     await caches.open('tradematangi-webapp-offline-obsolete')

@@ -11,7 +11,7 @@
 
 ## Implementation
 
-`frontend/src/WebsiteApp.tsx` owns the shared application/provider composition. The webapp adds only its app shell, installation lifecycle, fullscreen controls, connection label, scoped offline worker and targeted tablet styles. Root workspace heights accept the shell's available-height CSS variable, with the original website/desktop height as fallback.
+`frontend/src/WebsiteApp.tsx` owns the shared application/provider composition. The webapp adds a lightweight shell, fullscreen controls, scoped offline worker and targeted tablet styles. Installation controls live only on the website. The app uses the full viewport height, respecting safe areas, without an additional title or control row.
 
 Shared chart components consume an optional `ChartMenuGesture` context, defaulting to `contextmenu`. The webapp supplies `doubleclick`. Gesture recognition observes pointer events without capturing/preventing background gestures, rejects drags/pinches/cancellation/long holds, and suppresses synthetic duplicate mouse menus. Existing chart-to-order routing retains exact session/pane/contract context. Lightweight Swing order-line handling accepts touch pointers in the PWA and preserves release-only callbacks and cancellation recovery. Existing nested chart menus also accept tap and keyboard activation.
 
@@ -41,7 +41,7 @@ See [webapp setup and hosting](../webapp/README.md) for startup scripts, build/t
 
 - Install/relaunch in desktop Chromium and physical iPad Safari; check standalone storage/login behavior, both orientations, double-tap, pan, pinch and line editing.
 - Verify Google sign-in and broker connection flows on the deployed HTTPS origin, including popup behavior.
-- Verify live feeds, background/resume recovery and concurrent website/installed-app windows against the intended test environment. The browser connectivity label is not broker-health or order-acknowledgement evidence.
+- Verify live feeds, background/resume recovery and concurrent website/installed-app windows against the intended test environment. Browser connection notifications are not broker-health or order-acknowledgement evidence.
 - Obtain explicit authorization before any real-order acceptance test. Deployment and merging remain manual.
 
 ## Installation from the existing website follow-up
@@ -51,3 +51,13 @@ The frontend startup scripts build both applications and serve the combined `fro
 Shared installation state survives switching from the login screen to the authenticated trading header, retains the browser's one-shot prompt, prevents duplicate prompt requests and hides controls in standalone mode or after installation. Unsupported/private browsers receive instructions and a separate Open webapp link. A normal Chromium profile verifies native installability diagnostics; isolated browser tests check manifest identity, launch URL, installation controls and worker scope.
 
 Follow-up verification on 2026-10-18: all **19 installation/webapp browser scenarios** and **5 focused existing website chart regressions** pass. The combined build passes both TypeScript checks and both production builds. The real startup script serves `/`, `/webapp/`, the manifest and the worker on port 5173 with revalidation headers. Stopping the managed frontend leaves an independently running Vite process available. Shell syntax and whitespace checks pass. The earlier 36 website browser/298 shared-unit results above are the original implementation baseline; no broad backend/full-suite rerun was needed for this follow-up.
+
+## Fullscreen and chart-space follow-up
+
+The permanent TradeMatangi app / Install app / fullscreen row and its reserved height are removed. The first trading row is the existing TradeMatangi header and controls. No installation control/provider is mounted in the webapp, so entering fullscreen cannot make an Install app button reappear; website installation remains unchanged.
+
+A shared optional header control slot is empty by default in the website/desktop and populated only by the webapp shell. Compact fullscreen icons reuse login, Day, Swing, Pattern, Structures and Analysis control areas. In desktop fullscreen the entry icon is hidden; passive pointer observation reveals a floating top-center exit button when the pointer reaches the top eight pixels. It consumes no layout space and no invisible hit area; hovering/focusing pins it, otherwise it hides after 1.5 seconds away. Keyboard focus reveals it, Escape and browser-initiated exits update the state, and touch devices keep a restore icon in their existing header. Unsupported APIs render no fullscreen controls. Errors and connection-loss messages use the existing notification system.
+
+The app/manifest identity, backend, worker cache behavior and chart/order gestures are unchanged. Deployed installed windows pick up this change on reopening after the new frontend build is deployed; reinstalling is unnecessary. Physical device/browser-native fullscreen acceptance remains manual.
+
+Fullscreen follow-up verification (2026-10-18): **21 webapp/installation browser checks**, **5 focused website chart regressions** and **29 focused shared/desktop unit tests** pass. Both production builds and their TypeScript checks pass, as does the desktop TypeScript check. Browser checks cover zero reserved app-bar height, no webapp installation controls, top-edge reveal/hover/focus/auto-hide, keyboard and browser exits, touch restore, main-page control placement, unsupported/rejected APIs and preserved chart canvas identity across fullscreen transitions. The tablet screenshots show the existing trading header as the first row. No backend or real-order tests were required for this UI-only change.

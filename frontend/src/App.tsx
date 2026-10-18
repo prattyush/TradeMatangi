@@ -1,3 +1,4 @@
+import { AppWindowControls } from '../../shared/AppWindowControls'
 import { InstallAppControl } from '../../webapp/src/InstallApp'
 import AccountNamePopup from './components/AccountNamePopup'
 import { useAccountProfile, type AccountProfile } from './hooks/useAccountProfile'
@@ -2061,6 +2062,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           display: 'flex', alignItems: 'center', gap: 12,
         }}>
           <span style={{ fontSize: 16, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
+          <AppWindowControls />
           <button
             onClick={() => setShowPatternLibrary(false)}
             style={{
@@ -2097,6 +2099,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
+        <AppWindowControls />
         {sim.group && <SessionSwitcher group={sim.group} selectedSessionId={sim.sessionId}
           onSelect={(id) => { if (addingSession) cancelAddSession(); sim.selectGroupMember(id).catch(() => {}) }}
           onRename={async (id, alias) => { if (!sim.groupId) return; await api.renameSessionGroupMember(sim.groupId, id, alias); await sim.refreshGroup() }}

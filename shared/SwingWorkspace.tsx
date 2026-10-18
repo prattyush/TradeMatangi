@@ -1,3 +1,4 @@
+import { AppWindowControls } from "./AppWindowControls";
 import { snapSwingPrice } from './swingOrderPrice';
 import type { SwingSubscribe } from "./swingStream";
 import { SwingIconButton } from "./SwingIcon";
@@ -687,6 +688,7 @@ export default function SwingWorkspace({
         </div>
       </div>}
       <div className="swing-workspace-bar">
+        <AppWindowControls />
         {navigationControls}
         {portfolioControls}
         <strong>

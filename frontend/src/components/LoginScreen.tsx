@@ -1,3 +1,4 @@
+import { AppWindowControls } from '../../../shared/AppWindowControls'
 import { InstallAppControl } from '../../../webapp/src/InstallApp'
 import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect, useCallback } from 'react'
@@ -158,7 +159,7 @@ export default function LoginScreen({ onLogin, showInstall = false }: Props) {
           borderRadius: 12,
         }}>
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#58a6ff' }}>Welcome to TradeMatangi</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#58a6ff' }}>Welcome to TradeMatangi <AppWindowControls /></div>
             <div style={{ fontSize: 13, color: '#484f58', marginTop: 8 }}>
               Please choose an account name to continue
             </div>
@@ -200,7 +201,7 @@ export default function LoginScreen({ onLogin, showInstall = false }: Props) {
         borderRadius: 12,
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi <AppWindowControls /></div>
           <div style={{ fontSize: 13, color: '#484f58', marginTop: 4 }}>
             {mode === 'login' ? 'Sign in to your account' : 'Create a new account'}
           </div>

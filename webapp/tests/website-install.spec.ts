@@ -6,6 +6,7 @@ test('website offers the same installable app without changing its own URL or wo
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Install app', exact: true })).toBeVisible()
   await expect(page.getByText('TradeMatangi app', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.app-fullscreen-button')).toHaveCount(0)
   await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', '/webapp/manifest.webmanifest')
   const manifest = await (await request.get(`${site}/webapp/manifest.webmanifest`)).json()
   expect(manifest).toMatchObject({ id: '/webapp/', start_url: '/webapp/', scope: '/webapp/', display: 'standalone' })
@@ -21,7 +22,8 @@ test('website offers the same installable app without changing its own URL or wo
   await page.getByRole('link', { name: 'Open webapp' }).click()
   const app = await opened
   await expect(app).toHaveURL(`${site}/webapp/`)
-  await expect(app.getByText('TradeMatangi app', { exact: true })).toBeVisible()
+  await expect(app.getByRole('button', { name: 'Full screen', exact: true })).toBeVisible()
+  await expect(app.getByRole('button', { name: 'Install app', exact: true })).toHaveCount(0)
   await expect(page).toHaveURL(`${site}/`)
 })
 
