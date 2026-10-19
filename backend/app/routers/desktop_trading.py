@@ -1787,7 +1787,7 @@ def wallet(session_id: str, user_id: str = Depends(get_desktop_user_id)):
 @router.get("/wallet")
 async def pre_session_wallet(
     date: str = Query(...),
-    desktop_mode: str = Query(default="replay", pattern="^(paper|replay|stepwise)$"),
+    desktop_mode: str = Query(default="replay", pattern="^(paper|replay|stepwise|real)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
     """Return the wallet balance that the next desktop run will use."""
@@ -1795,9 +1795,13 @@ async def pre_session_wallet(
         from app.dependencies import require_real_trading_access
         from app.services import execution_broker
         require_real_trading_access(user_id)
-        settings = await asyncio.to_thread(get_settings, user_id, strict=True)
-        broker = execution_broker.get_service(settings["real_execution_broker"])
-        balance = await asyncio.to_thread(broker.get_funds)
+        try:
+            settings = await asyncio.to_thread(get_settings, user_id, strict=True)
+            broker = execution_broker.get_service(settings["real_execution_broker"])
+            balance = await asyncio.to_thread(broker.get_funds)
+        except Exception as exc:
+            logger.warning("desktop real wallet read failed user_id=%s error=%s", user_id, exc)
+            raise HTTPException(status_code=502, detail=f"Could not read broker funds: {exc}") from exc
         return {"user_id": user_id, "date": date, "balance": balance, "locked": True, "reset_reason": "Real broker funds are read-only"}
     ledger_kind = "paper" if desktop_mode == "paper" else "sim"
     from app.services.practice_wallets import read, blocked
@@ -1810,10 +1814,12 @@ async def pre_session_wallet(
 async def reset_pre_session_wallet(
     req: WalletResetRequest,
     date: str = Query(...),
-    desktop_mode: str = Query(default="replay", pattern="^(paper|replay|stepwise)$"),
+    desktop_mode: str = Query(default="replay", pattern="^(paper|replay|stepwise|real)$"),
     user_id: str = Depends(get_desktop_user_id),
 ):
     """Set the wallet for the next desktop trading run."""
+    if desktop_mode == "real":
+        raise HTTPException(status_code=403, detail="Real broker funds cannot be reset")
     from app.services.practice_wallets import reset
     kind = "paper" if desktop_mode == "paper" else "sim"
     balance = await asyncio.to_thread(reset, user_id, date, kind, req.amount)

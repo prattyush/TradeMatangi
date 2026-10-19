@@ -579,6 +579,53 @@ def test_desktop_pre_session_wallet_reset_updates_sim_ledger(no_db):
     _clear()
 
 
+def _real_wallet_client():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.dependencies import get_desktop_user_id
+    app = FastAPI()
+    app.include_router(desktop_trading.router)
+    app.dependency_overrides[get_desktop_user_id] = lambda: "desktop-user"
+    app.dependency_overrides[desktop_trading.require_real_bearer] = lambda: None
+    return TestClient(app)
+
+
+def test_desktop_pre_session_wallet_real_returns_broker_funds():
+    from unittest.mock import MagicMock
+    broker = MagicMock()
+    broker.get_funds.return_value = 98765.5
+    with patch("app.dependencies.require_real_trading_access"), \
+         patch.object(desktop_trading, "get_settings", return_value={"real_execution_broker": "kotak"}), \
+         patch("app.services.execution_broker.get_service", return_value=broker):
+        response = _real_wallet_client().get("/api/desktop/v1/trading/wallet?date=2026-05-06&desktop_mode=real")
+
+    assert response.status_code == 200
+    assert response.json()["balance"] == 98765.5
+    assert response.json()["locked"] is True
+
+
+def test_desktop_pre_session_wallet_real_broker_failure_returns_502():
+    from unittest.mock import MagicMock
+    broker = MagicMock()
+    broker.get_funds.side_effect = RuntimeError("session expired")
+    with patch("app.dependencies.require_real_trading_access"), \
+         patch.object(desktop_trading, "get_settings", return_value={"real_execution_broker": "kotak"}), \
+         patch("app.services.execution_broker.get_service", return_value=broker):
+        response = _real_wallet_client().get("/api/desktop/v1/trading/wallet?date=2026-05-06&desktop_mode=real")
+
+    assert response.status_code == 502
+    assert "Could not read broker funds" in response.json()["detail"]
+
+
+def test_desktop_pre_session_wallet_reset_real_is_forbidden():
+    with patch("app.services.practice_wallets.reset") as reset:
+        response = _real_wallet_client().post(
+            "/api/desktop/v1/trading/wallet/reset?date=2026-05-06&desktop_mode=real", json={"amount": 100000})
+
+    assert response.status_code == 403
+    assert not reset.called
+
+
 def test_desktop_convert_rejects_other_user_session(no_db):
     _clear()
     session = _session()
