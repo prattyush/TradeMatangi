@@ -1518,12 +1518,18 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const handleStart = useCallback(async (startTime: string, speed: number, instrumentConfig: InstrumentConfig) => {
     setRunningStrategies([])
     const effectiveSpeed = sim.group?.speed ?? speed
-    await sim.startSession(startTime, effectiveSpeed, {
+    const startedSessionId = await sim.startSession(startTime, effectiveSpeed, {
       ...instrumentConfig,
       brokerage_per_order: brokeragePerOrder,
       strategy_interval_secs: stratIntervalSecs,
       ...(addingSession && sim.groupId ? { group_id: sim.groupId } : {}),
     })
+    if (instrumentConfig.session_type === 'real') {
+      const guardrails = await api.getGuardRailStatus(startedSessionId).catch(() => null)
+      if (guardrails) setGuardrailPopup(guardrails.ban_active
+        ? { type: 'BAN', reason: 'Trading suspended: the session still exceeds a configured risk limit.' }
+        : null)
+    }
     setAddingSession(false)
     if (autoStartSnapshots) startSnapshots()
   }, [sim.startSession, sim.groupId, sim.group?.speed, addingSession, brokeragePerOrder, stratIntervalSecs, autoStartSnapshots, startSnapshots])
