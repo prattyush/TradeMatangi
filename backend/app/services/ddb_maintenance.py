@@ -249,20 +249,27 @@ def session_inventory(client, selected):
     return changes
 
 
-def delete_inventory(client, changes, backup):
-    """Inventory must match the verified durable backup; abort on changed data."""
-    if changes != backup["changes"]:
-        raise ValueError("Deletion inventory differs from backup")
-    check_target(client, backup)
+def delete_inventory(client, changes, backup=None):
+    """Apply a session inventory. With a backup it must match and can be restored;
+    without one (admin fast path) there is no rollback."""
+    if backup is not None:
+        if changes != backup["changes"]:
+            raise ValueError("Deletion inventory differs from backup")
+        check_target(client, backup)
+        schemas = backup["schemas"]
+    else:
+        schemas = {name: client.describe_table(TableName=name)["Table"] for name in {c["table"] for c in changes}}
     for c in changes:
-        if get(client, c["table"], backup["schemas"][c["table"]], c["before"]) != c["before"]:
-            raise RuntimeError("Records changed after backup; stop backend and re-list sessions")
+        if get(client, c["table"], schemas[c["table"]], c["before"]) != c["before"]:
+            raise RuntimeError("Records changed after inventory; stop backend and re-list sessions")
     # Individual writes avoid unprocessed batch items and make failures explicit.
     for c in changes:
         if c["after"] is None:
-            client.delete_item(TableName=c["table"], Key=key_for(backup["schemas"][c["table"]], c["before"]))
+            client.delete_item(TableName=c["table"], Key=key_for(schemas[c["table"]], c["before"]))
         else:
             client.put_item(TableName=c["table"], Item=c["after"])
     for c in changes:
-        if get(client, c["table"], backup["schemas"][c["table"]], c["before"]) != c["after"]:
-            raise RuntimeError("Cleanup verification failed; restore the backup before restarting")
+        if get(client, c["table"], schemas[c["table"]], c["before"]) != c["after"]:
+            raise RuntimeError("Cleanup verification failed"
+                               + ("; restore the backup before restarting" if backup is not None
+                                  else "; no backup exists to restore from"))

@@ -52,6 +52,10 @@ records are backed up. The selected session root is deleted last. Wallet balance
 shared fee adjustments, other sessions and broker orders are preserved. No broker
 API is called. Runtime/UI caches clear when the backend is restarted.
 
+For trusted admin runs only, `--backend-stopped --no-backup` skips the verified
+backup and deletes directly. There is no rollback on that path — prefer the
+default (backup-first) unless you are certain and have no need to restore.
+
 Maintenance may scan session metadata and tables lacking a session primary key.
 Exclusive projection revisions also require a filtered scan because DynamoDB
 cannot query a hash-key prefix. This happens only in the offline tool, never in
