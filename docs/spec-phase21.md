@@ -2240,3 +2240,8 @@ on both hosts. No live orders or trading-data mutations were performed.
 - Capital-loss and losing-trade bans are reevaluated on Start without resetting unrelated cooldowns/manual blocks. Real guardrail state is persisted and restored with the session. Failed accounting does not replace session capital; failed session persistence rolls back the in-memory capital/restriction change.
 - No new table, polling loop, broad historical scan or broker order mutation is required.
 - Validation: 291 focused backend tests passed (240 capital/wallet/guardrail/lifecycle/performance tests plus 51 label/analysis/desktop-analysis tests), including a desktop Real Start path check. Website and desktop production builds (TypeScript + Vite) passed; `git diff --check` passed. No live broker orders or production-data changes were performed.
+
+### Compact pending exit labels (2026-10-19)
+
+- Website right panel and desktop left panel show the first two pending exit-label entries by default. When more than two are pending, a Show all / Show fewer control expands or collapses the list while keeping the total count visible. Open-trade labeling and pending orders are unchanged; changing sessions resets the collapsed view.
+- Validation: browser checks passed for 1, 2 and 5 entries, expand/collapse and session reset on both hosts. Website and desktop production builds passed; `git diff --check` passed.
