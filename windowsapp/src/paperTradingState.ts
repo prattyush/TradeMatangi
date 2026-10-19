@@ -49,6 +49,14 @@ export const applyPaperStreamEvent = (snapshot: DesktopTradingSnapshot, event: R
   const eventId = Number(event.event_id)
   if (Number.isFinite(eventId) && eventId <= (snapshot.event_cursor ?? -1)) return snapshot
   const cursor = Number.isFinite(eventId) ? eventId : snapshot.event_cursor
+  if (event.type === 'session_ended') {
+    return { ...snapshot, event_cursor: cursor, session: { ...snapshot.session, state: 'ended' },
+      trades: Array.isArray(event.trades) ? event.trades as DesktopTrade[] : snapshot.trades,
+      open_orders: Array.isArray(event.open_orders) ? event.open_orders as DesktopOrder[] : snapshot.open_orders,
+      positions: event.positions ? event.positions as DesktopTradingSnapshot['positions'] : snapshot.positions,
+      positions_by_contract: event.positions_by_contract ? event.positions_by_contract as DesktopTradingSnapshot['positions_by_contract'] : snapshot.positions_by_contract,
+      pnl: event.pnl ? event.pnl as DesktopTradingSnapshot['pnl'] : snapshot.pnl }
+  }
   const orderId = typeof event.order_id === 'string' ? event.order_id : ''
   if (event.type === 'order_updated' && orderId && (event.status === 'FILLED' || event.status === 'CANCELLED')) {
     return { ...snapshot, event_cursor: cursor, open_orders: snapshot.open_orders.filter(order => order.order_id !== orderId) }
@@ -123,7 +131,7 @@ export const applyPaperStreamEvent = (snapshot: DesktopTradingSnapshot, event: R
     const primaryOption = !contractKey || (Number.isFinite(strike) && strike === (right === 'CE' ? snapshot.session.strike_ce : snapshot.session.strike_pe) && expiry === snapshot.session.expiry)
     if (right === 'CE' && primaryOption) next = { ...next, current_price_ce: price }
     else if (right === 'PE' && primaryOption) next = { ...next, current_price_pe: price }
-    else next = { ...next, current_price: price }
+    else if (!right) next = { ...next, current_price: price }
   }
   if (contractKey && Number.isFinite(price)) {
     next = {

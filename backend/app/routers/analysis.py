@@ -1,3 +1,4 @@
+from app.services.instrument_identity import strike_number
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -14,6 +15,10 @@ router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
 class SessionSummary(BaseModel):
+    trading_style:str="intraday"
+    portfolio_id:str|None=None
+    entry_date:str|None=None
+    exit_date:str|None=None
     snapshot_session_ids: list[str] = []
     shared: bool = False
     owner_email: str | None = None
@@ -24,7 +29,7 @@ class SessionSummary(BaseModel):
     start_time: str | None = None
     instrument_type: str = "equity"
     session_type: str = "sim"
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     session_capital: float = 0.0
     net_pnl: float = 0.0
@@ -58,7 +63,7 @@ class TradeSummary(BaseModel):
     timestamp: int
     instrument_type: str = "equity"
     right: str | None = None
-    strike: int | None = None
+    strike: int | float | None = None
     expiry: str | None = None
     commission: float = 0.0
     fee_source: str | None = None
@@ -67,6 +72,7 @@ class TradeSummary(BaseModel):
 
 
 class SessionDetail(SessionSummary):
+    cycles: list[dict] = []
     orders: list[dict] = []
     trades: list[TradeSummary] = []
 
@@ -78,6 +84,8 @@ async def get_sessions(
     end_date: str | None = Query(default=None, description="YYYY-MM-DD"),
     instrument_type: str | None = Query(default=None),
     session_type: str | None = Query(default=None, description="sim, paper, real, or stepwise"),
+    trading_style:str|None=Query(default=None,pattern="^(intraday|swing)$"),
+    portfolio_id:str|None=None,
     include_shared: bool = False,
     user_id: str = Depends(get_request_user_id),
 ):
@@ -90,6 +98,8 @@ async def get_sessions(
             start_date=start_date, end_date=end_date,
             instrument_type=instrument_type,
             session_type=query_session_type,
+            **({"trading_style":trading_style} if trading_style else {}),
+            **({"portfolio_id":portfolio_id} if portfolio_id else {}),
         )
         result = []
         for s in sessions:
@@ -103,6 +113,12 @@ async def get_sessions(
                 import asyncio
                 from app.services.performance_service import load_session_cycles
                 cycles = load_session_cycles(s, include_labels=False)
+            if s.get("trading_style")=="swing":
+                from app.services.performance_service import load_session_cycles
+                from app.services import swing_market
+                cycles=cycles if cycles is not None else load_session_cycles(s,include_labels=False)
+                if (start_date or end_date) and not any((not end_date or c["entry_date"]<=end_date) and (not start_date or (c.get("exit_date") or swing_market.today())>=start_date) for c in cycles):
+                    continue
             summary = analysis_service.compute_session_summary(s, trades, cycles)
             result.append({**summary,"shared":s.get("shared",False),"owner_email":s.get("owner_email"),"snapshot_session_ids":s.get("snapshot_session_ids",[s["session_id"]])})
         return result
@@ -185,7 +201,7 @@ async def get_ohlc_context(
     entry_ts: int = Query(...),
     exit_ts: int | None = Query(default=None),
     right: str | None = Query(default=None),
-    strike: int | None = Query(default=None),
+    strike: int | float | None = Query(default=None),
     expiry: str | None = Query(default=None),
     pre_bars: int = Query(default=6, ge=1, le=20),
     post_bars: int = Query(default=3, ge=1, le=10),
@@ -208,7 +224,7 @@ async def get_ohlc_context(
     if is_options:
         try:
             from app.services.options_service import fetch_options_historical
-            fetch_options_historical(symbol, date, int(strike), expiry, right)
+            fetch_options_historical(symbol, date, strike_number(strike), expiry, right)
         except Exception as exc:
             logger.warning("ohlc-context: options Breeze fetch failed %s %s %s %s %s: %s",
                            symbol, date, right, strike, expiry, exc)
@@ -221,7 +237,7 @@ async def get_ohlc_context(
 
     try:
         if is_options:
-            df = load_options_dataframe(symbol, date, int(strike), expiry, right)
+            df = load_options_dataframe(symbol, date, strike_number(strike), expiry, right)
         else:
             df = load_dataframe(symbol, date)
     except FileNotFoundError as exc:

@@ -9,3 +9,10 @@ export function refreshedSessionCapital(activeSessionId: string | null, response
   return activeSessionId === responseSessionId && typeof capital === 'number' && Number.isFinite(capital)
     ? capital : currentCapital
 }
+
+/** Verification reports are not state snapshots; reject them before replacing UI state. */
+export function isBrokerSnapshot(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  const row = value as Record<string, unknown>
+  return ['orders', 'trades', 'positions', 'application_orders', 'open_orders'].every(key => Array.isArray(row[key]))
+}

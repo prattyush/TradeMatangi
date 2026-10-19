@@ -1,0 +1,1001 @@
+{
+  "captured_on": "2026-10-10",
+  "source": "https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv",
+  "mapping_source": "https://directlink.icicidirect.com/NewSecurityMaster/SecurityMaster.zip",
+  "stocks": [
+    {
+      "symbol": "ABB",
+      "nse_symbol": "ABB",
+      "display_name": "ABB India Ltd.",
+      "isin": "INE117A01022",
+      "breeze_stock_code": "ABB",
+      "option_eligible": true,
+      "lot_size": 125,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "ADANIENSOL",
+      "nse_symbol": "ADANIENSOL",
+      "display_name": "Adani Energy Solutions Ltd.",
+      "isin": "INE931S01010",
+      "breeze_stock_code": "ADATRA",
+      "option_eligible": true,
+      "lot_size": 675,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "ADANIENT",
+      "nse_symbol": "ADANIENT",
+      "display_name": "Adani Enterprises Ltd.",
+      "isin": "INE423A01024",
+      "breeze_stock_code": "ADAENT",
+      "option_eligible": true,
+      "lot_size": 309,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "ADANIGREEN",
+      "nse_symbol": "ADANIGREEN",
+      "display_name": "Adani Green Energy Ltd.",
+      "isin": "INE364U01010",
+      "breeze_stock_code": "ADAGRE",
+      "option_eligible": true,
+      "lot_size": 600,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "ADANIPORTS",
+      "nse_symbol": "ADANIPORTS",
+      "display_name": "Adani Ports and Special Economic Zone Ltd.",
+      "isin": "INE742F01042",
+      "breeze_stock_code": "ADAPOR",
+      "option_eligible": true,
+      "lot_size": 475,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "ADANIPOWER",
+      "nse_symbol": "ADANIPOWER",
+      "display_name": "Adani Power Ltd.",
+      "isin": "INE814H01029",
+      "breeze_stock_code": "ADAPOW",
+      "option_eligible": true,
+      "lot_size": 3550,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "AMBUJACEM",
+      "nse_symbol": "AMBUJACEM",
+      "display_name": "Ambuja Cements Ltd.",
+      "isin": "INE079A01024",
+      "breeze_stock_code": "AMBCE",
+      "option_eligible": true,
+      "lot_size": 1200,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "APOLLOHOSP",
+      "nse_symbol": "APOLLOHOSP",
+      "display_name": "Apollo Hospitals Enterprise Ltd.",
+      "isin": "INE437A01024",
+      "breeze_stock_code": "APOHOS",
+      "option_eligible": true,
+      "lot_size": 125,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "ASIANPAINT",
+      "nse_symbol": "ASIANPAINT",
+      "display_name": "Asian Paints Ltd.",
+      "isin": "INE021A01026",
+      "breeze_stock_code": "ASIPAI",
+      "option_eligible": true,
+      "lot_size": 250,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "DMART",
+      "nse_symbol": "DMART",
+      "display_name": "Avenue Supermarts Ltd.",
+      "isin": "INE192R01011",
+      "breeze_stock_code": "AVESUP",
+      "option_eligible": true,
+      "lot_size": 150,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "AXISBANK",
+      "nse_symbol": "AXISBANK",
+      "display_name": "Axis Bank Ltd.",
+      "isin": "INE238A01034",
+      "breeze_stock_code": "AXIBAN",
+      "option_eligible": true,
+      "lot_size": 625,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "BSE",
+      "nse_symbol": "BSE",
+      "display_name": "BSE Ltd.",
+      "isin": "INE118H01025",
+      "breeze_stock_code": "BSE",
+      "option_eligible": true,
+      "lot_size": 200,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "BAJAJ-AUTO",
+      "nse_symbol": "BAJAJ-AUTO",
+      "display_name": "Bajaj Auto Ltd.",
+      "isin": "INE917I01010",
+      "breeze_stock_code": "BAAUTO",
+      "option_eligible": true,
+      "lot_size": 75,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "BAJFINANCE",
+      "nse_symbol": "BAJFINANCE",
+      "display_name": "Bajaj Finance Ltd.",
+      "isin": "INE296A01032",
+      "breeze_stock_code": "BAJFI",
+      "option_eligible": true,
+      "lot_size": 750,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "BAJAJFINSV",
+      "nse_symbol": "BAJAJFINSV",
+      "display_name": "Bajaj Finserv Ltd.",
+      "isin": "INE918I01026",
+      "breeze_stock_code": "BAFINS",
+      "option_eligible": true,
+      "lot_size": 300,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "BAJAJHLDNG",
+      "nse_symbol": "BAJAJHLDNG",
+      "display_name": "Bajaj Holdings & Investment Ltd.",
+      "isin": "INE118A01012",
+      "breeze_stock_code": "BAJHOL",
+      "option_eligible": true,
+      "lot_size": 75,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "BANKBARODA",
+      "nse_symbol": "BANKBARODA",
+      "display_name": "Bank of Baroda",
+      "isin": "INE028A01039",
+      "breeze_stock_code": "BANBAR",
+      "option_eligible": true,
+      "lot_size": 2925,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "BEL",
+      "nse_symbol": "BEL",
+      "display_name": "Bharat Electronics Ltd.",
+      "isin": "INE263A01024",
+      "breeze_stock_code": "BHAELE",
+      "option_eligible": true,
+      "lot_size": 1425,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "BPCL",
+      "nse_symbol": "BPCL",
+      "display_name": "Bharat Petroleum Corporation Ltd.",
+      "isin": "INE029A01011",
+      "breeze_stock_code": "BHAPET",
+      "option_eligible": true,
+      "lot_size": 1975,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "BHARTIARTL",
+      "nse_symbol": "BHARTIARTL",
+      "display_name": "Bharti Airtel Ltd.",
+      "isin": "INE397D01024",
+      "breeze_stock_code": "BHAAIR",
+      "option_eligible": true,
+      "lot_size": 475,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "BOSCHLTD",
+      "nse_symbol": "BOSCHLTD",
+      "display_name": "Bosch Ltd.",
+      "isin": "INE323A01026",
+      "breeze_stock_code": "BOSLIM",
+      "option_eligible": true,
+      "lot_size": 25,
+      "strike_interval": 500.0
+    },
+    {
+      "symbol": "BRITANNIA",
+      "nse_symbol": "BRITANNIA",
+      "display_name": "Britannia Industries Ltd.",
+      "isin": "INE216A01030",
+      "breeze_stock_code": "BRIIND",
+      "option_eligible": true,
+      "lot_size": 125,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "CGPOWER",
+      "nse_symbol": "CGPOWER",
+      "display_name": "CG Power and Industrial Solutions Ltd.",
+      "isin": "INE067A01029",
+      "breeze_stock_code": "CROGRE",
+      "option_eligible": true,
+      "lot_size": 850,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "CANBK",
+      "nse_symbol": "CANBK",
+      "display_name": "Canara Bank",
+      "isin": "INE476A01022",
+      "breeze_stock_code": "CANBAN",
+      "option_eligible": true,
+      "lot_size": 6750,
+      "strike_interval": 0.5
+    },
+    {
+      "symbol": "CHOLAFIN",
+      "nse_symbol": "CHOLAFIN",
+      "display_name": "Cholamandalam Investment and Finance Company Ltd.",
+      "isin": "INE121A01024",
+      "breeze_stock_code": "CHOINV",
+      "option_eligible": true,
+      "lot_size": 625,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "CIPLA",
+      "nse_symbol": "CIPLA",
+      "display_name": "Cipla Ltd.",
+      "isin": "INE059A01026",
+      "breeze_stock_code": "CIPLA",
+      "option_eligible": true,
+      "lot_size": 425,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "COALINDIA",
+      "nse_symbol": "COALINDIA",
+      "display_name": "Coal India Ltd.",
+      "isin": "INE522F01014",
+      "breeze_stock_code": "COALIN",
+      "option_eligible": true,
+      "lot_size": 1350,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "CUMMINSIND",
+      "nse_symbol": "CUMMINSIND",
+      "display_name": "Cummins India Ltd.",
+      "isin": "INE298A01020",
+      "breeze_stock_code": "CUMIND",
+      "option_eligible": true,
+      "lot_size": 200,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "DLF",
+      "nse_symbol": "DLF",
+      "display_name": "DLF Ltd.",
+      "isin": "INE271C01023",
+      "breeze_stock_code": "DLFLIM",
+      "option_eligible": true,
+      "lot_size": 950,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "DIVISLAB",
+      "nse_symbol": "DIVISLAB",
+      "display_name": "Divi's Laboratories Ltd.",
+      "isin": "INE361B01024",
+      "breeze_stock_code": "DIVLAB",
+      "option_eligible": true,
+      "lot_size": 100,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "DRREDDY",
+      "nse_symbol": "DRREDDY",
+      "display_name": "Dr. Reddy's Laboratories Ltd.",
+      "isin": "INE089A01031",
+      "breeze_stock_code": "DRREDD",
+      "option_eligible": true,
+      "lot_size": 625,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "EICHERMOT",
+      "nse_symbol": "EICHERMOT",
+      "display_name": "Eicher Motors Ltd.",
+      "isin": "INE066A01021",
+      "breeze_stock_code": "EICMOT",
+      "option_eligible": true,
+      "lot_size": 100,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "ETERNAL",
+      "nse_symbol": "ETERNAL",
+      "display_name": "Eternal Ltd.",
+      "isin": "INE758T01015",
+      "breeze_stock_code": "ZOMLIM",
+      "option_eligible": true,
+      "lot_size": 2425,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "GAIL",
+      "nse_symbol": "GAIL",
+      "display_name": "GAIL (India) Ltd.",
+      "isin": "INE129A01019",
+      "breeze_stock_code": "GAIL",
+      "option_eligible": true,
+      "lot_size": 3550,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "GODREJCP",
+      "nse_symbol": "GODREJCP",
+      "display_name": "Godrej Consumer Products Ltd.",
+      "isin": "INE102D01028",
+      "breeze_stock_code": "GODCON",
+      "option_eligible": true,
+      "lot_size": 500,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "GRASIM",
+      "nse_symbol": "GRASIM",
+      "display_name": "Grasim Industries Ltd.",
+      "isin": "INE047A01021",
+      "breeze_stock_code": "GRASIM",
+      "option_eligible": true,
+      "lot_size": 250,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "HCLTECH",
+      "nse_symbol": "HCLTECH",
+      "display_name": "HCL Technologies Ltd.",
+      "isin": "INE860A01027",
+      "breeze_stock_code": "HCLTEC",
+      "option_eligible": true,
+      "lot_size": 400,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "HDFCAMC",
+      "nse_symbol": "HDFCAMC",
+      "display_name": "HDFC Asset Management Company Ltd.",
+      "isin": "INE127D01025",
+      "breeze_stock_code": "HDFAMC",
+      "option_eligible": true,
+      "lot_size": 300,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "HDFCBANK",
+      "nse_symbol": "HDFCBANK",
+      "display_name": "HDFC Bank Ltd.",
+      "isin": "INE040A01034",
+      "breeze_stock_code": "HDFBAN",
+      "option_eligible": true,
+      "lot_size": 650,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "HDFCLIFE",
+      "nse_symbol": "HDFCLIFE",
+      "display_name": "HDFC Life Insurance Company Ltd.",
+      "isin": "INE795G01014",
+      "breeze_stock_code": "HDFSTA",
+      "option_eligible": true,
+      "lot_size": 1100,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "HINDALCO",
+      "nse_symbol": "HINDALCO",
+      "display_name": "Hindalco Industries Ltd.",
+      "isin": "INE038A01020",
+      "breeze_stock_code": "HINDAL",
+      "option_eligible": true,
+      "lot_size": 700,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "HAL",
+      "nse_symbol": "HAL",
+      "display_name": "Hindustan Aeronautics Ltd.",
+      "isin": "INE066F01020",
+      "breeze_stock_code": "HINAER",
+      "option_eligible": true,
+      "lot_size": 150,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "HINDUNILVR",
+      "nse_symbol": "HINDUNILVR",
+      "display_name": "Hindustan Unilever Ltd.",
+      "isin": "INE030A01027",
+      "breeze_stock_code": "HINLEV",
+      "option_eligible": true,
+      "lot_size": 300,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "HINDZINC",
+      "nse_symbol": "HINDZINC",
+      "display_name": "Hindustan Zinc Ltd.",
+      "isin": "INE267A01025",
+      "breeze_stock_code": "HINZIN",
+      "option_eligible": true,
+      "lot_size": 1225,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "POWERINDIA",
+      "nse_symbol": "POWERINDIA",
+      "display_name": "Hitachi Energy India Ltd.",
+      "isin": "INE07Y701011",
+      "breeze_stock_code": "ABBPOW",
+      "option_eligible": true,
+      "lot_size": 25,
+      "strike_interval": 500.0
+    },
+    {
+      "symbol": "HYUNDAI",
+      "nse_symbol": "HYUNDAI",
+      "display_name": "Hyundai Motor India Ltd.",
+      "isin": "INE0V6F01027",
+      "breeze_stock_code": "HYUMOT",
+      "option_eligible": true,
+      "lot_size": 275,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "ICICIBANK",
+      "nse_symbol": "ICICIBANK",
+      "display_name": "ICICI Bank Ltd.",
+      "isin": "INE090A01021",
+      "breeze_stock_code": "ICIBAN",
+      "option_eligible": true,
+      "lot_size": 700,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "ITC",
+      "nse_symbol": "ITC",
+      "display_name": "ITC Ltd.",
+      "isin": "INE154A01025",
+      "breeze_stock_code": "ITC",
+      "option_eligible": true,
+      "lot_size": 1725,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "IOC",
+      "nse_symbol": "IOC",
+      "display_name": "Indian Oil Corporation Ltd.",
+      "isin": "INE242A01010",
+      "breeze_stock_code": "INDOIL",
+      "option_eligible": true,
+      "lot_size": 4875,
+      "strike_interval": 0.5
+    },
+    {
+      "symbol": "IRFC",
+      "nse_symbol": "IRFC",
+      "display_name": "Indian Railway Finance Corporation Ltd.",
+      "isin": "INE053F01010",
+      "breeze_stock_code": "INDR",
+      "option_eligible": true,
+      "lot_size": 5425,
+      "strike_interval": 1.0
+    },
+    {
+      "symbol": "INFY",
+      "nse_symbol": "INFY",
+      "display_name": "Infosys Ltd.",
+      "isin": "INE009A01021",
+      "breeze_stock_code": "INFTEC",
+      "option_eligible": true,
+      "lot_size": 400,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "INDIGO",
+      "nse_symbol": "INDIGO",
+      "display_name": "InterGlobe Aviation Ltd.",
+      "isin": "INE646L01027",
+      "breeze_stock_code": "INTAVI",
+      "option_eligible": true,
+      "lot_size": 150,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "JSWSTEEL",
+      "nse_symbol": "JSWSTEEL",
+      "display_name": "JSW Steel Ltd.",
+      "isin": "INE019A01038",
+      "breeze_stock_code": "JSWSTE",
+      "option_eligible": true,
+      "lot_size": 675,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "JINDALSTEL",
+      "nse_symbol": "JINDALSTEL",
+      "display_name": "Jindal Steel Ltd.",
+      "isin": "INE749A01030",
+      "breeze_stock_code": "JINSP",
+      "option_eligible": true,
+      "lot_size": 625,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "JIOFIN",
+      "nse_symbol": "JIOFIN",
+      "display_name": "Jio Financial Services Ltd.",
+      "isin": "INE758E01017",
+      "breeze_stock_code": "JIOFIN",
+      "option_eligible": true,
+      "lot_size": 2350,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "KOTAKBANK",
+      "nse_symbol": "KOTAKBANK",
+      "display_name": "Kotak Mahindra Bank Ltd.",
+      "isin": "INE237A01036",
+      "breeze_stock_code": "KOTMAH",
+      "option_eligible": true,
+      "lot_size": 2000,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "LTM",
+      "nse_symbol": "LTM",
+      "display_name": "LTM Ltd.",
+      "isin": "INE214T01019",
+      "breeze_stock_code": "LTINFO",
+      "option_eligible": true,
+      "lot_size": 150,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "LT",
+      "nse_symbol": "LT",
+      "display_name": "Larsen & Toubro Ltd.",
+      "isin": "INE018A01030",
+      "breeze_stock_code": "LARTOU",
+      "option_eligible": true,
+      "lot_size": 175,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "M&M",
+      "nse_symbol": "M&M",
+      "display_name": "Mahindra & Mahindra Ltd.",
+      "isin": "INE101A01026",
+      "breeze_stock_code": "MAHMAH",
+      "option_eligible": true,
+      "lot_size": 200,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "MARUTI",
+      "nse_symbol": "MARUTI",
+      "display_name": "Maruti Suzuki India Ltd.",
+      "isin": "INE585B01010",
+      "breeze_stock_code": "MARUTI",
+      "option_eligible": true,
+      "lot_size": 50,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "MAXHEALTH",
+      "nse_symbol": "MAXHEALTH",
+      "display_name": "Max Healthcare Institute Ltd.",
+      "isin": "INE027H01010",
+      "breeze_stock_code": "MAXHEA",
+      "option_eligible": true,
+      "lot_size": 525,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "MAZDOCK",
+      "nse_symbol": "MAZDOCK",
+      "display_name": "Mazagoan Dock Shipbuilders Ltd.",
+      "isin": "INE249Z01020",
+      "breeze_stock_code": "MAZDOC",
+      "option_eligible": true,
+      "lot_size": 225,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "MUTHOOTFIN",
+      "nse_symbol": "MUTHOOTFIN",
+      "display_name": "Muthoot Finance Ltd.",
+      "isin": "INE414G01012",
+      "breeze_stock_code": "MUTFIN",
+      "option_eligible": true,
+      "lot_size": 275,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "NTPC",
+      "nse_symbol": "NTPC",
+      "display_name": "NTPC Ltd.",
+      "isin": "INE733E01010",
+      "breeze_stock_code": "NTPC",
+      "option_eligible": true,
+      "lot_size": 1500,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "NESTLEIND",
+      "nse_symbol": "NESTLEIND",
+      "display_name": "Nestle India Ltd.",
+      "isin": "INE239A01024",
+      "breeze_stock_code": "NESIND",
+      "option_eligible": true,
+      "lot_size": 500,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "ONGC",
+      "nse_symbol": "ONGC",
+      "display_name": "Oil & Natural Gas Corporation Ltd.",
+      "isin": "INE213A01029",
+      "breeze_stock_code": "ONGC",
+      "option_eligible": true,
+      "lot_size": 2250,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "PIDILITIND",
+      "nse_symbol": "PIDILITIND",
+      "display_name": "Pidilite Industries Ltd.",
+      "isin": "INE318A01026",
+      "breeze_stock_code": "PIDIND",
+      "option_eligible": true,
+      "lot_size": 500,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "POLYCAB",
+      "nse_symbol": "POLYCAB",
+      "display_name": "Polycab India Ltd.",
+      "isin": "INE455K01017",
+      "breeze_stock_code": "POLI",
+      "option_eligible": true,
+      "lot_size": 125,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "PFC",
+      "nse_symbol": "PFC",
+      "display_name": "Power Finance Corporation Ltd.",
+      "isin": "INE134E01011",
+      "breeze_stock_code": "POWFIN",
+      "option_eligible": true,
+      "lot_size": 1300,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "POWERGRID",
+      "nse_symbol": "POWERGRID",
+      "display_name": "Power Grid Corporation of India Ltd.",
+      "isin": "INE752E01010",
+      "breeze_stock_code": "POWGRI",
+      "option_eligible": true,
+      "lot_size": 1900,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "PNB",
+      "nse_symbol": "PNB",
+      "display_name": "Punjab National Bank",
+      "isin": "INE160A01022",
+      "breeze_stock_code": "PUNBAN",
+      "option_eligible": true,
+      "lot_size": 8000,
+      "strike_interval": 1.0
+    },
+    {
+      "symbol": "RELIND",
+      "nse_symbol": "RELIANCE",
+      "display_name": "Reliance Industries Ltd.",
+      "isin": "INE002A01018",
+      "breeze_stock_code": "RELIND",
+      "option_eligible": true,
+      "lot_size": 500,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "SBILIFE",
+      "nse_symbol": "SBILIFE",
+      "display_name": "SBI Life Insurance Company Ltd.",
+      "isin": "INE123W01016",
+      "breeze_stock_code": "SBILIF",
+      "option_eligible": true,
+      "lot_size": 375,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "MOTHERSON",
+      "nse_symbol": "MOTHERSON",
+      "display_name": "Samvardhana Motherson International Ltd.",
+      "isin": "INE775A01035",
+      "breeze_stock_code": "MOTSUM",
+      "option_eligible": true,
+      "lot_size": 6150,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "SHRIRAMFIN",
+      "nse_symbol": "SHRIRAMFIN",
+      "display_name": "Shriram Finance Ltd.",
+      "isin": "INE721A01047",
+      "breeze_stock_code": "SHRTRA",
+      "option_eligible": true,
+      "lot_size": 825,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "ENRIN",
+      "nse_symbol": "ENRIN",
+      "display_name": "Siemens Energy India Ltd.",
+      "isin": "INE1NPP01017",
+      "breeze_stock_code": "SIEENE",
+      "option_eligible": true,
+      "lot_size": 175,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "SIEMENS",
+      "nse_symbol": "SIEMENS",
+      "display_name": "Siemens Ltd.",
+      "isin": "INE003A01024",
+      "breeze_stock_code": "SIEMEN",
+      "option_eligible": true,
+      "lot_size": 175,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "SOLARINDS",
+      "nse_symbol": "SOLARINDS",
+      "display_name": "Solar Industries India Ltd.",
+      "isin": "INE343H01029",
+      "breeze_stock_code": "SOLIN",
+      "option_eligible": true,
+      "lot_size": 50,
+      "strike_interval": 250.0
+    },
+    {
+      "symbol": "SBIN",
+      "nse_symbol": "SBIN",
+      "display_name": "State Bank of India",
+      "isin": "INE062A01020",
+      "breeze_stock_code": "STABAN",
+      "option_eligible": true,
+      "lot_size": 750,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "SUNPHARMA",
+      "nse_symbol": "SUNPHARMA",
+      "display_name": "Sun Pharmaceutical Industries Ltd.",
+      "isin": "INE044A01036",
+      "breeze_stock_code": "SUNPHA",
+      "option_eligible": true,
+      "lot_size": 350,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "TVSMOTOR",
+      "nse_symbol": "TVSMOTOR",
+      "display_name": "TVS Motor Company Ltd.",
+      "isin": "INE494B01023",
+      "breeze_stock_code": "TVSMOT",
+      "option_eligible": true,
+      "lot_size": 175,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "TATACAP",
+      "nse_symbol": "TATACAP",
+      "display_name": "Tata Capital Ltd.",
+      "isin": "INE976I01016",
+      "breeze_stock_code": "TATCAP",
+      "option_eligible": false
+    },
+    {
+      "symbol": "TCS",
+      "nse_symbol": "TCS",
+      "display_name": "Tata Consultancy Services Ltd.",
+      "isin": "INE467B01029",
+      "breeze_stock_code": "TCS",
+      "option_eligible": true,
+      "lot_size": 225,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "TATACONSUM",
+      "nse_symbol": "TATACONSUM",
+      "display_name": "Tata Consumer Products Ltd.",
+      "isin": "INE192A01025",
+      "breeze_stock_code": "TATGLO",
+      "option_eligible": true,
+      "lot_size": 550,
+      "strike_interval": 10.0
+    },
+    {
+      "symbol": "TATMOT",
+      "nse_symbol": "TMCV",
+      "display_name": "Tata Motors Ltd.",
+      "isin": "INE1TAE01010",
+      "breeze_stock_code": "TATCOV",
+      "option_eligible": false
+    },
+    {
+      "symbol": "TMPV",
+      "nse_symbol": "TMPV",
+      "display_name": "Tata Motors Passenger Vehicles Ltd.",
+      "isin": "INE155A01022",
+      "breeze_stock_code": "TATMOT",
+      "option_eligible": true,
+      "lot_size": 1600,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "TATPOW",
+      "nse_symbol": "TATAPOWER",
+      "display_name": "Tata Power Co. Ltd.",
+      "isin": "INE245A01021",
+      "breeze_stock_code": "TATPOW",
+      "option_eligible": true,
+      "lot_size": 1450,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "TATASTEEL",
+      "nse_symbol": "TATASTEEL",
+      "display_name": "Tata Steel Ltd.",
+      "isin": "INE081A01020",
+      "breeze_stock_code": "TATSTE",
+      "option_eligible": true,
+      "lot_size": 2750,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "TECHM",
+      "nse_symbol": "TECHM",
+      "display_name": "Tech Mahindra Ltd.",
+      "isin": "INE669C01036",
+      "breeze_stock_code": "TECMAH",
+      "option_eligible": true,
+      "lot_size": 600,
+      "strike_interval": 20.0
+    },
+    {
+      "symbol": "TITAN",
+      "nse_symbol": "TITAN",
+      "display_name": "Titan Company Ltd.",
+      "isin": "INE280A01028",
+      "breeze_stock_code": "TITIND",
+      "option_eligible": true,
+      "lot_size": 175,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "TORNTPHARM",
+      "nse_symbol": "TORNTPHARM",
+      "display_name": "Torrent Pharmaceuticals Ltd.",
+      "isin": "INE685A01028",
+      "breeze_stock_code": "TORPHA",
+      "option_eligible": true,
+      "lot_size": 125,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "TRENT",
+      "nse_symbol": "TRENT",
+      "display_name": "Trent Ltd.",
+      "isin": "INE849A01020",
+      "breeze_stock_code": "TRENT",
+      "option_eligible": true,
+      "lot_size": 225,
+      "strike_interval": 50.0
+    },
+    {
+      "symbol": "ULTRACEMCO",
+      "nse_symbol": "ULTRACEMCO",
+      "display_name": "UltraTech Cement Ltd.",
+      "isin": "INE481G01011",
+      "breeze_stock_code": "ULTCEM",
+      "option_eligible": true,
+      "lot_size": 50,
+      "strike_interval": 100.0
+    },
+    {
+      "symbol": "UNIONBANK",
+      "nse_symbol": "UNIONBANK",
+      "display_name": "Union Bank of India",
+      "isin": "INE692A01016",
+      "breeze_stock_code": "UNIBAN",
+      "option_eligible": true,
+      "lot_size": 4425,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "VBL",
+      "nse_symbol": "VBL",
+      "display_name": "Varun Beverages Ltd.",
+      "isin": "INE200M01039",
+      "breeze_stock_code": "VARBEV",
+      "option_eligible": true,
+      "lot_size": 1275,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "VAML",
+      "nse_symbol": "VAML",
+      "display_name": "Vedanta Aluminium Metal Ltd.",
+      "isin": "INE1CDF01017",
+      "breeze_stock_code": "VEDALU",
+      "option_eligible": false
+    },
+    {
+      "symbol": "VEDL",
+      "nse_symbol": "VEDL",
+      "display_name": "Vedanta Ltd.",
+      "isin": "INE205A01025",
+      "breeze_stock_code": "VEDLIM",
+      "option_eligible": true,
+      "lot_size": 1150,
+      "strike_interval": 5.0
+    },
+    {
+      "symbol": "IDEA",
+      "nse_symbol": "IDEA",
+      "display_name": "Vodafone Idea Ltd.",
+      "isin": "INE669E01016",
+      "breeze_stock_code": "IDECEL",
+      "option_eligible": true,
+      "lot_size": 71475,
+      "strike_interval": 1.0
+    },
+    {
+      "symbol": "WIPRO",
+      "nse_symbol": "WIPRO",
+      "display_name": "Wipro Ltd.",
+      "isin": "INE075A01022",
+      "breeze_stock_code": "WIPRO",
+      "option_eligible": true,
+      "lot_size": 3000,
+      "strike_interval": 2.5
+    },
+    {
+      "symbol": "ZYDUSLIFE",
+      "nse_symbol": "ZYDUSLIFE",
+      "display_name": "Zydus Lifesciences Ltd.",
+      "isin": "INE010B01027",
+      "breeze_stock_code": "CADHEA",
+      "option_eligible": true,
+      "lot_size": 900,
+      "strike_interval": 10.0
+    }
+  ]
+}

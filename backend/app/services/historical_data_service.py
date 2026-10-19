@@ -92,7 +92,7 @@ def _warn(key: tuple, message: str, *args) -> None:
     logger.warning(message, *args)
 
 
-def _path(provider: str, symbol: str, date: str, strike: int | None, expiry: str | None, right: str | None) -> Path:
+def _path(provider: str, symbol: str, date: str, strike: int | float | None, expiry: str | None, right: str | None) -> Path:
     from app.services.data_loader import parquet_path
     from app.services.options_service import options_parquet_path
     if provider == "breeze":
@@ -187,7 +187,7 @@ def _remember(key: tuple, result: HistoricalResult) -> None:
     _results[key] = (now, result)
 
 
-def load_history(symbol: str, date: str, strike: int | None = None, expiry: str | None = None,
+def load_history(symbol: str, date: str, strike: int | float | None = None, expiry: str | None = None,
                  right: str | None = None, *, policy: HistoricalPolicy | None = None,
                  force_refresh: bool = False, mode: Literal["live", "replay"] | None = None) -> HistoricalResult:
     """Resolve/fetch a single contract/day and return the exact selected frame.

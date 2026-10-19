@@ -3,6 +3,7 @@ Trading service: in-memory store (source of truth) with async DynamoDB persisten
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import logging
 from decimal import Decimal
 from typing import Literal
@@ -18,7 +19,8 @@ _trades: dict[str, list[Trade]] = {}
 
 def _uses_equity_intraday_margin(session, right: str | None = None) -> bool:
     return (
-        right is None
+        getattr(session, "trading_style", "intraday") != "swing"
+        and right is None
         and getattr(session, "instrument_type", None) == "equity"
         and getattr(session, "session_type", None) in ("sim", "stepwise", "paper", "real")
     )
@@ -52,7 +54,7 @@ def settle_wallet_for_trade(
     price: float,
     quantity: int,
     right: str | None = None,
-    strike: int | None = None,
+    strike: int | float | None = None,
     expiry: str | None = None,
     entry_reserved: bool = False,
     reserved_amount: float = 0.0,
@@ -78,6 +80,9 @@ def settle_wallet_for_trade(
                     _wallet_credit(session, -diff, operation_id, order=order)
         else:
             _wallet_credit(session, amount, operation_id, order=order)
+        if side == TradeSide.BUY and entry_reserved and reserved_amount == amount and order is not None and session.wallet_ledger_id.startswith("swing:"):
+            from app.services.swing_cash import move
+            move(session.user_id, session.portfolio_id, 0, operation_id, order=order)
         if side == TradeSide.BUY and entry_reserved and reserved_amount == amount and order is not None and session.wallet_ledger_id.startswith("paper:"):
             from app.services.paper_wallet import move
             engine = (session.session_id, session.symbol, session.paper_engine_token) if getattr(session, "desktop_origin", None) == "desktop_paper" and getattr(session, "paper_engine_token", None) else None
@@ -155,8 +160,11 @@ def _write_trade_to_db(trade: Trade) -> None:
             "price": Decimal(str(trade.price)),
             "timestamp": trade.timestamp,
             "instrument_type": trade.instrument_type,
+            "trading_style": trade.trading_style,
             "commission": Decimal(str(trade.commission)),
         }
+        if trade.portfolio_id:
+            item["portfolio_id"] = trade.portfolio_id
         if trade.execution_sort_time is not None:
             item["execution_sort_time"] = trade.execution_sort_time
         if trade.analytics is not None:
@@ -167,7 +175,7 @@ def _write_trade_to_db(trade: Trade) -> None:
         if trade.underlying_price is not None:
             item["underlying_price"] = Decimal(str(trade.underlying_price))
 
-        if trade.instrument_type == "options":
+        if trade.instrument_type in ("options", "futures"):
             if trade.strike is not None:
                 item["strike"] = trade.strike
             if trade.expiry is not None:
@@ -175,14 +183,21 @@ def _write_trade_to_db(trade: Trade) -> None:
             if trade.right is not None:
                 item["right"] = trade.right
         item["session_type"] = trade.session_type
-        for field in ("kotak_order_id", "broker_account_id", "broker_exchange", "broker_execution_ids"):
+        for field in ("execution_broker", "broker_order_id", "kotak_order_id", "broker_account_id", "broker_exchange", "broker_execution_ids"):
             value = getattr(trade, field)
             if value:
                 item[field] = value
+        from app.services.real_broker_state import encode
+        item = encode(item)
         if trade.session_type == "real":
             from app.services.real_broker_state import active_partition
             item["session_id"] = active_partition(trade.session_id) or trade.session_id
-        if trade.source == "desktop_paper":
+        from app.services.simulation import get_session
+        session = get_session(trade.session_id)
+        if session and session.session_type == "real" and session.trading_style == "swing" and getattr(session, "real_claim_token", None):
+            from app.services.real_session_slots import fenced_put
+            fenced_put(session, "Trades", item)
+        elif trade.source == "desktop_paper":
             from datetime import datetime, timezone
             from app.services import paper_wallet
             date = datetime.fromtimestamp(trade.timestamp, tz=timezone.utc).date().isoformat()
@@ -209,7 +224,7 @@ def record_trade(
     quantity: int = 1,
     symbol: str = DEFAULT_SYMBOL,
     instrument_type: str = "equity",
-    strike: int | None = None,
+    strike: int | float | None = None,
     expiry: str | None = None,
     right: str | None = None,
     brokerage_per_order: float = 1.0,
@@ -218,23 +233,33 @@ def record_trade(
     source: str | None = None,
     trade_id: str | None = None,
     kotak_order_id: str | None = None,
+    broker_order_id: str | None = None,
+    execution_broker: str | None = None,
+    broker_account_id: str | None = None,
     cumulative: bool = False,
     defer_exit_reconciliation: bool = False,
     analytics: dict | None = None,
 ) -> Trade:
     ensure_session(session_id)
+    from app.services.simulation import get_session
+    runtime = get_session(session_id)
+    if runtime is not None and session_type == "real":
+        from app.services.execution_broker import name
+        execution_broker = name(runtime)
+        broker_account_id = broker_account_id or getattr(runtime, "broker_account_id", None)
+    broker_order_id = broker_order_id or kotak_order_id
     from app.services.execution_analytics import filled, order_snapshot
     if analytics is None:
         from app.services.order_service import get_all_orders
         from app.services.simulation import get_session
         order = next((o for o in get_all_orders(session_id) if o.order_id == trade_id or
-                      (kotak_order_id and o.kotak_order_id == kotak_order_id)), None)
+                      (broker_order_id and o.broker_order_id == broker_order_id)), None)
         if order is not None:
             analytics = order_snapshot(order, get_session(session_id))
     analytics = filled(analytics, price, quantity)
     if trade_id:
         existing = next((trade for trade in _trades[session_id]
-                         if trade.trade_id == trade_id or (kotak_order_id and trade.kotak_order_id == kotak_order_id)), None)
+                         if trade.trade_id == trade_id or (broker_order_id and trade.broker_order_id == broker_order_id)), None)
         if existing:
             if cumulative and quantity > existing.quantity:
                 existing.quantity, existing.price = quantity, price
@@ -250,7 +275,7 @@ def record_trade(
         try:
             from app.services import simulation as sim_svc
             session = sim_svc.get_session(session_id)
-            if session and session.last_price > 0:
+            if session and session.last_price > 0 and getattr(session, "swing_historical_recovery", False) is not True:
                 underlying_price = session.last_price
         except Exception:
             pass
@@ -285,9 +310,17 @@ def record_trade(
         commission=compute_commission(side, price, quantity, brokerage_per_order),
         session_type=session_type,
         source=source,
-        kotak_order_id=kotak_order_id,
+        broker_order_id=broker_order_id,
+        execution_broker=execution_broker, broker_account_id=broker_account_id,
+        trading_style="swing" if getattr(runtime, "trading_style", None) == "swing" else "intraday",
+        portfolio_id=getattr(runtime, "portfolio_id", None) if getattr(runtime, "trading_style", None) == "swing" else None,
+        kotak_order_id=kotak_order_id if execution_broker != "kite" else None,
         underlying_price=underlying_price,
     )
+    if getattr(runtime, 'trading_style', 'intraday') == 'swing' and runtime.session_type != 'real':
+        from app.services.swing_cash import move
+        trade.commission=round(trade.commission,2)
+        move(user_id, runtime.portfolio_id, -trade.commission, f'fee:{trade.trade_id}', allow_negative=True, trade=trade)
     _trades[session_id].append(trade)
     try:
         _write_trade_to_db(trade)
@@ -315,7 +348,7 @@ def _open_position_lots(
     session_id: str,
     symbol: str | None = None,
     right: str | None = None,
-    strike: int | None = None,
+    strike: int | float | None = None,
     expiry: str | None = None,
     exact_contract: bool = False,
 ):
@@ -328,9 +361,9 @@ def _open_position_lots(
     symbol_trades = [t for t in trades if t.symbol == symbol and t.right == right]
     if right is not None and strike is not None:
         if exact_contract:
-            symbol_trades = [t for t in symbol_trades if t.strike is not None and int(t.strike) == int(strike)]
+            symbol_trades = [t for t in symbol_trades if t.strike is not None and strike_number(t.strike) == strike_number(strike)]
         else:
-            symbol_trades = [t for t in symbol_trades if t.strike is None or int(t.strike) == int(strike)]
+            symbol_trades = [t for t in symbol_trades if t.strike is None or strike_number(t.strike) == strike_number(strike)]
     if right is not None and expiry is not None:
         if exact_contract:
             symbol_trades = [t for t in symbol_trades if t.expiry == expiry]
@@ -385,7 +418,7 @@ def get_position(
     session_id: str,
     symbol: str | None = None,
     right: str | None = None,
-    strike: int | None = None,
+    strike: int | float | None = None,
     expiry: str | None = None,
     exact_contract: bool = False,
 ) -> Position:
@@ -468,14 +501,16 @@ def reload_trades_from_db(session_id: str, *, strict: bool = False) -> None:
                     timestamp=int(item["timestamp"]),
                     session_id=str(item["session_id"]),
                     instrument_type=str(item.get("instrument_type", "equity")),
-                    strike=int(item["strike"]) if item.get("strike") is not None else None,
+                    strike=strike_number(item["strike"]) if item.get("strike") is not None else None,
                     expiry=item.get("expiry"),
                     right=item.get("right"),
                     commission=float(item.get("commission", 0)),
                     session_type=str(item.get("session_type", "sim")),
                     source=item.get("source"),
                     kotak_order_id=item.get("kotak_order_id"),
+                    broker_order_id=item.get("broker_order_id"), execution_broker=item.get("execution_broker"),
                     broker_account_id=item.get("broker_account_id"),
+                    trading_style=item.get("trading_style", "intraday"), portfolio_id=item.get("portfolio_id"),
                     broker_exchange=item.get("broker_exchange"),
                     broker_execution_ids=item.get("broker_execution_ids", []),
                     underlying_price=float(item.get("underlying_price")) if item.get("underlying_price") is not None else None,
@@ -499,6 +534,11 @@ def get_open_option_contracts(session_id: str, symbol: str) -> list[dict]:
     trades = get_trades(session_id)
     keys = {(t.right, t.strike, t.expiry) for t in trades
             if t.symbol == symbol and t.right in ("CE", "PE") and t.strike is not None and t.expiry}
+    from app.services.simulation import get_session
+    session = get_session(session_id)
+    if session and session.session_type == 'real':
+        keys.update((p['right'], p['strike'], p['expiry']) for p in getattr(session, 'broker_positions', [])
+                    if p.get('right') in ('CE', 'PE') and p.get('strike') and p.get('expiry'))
     result = []
     for right, strike, expiry in keys:
         position = get_position(

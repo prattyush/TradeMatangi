@@ -121,6 +121,9 @@ def _ensure_ledger_table() -> None:
 
 def get_or_init_ledger(user_id: str, date: str, ledger_id: str, ledger_kind: str = "sim") -> float:
     """Use isolated dated practice funds; preserve the Real ledger path."""
+    if ledger_id.startswith("swing:"):
+        from app.services.swing_cash import read
+        return float(read(user_id, ledger_id.split(":", 1)[1])["current_balance"])
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import balance
         return balance(user_id, date)
@@ -168,6 +171,9 @@ def get_ledger_balance(user_id: str, date: str, ledger_id: str, ledger_kind: str
 
 
 def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, allow_negative: bool = False, order=None, engine=None) -> float:
+    if ledger_id.startswith("swing:"):
+        from app.services.swing_cash import move
+        return move(user_id, ledger_id.split(":", 1)[1], -max(amount, 0), operation_id, allow_negative=allow_negative, order=order)
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import move
         return move(user_id, date, -max(amount, 0), operation_id, allow_negative, order, engine)
@@ -181,6 +187,9 @@ def debit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_
 
 
 def credit_ledger(user_id: str, amount: float, date: str, ledger_id: str, ledger_kind: str = "sim", operation_id: str | None = None, order=None, engine=None, cleanup=None) -> float:
+    if ledger_id.startswith("swing:"):
+        from app.services.swing_cash import move
+        return move(user_id, ledger_id.split(":", 1)[1], max(amount, 0), operation_id, order=order)
     if ledger_id.startswith("paper:"):
         from app.services.paper_wallet import move
         return move(user_id, date, max(amount, 0), operation_id, order=order, engine=engine, cleanup=cleanup)
@@ -343,12 +352,12 @@ def delete_entry(user_id: str, date: str) -> None:
 
 
 # Broker snapshots are deliberately separate from locally reserved cash.
-def sync_real_funds(user_id: str, date: str, amount: float, *, reason: str, accounting: dict | None = None) -> float:
+def sync_real_funds(user_id: str, date: str, amount: float, *, reason: str, accounting: dict | None = None, ledger_id: str | None = None) -> float:
     import math
     import time
     if not math.isfinite(amount):
         raise ValueError("Broker funds must be finite")
-    ledger_id = f"real:{date}"
+    ledger_id = ledger_id or f"real:{date}"
     updated_at = int(time.time() * 1000)
     _ensure_ledger_table()
     from app.services.db import get_dynamodb_resource
@@ -385,20 +394,23 @@ def get_real_funds_snapshot(user_id: str, date: str) -> tuple[float, int]:
     return snapshot
 
 
-def sync_real_account_funds(user_id, date, account, net, realized, committed, *, reason):
-    """Initialize account/day capital once; retain raw cash for order affordability."""
+def sync_real_account_funds(user_id, date, account, net, realized, committed, *, reason, execution_broker=None, capital_override=None):
+    """Replace capital only on explicit Day start; other refreshes update cash only."""
     import math
-    candidate = round(net - realized + committed, 2)
+    candidate = round(capital_override if capital_override is not None else net - realized + committed, 2)
     display = round(net - realized, 2)
     if not all(math.isfinite(value) for value in (net, realized, committed, candidate, display)):
         raise ValueError("Invalid real accounting snapshot")
     _ensure_ledger_table()
     from app.services.db import get_dynamodb_resource
-    # Atomic initialization also works when another worker initializes the same day.
+    # A refresh can change cash because of fills/margin/fees, not just transfers.
+    replace_capital = reason == "start"
+    capital_account = f"{execution_broker}:{account}" if execution_broker else account
     row = get_dynamodb_resource().Table(_LEDGER_TABLE).update_item(
-        Key={"user_id": user_id, "ledger_id": f"real-capital:{account}:{date}"},
+        Key={"user_id": user_id, "ledger_id": f"real-capital:{capital_account}:{date}"},
         UpdateExpression="SET #date = :date, ledger_kind = :kind, "
-                         "day_start_capital = if_not_exists(day_start_capital, :capital)",
+                         + ("day_start_capital = :capital" if replace_capital else
+                          "day_start_capital = if_not_exists(day_start_capital, :capital)"),
         ExpressionAttributeNames={"#date": "date"},
         ExpressionAttributeValues={":date": date, ":kind": "real-capital", ":capital": Decimal(str(candidate))},
         ReturnValues="ALL_NEW",
@@ -406,16 +418,17 @@ def sync_real_account_funds(user_id, date, account, net, realized, committed, *,
     capital = float(row["day_start_capital"])
     if not math.isfinite(capital):
         raise ValueError("Invalid saved real day-start capital")
+    ledger = f"real:{execution_broker}:{account}:{date}" if execution_broker else f"real:{date}"
     accounting = {"broker_account_id": account, "day_start_capital": capital,
                   "display_balance": display, "gross_realized_pnl": realized, "committed_funds": committed}
-    sync_real_funds(user_id, date, net, reason=reason, accounting=accounting)
+    sync_real_funds(user_id, date, net, reason=reason, accounting=accounting, ledger_id=ledger)
     return {"balance": net, "display_balance": display, "session_capital": capital}
 
 
-def get_real_wallet_snapshot(user_id, date):
+def get_real_wallet_snapshot(user_id, date, ledger_id=None):
     from app.services.db import get_dynamodb_resource
     item = get_dynamodb_resource().Table(_LEDGER_TABLE).get_item(
-        Key={"user_id": user_id, "ledger_id": f"real:{date}"}, ConsistentRead=True,
+        Key={"user_id": user_id, "ledger_id": ledger_id or f"real:{date}"}, ConsistentRead=True,
     ).get("Item", {})
     if "broker_balance" not in item:
         raise ValueError("Real wallet needs a broker refresh")

@@ -32,5 +32,11 @@ export class TradingOverlayRegistry {
     return removed
   }
 
+  /** A gesture can mutate the renderer even when the confirmed props are unchanged. */
+  invalidate(key: string): void {
+    const entry = this.entries.get(key)
+    if (entry) entry.signature = ''
+  }
+
   reset(): void { this.entries.clear() }
 }

@@ -78,6 +78,8 @@ def test_fee_change_updates_outcomes_detail_and_session_summary(db):
     summary=client.get('/api/analysis/sessions/nifty',headers=headers)
     assert summary.status_code==200,summary.text
     assert summary.json()['total_commission']==120
+    assert report.json()['day_paths'][0]['net_pnl']==-20
+    assert summary.json()['cycles'][0]['net_pnl']==-20
     assert sum(row['commission'] for row in summary.json()['trades'])==120
 
 
@@ -211,3 +213,82 @@ def test_other_date_and_projection_alias_do_not_duplicate_bill(db):
     assert next(c for c in cycles if c['session_id']=='nifty')['fees'] == pytest.approx(9)
     assert next(c for c in cycles if c['session_id']=='old-date')['fees'] == pytest.approx(3)
     assert fees.overview(USER, '2026-10-08')['accounts'][0]['actual_total'] is None
+
+
+def test_kite_day_corrections_are_separate_from_kotak_same_account(db):
+    seed(db, 'kotak')
+    session = seed(db, 'kite')
+    session['execution_broker'] = 'kite'
+    db.Table('Sessions').put_item(Item=session)
+    for side in ('BUY','SELL'):
+        row = db.Table('Trades').get_item(Key={'session_id':'kite','trade_id':f'kite-{side}'})['Item']
+        row['broker_order_id'] = row.pop('kotak_order_id')
+        row['execution_broker'] = 'kite'
+        db.Table('Trades').put_item(Item=row)
+    accounts = fees.overview(USER,DATE)['accounts']
+    assert {item['execution_broker'] for item in accounts} == {'kotak','kite'}
+    fees.save(USER,DATE,ACCOUNT,9,'kite')
+    assert perf.load_session_cycles(session)[0]['fees'] == pytest.approx(9)
+    assert perf.load_cycles(USER,session_type='real',symbol='NIFTY')[0]['fee_source'] in {'estimated','allocated_actual'}
+    cycles = {cycle['session_id']:cycle for cycle in perf.load_cycles(USER,session_type='real')}
+    assert cycles['kotak']['fees'] == pytest.approx(3)
+    assert cycles['kite']['fees'] == pytest.approx(9)
+    fees.remove(USER,DATE,ACCOUNT,'kite')
+    assert fees.read(USER,DATE,ACCOUNT,'kite') is None
+
+
+def test_swing_books_are_excluded_from_finalized_day_charges(db):
+    day = seed(db,'day')
+    swing = seed(db,'swing')
+    swing.update(trading_style='swing', portfolio_id='portfolio')
+    db.Table('Sessions').put_item(Item=swing)
+    assert fees.overview(USER,DATE)['accounts'][0]['estimated_total'] == 3
+    fees.save(USER,DATE,ACCOUNT,12)
+    assert perf.load_session_cycles(day)[0]['fees'] == pytest.approx(12)
+    assert perf.load_session_cycles(swing)[0]['fees'] == pytest.approx(3)
+    assert all(row['fee_source']=='estimated' for cycle in perf.load_session_cycles(swing) for row in cycle['executions'])
+
+
+def test_legacy_kotak_charge_record_is_readable_and_cannot_resurrect(db):
+    session=seed(db)
+    fees.save(USER,DATE,ACCOUNT,9)
+    ledger=db.Table('WalletLedgers')
+    record=fees.read(USER,DATE,ACCOUNT)
+    ledger.delete_item(Key=fees.key(USER,DATE,ACCOUNT))
+    ledger.put_item(Item={**record,**fees.legacy_key(USER,DATE,ACCOUNT)})
+    assert perf.load_session_cycles(session)[0]['fees']==9
+    assert fees.read(USER,DATE,ACCOUNT,'kite') is None
+    fees.save(USER,DATE,ACCOUNT,12)
+    assert perf.load_session_cycles(session)[0]['fees']==pytest.approx(12)
+    fees.remove(USER,DATE,ACCOUNT)
+    assert fees.read(USER,DATE,ACCOUNT) is None
+    assert perf.load_session_cycles(session)[0]['fees']==pytest.approx(3)
+
+
+def test_kite_fee_endpoint_requires_owned_broker_scope(db):
+    session=seed(db,'kite')
+    session['execution_broker']='kite'
+    db.Table('Sessions').put_item(Item=session)
+    client=TestClient(app)
+    body={'date':DATE,'account_id':ACCOUNT,'actual_total':9,'execution_broker':'kite'}
+    # Old trade rows inherit the pinned session broker when they lack this field.
+    result=client.post('/api/analysis/performance/real-fees',headers={'X-User-Id':USER},json=body)
+    assert result.status_code==200,result.text
+    assert result.json()['accounts'][0]['execution_broker']=='kite'
+    assert client.post('/api/analysis/performance/real-fees',headers={'X-User-Id':'other'},json=body).status_code==404
+    assert client.delete(f'/api/analysis/performance/real-fees?date={DATE}&account_id={ACCOUNT}',headers={'X-User-Id':USER}).status_code==404
+    assert client.delete(f'/api/analysis/performance/real-fees?date={DATE}&account_id={ACCOUNT}&execution_broker=kite',headers={'X-User-Id':USER}).status_code==200
+
+
+def test_failed_removal_keeps_legacy_and_current_charge_metadata(db,monkeypatch):
+    seed(db)
+    fees.save(USER,DATE,ACCOUNT,9)
+    record=fees.read(USER,DATE,ACCOUNT)
+    db.Table('WalletLedgers').put_item(Item={**record,**fees.legacy_key(USER,DATE,ACCOUNT)})
+    class Failure:
+        def transact_write_items(self,**kwargs): raise RuntimeError('Storage unavailable')
+    monkeypatch.setattr('app.services.db.get_dynamodb_client',lambda:Failure())
+    response=TestClient(app).delete(f'/api/analysis/performance/real-fees?date={DATE}&account_id={ACCOUNT}',headers={'X-User-Id':USER})
+    assert response.status_code==503
+    assert db.Table('WalletLedgers').get_item(Key=fees.key(USER,DATE,ACCOUNT))['Item']['actual_total']==9
+    assert db.Table('WalletLedgers').get_item(Key=fees.legacy_key(USER,DATE,ACCOUNT))['Item']['actual_total']==9

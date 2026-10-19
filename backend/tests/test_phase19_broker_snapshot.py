@@ -43,7 +43,7 @@ class Table:
 def env(monkeypatch):
     session = simulation.SimulationSession(session_id='snapshot-test', symbol='BSESEN', date='2026-10-01',
         start_time='09:15:00', speed=1, user_id='snapshot-user', session_type='real', instrument_type='options',
-        strike=71500, strike_ce=71500, strike_pe=71500, expiry='2026-10-01')
+        strike=71500, strike_ce=71500, strike_pe=71500, expiry='2026-10-01', session_capital=18000)
     session.current_time = str(reports.wall_time('2026-10-01 14:46:06'))
     tables = {name: Table(name) for name in ('Sessions', 'Trades', 'Orders', 'TradeLabels')}
     db = SimpleNamespace(Table=lambda name: tables[name])
@@ -287,6 +287,7 @@ def test_labels_remap_only_exact_round_trip(env):
     assert state.remap_labels(old, labels, new)[0]['entry_tag'] == 'pattern'
     old[0]['timestamp'] += 60
     old[0]['kotak_order_id'] = None
+    old[0]['broker_order_id'] = None
     assert state.remap_labels(old, labels, new) == []
 
 

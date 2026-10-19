@@ -40,7 +40,7 @@ def _emit_guardrail_event(session: "SimulationSession", guardrail_type: str, rea
     """Push a guardrail_activated SSE event onto the session queue."""
     session.guardrail_last_type = guardrail_type
     session.guardrail_last_reason = reason
-    if getattr(session, "desktop_origin", None) == "desktop_paper":
+    if getattr(session, "desktop_origin", None) == "desktop_paper" or (getattr(session, "session_type", None) == "real" and getattr(session, "trading_style", "intraday") != "swing"):
         from app.services.simulation import _upsert_session_to_db
         _upsert_session_to_db(session, strict=True)
     event = {
@@ -181,6 +181,29 @@ def _check_cooldown(session: "SimulationSession") -> None:
         _emit_guardrail_event(session, "COOLDOWN", reason, until_bar)
         logger.info("COOLDOWN triggered on session %s until bar %s (trips_seen=%d)",
                     session.session_id, until_bar, len(all_trips))
+
+
+def refresh_real_ban(session: "SimulationSession") -> None:
+    """Reevaluate Real Day bans without resetting cooldowns or manual blocks."""
+    from app.services.trading import get_trades
+    if session.session_type != "real" or getattr(session, "trading_style", "intraday") == "swing":
+        return
+    if session.guardrail_ban_enabled:
+        banned, reason = _compute_ban_check(session)
+        # Capital-loss evaluation needs a flat book and a valid denominator.
+        if not banned and session.guardrail_ban_active and (
+            session.session_capital <= 0 or _has_open_positions(get_trades(session.session_id))
+        ):
+            return
+    else:
+        banned, reason = False, ""
+    session.guardrail_ban_active = banned
+    if banned:
+        session.guardrail_last_type = "BAN"
+        session.guardrail_last_reason = reason
+    elif getattr(session, "guardrail_last_type", "") == "BAN":
+        session.guardrail_last_type = ""
+        session.guardrail_last_reason = ""
 
 
 def _check_ban(session: "SimulationSession") -> None:
@@ -366,7 +389,7 @@ def _get_capital_in_use(session: "SimulationSession") -> float:
 
 def _simulate_post_trade_capital(
     session: "SimulationSession", price: float, quantity: int, side: str,
-    right: str | None = None, strike: int | None = None, expiry: str | None = None,
+    right: str | None = None, strike: int | float | None = None, expiry: str | None = None,
 ) -> float:
     """Estimate margin/premium usage, closing only the targeted position first."""
     from app.services.trading import get_position
@@ -388,7 +411,7 @@ def _simulate_post_trade_capital(
 
 def check_maxsize(
     session: "SimulationSession", price: float, quantity: int, side: str,
-    right: str | None = None, strike: int | None = None, expiry: str | None = None,
+    right: str | None = None, strike: int | float | None = None, expiry: str | None = None,
 ) -> tuple[bool, str]:
     """
     Check whether executing this trade would exceed the MaxSize limit.

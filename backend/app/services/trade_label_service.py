@@ -4,6 +4,7 @@ Round-trip computation, label persistence, stats aggregation, tag listing.
 """
 from __future__ import annotations
 
+from app.services.instrument_identity import strike_number
 import json
 import logging
 from collections import defaultdict, deque, Counter
@@ -82,7 +83,7 @@ def _load_session(session_id: str) -> dict | None:
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Sessions")
-        resp = table.get_item(Key={"session_id": session_id})
+        resp = table.get_item(Key={"session_id": session_id}, ConsistentRead=True)
         return resp.get("Item")
     except Exception:
         logger.exception("Failed to load session %s", session_id)
@@ -94,7 +95,7 @@ def _contract_identity(trade: dict) -> tuple[str | None, int | None, str | None]
     strike = trade.get("strike")
     return (
         trade.get("right"),
-        int(strike) if strike is not None else None,
+        strike_number(strike) if strike is not None else None,
         trade.get("expiry"),
     )
 
@@ -174,7 +175,7 @@ def cycle_round_trips(cycles):
     completed, opened = [], []
     for cycle in cycles:
         trip = dict(
-            index=cycle["index"],
+            index=cycle.get("label_index",cycle["index"]),
             cycle_id=cycle["cycle_id"],
             right=cycle["right"],
             strike=cycle["strike"],
@@ -219,7 +220,7 @@ def _serialize_rt_trade(t: dict) -> dict:
         "price": _safe_float(t.get("price")),
         "timestamp": int(t.get("timestamp", 0)),
         "right": t.get("right"),
-        "strike": int(t.get("strike")) if t.get("strike") is not None else None,
+        "strike": strike_number(t.get("strike")) if t.get("strike") is not None else None,
         "expiry": t.get("expiry"),
         "commission": _safe_float(t.get("commission")),
     }
@@ -229,13 +230,26 @@ def compute_round_trips_for_session(session_id: str) -> list[dict]:
     """Compute FIFO round-trips for a session."""
     try:
         from app.services.analysis_service import get_trades_for_session
+
         trades = get_trades_for_session(session_id)
+        session = _load_session(session_id) or {"session_id": session_id}
+        if session.get("trading_style") == "swing":
+            from app.services.performance_service import load_session_cycles
+
+            closed, opened = cycle_round_trips(
+                load_session_cycles(session, include_labels=True)
+            )
+            return [{**trip, "state": "closed"} for trip in closed] + [
+                {**trip, "state": "open"} for trip in opened
+            ]
         if not trades:
             return []
-        session = _load_session(session_id) or {"session_id": session_id}
         if session.get("session_type") == "real":
             from app.services.performance_service import load_session_cycles
-            return cycle_round_trips(load_session_cycles(session, include_labels=False))[0]
+
+            return cycle_round_trips(
+                load_session_cycles(session, include_labels=False)
+            )[0]
         return compute_round_trip_state(trades, session)[0]
     except Exception as exc:
         logger.exception("Failed to compute round trips for session %s", session_id)
@@ -270,10 +284,75 @@ def save_labels(session_id: str, labels: list[dict], user_id: str) -> list[dict]
 
         round_trips = compute_round_trips_for_session(session_id)
         rt = next((r for r in round_trips if r["index"] == rt_idx), None)
-        rt_pnl = rt["pnl"] if rt else 0.0
-        rt_pnl_pct = round(rt_pnl / session_capital * 100, 4) if session_capital > 0 else 0.0
+        swing_cycle = None
+        if session.get("trading_style") == "swing":
+            from app.services.performance_service import load_session_cycles
 
-        existing = table.get_item(Key={"session_id": session_id, "round_trip_index": rt_idx}).get("Item")
+            candidates = load_session_cycles(session)
+            swing_cycle = (
+                next(
+                    (
+                        c
+                        for c in candidates
+                        if c["cycle_id"] == lbl.get("analytics_cycle_id")
+                    ),
+                    None,
+                )
+                if lbl.get("analytics_cycle_id")
+                else next(
+                    (
+                        c
+                        for c in candidates
+                        if c.get("label_index", c["index"]) == rt_idx
+                        or c["index"] == rt_idx
+                    ),
+                    None,
+                )
+            )
+            if not swing_cycle:
+                raise ValueError(
+                    "Trade cycle no longer exists; refresh before labelling"
+                )
+            rt_idx = swing_cycle.get("label_index", swing_cycle["index"])
+            rt = next(
+                (
+                    r
+                    for r in round_trips
+                    if r.get("cycle_id") == swing_cycle["cycle_id"]
+                ),
+                None,
+            )
+        if lbl.get("analytics_cycle_id") and (
+            not rt or lbl["analytics_cycle_id"] != rt.get("cycle_id")
+        ):
+            raise ValueError("Trade cycle changed; refresh before labelling")
+        rt_pnl = rt["pnl"] if rt else 0.0
+        reference = session_capital
+        if session.get("trading_style") == "swing" and rt:
+            from app.services.performance_service import load_session_cycles
+
+            current_cycle = next(
+                (
+                    c
+                    for c in load_session_cycles(session, include_labels=False)
+                    if c["cycle_id"] == rt["cycle_id"]
+                ),
+                None,
+            )
+            reference = current_cycle["capital"] if current_cycle else 0
+        rt_pnl_pct = round(rt_pnl / reference * 100, 4) if reference > 0 else 0.0
+
+        existing = table.get_item(
+            Key={"session_id": session_id, "round_trip_index": rt_idx}
+        ).get("Item")
+        if (
+            swing_cycle
+            and existing
+            and not swing_cycle.get("label")
+            and existing.get("analytics_cycle_id")
+            not in (None, swing_cycle["cycle_id"])
+        ):
+            raise ValueError("Label identity conflict; refresh before saving")
         created_at = existing.get("created_at", "") if existing else now
 
         item = {
@@ -281,9 +360,11 @@ def save_labels(session_id: str, labels: list[dict], user_id: str) -> list[dict]
             "round_trip_index": rt_idx,
             "user_id": user_id,
             "symbol": symbol,
-            "date": date,
+            "date": swing_cycle["date"] if swing_cycle else date,
             "instrument_type": instrument_type,
             "session_type": session_type,
+            "trading_style": session.get("trading_style", "intraday"),
+            "portfolio_id": session.get("portfolio_id"),
             "analytics_cycle_id": rt.get("cycle_id") if rt else None,
             "round_trip_pnl": Decimal(str(rt_pnl)),
             "round_trip_pnl_pct": Decimal(str(rt_pnl_pct)),
@@ -296,15 +377,77 @@ def save_labels(session_id: str, labels: list[dict], user_id: str) -> list[dict]
             "created_at": created_at,
             "updated_at": now,
         }
-        if session_type == "real":
+        if session_type == "real" and session.get("trading_style") != "swing":
             from app.services.real_broker_state import _links
+
             revision = _links.get(session_id, {}).get("revision")
             if revision:
                 item["broker_snapshot_revision"] = revision
-        table.put_item(Item=item)
+        if swing_cycle:
+            # Stable 48-bit indexes are exact in JavaScript. A conflicting hash or
+            # concurrently changed legacy mapping must never overwrite a label.
+            expected_id = (
+                existing.get("analytics_cycle_id")
+                if existing and "analytics_cycle_id" in existing
+                else swing_cycle["cycle_id"]
+            )
+            from botocore.exceptions import ClientError
+
+            try:
+                table.put_item(
+                    Item=item,
+                    ConditionExpression="attribute_not_exists(analytics_cycle_id) OR analytics_cycle_id = :expected",
+                    ExpressionAttributeValues={":expected": expected_id},
+                )
+            except ClientError as exc:
+                if (
+                    exc.response.get("Error", {}).get("Code")
+                    == "ConditionalCheckFailedException"
+                ):
+                    from fastapi import HTTPException
+
+                    raise HTTPException(
+                        409, "Trade label changed; refresh before saving"
+                    ) from exc
+                raise
+        else:
+            table.put_item(Item=item)
         saved.append(item)
 
     return [_serialize_label(item) for item in saved]
+
+
+def rebase_real_day_labels(session_id: str, capital: float) -> None:
+    """Refresh stored label percentages without overwriting labels or broker snapshots."""
+    from app.services.real_broker_state import read_labels
+    from app.services.db import get_dynamodb_resource
+    db = get_dynamodb_resource()
+    table = db.Table(TABLE_NAME)
+    for row in read_labels(db, session_id):
+        value = _safe_float(row.get("round_trip_pnl")) / capital * 100 if capital > 0 else 0.0
+        table.update_item(
+            Key={"session_id": session_id, "round_trip_index": row["round_trip_index"]},
+            UpdateExpression="SET round_trip_pnl_pct = :pct",
+            ConditionExpression="attribute_exists(session_id)",
+            ExpressionAttributeValues={":pct": Decimal(str(round(value, 4)))},
+        )
+
+
+def _current_real_day_label_percentages(items):
+    """Capital is authoritative even when reading an older broker snapshot label."""
+    sessions = {}
+    result = []
+    for row in items:
+        if row.get("session_type") == "real" and row.get("trading_style", "intraday") != "swing":
+            sid = row["session_id"]
+            if sid not in sessions:
+                sessions[sid] = _load_session(sid)
+            session = sessions[sid]
+            if session and session.get("trading_style", "intraday") != "swing":
+                capital = _safe_float(session.get("session_capital"))
+                row = {**row, "round_trip_pnl_pct": round(_safe_float(row.get("round_trip_pnl")) / capital * 100, 4) if capital > 0 else 0.0}
+        result.append(row)
+    return result
 
 
 def get_labels_for_session(session_id: str) -> list[dict]:
@@ -321,14 +464,15 @@ def get_labels_for_session(session_id: str) -> list[dict]:
             items.extend(resp.get("Items", []))
         from app.services.real_broker_state import projected_labels, _links
         real_labels = any(row.get("session_type") == "real" for row in items)
-        projected = projected_labels(session_id) if real_labels or session_id in _links else None
+        swing = (_load_session(session_id) or {}).get("trading_style")=="swing" if real_labels else False
+        projected = projected_labels(session_id) if not swing and (real_labels or session_id in _links) else None
         if projected is not None:
             revision = _links.get(session_id, {}).get("revision")
             current = [r for r in items if revision and r.get("broker_snapshot_revision") == revision]
             by_index = {int(r["round_trip_index"]): r for r in projected}
             by_index.update({int(r["round_trip_index"]): r for r in current})
-            return [_serialize_label(item) for item in by_index.values()]
-        return [_serialize_label(item) for item in items]
+            return [_serialize_label(item) for item in _current_real_day_label_percentages(by_index.values())]
+        return [_serialize_label(item) for item in _current_real_day_label_percentages(items)]
     except Exception as exc:
         logger.exception("Failed to get labels for session %s", session_id)
         raise RuntimeError("Saved labels could not be read; retry later") from exc
@@ -466,7 +610,7 @@ def get_stats(
             if owner and owner not in owners:
                 owners.add(owner)
                 canonical.extend(get_labels_for_session(owner))
-        labels = canonical
+        labels = _current_real_day_label_percentages(canonical)
 
         if symbol:
             labels = [l for l in labels if l.get("symbol") == symbol]

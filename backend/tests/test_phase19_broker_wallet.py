@@ -21,7 +21,10 @@ def isolated(monkeypatch):
         values = kwargs["ExpressionAttributeValues"]
         item.update(date=values[":date"], ledger_kind=values[":kind"])
         if ":capital" in values:
-            item.setdefault("day_start_capital", values[":capital"])
+            if "if_not_exists" in kwargs["UpdateExpression"]:
+                item.setdefault("day_start_capital", values[":capital"])
+            else:
+                item["day_start_capital"] = values[":capital"]
             return {"Attributes": dict(item)}
         item["current_balance"] = values[":balance"]
         for name in ("broker_account_id", "day_start_capital", "display_balance", "gross_realized_pnl", "committed_funds"):
@@ -29,6 +32,7 @@ def isolated(monkeypatch):
                 item[name] = values[":" + name]
         if "broker_balance" in kwargs["UpdateExpression"]:
             item.update(broker_balance=values[":balance"], broker_funds_updated_at=values[":updated"])
+    table.query.return_value = {"Items": []}
     table.update_item.side_effect = update
     table.get_item.side_effect = lambda **kwargs: {"Item": items.get(tuple(kwargs["Key"].values()), {})}
     resource = MagicMock()
@@ -100,6 +104,7 @@ async def test_explicit_refresh_keeps_capital_and_paper_isolation(monkeypatch):
     wallet_service.sync_real_account_funds(USER, DATE, "account-a", 900, 0, 0, reason="start")
     broker.get_limits.return_value = {"Net": 750, "MarginUsed": 150}
     broker.account_identity.return_value = "account-a"
+    broker.execution_broker = "kotak"
     broker.get_trade_history.return_value = []
     broker.get_positions.return_value = []
     monkeypatch.setattr(kotak_service, "get_service", lambda: broker)
@@ -151,11 +156,16 @@ async def test_each_real_start_fetches_once_and_preserves_history(branch, overri
     monkeypatch.setattr("app.services.guardrail_service.initialize_guardrails", lambda *args: None)
     existing = None if branch == "new" else {"session_id": "existing-real", "wallet_ledger_id": f"sim:{DATE}"}
     monkeypatch.setattr(simulation, "find_session_by_context", lambda *args: existing)
+    from app.services import real_sessions, swing_funding_store as funding_store
+    monkeypatch.setattr(real_sessions, "recovery_record", lambda: existing)
+    monkeypatch.setattr(real_sessions, "prepared_identity", lambda: "existing-real" if existing else "reserved-real")
+    monkeypatch.setattr(funding_store, "initialize", lambda *args: {"period_id": "test-period"})
+    monkeypatch.setattr(funding_store, "start_participant", lambda *args, **kwargs: {"period_id": "test-period", "funding": {"modes": {"intraday": {"capital": 18000}}}})
     s = session("existing-real")
     s.session_capital, s.wallet_ledger_id = 0, f"sim:{DATE}"
     monkeypatch.setattr(simulation, "get_session", lambda sid: s if branch == "active" else None)
     def rebuild(record, **kwargs):
-        assert record["wallet_ledger_id"] == f"real:{DATE}"
+        assert record["wallet_ledger_id"] == f"real:kotak:account-a:{DATE}"
         s.wallet_ledger_id = record["wallet_ledger_id"]
         return s
     monkeypatch.setattr(simulation, "rebuild_session_from_db", rebuild)
@@ -164,6 +174,7 @@ async def test_each_real_start_fetches_once_and_preserves_history(branch, overri
     broker = MagicMock()
     broker.is_authenticated.return_value = True
     broker.account_identity.return_value = "account-a"
+    broker.execution_broker = "kotak"
     broker.get_limits.return_value = {"Net": 19200, "MarginUsed": 0}
     from app.services.broker_reports import normalize_execution
     broker.get_trade_history.return_value = [normalize_execution(dict(flId=identity, nOrdNo=identity,
@@ -173,10 +184,10 @@ async def test_each_real_start_fetches_once_and_preserves_history(branch, overri
     broker.get_positions.return_value = []
     monkeypatch.setattr(kotak_service, "get_service", lambda: broker)
     result = await start_router._start_simulation(SimulationStartRequest(symbol="RELIANCE", date=DATE,
-        start_time="09:15:00", speed=1, session_type="real", override=override,
+        start_time="09:15:00", speed=1, session_type="real", execution_broker="kotak", override=override,
         group_id=group["group_id"] if grouped else None), USER)
     assert result.session_capital == 18000
-    assert result.wallet_ledger_id == f"real:{DATE}"
+    assert result.wallet_ledger_id == f"real:kotak:account-a:{DATE}"
     assert wallet_service._wallets[(USER, DATE)] == 150000
     broker.get_limits.assert_called_once()
     delete_sessions.assert_not_called()
@@ -207,7 +218,7 @@ async def test_legacy_real_wallet_never_falls_back_to_paper_balance(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_browser_wallet_read_corrects_legacy_capital_without_broker_fetch(monkeypatch):
+async def test_browser_wallet_read_preserves_session_capital_without_broker_fetch(monkeypatch):
     s, broker = session(), MagicMock()
     s.session_capital = 19200
     monkeypatch.setattr(simulation, 'get_session', lambda sid: s)
@@ -216,12 +227,12 @@ async def test_browser_wallet_read_corrects_legacy_capital_without_broker_fetch(
     result = await wallet.get_wallet(DATE, s.session_id, USER)
     assert result.balance == 14200
     assert result.display_balance == 13000
-    assert result.session_capital == s.session_capital == 18000
+    assert result.session_capital == s.session_capital == 19200
     broker.get_limits.assert_not_called()
     broker.get_trade_history.assert_not_called()
 
 
-def test_corrected_capital_updates_only_same_user_date_real_sessions(monkeypatch):
+def test_explicit_start_changes_only_selected_real_session(monkeypatch):
     from app.services.real_accounting import apply_session_capital
     original = session('capital-original')
     sibling, other_owner, other_date, paper = [session(sid) for sid in ('sibling', 'owner', 'date', 'paper')]
@@ -233,10 +244,11 @@ def test_corrected_capital_updates_only_same_user_date_real_sessions(monkeypatch
     persist = MagicMock()
     monkeypatch.setattr(simulation, '_upsert_session_to_db', persist)
     try:
-        apply_session_capital(original, 18000)
-        assert original.session_capital == sibling.session_capital == 18000
+        apply_session_capital(original, 18000, on_start=True)
+        assert original.session_capital == 18000
+        assert sibling.session_capital == 900
         assert other_owner.session_capital == other_date.session_capital == paper.session_capital == 900
-        assert persist.call_count == 2
+        assert persist.call_count == 1
     finally:
         for s in (original, sibling, other_owner, other_date, paper):
             simulation._sessions.pop(s.session_id, None)

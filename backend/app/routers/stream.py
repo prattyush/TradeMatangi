@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from app.services import performance_diagnostics as diagnostics
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from app.services import simulation as sim_svc
@@ -54,7 +55,8 @@ async def _event_generator(session_id: str, last_event_id: int | None):
             sent += 1
             if sent == 1:
                 logger.debug("sse_first_event_sent session_id=%s event_id=%s", session_id, event_id)
-            yield f"id: {event_id}\ndata: {event}\n\n"
+            outgoing = diagnostics.sample_sse(event, event_id, f"session:{session_id}")
+            yield f"id: {event_id}\ndata: {outgoing}\n\n"
 
             # Stop streaming once the session has ended and queue is drained
             if '"type": "session_ended"' in event or '"type":"session_ended"' in event:

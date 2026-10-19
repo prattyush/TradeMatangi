@@ -175,8 +175,8 @@ class TestFetchHistorical:
         assert result.suffix == ".parquet"
         df = pd.read_parquet(result)
         assert len(df) == 22500
-        # 375 minutes / 15-minute chunks = 25 API calls
-        assert mock_breeze.get_historical_data_v2.call_count == 25
+        # 375 minutes / 16.5-minute chunks = 23 API calls
+        assert mock_breeze.get_historical_data_v2.call_count == 23
 
     def test_expired_token_raises_breeze_token_error(self, tmp_path):
         mock_breeze = MagicMock()
@@ -206,15 +206,15 @@ class TestFetchHistorical:
 
 
 class TestFetchDayPaginated:
-    def test_makes_25_chunk_requests(self):
-        """375-minute trading day ÷ 15-minute chunks = 25 API calls."""
+    def test_makes_23_chunk_requests(self):
+        """375-minute trading day ÷ 16.5-minute chunks = 23 API calls."""
         mock_breeze = MagicMock()
         mock_breeze.get_historical_data_v2.side_effect = _chunk_side_effect
         sym_info = {"breeze_stock_code": "NIFTY", "exchange_code": "NSE", "product_type": "cash"}
 
         records = _fetch_day_paginated(mock_breeze, sym_info, "2026-05-06")
 
-        assert mock_breeze.get_historical_data_v2.call_count == 25
+        assert mock_breeze.get_historical_data_v2.call_count == 23
         assert len(records) == 22500
 
     def test_chunk_boundaries_are_contiguous(self):
@@ -231,6 +231,7 @@ class TestFetchDayPaginated:
 
         _fetch_day_paginated(mock_breeze, sym_info, "2026-05-06")
 
+        calls_log.sort()
         # Every from_date (except first) equals the previous to_date
         for i in range(1, len(calls_log)):
             assert calls_log[i][0] == calls_log[i - 1][1]

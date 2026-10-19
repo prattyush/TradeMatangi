@@ -1,3 +1,7 @@
+import { snapSwingPrice, swingOrderTick } from '../../shared/swingOrderPrice'
+import { beginPerformanceSample, endPerformanceSample } from '../../frontend/src/services/performanceDiagnostics'
+import { canonicalDrawingKey as canonicalInstrumentKey, drawingIdentity } from "./drawingIdentity"
+import { announceDrawingChange, watchDrawingChanges } from "./drawingChanges"
 import { useEffect, useRef, useState } from 'react'
 import { useDismissMessage } from './useDismissMessage'
 import { invoke } from '@tauri-apps/api/core'
@@ -47,7 +51,7 @@ interface DrawingAction { id: number; action: 'delete' | 'hide' | 'lock' }
 type DrawingMode = 'once' | 'repeat'
 type OrderAction = 'FILL_MISSING_SL' | 'USE_SL_BUY' | 'USE_SL_SELL' | 'BULK_LIMIT' | 'BULK_MOVE_SL' | 'START_TARGET_PROFIT' | 'START_TARGET_PROFIT_HALF' | 'START_UNDERLYING_TARGET_HALF' | 'START_LOCK_PROFIT' | 'START_AGGRESSIVE_SL' | 'START_BREAKEVEN' | 'START_UNDERLYING_TARGET' | 'START_UNDERLYING_SL' | 'START_UNDERLYING_SL_HALF'
 type ConversionTarget = 'LIMIT' | 'STOPLOSS' | 'TARGET'
-type PricePickAction = { orderId?: string; conversion?: ConversionTarget; ticket?: unknown; missingSl?: { quantity: number } }
+type PricePickAction = { label?: string; orderId?: string; conversion?: ConversionTarget; ticket?: unknown; missingSl?: { quantity: number } }
 interface FloatingLabel { key: string; x: number; y: number; text: string; color: string }
 interface PersistedDrawing { tool: string; points: Array<{ timestamp: number; price: number }>; style?: { color?: string; width?: number; fillColor?: string; fillOpacity?: number }; visible?: boolean; locked?: boolean }
 interface DrawingRecord { drawing_id: string; revision: number; drawing: PersistedDrawing }
@@ -61,7 +65,6 @@ const reportChartDiagnostic = (kind: string, payload: Record<string, unknown>) =
 }
 const overlayName = (tool: string) => tool === 'Trend' ? 'segment' : tool === 'Horizontal' ? 'horizontalStraightLine' : tool === 'Fib Retracement' ? 'fibonacciLine' : tool
 const drawingPoints = (drawing: PersistedDrawing) => drawing.points.map(point => ({ timestamp: point.timestamp * 1000, value: point.price }))
-const canonicalInstrumentKey = (instrument: Record<string, unknown>) => JSON.stringify(Object.fromEntries(Object.entries(instrument).sort(([left], [right]) => left.localeCompare(right))))
 const orderPrice = (order: DesktopOrder) => order.order_type === 'LIMIT' ? order.limit_price : order.trigger_price
 const orderLineLabel = (order: DesktopOrder, position?: DesktopPosition | null, settings?: DesktopTradingSettings | null, sessionCapital = 0) => {
   const qty = compactQty(order.quantity)
@@ -88,7 +91,7 @@ const placeNearPoint = (x: number, y: number, width: number, height: number) => 
   }
 }
 
-export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loadOlder, viewportResetKey, loading, message, settings, isReplaying, isLive, instrument, baseUrl, drawingRequest, onDrawingError, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, levelsPosition = null, brokeragePerOrder = 1, aggregatePnl, positionMarkPrice, sessionCapital = 0, lotSize = 1, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, entryUnavailableReason = null, shortEntryEnabled = false, underlyingStrategyEnabled = false, showHistoricalMarkers = false, onToggleHistoricalMarkers, pricePickAction = null, onPricePick, onOrderDrag, onStrategyDrag, onStrategyTargetProfitPct, onStrategyCancel, onOrderCancel, onOrderConvertRequest, onOrderQuantityUpdate, onChartOrderAction, swapTargets = [] }: { symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loadOlder?: (beforeTimestamp: number) => Promise<{ candles: Candle[]; more: boolean }>; viewportResetKey?: string; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; drawingRequest: DrawingRequest; onDrawingError?: (error: unknown) => void; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; levelsPosition?: DesktopPosition | null; brokeragePerOrder?: number; aggregatePnl?: number; positionMarkPrice?: number; sessionCapital?: number; lotSize?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; entryUnavailableReason?: string | null; shortEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; showHistoricalMarkers?: boolean; onToggleHistoricalMarkers?: () => void; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onStrategyTargetProfitPct?: (strategyId: string, percentage: number) => Promise<void>; onStrategyCancel?: (strategyId: string) => Promise<void>; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onOrderQuantityUpdate?: (order: DesktopOrder, quantity: number) => Promise<void>; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void; swapTargets?: TileSwap[] }) {
+export function ChartTile({ shareDayDrawings=false, externalTradeMarkers=false, legacyDrawingScope, drawingScope, candleAnchorSeconds=0, hideWindowActions = false, readOnlyOrders = false, symbol, interval, supportedIntervals, onIntervalChange, candles = demo, loadOlder, viewportResetKey, loading, message, settings, isReplaying, isLive, instrument, baseUrl, drawingRequest, onDrawingError, onConfigure, onMaximize, maximized, active, indicators, drawingCommand, drawingAction, drawingMode, onDrawingComplete, onActivate, trades = [], openOrders = [], strategies = [], position = null, levelsPosition = null, brokeragePerOrder = 1, aggregatePnl, positionMarkPrice, sessionCapital = 0, lotSize = 1, tradingSettings = null, tradingEnabled = false, orderEntryEnabled = false, entryUnavailableReason = null, shortEntryEnabled = false, underlyingStrategyEnabled = false, showHistoricalMarkers = false, onToggleHistoricalMarkers, pricePickAction = null, onPricePick, onOrderSelect, onSwingChartContext, onOrderDrag, onStrategyDrag, onStrategyTargetProfitPct, onStrategyCancel, onOrderCancel, onOrderConvertRequest, onOrderQuantityUpdate, onChartOrderAction, swapTargets = [] }: { shareDayDrawings?:boolean; externalTradeMarkers?:boolean; legacyDrawingScope?:string; drawingScope?:string; candleAnchorSeconds?:number; hideWindowActions?: boolean; readOnlyOrders?: boolean; symbol: string; interval: string; supportedIntervals: number[]; onIntervalChange: (interval: string) => void; candles?: Candle[]; loadOlder?: (beforeTimestamp: number) => Promise<{ candles: Candle[]; more: boolean }>; viewportResetKey?: string; loading: boolean; message: string; settings: ChartSettings; isReplaying: boolean; isLive: boolean; replayDatasetKey?: string; instrument: Record<string, unknown>; baseUrl: string; drawingRequest: DrawingRequest; onDrawingError?: (error: unknown) => void; onConfigure: () => void; onMaximize: () => void; maximized: boolean; active: boolean; indicators: string[]; drawingCommand: DrawingCommand | null; drawingAction: DrawingAction | null; drawingMode: DrawingMode; onDrawingComplete: (commandId: number, tool: string) => void; onActivate: () => void; trades?: DesktopTrade[]; openOrders?: DesktopOrder[]; strategies?: DesktopStrategy[]; position?: DesktopPosition | null; levelsPosition?: DesktopPosition | null; brokeragePerOrder?: number; aggregatePnl?: number; positionMarkPrice?: number; sessionCapital?: number; lotSize?: number; tradingSettings?: DesktopTradingSettings | null; tradingEnabled?: boolean; orderEntryEnabled?: boolean; entryUnavailableReason?: string | null; shortEntryEnabled?: boolean; underlyingStrategyEnabled?: boolean; showHistoricalMarkers?: boolean; onToggleHistoricalMarkers?: () => void; pricePickAction?: PricePickAction | null; onPricePick?: (price: number) => void; onOrderSelect?: (order: DesktopOrder) => void; onSwingChartContext?: (price: number, x: number, y: number) => void; onOrderDrag?: (order: DesktopOrder, price: number) => void; onStrategyDrag?: (strategyId: string, price: number) => void; onStrategyTargetProfitPct?: (strategyId: string, percentage: number) => Promise<void>; onStrategyCancel?: (strategyId: string) => Promise<void>; onOrderCancel?: (order: DesktopOrder) => void; onOrderConvertRequest?: (order: DesktopOrder, target: ConversionTarget) => void; onOrderQuantityUpdate?: (order: DesktopOrder, quantity: number) => Promise<void>; onChartOrderAction?: (action: OrderAction, price: number, anchor: { x: number; y: number }) => void; swapTargets?: TileSwap[] }) {
   void baseUrl
   const element = useRef<HTMLDivElement>(null)
   const [historicalMarkersVisible, setHistoricalMarkersVisible] = useState(showHistoricalMarkers)
@@ -130,17 +133,29 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const [clock, setClock] = useState(() => Date.now())
   const indicatorKey = indicators.join('|')
   const tradingOverlaysRef = useRef(new TradingOverlayRegistry())
+  const swingInteractions = useRef({onOrderSelect, onSwingChartContext})
+  swingInteractions.current = {onOrderSelect, onSwingChartContext}
+  const swingDragPending = useRef(new Set<string>())
+  const swingDragGesture = useRef(new Map<string, {price: number; moved: boolean; ignoreUntil: number}>())
   const tradingOverlayInputsRef = useRef({ openOrders, strategies, position, sessionCapital, onOrderDrag, onStrategyDrag })
   tradingOverlayInputsRef.current = { openOrders, strategies, position, sessionCapital, onOrderDrag, onStrategyDrag }
-  const tradeMarkerOverlayIdsRef = useRef<Set<string>>(new Set())
+  const tradeMarkersRef = useRef(new TradingOverlayRegistry())
   const pricePickActionRef = useRef(pricePickAction)
   const onPricePickRef = useRef(onPricePick)
   const tradingEnabledRef = useRef(tradingEnabled)
   const onChartOrderActionRef = useRef(onChartOrderAction)
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
-  const drawingInstrumentKey = canonicalInstrumentKey(instrument)
+  const {writeInstrument: drawingInstrument, readKeys: drawingReadKeys} = drawingIdentity(instrument, drawingScope, legacyDrawingScope, shareDayDrawings)
+  const drawingInstrumentKey = canonicalInstrumentKey(drawingInstrument)
+  const drawingReadSignature = JSON.stringify(drawingReadKeys)
+  const drawingOwner = useRef(crypto.randomUUID())
+  const reloadDrawingsRef = useRef<() => void>(() => undefined)
+  const drawingBusyRef = useRef(0)
+  const drawingGestureRef = useRef(false)
   const latestPositionFill = trades.reduce((latest, trade) => {
-    const matches = instrument.kind === 'option'
+    const matches = instrument.kind === 'future'
+      ? trade.instrument_type === 'futures' && trade.symbol === instrument.underlying && trade.expiry === instrument.expiry
+      : instrument.kind === 'option'
       ? trade.symbol === instrument.underlying && trade.right === instrument.right && trade.strike === instrument.strike && (!trade.expiry || trade.expiry === instrument.expiry)
       : trade.symbol === instrument.symbol && !trade.right
     return matches ? Math.max(latest, trade.timestamp) : latest
@@ -166,22 +181,6 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }
   useEffect(() => { drawingModeRef.current = drawingMode }, [drawingMode])
   useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) return
-    for (const id of tradeMarkerOverlayIdsRef.current) chart.removeOverlay({ id })
-    tradeMarkerOverlayIdsRef.current.clear()
-    const intervalSeconds = Number(interval.replace('m', '')) * 60
-    if (!intervalSeconds) return
-    buildTradeMarkers(trades, instrument, intervalSeconds, historicalMarkersVisible).forEach(marker => {
-      const id = chart.createOverlay({ name: 'desktopTradeMarker', paneId: 'candle_pane', points: [{ timestamp: marker.timestamp * 1000, value: marker.price }], extendData: { color: marker.color, text: marker.text }, lock: true, visible: true, zLevel: 10 })
-      if (typeof id === 'string') tradeMarkerOverlayIdsRef.current.add(id)
-    })
-    return () => {
-      for (const id of tradeMarkerOverlayIdsRef.current) chart.removeOverlay({ id })
-      tradeMarkerOverlayIdsRef.current.clear()
-    }
-  }, [trades, instrument, interval, candles, historicalMarkersVisible])
-  useEffect(() => {
     if (!isLive) return
     setClock(Date.now())
     const timer = window.setInterval(() => setClock(Date.now()), 1000)
@@ -204,11 +203,11 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       chart.setTimezone('Etc/UTC')
       applyChartStyles(chart, settings)
       chart.setSymbol({ ticker: symbol, pricePrecision: 2, volumePrecision: 0 })
-      chart.setPeriod({ span: Number(interval.replace('m', '')), type: 'minute' })
+      chart.setPeriod(interval === '1D' ? {span:1,type:'day'} : {span:Number(interval.replace('m','')),type:'minute'})
       initialViewportRef.current = false
       chart.setDataLoader({
         getBars: async ({ type, timestamp, callback }) => {
-          const toBar = (candle: Candle) => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close })
+          const toBar = (candle: Candle) => ({ timestamp: candle.timestamp * 1000, open: candle.open, high: candle.high, low: candle.low, close: candle.close, volume:candle.volume ?? 0 })
           if (type !== 'forward' || !loadOlderRef.current || timestamp == null) {
             callback(type === 'init' ? candlesRef.current.map(toBar) : [], { forward: Boolean(loadOlderRef.current), backward: false })
             return
@@ -265,12 +264,13 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       }
     }
     const openContext = (event: MouseEvent) => {
-      if (!tradingEnabledRef.current || !chartRef.current || !container) return
+      if ((!tradingEnabledRef.current && !swingInteractions.current.onSwingChartContext) || !chartRef.current || !container) return
       const rect = container.getBoundingClientRect()
       const point = chartRef.current.convertFromPixel([{ x: event.clientX - rect.left, y: event.clientY - rect.top }], { paneId: 'candle_pane' })
       const value = Array.isArray(point) ? point[0]?.value : undefined
       if (typeof value !== 'number' || !Number.isFinite(value)) return
       event.preventDefault()
+      if (swingInteractions.current.onSwingChartContext) { swingInteractions.current.onSwingChartContext(value,event.clientX,event.clientY); return }
       setContextMenu({ x: event.clientX, y: event.clientY, price: Number(value.toFixed(2)) })
     }
     container.addEventListener('mousedown', rememberPointer)
@@ -280,10 +280,24 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       container.removeEventListener('mousedown', rememberPointer); container.removeEventListener('click', pickPrice); container.removeEventListener('contextmenu', openContext)
       subscribeBarRef.current = null; renderedCandlesRef.current = []; chartRef.current = null
       tradingOverlaysRef.current.reset()
+      tradeMarkersRef.current.reset()
       try { dispose(element.current!) ; reportChartDiagnostic('chart_dispose_success', { symbol, interval }) }
       catch (error) { reportChartDiagnostic('chart_dispose_error', { symbol, interval, error: String(error), stack: error instanceof Error ? error.stack : undefined }) }
     }
   }, [symbol, interval])
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const intervalSeconds = (interval === '1D' ? 1440 : Number(interval.replace('m', ''))) * 60
+    if (!intervalSeconds) return
+    const retained = new Set<string>()
+    buildTradeMarkers(trades, instrument, intervalSeconds, externalTradeMarkers || historicalMarkersVisible, candleAnchorSeconds).forEach(marker => {
+      retained.add(marker.id)
+      tradeMarkersRef.current.upsert(chart, marker.id, { name: 'desktopTradeMarker', paneId: 'candle_pane', points: [{ timestamp: marker.timestamp * 1000, value: marker.price }], extendData: { color: marker.color, text: marker.text }, lock: true, visible: true, zLevel: 10 })
+    })
+    tradeMarkersRef.current.prune(chart, retained)
+  }, [trades, instrument, interval, candles, historicalMarkersVisible, externalTradeMarkers, candleAnchorSeconds])
+
   useEffect(() => {
     if (!contextMenu) return
     const close = (event: MouseEvent) => {
@@ -316,7 +330,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       setPositionLevelGeometry(current => current.length ? [] : current)
       return
     }
-    const seconds = Number(interval.replace('m', '')) * 60
+    const seconds = (interval === '1D' ? 1440 : Number(interval.replace('m', ''))) * 60
     const fallbackKey = `${levelsPosition?.side}:${levelsPosition?.quantity}:${levelsPosition?.avg_entry_price}:${levelsPosition?.entry_commission}`
     if (!latestPositionFill && positionLevelFallbackRef.current?.key !== fallbackKey && candles.length) {
       positionLevelFallbackRef.current = { key: fallbackKey, timestamp: Math.floor(candles[candles.length - 1].timestamp / seconds) * seconds * 1000 }
@@ -357,56 +371,75 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     }
   }, [indicatorKey, levelsPosition?.side, levelsPosition?.quantity, levelsPosition?.avg_entry_price, levelsPosition?.entry_commission, sessionCapital, brokeragePerOrder, latestPositionFill, drawingInstrumentKey, interval, candles.length, candles[candles.length - 1]?.high, candles[candles.length - 1]?.low])
   useEffect(() => {
-    candlesRef.current = candles
-    const chart = chartRef.current
-    if (!chart) return
-    const resetViewport = viewportResetRef.current !== viewportResetKey
-    viewportResetRef.current = viewportResetKey
-    if ((!initialViewportRef.current || resetViewport) && candles.length > 0 && element.current) {
-      chart.setBarSpace(Math.max(1, element.current.clientWidth / Math.min(150, candles.length)))
-      chart.scrollToDataIndex(candles.length - 1, 0)
-      initialViewportRef.current = true
-    }
-    const latest = candles[candles.length - 1]
-    const previous = renderedCandlesRef.current
-    const sameCandle = (left: Candle, right: Candle) => left.timestamp === right.timestamp && left.open === right.open && left.high === right.high && left.low === right.low && left.close === right.close
-    // Live snapshots normally change only the current candle or append one
-    // candle. Feed those updates through KLineCharts' incremental loader so
-    // the user's scroll position and crosshair remain untouched.
-    // Replay and live snapshots commonly update the last candle in place. The
-    // previous implementation compared every candle, including that mutable
-    // last candle, so every replay tick fell back to resetData() and cleared
-    // the crosshair. Permit a same-length last-bar update, or one new bar,
-    // while still resetting when history/symbol data is replaced.
-    const sameLengthUpdate = candles.length === previous.length && previous.length > 0 && previous.slice(0, -1).every((candle, index) => sameCandle(candle, candles[index]))
-    const appendUpdate = candles.length === previous.length + 1 && previous.length > 0 && previous.every((candle, index) => sameCandle(candle, candles[index]))
-    const incremental = Boolean(subscribeBarRef.current && (sameLengthUpdate || appendUpdate))
+    const diagnosticStart = beginPerformanceSample("desktop-chart-update")
     try {
-      if (incremental && latest && subscribeBarRef.current) {
-        subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close })
-        renderedCandlesRef.current = candles
-        reportChartDiagnostic('chart_incremental_success', { symbol, interval, candle_count: candles.length, latest })
-        return
+      candlesRef.current = candles
+      const chart = chartRef.current
+      if (!chart) return
+      const resetViewport = viewportResetRef.current !== viewportResetKey
+      viewportResetRef.current = viewportResetKey
+      if ((!initialViewportRef.current || resetViewport) && candles.length > 0 && element.current) {
+        chart.setBarSpace(Math.max(1, element.current.clientWidth / Math.min(150, candles.length)))
+        chart.scrollToDataIndex(candles.length - 1, 0)
+        initialViewportRef.current = true
       }
-      const barSpace = chart.getBarSpace().bar
-      const range = chart.getVisibleRange()
-      const anchor = previous[Math.max(0, Math.min(previous.length - 1, Math.floor(range.to) - 1))]?.timestamp
-      chart.resetData()
-      chart.setBarSpace(barSpace)
-      if (anchor && !resetViewport) chart.scrollToTimestamp(anchor * 1000, 0)
-      renderedCandlesRef.current = candles
-      reportChartDiagnostic('chart_reset_success', { symbol, interval, candle_count: candles.length, latest: latest ?? null })
-    } catch (error) {
-      reportChartDiagnostic('chart_data_error', { symbol, interval, candle_count: candles.length, latest: latest ?? null, error: String(error), stack: error instanceof Error ? error.stack : undefined })
-    }
+      const latest = candles[candles.length - 1]
+      const previous = renderedCandlesRef.current
+      const sameCandle = (left: Candle, right: Candle) => left.timestamp === right.timestamp && left.open === right.open && left.high === right.high && left.low === right.low && left.close === right.close
+      // Live snapshots normally change only the current candle or append one
+      // candle. Feed those updates through KLineCharts' incremental loader so
+      // the user's scroll position and crosshair remain untouched.
+      // Replay and live snapshots commonly update the last candle in place. The
+      // previous implementation compared every candle, including that mutable
+      // last candle, so every replay tick fell back to resetData() and cleared
+      // the crosshair. Permit a same-length last-bar update, or one new bar,
+      // while still resetting when history/symbol data is replaced.
+      const sameLengthUpdate = candles.length === previous.length && previous.length > 0 && previous.slice(0, -1).every((candle, index) => sameCandle(candle, candles[index]))
+      const appendUpdate = candles.length === previous.length + 1 && previous.length > 0 && previous.every((candle, index) => sameCandle(candle, candles[index]))
+      const incremental = Boolean(subscribeBarRef.current && (sameLengthUpdate || appendUpdate))
+      try {
+        if (incremental && latest && subscribeBarRef.current) {
+          subscribeBarRef.current({ timestamp: latest.timestamp * 1000, open: latest.open, high: latest.high, low: latest.low, close: latest.close, volume:latest.volume ?? 0 })
+          renderedCandlesRef.current = candles
+          reportChartDiagnostic('chart_incremental_success', { symbol, instrument, interval, candle_count: candles.length, latest })
+          return
+        }
+        const barSpace = chart.getBarSpace().bar
+        const range = chart.getVisibleRange()
+        const anchor = previous[Math.max(0, Math.min(previous.length - 1, Math.floor(range.to) - 1))]?.timestamp
+        chart.resetData()
+        chart.setBarSpace(barSpace)
+        if (anchor && !resetViewport) chart.scrollToTimestamp(anchor * 1000, 0)
+        renderedCandlesRef.current = candles
+        reportChartDiagnostic('chart_reset_success', { symbol, interval, candle_count: candles.length, latest: latest ?? null })
+      } catch (error) {
+        reportChartDiagnostic('chart_data_error', { symbol, interval, candle_count: candles.length, latest: latest ?? null, error: String(error), stack: error instanceof Error ? error.stack : undefined })
+      }
+    } finally { endPerformanceSample("desktop-chart-update", diagnosticStart) }
   }, [candles, isReplaying, viewportResetKey])
   const persistDrawing = async (path: string, method: 'POST' | 'PUT' | 'DELETE', drawing: PersistedDrawing, revision?: number) => {
     try {
-      return await drawingRequest(path, method, { instrument, drawing, revision, mutation_id: crypto.randomUUID() }) as DrawingRecord
+      drawingBusyRef.current++
+      const result = await drawingRequest(path, method, { instrument: drawingInstrument, drawing, revision, mutation_id: crypto.randomUUID() }) as DrawingRecord
+      announceDrawingChange({owner: drawingOwner.current, keys: drawingReadKeys})
+      return result
     } catch (error) {
       onDrawingError?.(error)
+      // Restore the server revision after a failed/contended edit, without overwriting it.
+      window.setTimeout(() => reloadDrawingsRef.current(), 0)
       return null
+    } finally {
+      drawingBusyRef.current--
     }
+  }
+  const saveMovedDrawing = (event: any) => {
+    drawingGestureRef.current = false
+    const item = drawingsRef.current.find(row => row.id === event.overlay.id)
+    if (!item?.backendId || item.revision === undefined) return
+    const drawing = {...item.drawing, points: event.overlay.points.map((point: any) => ({timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value)}))}
+    void persistDrawing(`drawings/${item.backendId}`, 'PUT', drawing, item.revision).then(record => {
+      if (record) setDrawings(items => items.map(row => row.id === item.id ? {...row, drawing: record.drawing, revision: record.revision} : row))
+    })
   }
   const createPersistedOverlay = (record: DrawingRecord) => {
     const style = record.drawing.style ?? {}
@@ -421,6 +454,8 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       visible: record.drawing.visible !== false,
       styles: { line: { color: style.color ?? settings.drawingLineColor, size: style.width ?? settings.drawingLineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) }, rect: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) }, circle: { color: style.fillColor ?? withOpacity(settings.drawingFillColor, style.fillOpacity ?? settings.drawingFillOpacity) } },
       onSelected: (event: any) => setSelected(event.overlay.id),
+      onPressedMoveStart: () => { drawingGestureRef.current = true },
+      onPressedMoveEnd: saveMovedDrawing,
       onRemoved: (event: any) => { drawingOverlayIdsRef.current.delete(event.overlay.id); setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)) },
     } as any)
     if (typeof id !== 'string') return
@@ -429,23 +464,38 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   }
   createPersistedOverlayRef.current = createPersistedOverlay
   useEffect(() => {
-    if (!chartRef.current) return
-    let cancelled = false
-    const encoded = encodeURIComponent(drawingInstrumentKey)
-    void drawingRequest(`drawings?instrument=${encoded}`, 'GET').then(value => {
-      if (cancelled) return
-      for (const id of drawingOverlayIdsRef.current) chartRef.current?.removeOverlay({ id })
-      drawingOverlayIdsRef.current.clear()
-      setDrawings([])
-      const records = (value as { drawings?: DrawingRecord[] }).drawings ?? []
-      records.forEach(createPersistedOverlay)
-    }).catch(error => { if (!cancelled) onDrawingError?.(error) })
-    return () => { cancelled = true }
-  }, [drawingInstrumentKey, drawingRequest, onDrawingError])
+    let disposed = false
+    let generation = 0
+    let retryTimer: number | undefined
+    const refresh = () => {
+      if (disposed || !chartRef.current) return
+      if (drawingBusyRef.current || drawingGestureRef.current) {
+        window.clearTimeout(retryTimer)
+        retryTimer = window.setTimeout(refresh, 250)
+        return
+      }
+      const version = ++generation
+      const keys = JSON.parse(drawingReadSignature) as string[]
+      void Promise.all(keys.map(key => drawingRequest(`drawings?instrument=${encodeURIComponent(key)}`, 'GET'))).then(values => {
+        if (disposed || version !== generation) return
+        if (drawingBusyRef.current || drawingGestureRef.current) { refresh(); return }
+        const records = values.flatMap(value => (value as { drawings?: DrawingRecord[] }).drawings ?? [])
+        // Retain unfinished local drawings; only refresh records already persisted.
+        for (const item of drawingsRef.current) if (item.backendId) chartRef.current?.removeOverlay({id: item.id})
+        setDrawings(current => current.filter(item => !item.backendId))
+        records.forEach(record => createPersistedOverlayRef.current(record))
+        setSelected(null)
+      }).catch(error => { if (!disposed && version === generation) onDrawingError?.(error) })
+    }
+    reloadDrawingsRef.current = refresh
+    refresh()
+    const stop = watchDrawingChanges(drawingOwner.current, drawingReadKeys, refresh)
+    return () => { disposed = true; window.clearTimeout(retryTimer); stop(); reloadDrawingsRef.current = () => undefined }
+  }, [drawingReadSignature, drawingRequest, onDrawingError])
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
       if (!active || (event.target instanceof HTMLElement && event.target.closest('input,textarea,select,[contenteditable=true]'))) return
-      if (event.key === 'Escape') { setContextMenu(null); if (pricePickAction) onPricePick?.(NaN) }
+      if (event.key === 'Escape') { drawingGestureRef.current = false; setContextMenu(null); if (pricePickAction) onPricePick?.(NaN) }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedOrderId !== null) { const order = openOrders.find(item => item.order_id === selectedOrderId); if (order) onOrderCancel?.(order); setSelectedOrderId(null); return }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selected !== null) { const drawing = drawings.find(item => item.id === selected); if (drawing?.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: selected }); drawingOverlayIdsRef.current.delete(selected); setDrawings(current => current.filter(item => item.id !== selected)); setSelected(null) }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') setDrawings(current => { const drawing = current[current.length - 1]; if (drawing) { if (drawing.backendId && drawing.revision) void persistDrawing(`drawings/${drawing.backendId}`, 'DELETE', drawing.drawing, drawing.revision); chartRef.current?.removeOverlay({ id: drawing.id }); drawingOverlayIdsRef.current.delete(drawing.id) }; setSelected(null); return current.slice(0, -1) })
@@ -464,7 +514,10 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
       styles: { line: { color: lineColor, size: lineWidth, style: 'solid', dashedValue: [2, 2] }, polygon: { color: fillColor }, rect: { color: fillColor }, circle: { color: fillColor } },
-      onDrawEnd: event => { const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); const drawing = { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false }; if (points.length && typeof event.overlay.id === 'string') void persistDrawing('drawings', 'POST', drawing).then(record => { if (!record) return; setDrawings(current => current.map(item => item.id === event.overlay.id ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing } : item)) }); onDrawingComplete(commandId, nextTool); if (drawingModeRef.current === 'repeat') window.setTimeout(() => addDrawing(nextTool, commandId), 0) },
+      onPressedMoveStart: () => { drawingGestureRef.current = true },
+      onPressedMoveEnd: saveMovedDrawing,
+      onDrawStart: () => { drawingGestureRef.current = true },
+      onDrawEnd: event => { drawingGestureRef.current = false; const points = event.overlay.points.map(point => ({ timestamp: Math.floor(Number(point.timestamp) / 1000), price: Number(point.value) })); const drawing = { tool: nextTool, points, style: { color: lineColor, width: lineWidth, fillColor, fillOpacity: settings.drawingFillOpacity }, visible: true, locked: false }; if (points.length && typeof event.overlay.id === 'string') void persistDrawing('drawings', 'POST', drawing).then(record => { if (!record) return; setDrawings(current => current.map(item => item.id === event.overlay.id ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing } : item)) }); onDrawingComplete(commandId, nextTool); if (drawingModeRef.current === 'repeat') window.setTimeout(() => addDrawing(nextTool, commandId), 0) },
       onSelected: event => setSelected(event.overlay.id),
       onRemoved: event => { drawingOverlayIdsRef.current.delete(event.overlay.id); setDrawings(current => current.filter(drawing => drawing.id !== event.overlay.id)) },
     })
@@ -513,14 +566,43 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
         paneId: 'candle_pane',
         points: [{ timestamp, value: price }],
         styles: { line: { color, size: selectedLine ? 3 : 2, style: 'dashed', dashedValue: [6, 3] } },
+        lock: readOnlyOrders && !onOrderDrag,
+        onClick: onOrderSelect ? () => {
+          const gesture = swingDragGesture.current.get(order.order_id)
+          const latest = tradingOverlayInputsRef.current.openOrders.find(item => item.order_id === order.order_id)
+          if (latest && !swingDragPending.current.has(order.order_id) && (!gesture || Date.now() > gesture.ignoreUntil)) swingInteractions.current.onOrderSelect?.(latest)
+          return true
+        } : undefined,
         extendData: { orderId: order.order_id, label },
-        onSelected: () => { setSelectedOrderId(order.order_id); setSelectedOrderAnchor(lastPointerRef.current); setSelectedStrategyId(null); setSelectedStrategyAnchor(null); setSelected(null) },
+        onSelected: () => { if (readOnlyOrders) return; setSelectedOrderId(order.order_id); setSelectedOrderAnchor(lastPointerRef.current); setSelectedStrategyId(null); setSelectedStrategyAnchor(null); setSelected(null) },
         onDeselected: () => { setSelectedOrderId(current => current === order.order_id ? null : current); setSelectedOrderAnchor(null) },
+        onPressedMoveStart: () => {
+          if (onOrderSelect) swingDragGesture.current.set(order.order_id, {price: orderPrice(order), moved:false, ignoreUntil:0})
+        },
+        onPressedMoving: (event: any) => {
+          const gesture = swingDragGesture.current.get(order.order_id)
+          if (gesture && Math.abs(event.overlay.points[0]?.value - gesture.price) > swingOrderTick(order)/2) {gesture.moved=true;gesture.ignoreUntil=Date.now()+400}
+        },
         onPressedMoveEnd: (event: any) => {
           const value = event.overlay.points[0]?.value
           const inputs = tradingOverlayInputsRef.current
           const latest = inputs.openOrders.find(item => item.order_id === order.order_id)
-          if (latest && typeof value === 'number' && Number.isFinite(value)) inputs.onOrderDrag?.(latest, Number(value.toFixed(2)))
+          if (!latest || typeof value !== 'number' || !Number.isFinite(value)) return
+          if (!onOrderSelect) { inputs.onOrderDrag?.(latest, Number(value.toFixed(2))); return }
+          const gesture = swingDragGesture.current.get(order.order_id)
+          if (!gesture?.moved || swingDragPending.current.has(order.order_id)) return
+          gesture.ignoreUntil = Date.now()+400
+          swingDragPending.current.add(order.order_id)
+          const restore = () => {
+            swingDragPending.current.delete(order.order_id)
+            if (chartRef.current !== chart) return
+            const confirmed = tradingOverlayInputsRef.current.openOrders.find(item => item.order_id === order.order_id)
+            if (confirmed) chart.overrideOverlay({id:event.overlay.id, points:[{timestamp,value:orderPrice(confirmed)}]})
+            tradingOverlaysRef.current.invalidate(overlayKey)
+          }
+          const snapped = snapSwingPrice(value,swingOrderTick(latest))
+          if (snapped <= 0 || snapped === orderPrice(latest)) {restore();return}
+          void Promise.resolve(inputs.onOrderDrag?.(latest, snapped)).catch(() => {}).finally(restore)
         },
       } as any)
     }
@@ -571,7 +653,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
     const removed = tradingOverlaysRef.current.prune(chart, retained)
     if (removed.length) reportChartDiagnostic('trading_overlays_removed', { instrument: drawingInstrumentKey, keys: removed, removed_at_ms: Date.now(), renderer_time_ms: performance.now() })
     setFloatingLabels(nextLabels)
-  }, [openOrders, strategies, selectedOrderId, selectedStrategyId, position, tradingSettings, sessionCapital, aggregatePnl, positionMarkPrice, brokeragePerOrder, symbol, interval, candles, onOrderDrag, onStrategyDrag])
+  }, [openOrders, strategies, selectedOrderId, selectedStrategyId, position, tradingSettings, sessionCapital, aggregatePnl, positionMarkPrice, brokeragePerOrder, symbol, interval, candles, readOnlyOrders, onOrderSelect, onOrderDrag, onStrategyDrag])
   useEffect(() => {
     const chart = chartRef.current
     const latest = candles[candles.length - 1]
@@ -592,7 +674,7 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
       setPnlLabel(null)
     }
   }, [candles, position, tradingSettings, sessionCapital, symbol, interval])
-  const closeCountdown = formatCandleCloseCountdown(clock / 1000, Number(interval.replace('m', '')))
+  const closeCountdown = formatCandleCloseCountdown(clock / 1000, (interval === '1D' ? 1440 : Number(interval.replace('m', ''))))
   const selectedOrder = openOrders.find(order => order.order_id === selectedOrderId)
   const selectedStrategy = strategies.find(strategy => strategy.strategy_id === selectedStrategyId && strategy.strategy_type === 'TargetProfit')
   useEffect(() => { setSelectedOrderQty(selectedOrder ? String(selectedOrder.quantity) : '') }, [selectedOrder?.order_id, selectedOrder?.quantity])
@@ -651,5 +733,5 @@ export function ChartTile({ symbol, interval, supportedIntervals, onIntervalChan
   const lineActionPosition = selectedOrderAnchor ? placeNearPoint(selectedOrderAnchor.x, selectedOrderAnchor.y, selectedOrderIsSl ? 620 : 360, selectedOrderIsSl ? 72 : 46) : { left: 12, top: 64 }
   const targetProfitEditorPosition = selectedStrategyAnchor ? placeNearPoint(selectedStrategyAnchor.x, selectedStrategyAnchor.y, 290, 112) : { left: 12, top: 64 }
   const swapButtons = swapTargets.map(target => <button key={`${target.dir}-${target.label}`} className="icon-button" title={target.label} aria-label={target.label} onClick={event => { event.stopPropagation(); target.onClick() }}>{target.dir}</button>)
-  return <section className={`chart ${active ? 'active-chart' : ''}`} style={{ background: settings.background, color: settings.textColor }} onPointerDownCapture={event => { if (!(event.target as HTMLElement).closest('.line-actions,.chart-context-menu,.trade-ticket')) onActivate() }}><div className="chart-head"><span>{tradingSettings?.desktop_hide_chart_labels ? '' : `${symbol} · `}<select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select>{tradingSettings?.desktop_hide_chart_labels ? '' : ' · IST'}</span><span className="chart-actions">{pricePickAction && <span className="candle-close">{pricePickAction.missingSl ? `Click stop-loss price for ${pricePickAction.missingSl.quantity}` : 'Pick price'}</span>}{isLive && <span className="candle-close" aria-label={`Candle closes in ${closeCountdown}`}>{closeCountdown}</span>}{swapButtons}<button className="icon-button" title="Fit data to chart" aria-label="Fit data to chart" onClick={fitChart}>⤧</button><button className="icon-button" title={historicalMarkersVisible ? 'Hide closed trade markers' : 'Show closed trade markers'} aria-label={historicalMarkersVisible ? 'Hide closed trade markers' : 'Show closed trade markers'} onClick={() => { setHistoricalMarkersVisible(value => !value); onToggleHistoricalMarkers?.() }}>◎</button><button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button></span></div><div className="kline-container"><div className="kline" ref={element} /><div aria-hidden="true" className="position-pnl-levels">{positionLevelGeometry.map(level => <div key={level.key} className="position-pnl-level" style={{ left: level.x, top: level.y, width: level.width, borderTopColor: level.color }}><span className={level.labelLeft ? 'label-left' : ''} style={{ color: level.color, background: settings.background }}>{level.label}</span></div>)}</div>{floatingLabels.map(label => <div key={label.key} className="order-line-label" style={{ left: label.x, top: label.y, borderColor: label.color, color: label.color }}>{label.text}</div>)}{pnlLabel && <div className="position-pnl-label" style={{ left: pnlLabel.x, top: pnlLabel.y, color: pnlLabel.color, borderColor: pnlLabel.color }}>{pnlLabel.text}</div>}{selectedStrategy && <form className="line-actions target-profit-editor" style={{ left: targetProfitEditorPosition.left, top: targetProfitEditorPosition.top }} onPointerDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); void saveTargetProfitPct() }}><strong>Take profit (% of capital)</strong><input aria-label="Take profit percentage of capital" type="number" min="0" step="any" value={targetProfitPctDraft} disabled={targetProfitBusy} onChange={event => { setTargetProfitPctDraft(event.target.value); setTargetProfitPctError('') }} autoFocus /><span>%</span><button type="submit" className="target-profit-icon" aria-label="Save Take Profit" title="Save Take Profit" disabled={targetProfitBusy || !Number.isFinite(Number(targetProfitPctDraft)) || Number(targetProfitPctDraft) <= 0 || !onStrategyTargetProfitPct}>{savingTargetProfitPct ? '…' : <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 8l3 3 7-7" /></svg>}</button><button type="button" className="target-profit-icon" aria-label="Cancel Take Profit edits" title="Cancel edits" disabled={targetProfitBusy} onClick={closeTargetProfitPctEditor}><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button><button type="button" className="target-profit-icon target-profit-delete" aria-label="Delete Take Profit strategy" title="Delete Take Profit strategy" disabled={targetProfitBusy || !onStrategyCancel} onClick={()=>void deleteTargetProfit()}>{deletingTargetProfit ? '…' : <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 6v6M9 6v6" /></svg>}</button>{targetProfitPctError && <span className="target-profit-editor-error">{targetProfitPctError}</span>}</form>}{selectedOrder && <div className="line-actions" style={{ left: lineActionPosition.left, top: lineActionPosition.top }}><span>{orderLineLabel(selectedOrder, position, tradingSettings, sessionCapital)}</span>{selectedOrderIsSl && <><input aria-label="Stop-loss quantity" type="number" min={lotSize} max={selectedOrderMaxQty} step={lotSize} value={selectedOrderQty} disabled={selectedOrderMaxQty < lotSize || savingOrderQty} onChange={event => { setSelectedOrderQty(event.target.value); setOrderQtyError('') }} onWheel={event => { if (document.activeElement === event.currentTarget) { event.preventDefault(); const current = Number(selectedOrderQty) || selectedOrder.quantity; setSelectedOrderQty(String(Math.max(lotSize, Math.min(selectedOrderMaxQty, current + (event.deltaY < 0 ? lotSize : -lotSize))))) } }} style={{ width: 76 }} /><button disabled={savingOrderQty || !Number.isInteger(Number(selectedOrderQty)) || Number(selectedOrderQty) < lotSize || Number(selectedOrderQty) > selectedOrderMaxQty || Number(selectedOrderQty) % lotSize !== 0} onClick={() => void saveSelectedOrderQty()}>{savingOrderQty ? '…' : 'Save Qty'}</button>{orderQtyError && <span title={orderQtyError} style={{ color: '#f87171' }}>!</span>}</>}<button title="Convert to limit" aria-label="Convert to limit" onClick={() => onOrderConvertRequest?.(selectedOrder, 'LIMIT')}>L</button><button title="Convert to stop-loss" aria-label="Convert to stop-loss" onClick={() => onOrderConvertRequest?.(selectedOrder, 'STOPLOSS')}>SL</button><button title="Convert to target" aria-label="Convert to target" onClick={() => onOrderConvertRequest?.(selectedOrder, 'TARGET')}>T</button><button title="Delete order" aria-label="Delete order" onClick={() => onOrderCancel?.(selectedOrder)}>×</button></div>}{contextMenu && <div className={`chart-context-menu ${menuPosition.left + 230 + (underlyingStrategyEnabled ? 284 : 142) > window.innerWidth ? 'open-left' : ''}`} style={{ left: menuPosition.left, top: menuPosition.top }}><strong>{orderEntryEnabled ? `Use as SL ${contextMenu.price.toFixed(2)}` : instrument.kind === 'option' ? `${instrument.right} ${contextMenu.price.toFixed(2)}` : `Underlying ${contextMenu.price.toFixed(2)}`}</strong>{entryUnavailableReason && instrument.kind === 'option' && <span className="context-menu-reason">{entryUnavailableReason}</span>}{hasPosition && orderEntryEnabled && <button disabled={uncoveredQuantity === 0} onClick={() => menuAction('FILL_MISSING_SL')}>SL · {uncoveredQuantity}</button>}{(hasPosition || orderEntryEnabled || underlyingStrategyEnabled) && <div className="profit-size-menu"><button aria-haspopup="true">Strategies ▸</button><div>{hasPosition && <><button onClick={() => menuAction('START_AGGRESSIVE_SL')}>Aggressive SL</button><button onClick={() => menuAction('START_BREAKEVEN')}>Breakeven</button></>}{orderEntryEnabled && <button onClick={() => menuAction('START_LOCK_PROFIT')}>Lock profit here</button>}{underlyingStrategyEnabled && <><div className="profit-size-menu"><button>Underlying target here ▸</button><div><button onClick={() => menuAction('START_UNDERLYING_TARGET_HALF')}>Half</button><button onClick={() => menuAction('START_UNDERLYING_TARGET')}>Full</button></div></div><div className="profit-size-menu"><button>Underlying SL here ▸</button><div><button onClick={() => menuAction('START_UNDERLYING_SL_HALF')}>Half</button><button onClick={() => menuAction('START_UNDERLYING_SL')}>Full</button></div></div></>}</div></div>}{orderEntryEnabled && <><button onClick={() => menuAction('USE_SL_BUY')}>Buy entry</button>{(shortEntryEnabled || tradingSettings?.context_menu_sl_mode === 'both') && <button onClick={() => menuAction('USE_SL_SELL')}>Sell entry</button>}{hasSlOrders && <button onClick={() => menuAction('BULK_MOVE_SL')}>Move SL here</button>}{hasClosingOrders && <button onClick={() => menuAction('BULK_LIMIT')}>Move exits to Limit here</button>}<div className="profit-size-menu"><button>Take profit here ▸</button><div><button onClick={() => menuAction('START_TARGET_PROFIT_HALF')}>Half</button><button onClick={() => menuAction('START_TARGET_PROFIT')}>Full</button></div></div></>}</div>}{historyError && <div className="tile-notice" role="alert">{historyError}</div>}{loading && <div className="chart-loading"><span className="spinner" />Loading candles...</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div></section>
+  return <section className={`chart ${active ? 'active-chart' : ''}`} style={{ background: settings.background, color: settings.textColor }} onPointerDownCapture={event => { if (!(event.target as HTMLElement).closest('.line-actions,.chart-context-menu,.trade-ticket')) onActivate() }}><div className="chart-head"><span>{tradingSettings?.desktop_hide_chart_labels ? '' : `${symbol} · `}{supportedIntervals.length ? <select className="interval-picker" value={interval.replace('m', '')} onChange={event => onIntervalChange(event.target.value)} aria-label="Candle interval">{supportedIntervals.map(value => <option key={value} value={value}>{value}m</option>)}</select> : <strong>{interval}</strong>}{tradingSettings?.desktop_hide_chart_labels ? '' : ' · IST'}</span><span className="chart-actions">{pricePickAction && <span className="candle-close">{pricePickAction.missingSl ? `Click stop-loss price for ${pricePickAction.missingSl.quantity}` : pricePickAction.label ?? 'Pick price'}</span>}{isLive && <span className="candle-close" aria-label={`Candle closes in ${closeCountdown}`}>{closeCountdown}</span>}{swapButtons}<button className="icon-button" title="Fit data to chart" aria-label="Fit data to chart" onClick={fitChart}>⤧</button>{!externalTradeMarkers && <button className="icon-button" title={historicalMarkersVisible ? 'Hide closed trade markers' : 'Show closed trade markers'} aria-label={historicalMarkersVisible ? 'Hide closed trade markers' : 'Show closed trade markers'} onClick={() => { setHistoricalMarkersVisible(value => !value); onToggleHistoricalMarkers?.() }}>◎</button>}{!hideWindowActions && <><button className="icon-button" title="Choose instrument" aria-label="Choose instrument" onClick={onConfigure}>⌕</button><button className="icon-button" title={maximized ? 'Restore chart' : 'Maximize chart'} aria-label={maximized ? 'Restore chart' : 'Maximize chart'} onClick={onMaximize}>{maximized ? '⊡' : '⛶'}</button></>}</span></div><div className="kline-container"><div className="kline" ref={element} /><div aria-hidden="true" className="position-pnl-levels">{positionLevelGeometry.map(level => <div key={level.key} className="position-pnl-level" style={{ left: level.x, top: level.y, width: level.width, borderTopColor: level.color }}><span className={level.labelLeft ? 'label-left' : ''} style={{ color: level.color, background: settings.background }}>{level.label}</span></div>)}</div>{floatingLabels.map(label => <div key={label.key} className="order-line-label" style={{ left: label.x, top: label.y, borderColor: label.color, color: label.color }}>{label.text}</div>)}{pnlLabel && <div className="position-pnl-label" style={{ left: pnlLabel.x, top: pnlLabel.y, color: pnlLabel.color, borderColor: pnlLabel.color }}>{pnlLabel.text}</div>}{selectedStrategy && <form className="line-actions target-profit-editor" style={{ left: targetProfitEditorPosition.left, top: targetProfitEditorPosition.top }} onPointerDown={event => event.stopPropagation()} onSubmit={event => { event.preventDefault(); void saveTargetProfitPct() }}><strong>Take profit (% of capital)</strong><input aria-label="Take profit percentage of capital" type="number" min="0" step="any" value={targetProfitPctDraft} disabled={targetProfitBusy} onChange={event => { setTargetProfitPctDraft(event.target.value); setTargetProfitPctError('') }} autoFocus /><span>%</span><button type="submit" className="target-profit-icon" aria-label="Save Take Profit" title="Save Take Profit" disabled={targetProfitBusy || !Number.isFinite(Number(targetProfitPctDraft)) || Number(targetProfitPctDraft) <= 0 || !onStrategyTargetProfitPct}>{savingTargetProfitPct ? '…' : <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M3 8l3 3 7-7" /></svg>}</button><button type="button" className="target-profit-icon" aria-label="Cancel Take Profit edits" title="Cancel edits" disabled={targetProfitBusy} onClick={closeTargetProfitPctEditor}><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button><button type="button" className="target-profit-icon target-profit-delete" aria-label="Delete Take Profit strategy" title="Delete Take Profit strategy" disabled={targetProfitBusy || !onStrategyCancel} onClick={()=>void deleteTargetProfit()}>{deletingTargetProfit ? '…' : <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 6v6M9 6v6" /></svg>}</button>{targetProfitPctError && <span className="target-profit-editor-error">{targetProfitPctError}</span>}</form>}{selectedOrder && !readOnlyOrders && <div className="line-actions" style={{ left: lineActionPosition.left, top: lineActionPosition.top }}><span>{orderLineLabel(selectedOrder, position, tradingSettings, sessionCapital)}</span>{selectedOrderIsSl && <><input aria-label="Stop-loss quantity" type="number" min={lotSize} max={selectedOrderMaxQty} step={lotSize} value={selectedOrderQty} disabled={selectedOrderMaxQty < lotSize || savingOrderQty} onChange={event => { setSelectedOrderQty(event.target.value); setOrderQtyError('') }} onWheel={event => { if (document.activeElement === event.currentTarget) { event.preventDefault(); const current = Number(selectedOrderQty) || selectedOrder.quantity; setSelectedOrderQty(String(Math.max(lotSize, Math.min(selectedOrderMaxQty, current + (event.deltaY < 0 ? lotSize : -lotSize))))) } }} style={{ width: 76 }} /><button disabled={savingOrderQty || !Number.isInteger(Number(selectedOrderQty)) || Number(selectedOrderQty) < lotSize || Number(selectedOrderQty) > selectedOrderMaxQty || Number(selectedOrderQty) % lotSize !== 0} onClick={() => void saveSelectedOrderQty()}>{savingOrderQty ? '…' : 'Save Qty'}</button>{orderQtyError && <span title={orderQtyError} style={{ color: '#f87171' }}>!</span>}</>}<button title="Convert to limit" aria-label="Convert to limit" onClick={() => onOrderConvertRequest?.(selectedOrder, 'LIMIT')}>L</button><button title="Convert to stop-loss" aria-label="Convert to stop-loss" onClick={() => onOrderConvertRequest?.(selectedOrder, 'STOPLOSS')}>SL</button><button title="Convert to target" aria-label="Convert to target" onClick={() => onOrderConvertRequest?.(selectedOrder, 'TARGET')}>T</button><button title="Delete order" aria-label="Delete order" onClick={() => onOrderCancel?.(selectedOrder)}>×</button></div>}{contextMenu && <div className={`chart-context-menu ${menuPosition.left + 230 + (underlyingStrategyEnabled ? 284 : 142) > window.innerWidth ? 'open-left' : ''}`} style={{ left: menuPosition.left, top: menuPosition.top }}><strong>{orderEntryEnabled ? `Use as SL ${contextMenu.price.toFixed(2)}` : instrument.kind === 'option' ? `${instrument.right} ${contextMenu.price.toFixed(2)}` : `Underlying ${contextMenu.price.toFixed(2)}`}</strong>{entryUnavailableReason && instrument.kind === 'option' && <span className="context-menu-reason">{entryUnavailableReason}</span>}{hasPosition && orderEntryEnabled && <button disabled={uncoveredQuantity === 0} onClick={() => menuAction('FILL_MISSING_SL')}>SL · {uncoveredQuantity}</button>}{(hasPosition || orderEntryEnabled || underlyingStrategyEnabled) && <div className="profit-size-menu"><button aria-haspopup="true">Strategies ▸</button><div>{hasPosition && <><button onClick={() => menuAction('START_AGGRESSIVE_SL')}>Aggressive SL</button><button onClick={() => menuAction('START_BREAKEVEN')}>Breakeven</button></>}{orderEntryEnabled && <button onClick={() => menuAction('START_LOCK_PROFIT')}>Lock profit here</button>}{underlyingStrategyEnabled && <><div className="profit-size-menu"><button>Underlying target here ▸</button><div><button onClick={() => menuAction('START_UNDERLYING_TARGET_HALF')}>Half</button><button onClick={() => menuAction('START_UNDERLYING_TARGET')}>Full</button></div></div><div className="profit-size-menu"><button>Underlying SL here ▸</button><div><button onClick={() => menuAction('START_UNDERLYING_SL_HALF')}>Half</button><button onClick={() => menuAction('START_UNDERLYING_SL')}>Full</button></div></div></>}</div></div>}{orderEntryEnabled && <><button onClick={() => menuAction('USE_SL_BUY')}>Buy entry</button>{(shortEntryEnabled || tradingSettings?.context_menu_sl_mode === 'both') && <button onClick={() => menuAction('USE_SL_SELL')}>Sell entry</button>}{hasSlOrders && <button onClick={() => menuAction('BULK_MOVE_SL')}>Move SL here</button>}{hasClosingOrders && <button onClick={() => menuAction('BULK_LIMIT')}>Move exits to Limit here</button>}<div className="profit-size-menu"><button>Take profit here ▸</button><div><button onClick={() => menuAction('START_TARGET_PROFIT_HALF')}>Half</button><button onClick={() => menuAction('START_TARGET_PROFIT')}>Full</button></div></div></>}</div>}{historyError && <div className="tile-notice" role="alert">{historyError}</div>}{loading && <div className="chart-loading"><span className="spinner" />Loading candles...</div>}{!loading && message && <div className="chart-loading chart-message">{message}</div>}</div></section>
 }

@@ -4,6 +4,7 @@ Keep this router independent of simulation, orders, wallets, strategies and
 broker credentials. New desktop endpoints belong here rather than being added
 to the legacy web/trading routers.
 """
+from app.models.schemas import ContractModel
 import asyncio
 from app.services.history_workers import run_history
 import uuid
@@ -21,14 +22,14 @@ from app.utils import is_trading_day, prior_trading_days
 router = APIRouter(prefix="/api/desktop/v1", tags=["desktop"])
 
 
-class DesktopCapabilities(BaseModel):
+class DesktopCapabilities(ContractModel):
     api_version: str = "v1"
     authentication: list[str] = ["bearer", "x-user-id-legacy"]
     features: list[str] = ["catalogue", "historical-candles", "option-metadata", "option-historical-candles", "preflight"]
-    trading_capabilities: list[str] = ["stepwise", "replay-trading", "orders", "strategies", "wallet", "flatten", "draggable-lines", "bulk-convert", "trade-labels", "session-preparation"]
+    trading_capabilities: list[str] = ["stepwise", "replay-trading", "orders", "strategies", "wallet", "flatten", "draggable-lines", "bulk-convert", "trade-labels", "session-preparation", "real", "execution-broker", "multiple-contracts", "linked-screens"]
 
 
-class DesktopInstrument(BaseModel):
+class DesktopInstrument(ContractModel):
     symbol: str
     display_name: str
     exchange: str
@@ -37,12 +38,12 @@ class DesktopInstrument(BaseModel):
     supported_intervals: list[int]
 
 
-class DesktopCatalogue(BaseModel):
+class DesktopCatalogue(ContractModel):
     version: int = 1
     instruments: list[DesktopInstrument]
 
 
-class DesktopCandle(BaseModel):
+class DesktopCandle(ContractModel):
     timestamp: int
     open: float
     high: float
@@ -50,7 +51,7 @@ class DesktopCandle(BaseModel):
     close: float
 
 
-class HistoricalPage(BaseModel):
+class HistoricalPage(ContractModel):
     version: int = 1
     symbol: str
     interval_minutes: int
@@ -59,12 +60,12 @@ class HistoricalPage(BaseModel):
     candles: list[DesktopCandle]
 
 
-class OptionMetadata(BaseModel):
+class OptionMetadata(ContractModel):
     version: int = 1
     symbol: str
     as_of_date: str
     expiries: list[str]
-    strike_interval: int
+    strike_interval: float
     rights: list[str] = ["CE", "PE"]
     available: bool
     unavailable_reason: str | None = None
@@ -72,18 +73,18 @@ class OptionMetadata(BaseModel):
 
 class OptionHistoricalPage(HistoricalPage):
     expiry: str
-    strike: int
+    strike: int | float
     right: str
     available: bool
     unavailable_reason: str | None = None
 
 
-class PreflightRequest(BaseModel):
+class PreflightRequest(ContractModel):
     symbol: str
     trading_date: str
 
 
-class PreflightStatus(BaseModel):
+class PreflightStatus(ContractModel):
     job_id: str
     status: str
     detail: str | None = None
@@ -100,7 +101,7 @@ async def capabilities(_: str = Depends(get_desktop_user_id)) -> DesktopCapabili
 
 @router.get("/catalogue", response_model=DesktopCatalogue)
 async def catalogue(_: str = Depends(get_desktop_user_id)) -> DesktopCatalogue:
-    """Expose the initial five-symbol desktop catalogue, not trading eligibility."""
+    """Expose the shared instrument catalogue, with master-backed option eligibility."""
     instruments = []
     for symbol, definition in SUPPORTED_SYMBOLS.items():
         instruments.append(DesktopInstrument(
@@ -127,6 +128,8 @@ async def option_metadata(
         requested_date = calendar_date.fromisoformat(as_of_date)
     except ValueError:
         raise HTTPException(status_code=422, detail="as_of_date must be YYYY-MM-DD")
+    if "options_exchange_code" not in SUPPORTED_SYMBOLS[symbol]:
+        return OptionMetadata(symbol=symbol, as_of_date=as_of_date, expiries=[], strike_interval=0, available=False, unavailable_reason="No listed option contracts in the catalogue")
     if not is_trading_day(requested_date):
         return OptionMetadata(symbol=symbol, as_of_date=as_of_date, expiries=[], strike_interval=STRIKE_INTERVALS[symbol], available=False, unavailable_reason="The selected date is not a trading day")
     expiry = get_expiry_date(symbol, as_of_date)
@@ -181,14 +184,14 @@ async def option_historical_page(
     symbol: str = Query(...),
     trading_date: str = Query(...),
     expiry: str = Query(...),
-    strike: int = Query(..., gt=0),
+    strike: int | float = Query(..., gt=0),
     right: str = Query(...),
     interval_minutes: int = Query(default=1, ge=1, le=60),
     context_days: int = Query(default=5, ge=0, le=5),
     _: str = Depends(get_desktop_user_id),
 ) -> OptionHistoricalPage:
     """Desktop option history with explicit unavailable states, never substitution."""
-    if symbol not in SUPPORTED_SYMBOLS or right.upper() not in ("CE", "PE"):
+    if symbol not in STRIKE_INTERVALS or right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=422, detail="Unsupported option instrument")
     if strike % STRIKE_INTERVALS[symbol] != 0:
         raise HTTPException(status_code=422, detail="Strike does not match the instrument strike interval")

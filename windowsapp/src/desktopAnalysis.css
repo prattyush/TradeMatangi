@@ -86,3 +86,24 @@
   .analysis-session-workspace:not(.navigator-collapsed) { grid-template-columns: minmax(0,1fr); }
 }
 .analysis-navigation-message { position: absolute; top: 42px; right: 12px; margin: 0; padding: 8px; background: #24334c; z-index: 3100; font-size: 12px; }
+.desktop-analysis-chart header { display: flex; align-items: center; gap: 6px; }
+.desktop-analysis-chart header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-analysis-chart header button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.desktop-analysis-chart > small { position: absolute; bottom: 2px; left: 6px; background: #10131a; pointer-events: none; }
+
+/* Fill the selected Day session while keeping the complete journey visible. */
+.analysis-selected-session { min-height: 0; }
+.desktop-day-trades-card {
+  min-height: 100%; box-sizing: border-box; margin-bottom: 0 !important;
+  display: flex; flex-direction: column;
+}
+.desktop-day-trades-content { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.desktop-day-trades-content > .analysis-panels:not(.chart-maximized) { height: auto; flex: 1 0 300px; }
+.analysis-trades-top-desktop > .day-journey { box-sizing: border-box; }
+.analysis-trades-top-desktop > .day-journey svg { height: clamp(130px, 19vh, 200px); max-height: none; }
+.analysis-trades-top-desktop > .day-journey .day-journey-empty { min-height: 80px; }
+@media (min-width: 1001px) {
+  .analysis-trades-top-desktop { align-items: stretch; flex-shrink: 0; }
+  .analysis-trades-top-desktop > .analysis-trades-list { contain: size; max-height: none; min-height: 0; }
+  .analysis-trades-top-desktop > .day-journey { position: static; overflow: visible; }
+}

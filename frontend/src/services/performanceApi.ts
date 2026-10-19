@@ -41,7 +41,7 @@ export const getPerformanceCycles = (
     next_offset: number | null;
   }>("/cycles", { ...filters, offset: String(offset) }, signal);
 export const getPerformanceDetail = (
-  cycle: PerformanceCycle,
+  cycle: Pick<PerformanceCycle, "session_id" | "cycle_id">,
   enrich = false,
   signal?: AbortSignal,
 ) =>
@@ -51,15 +51,17 @@ export const getPerformanceDetail = (
     signal,
   );
 
-async function realFeesRequest(date: string, method = 'GET', account = '', amount?: number, signal?: AbortSignal): Promise<RealFeesDay> {
-  const params = new URLSearchParams({date, ...(method === 'DELETE' ? {account_id: account} : {})})
+async function realFeesRequest(date: string, method = 'GET', account = '', amount?: number, signal?: AbortSignal, execution_broker?: "kotak" | "kite"): Promise<RealFeesDay> {
+  const params = new URLSearchParams({date, ...(method === 'DELETE' ? {account_id: account, ...(execution_broker ? {execution_broker} : {})} : {})})
   const response = await fetch(`${BACKEND_URL}/api/analysis/performance/real-fees?${params}`, {
     method, signal, headers: {..._authHeaders(), 'Content-Type': 'application/json'},
-    body: method === 'POST' ? JSON.stringify({date, account_id: account, actual_total: amount}) : undefined,
+    body: method === 'POST' ? JSON.stringify({date, account_id: account, actual_total: amount, ...(execution_broker ? {execution_broker} : {})}) : undefined,
   })
   if (!response.ok) { const body = await response.json().catch(()=>({})); throw new Error(typeof body.detail === 'string' ? body.detail : `Real charges update failed (${response.status})`) }
   return response.json()
 }
 export const getRealFees = (date: string, signal?: AbortSignal) => realFeesRequest(date, 'GET', '', undefined, signal)
-export const saveRealFees = (date: string, account: string, amount: number) => realFeesRequest(date, 'POST', account, amount)
-export const deleteRealFees = (date: string, account: string) => realFeesRequest(date, 'DELETE', account)
+export const saveRealFees = (date: string, account: string, amount: number, broker?: "kotak" | "kite") => realFeesRequest(date, 'POST', account, amount, undefined, broker)
+export const deleteRealFees = (date: string, account: string, broker?: "kotak" | "kite") => realFeesRequest(date, 'DELETE', account, undefined, undefined, broker)
+
+export const getSwingReport=(filters:PerformanceFilters,signal?:AbortSignal)=>request<any>("/swing",filters,signal);

@@ -1,3 +1,8 @@
+import DayJourneyChart from './DayJourneyChart'
+import { sessionJourney } from './dayJourney'
+import SwingHistory from '../SwingHistory'
+import type {SwingChartProps} from '../SwingWorkspace'
+import type {ComponentType} from 'react'
 import type { AnalysisChartProps, OptionsChartProps, AnalysisChartPanelProps } from './chartProps'
 import StoredOrders from './StoredOrders'
 import { useAnalysisError } from './environment'
@@ -13,6 +18,7 @@ import PatternVsTradeComparison from './PatternVsTradeComparison'
 interface Props {
   onClose: () => void
   historicalDays?: number
+  initialPortfolioId?:string
 }
 
 const SYMBOLS = ['NIFTY', 'BSESEN', 'TATPOW', 'TATMOT', 'RELIND']
@@ -32,6 +38,8 @@ export interface SessionGroup {
   symbol: string
   instrument_type: string
   session_type: string
+  trading_style?:string
+  portfolio_id?:string
   sessions: SessionSummary[]
   totalPnl: number
   totalTrades: number
@@ -43,7 +51,7 @@ export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
   const map = new Map<string, SessionGroup>()
   for (const s of sessions) {
     if (s.trade_count === 0 && s.session_type !== 'real') continue
-    const key = `${s.user_id}|${s.date}|${s.symbol}|${s.instrument_type}|${s.session_type ?? ''}`
+    const key = `${s.user_id}|${s.date}|${s.symbol}|${s.instrument_type}|${s.session_type ?? ''}|${s.trading_style??'intraday'}|${s.portfolio_id??''}`
     if (!map.has(key)) {
       map.set(key, {
         key,
@@ -51,6 +59,7 @@ export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
         symbol: s.symbol,
         instrument_type: s.instrument_type,
         session_type: s.session_type ?? '',
+        trading_style:s.trading_style,portfolio_id:s.portfolio_id,
         sessions: [],
         totalPnl: 0,
         totalTrades: 0,
@@ -123,10 +132,11 @@ function TradeTable({ trades }: { trades: AnalysisTrade[] }) {
 
 // ── Group card ────────────────────────────────────────────────────────────────
 
-export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false }: { group: SessionGroup; historicalDays?: number; initiallyExpanded?: boolean }) {
+export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false,onSwingDraftStateChange }: {onSwingDraftStateChange?:(state:{dirty:boolean;saving:boolean})=>void; group: SessionGroup; historicalDays?: number; initiallyExpanded?: boolean }) {
   const api = useAnalysisApi()
   const environment = useAnalysisEnvironment()
 
+  const swingDraft=useRef({dirty:false,saving:false});
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState<Map<string, SessionDetail>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -138,7 +148,9 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const [showComparison, setShowComparison] = useState(false)
 
   const handleExpand = async () => {
-    if (expanded && environment.confirmDiscard?.() === false) return
+    if (expanded && group.trading_style==='swing') {
+      if(swingDraft.current.saving || (swingDraft.current.dirty && !window.confirm('Discard unsaved trade labels?')))return;
+    } else if (expanded && environment.confirmDiscard?.() === false) return
     if (!expanded && details.size === 0) {
       setLoading(true)
       try {
@@ -176,7 +188,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const sessionTypeLabel = group.session_type === 'paper' ? 'Paper' : group.session_type === 'real' ? 'Real' : group.session_type === 'stepwise' ? 'Stepwise' : 'Sim'
 
   return (
-    <div style={{
+    <div className={environment.desktop && group.trading_style !== 'swing' && expanded && activeTab === 'trades' ? 'desktop-day-trades-card' : undefined} style={{
       background: '#161b22', border: '1px solid #21262d', borderRadius: 8,
       overflow: 'hidden', marginBottom: 10,
     }}>
@@ -191,7 +203,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
         <div style={{ minWidth: 90 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#e6edf3' }}>{group.date}</div>
           <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-            {sessionTypeLabel}{group.sessions[0]?.shared ? ` · Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id}` : ''}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
+            {sessionTypeLabel}{group.trading_style==='swing'?' · Swing':''}{group.sessions[0]?.shared ? ` · Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id}` : ''}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
           </div>
         </div>
 
@@ -313,8 +325,8 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
 
       {detailError && <div role="alert">{detailError}<button onClick={() => { setDetailError(''); setExpanded(false); void handleExpand() }}>Retry</button></div>}
       {/* Expanded detail */}
-      {expanded && details.size > 0 && (
-        <div style={{ padding: '0 16px 16px', borderTop: '1px solid #21262d' }}>
+      {expanded&&group.trading_style==='swing'&&group.portfolio_id&&!group.sessions[0]?.shared&&environment.swingRequest&&environment.charts?.SwingChart?(environment.active===false?null:<SwingHistory onDraftStateChange={state=>{swingDraft.current=state;onSwingDraftStateChange?.(state);environment.onDirtyChange?.(state.dirty);environment.onLabelSavingChange?.(state.saving)}} request={environment.swingRequest} portfolioId={group.portfolio_id} sessionId={group.sessions[0]?.session_id} Renderer={environment.charts.SwingChart as ComponentType<SwingChartProps>} onClose={()=>setExpanded(false)}/>):expanded && details.size > 0 && (
+        <div className={environment.desktop && group.trading_style !== 'swing' && activeTab === 'trades' ? 'desktop-day-trades-content' : undefined} style={{ padding: '0 16px 16px', borderTop: '1px solid #21262d' }}>
           {/* Tab bar */}
           <div style={{ display: 'flex', gap: 0, marginTop: 12, marginBottom: 12 }}>
             <button
@@ -345,6 +357,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
 
           {activeTab === 'trades' ? (
             <>
+              <div className={group.trading_style==='swing'?undefined:`analysis-trades-top${environment.desktop ? ' analysis-trades-top-desktop' : ''}`}><div className={group.trading_style==='swing'?undefined:"analysis-trades-list"}>
               {group.sessions.map((s, idx) => {
                 const d = details.get(s.session_id)
                 if (!d) return null
@@ -376,6 +389,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 )
               })}
 
+              </div>{group.trading_style!=='swing'&&<DayJourneyChart journey={sessionJourney([...details.values()].flatMap(d=>d.cycles??[]),new Map(group.sessions.map(s=>[s.session_id,s.session_capital])))} />}</div>
               <AnalysisChartPanel
                 symbol={group.symbol}
                 date={group.date}
@@ -402,13 +416,14 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
 
 // ── Main TradeAnalysis component ─────────────────────────────────────────────
 
-export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
+export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortfolioId }: Props) {
   const api = useAnalysisApi()
 
   const environment = useAnalysisEnvironment()
   const today = environment.desktop ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date()) : new Date().toISOString().slice(0, 10)
   const thirtyDaysAgo = new Date(Date.parse(today + 'T00:00:00Z') - (environment.desktop ? 29 : 30) * 86400 * 1000).toISOString().slice(0, 10)
 
+  const [tradingStyle,setTradingStyle]=useState(initialPortfolioId?'swing':''),[portfolioId,setPortfolioId]=useState(initialPortfolioId??'')
   const [symbol, setSymbol] = useState<string>('')
   const [instrumentType, setInstrumentType] = useState<string>('')
   const [sessionType, setSessionType] = useState<string>('')
@@ -423,13 +438,29 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
   const [statsOpen, setStatsOpen] = useState(false)
 
   const searchGeneration = useRef(0)
+  const swingDrafts = useRef(
+    new Map<string, { dirty: boolean; saving: boolean }>(),
+  );
+  const [draftReset, setDraftReset] = useState(0);
+  const canNavigate = () => {
+    const states = [...swingDrafts.current.values()];
+    if (states.some((state) => state.saving)) return false;
+    if (states.some((state) => state.dirty)) {
+      if (!window.confirm("Discard unsaved trade labels?")) return false;
+      swingDrafts.current.clear();
+      setDraftReset((n) => n + 1);
+    }
+    return true;
+  };
   const handleSearch = useCallback(async () => {
+    if(!canNavigate())return;
     const revision = ++searchGeneration.current
     setLoading(true)
     setError(null)
     setHasSearched(true)
     try {
       const data = await api.getAnalysisSessions({
+        tradingStyle:tradingStyle||undefined,portfolioId:portfolioId||undefined,
         symbol: symbol || undefined,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
@@ -445,7 +476,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
     } finally {
       if (revision === searchGeneration.current) setLoading(false)
     }
-  }, [api, symbol, instrumentType, sessionType, startDate, endDate])
+  }, [api, symbol, instrumentType, sessionType, startDate, endDate,tradingStyle,portfolioId])
 
   useEffect(() => { void handleSearch(); return () => { searchGeneration.current++ } }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -482,11 +513,12 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
           <span style={{ fontSize: 16, fontWeight: 700, color: '#58a6ff' }}>Trade Analysis</span>
           <div style={{ flex: 1 }} />
           <button
-            onClick={onClose}
+            onClick={()=>{if(canNavigate())onClose();}}
             style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', fontSize: 18 }}
           >✕</button>
         </div>
 
+        <div className="swing-stat-filters"><label>Trading style <select aria-label="Analysis trading style" value={tradingStyle} onChange={e=>{setTradingStyle(e.target.value);setPortfolioId('')}}><option value="">All styles</option><option value="intraday">Day trading</option><option value="swing">Swing trading</option></select></label>{tradingStyle==='swing'&&<label>Portfolio <select aria-label="Analysis portfolio" value={portfolioId} onChange={e=>setPortfolioId(e.target.value)}><option value="">All portfolios</option>{[...new Set([portfolioId,...sessions.map(s=>s.portfolio_id)].filter(Boolean))].map(id=><option key={id} value={id}>{id}</option>)}</select></label>}</div>
         {/* Filters */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
@@ -497,7 +529,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
             Symbol:
             <select value={symbol} onChange={e => setSymbol(e.target.value)} style={inputStyle}>
               <option value="">All</option>
-              {SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
+              {[...new Set([...SYMBOLS,...sessions.map(s=>s.symbol)])].map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </label>
 
@@ -543,7 +575,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
           </button>
 
           <button
-            onClick={() => setStatsOpen(true)}
+            onClick={() => {if(canNavigate())setStatsOpen(true)}}
             style={{
               background: '#21262d', border: '1px solid #30363d',
               color: '#d29922', borderRadius: 6,
@@ -603,7 +635,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
           )}
 
           {groups.map(g => (
-            <GroupCard key={g.key} group={g} historicalDays={historicalDays} />
+            <GroupCard key={`${g.key}:${draftReset}`} onSwingDraftStateChange={state=>{if(state.dirty||state.saving)swingDrafts.current.set(g.key,state);else swingDrafts.current.delete(g.key)}} group={g} historicalDays={historicalDays} />
           ))}
         </div>
       </div>
@@ -616,6 +648,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2 }: Props) {
           defaultEndDate={endDate}
           defaultInstrumentType={instrumentType}
           defaultSessionType={sessionType}
+          defaultTradingStyle={tradingStyle||undefined} defaultPortfolioId={portfolioId||undefined}
           onChargesChanged={() => void handleSearch()}
         />
       )}

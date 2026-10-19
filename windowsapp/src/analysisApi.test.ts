@@ -103,3 +103,12 @@ describe('snapshot candle transport', () => {
     await expect(pending).rejects.toMatchObject({name:'AbortError'})
   })
 })
+
+it('sends broker scope for Day charges without changing legacy requests', async () => {
+  const request = vi.fn().mockResolvedValue({date:'2026-10-09',accounts:[]}) as unknown as AnalysisRequest
+  const adapter = createAnalysisApi(request)
+  await adapter.performance.saveRealFees!('2026-10-09','shared-id',12,'kite')
+  expect(request).toHaveBeenCalledWith('performance/real-fees','POST',{date:'2026-10-09',account_id:'shared-id',actual_total:12,execution_broker:'kite'},expect.any(AbortSignal))
+  await adapter.performance.deleteRealFees!('2026-10-09','shared-id','kite')
+  expect(request).toHaveBeenCalledWith('performance/real-fees?date=2026-10-09&account_id=shared-id&execution_broker=kite','DELETE',undefined,expect.any(AbortSignal))
+})

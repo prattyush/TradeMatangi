@@ -9,6 +9,7 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict = {
+    "real_execution_broker": "kotak",
     "brokerage_per_order": 1.0,
     "strategy_interval_secs": 180,
     "autostop_trigger_type": "bar",
@@ -167,6 +168,12 @@ def update_settings(user_id: str, settings: dict) -> dict:
             settings[key] = value
     _ensure_table()
     current = get_settings(user_id, strict=True)
+    if settings.get("real_execution_broker") is not None:
+        from app.dependencies import require_real_trading_access
+        from app.services import execution_broker
+        require_real_trading_access(user_id)
+        selected = execution_broker.name(settings["real_execution_broker"])
+        settings['real_execution_broker'] = selected
     if settings.get("target_deviation_pct") is not None:
         current["target_deviation_configured"] = True
     updates = {k: v for k, v in settings.items() if v is not None and k != "target_deviation_configured"}

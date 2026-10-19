@@ -1,11 +1,15 @@
 """Account-wide Kotak cash snapshots and a persistent IST-day capital baseline."""
 from __future__ import annotations
+from app.services.broker_reports import order_id as broker_report_id
 
 import asyncio
 import math
+import logging
 from datetime import datetime, timezone
 
 from app.services import broker_reports as reports
+
+logger = logging.getLogger(__name__)
 
 
 def required_number(value, name):
@@ -65,7 +69,7 @@ def gross_realized_pnl(date, executions, positions):
     for row in executions:
         if datetime.fromtimestamp(row["timestamp"], timezone.utc).date().isoformat() != date:
             continue
-        identity = (row["exchange"], row["kotak_order_id"], row["execution_id"])
+        identity = (row["exchange"], broker_report_id(row), row["execution_id"])
         if identity in seen:
             if seen[identity] != row:
                 raise ValueError("Conflicting duplicate Kotak execution")
@@ -74,7 +78,7 @@ def gross_realized_pnl(date, executions, positions):
         day.append(row)
     realized = 0.0
     day_quantities = {}
-    for row in sorted(day, key=lambda item: (item["timestamp"], item["kotak_order_id"], item["execution_id"])):
+    for row in sorted(day, key=lambda item: (item["timestamp"], broker_report_id(item), item["execution_id"])):
         key = contract_key(row)
         factor = factors.get(key, row.get("price_factor", 1.0))
         factor = required_number(factor, "price_factor")
@@ -125,28 +129,54 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
         # observed after exits. Finite-value validation still applies; clamping
         # would change the existing capital-recovery calculation.
         committed = required_number(limits.get("MarginUsed"), "MarginUsed")
-        realized = gross_realized_pnl(date, executions, positions)
+        realized = required_number(limits.get("RealizedPnl"), "RealizedPnl") if getattr(broker, "execution_broker", None) == "kite" else gross_realized_pnl(date, executions, positions)
+        broker_name = getattr(broker, "execution_broker", None)
+        broker_name = broker_name if isinstance(broker_name, str) else None
+
         if not isinstance(account, str) or not account:
             raise ValueError("Kotak account identity is missing")
     except (ValueError, TypeError, KeyError) as exc:
         raise KotakError(str(exc)) from exc
     return await asyncio.to_thread(wallet_service.sync_real_account_funds, user_id, date,
-        account, net, realized, committed, reason=reason)
+        account, net, realized, committed, reason=reason, execution_broker=broker_name,
+        capital_override=required_number(limits.get("DayStartCapital"), "DayStartCapital") if broker_name == "kite" else None)
 
 
-def apply_session_capital(session, capital):
-    """Persist corrected legacy capital and update sibling sessions on this account/day."""
-    from app.services import simulation
-    sessions = {session.session_id: session}
-    sessions.update({sid: other for sid, other in simulation._sessions.items()
-                     if other.user_id == session.user_id and other.date == session.date
-                     and other.session_type == "real"})
-    for other in sessions.values():
-        if other.session_capital != capital:
-            previous = other.session_capital
-            other.session_capital = capital
-            try:
-                simulation._upsert_session_to_db(other, strict=True)
-            except Exception:
-                other.session_capital = previous
-                raise
+def apply_session_capital(session, capital, *, on_start=False):
+    """An explicit Day start replaces capital; ordinary refreshes never do."""
+    if not on_start or session.session_type != "real" or getattr(session, "trading_style", "intraday") == "swing":
+        return
+    from app.services import simulation, guardrail_service
+    capital = required_number(capital, "session capital")
+    previous = (session.session_capital, session.guardrail_ban_active,
+                getattr(session, "guardrail_last_type", ""), getattr(session, "guardrail_last_reason", ""))
+    session.session_capital = capital
+    try:
+        guardrail_service.refresh_real_ban(session)
+        from app.services.trade_label_service import rebase_real_day_labels
+        rebase_real_day_labels(session.session_id, capital)
+        simulation._upsert_session_to_db(session, strict=True)
+    except Exception:
+        (session.session_capital, session.guardrail_ban_active,
+         session.guardrail_last_type, session.guardrail_last_reason) = previous
+        raise
+    logger.info("real_day_start_capital_updated session_id=%s previous=%s capital=%s banned=%s",
+                session.session_id, previous[0], capital, session.guardrail_ban_active)
+
+
+async def restart_capital(session, broker, allocation_pct=1):
+    """The explicit Start endpoint may also select an already-running engine."""
+    snapshot = await refresh(session.user_id, session.date, broker, reason="start")
+    if getattr(session, "real_funding_period", None) and getattr(session, "real_broker_restrictions_enabled", False):
+        # Existing allocated pools keep their own funding lifecycle.
+        capital = session.session_capital
+    else:
+        fraction = getattr(session, "real_day_allocation_pct", None) or allocation_pct
+        capital = snapshot["session_capital"] * fraction
+    old_fraction = getattr(session, "real_day_allocation_pct", None)
+    session.real_day_allocation_pct = capital / snapshot["session_capital"] if snapshot["session_capital"] > 0 else allocation_pct
+    try:
+        apply_session_capital(session, capital, on_start=True)
+    except Exception:
+        session.real_day_allocation_pct = old_fraction
+        raise

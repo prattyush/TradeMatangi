@@ -1,3 +1,4 @@
+import { recordFeedReceipt } from '../../frontend/src/services/performanceDiagnostics'
 import type { DesktopTradingSnapshot } from './contracts'
 import { acceptPaperSnapshot, applyPaperStreamEvent, isDesktopTradingSnapshot } from './paperTradingState'
 import { eventNeedsTradingRefresh } from './tradingRefresh'
@@ -99,6 +100,7 @@ export class TradingStreamController {
       this.journal.gapThrough(Number.isFinite(cursor) ? cursor : current.event_cursor ?? 0)
     }
     for (const event of events) {
+      recordFeedReceipt(event, `desktop-trading:${current.session.session_id}`)
       if (isDesktopTradingSnapshot(event)) {
         current = acceptPaperSnapshot(current, event)
       } else {

@@ -1,3 +1,5 @@
+import { ToolbarIcon } from './ToolbarIcon'
+import { CandleInterval } from '../../shared/analysis/CandleInterval'
 import { contractTabs } from './analysisContracts'
 import { snapshotCandles, snapshotBarTime, resolveSnapshotExecutions } from './analysisSnapshot'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -43,14 +45,15 @@ const viewports = new Map<string,{barSpace:number; anchor:number}>()
 export function clearAnalysisViewports() { viewports.clear() }
 export default function DesktopAnalysisChart(props: Props) {
   const api=useAnalysisApi(); const environment=useAnalysisEnvironment()
+  const intervalMinutes=environment.intervalMinutes??3
   const historicalDays=props.historicalDays??environment.historicalDays??2
   const container=useRef<HTMLDivElement>(null); const chartRef=useRef<Chart|null>(null)
   const candlesRef=useRef<OHLCCandle[]>([]); const overlays=useRef<string[]>([])
   const [candles,setCandles]=useState<OHLCCandle[]>([]); const [error,setError]=useState(''); const [loading,setLoading]=useState(true); const [refresh,setRefresh]=useState(0)
   const [filter,setFilter]=useState('all'); const [chooser,setChooser]=useState<ExecutionMarker|null>(null)
   const [unavailableSnapshot,setUnavailableSnapshot]=useState<AnalysisTrade|null>(null)
-  const barTime=snapshotBarTime(props.snapshotEventTime,props.barTime,props.date)
-  const chartKey=`${props.sessionId??props.trades?.[0]?.session_id??'chart'}:${props.exchange??''}:${props.product??''}:${props.symbol}:${props.date}:${props.right??'underlying'}:${props.strike??''}:${props.expiry??''}`
+  const barTime=snapshotBarTime(props.snapshotEventTime,props.barTime,props.date,intervalMinutes)
+  const chartKey=`${props.sessionId??props.trades?.[0]?.session_id??'chart'}:${props.exchange??''}:${props.product??''}:${props.symbol}:${props.date}:${props.right??'underlying'}:${props.strike??''}:${props.expiry??''}:${intervalMinutes}`
   const key=`${chartKey}:${barTime??''}:${props.snapshotEventId??''}:${props.snapshotEventTime??''}`
   const keyRef=useRef(chartKey); keyRef.current=chartKey
   const loadedKey=useRef<string|null>(null)
@@ -74,13 +77,13 @@ export default function DesktopAnalysisChart(props: Props) {
   },[api,capturedTrades,props.sessionId,props.filledTrades])
   const trades=resolvedTrades??capturedTrades
   const contract=props.right && props.strike && props.expiry ? {right:props.right,strike:props.strike,expiry:props.expiry,exchange:props.exchange,product:props.product}:undefined
-  const markers=analysisMarkers(trades,candles,contract,filter,props.getMarkerText)
+  const markers=analysisMarkers(trades,candles,contract,filter,props.getMarkerText,intervalMinutes)
   const markersRef=useRef(markers); if(!snapshotPending&&(!loading||barTime==null))markersRef.current=markers
   const saveViewport=()=>{ const chart=chartRef.current; if(!chart||!candlesRef.current.length||restoring.current)return; const range=chart.getVisibleRange(); const index=Math.max(0,Math.min(candlesRef.current.length-1,Math.floor((range.from+range.to)/2))); viewports.set(loadedKey.current??keyRef.current,{barSpace:chart.getBarSpace().bar,anchor:candlesRef.current[index].time*1000}); while(viewports.size>32)viewports.delete(viewports.keys().next().value!) }
   useEffect(()=>{
     if(!container.current)return
     registerAnalysisOverlays(); const chart=init(container.current); if(!chart)return
-    chartRef.current=chart; chart.setTimezone('Etc/UTC'); chart.setStyles('dark'); chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0}); chart.setPeriod({span:3,type:'minute'})
+    chartRef.current=chart; chart.setTimezone('Etc/UTC'); chart.setStyles('dark'); chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0}); chart.setPeriod({span:intervalMinutes,type:'minute'})
     chart.createIndicator({name:'EMA',calcParams:[9,21],paneId:'candle_pane'},true)
     let lastWidth=container.current.clientWidth
     let resizeRevision=0
@@ -115,12 +118,12 @@ export default function DesktopAnalysisChart(props: Props) {
     }
     void (async()=>{
       let rows:OHLCCandle[]
-      if(props.right&&props.strike&&props.expiry) rows=(await api.getOptionsHistorical(props.symbol,props.date,props.strike,props.expiry,props.right,3,Math.max(1,historicalDays))).candles
-      else { const [history,day]=await Promise.all([api.getHistorical(props.symbol,props.date,3,historicalDays),api.getPreSession(props.symbol,props.date,'15:30:00',3)]); rows=[...history.candles,...day] }
+      if(props.right&&props.strike&&props.expiry) rows=(await api.getOptionsHistorical(props.symbol,props.date,props.strike,props.expiry,props.right,intervalMinutes,Math.max(1,historicalDays))).candles
+      else { const [history,day]=await Promise.all([api.getHistorical(props.symbol,props.date,intervalMinutes,historicalDays),api.getPreSession(props.symbol,props.date,'15:30:00',intervalMinutes)]); rows=[...history.candles,...day] }
       if(request!==generation.current)return
       if(historicalDays===0) rows=rows.filter(c=>new Date(c.time*1000).toISOString().slice(0,10)===props.date)
       let eventCandle:OHLCCandle|null=null
-      if(props.snapshotEventId&&props.sessionId&&api.getSnapshotCandle){
+      if(intervalMinutes===3&&props.snapshotEventId&&props.sessionId&&api.getSnapshotCandle){
         try {
           eventCandle=(await api.getSnapshotCandle(props.sessionId,props.snapshotEventId,props.right==='CE'?'CE':props.right==='PE'?'PE':'underlying',controller.signal)).candle
         } catch(cause) {
@@ -140,7 +143,7 @@ export default function DesktopAnalysisChart(props: Props) {
       const anchorPoint=continuing&&saved ? chart.convertToPixel({timestamp:saved.anchor},{paneId:'candle_pane'}) : undefined
       const anchorX=anchorPoint&&!Array.isArray(anchorPoint) ? anchorPoint.x : undefined
       loadedKey.current=chartKey;loadedEventKey.current=key;candlesRef.current=sorted;setCandles(sorted);setLoading(false)
-      if(!continuing){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:3,type:'minute'})}
+      if(!continuing){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:intervalMinutes,type:'minute'})}
       // Reuse the loader on event changes so KLine also retains a manual price scale.
       if(continuing)chart.resetData()
       else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close} satisfies KLineData)):[],{forward:false,backward:false})})
@@ -187,17 +190,19 @@ export default function DesktopAnalysisChart(props: Props) {
     }
     const annotations=(props.annotations??[]).filter(a=>props.right?a.instrument===props.right:a.instrument==='underlying')
 
-    annotations.sort((a,b)=>a.time-b.time).forEach(a=>{const style=buildMarkers([a],props.activeStrategy??null,props.activeCategory??null,props.topPatterns)[0];const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:a.time*1000,value:a.price}],extendData:{color:style?.color??'#fbbf24',text:`${a.type==='entry'?'↑':'↓'} ${style?.text??a.text}`}});if(typeof id==='string')overlays.current.push(id)})
+    annotations.sort((a,b)=>a.time-b.time).forEach(a=>{const style=buildMarkers([a],props.activeStrategy??null,props.activeCategory??null,props.topPatterns)[0];const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:Math.floor(a.time/(intervalMinutes*60))*(intervalMinutes*60)*1000,value:a.price}],extendData:{color:style?.color??'#fbbf24',text:`${a.type==='entry'?'↑':'↓'} ${style?.text??a.text}`}});if(typeof id==='string')overlays.current.push(id)})
     const levels=[...(props.openOrders??[]).map(order=>({price:order.trigger_price||order.limit_price,text:`${order.side} ${order.order_type} ${order.quantity}`})), ...(props.position?[{price:props.position.avg_entry_price,text:`Captured ${props.position.side} ${props.position.quantity}`}]:[]), ...(props.barTime!=null&&props.currentPrice!=null?[{price:props.currentPrice,text:'Captured current price'}]:[])]
     for(const order of levels){const price=order.price;if(!price||!candles.length)continue;const id=chart.createOverlay({name:'analysisLevel',lock:true,points:[{timestamp:candles[candles.length-1].time*1000,value:price}],extendData:{text:order.text}});if(typeof id==='string')overlays.current.push(id)}
-  },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.openOrders,props.position,props.currentPrice])
+  },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.openOrders,props.position,props.currentPrice,intervalMinutes])
   return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''}`}>
-    <header><strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · 3m · IST</strong>
+    <header><strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · {intervalMinutes}m · IST</strong>
       {!props.right&&trades.some(t=>t.right)&&<select aria-label="Underlying markers" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option>CE</option><option>PE</option></select>}
-      <button onClick={()=>{const chart=chartRef.current;if(chart&&container.current){chart.setBarSpace(Math.max(1,container.current.clientWidth/Math.max(1,candles.length)));chart.scrollToRealTime(0)}}}>Fit</button>
-      {(props.onMaximize||props.onMax)&&<button aria-label={props.isMaximized?'Restore chart':'Maximize chart'} onClick={props.onMaximize??props.onMax}>{props.isMaximized?'Restore':'Maximize'}</button>}
+      <CandleInterval />
+      <button aria-label="Fit chart" title="Fit chart" onClick={()=>{const chart=chartRef.current;if(chart&&container.current){chart.setBarSpace(Math.max(1,container.current.clientWidth/Math.max(1,candles.length)));chart.scrollToRealTime(0)}}}><ToolbarIcon name="Fit" /></button>
+      {(props.onMaximize||props.onMax)&&<button title={props.isMaximized?'Restore chart':'Maximize chart'} aria-label={props.isMaximized?'Restore chart':'Maximize chart'} onClick={props.onMaximize??props.onMax}><ToolbarIcon name={props.isMaximized?'Restore':'Maximize'} /></button>}
     </header>
     <div ref={container} className="analysis-kline" />
+    {barTime!=null&&intervalMinutes!==3&&<small>Full historical event candle</small>}
     {loading&&<div role="status">Loading candles…</div>}{error&&<div role="alert">{error}<button onClick={()=>setRefresh(n=>n+1)}>Retry</button></div>}
     {chooser&&<div className="analysis-marker-chooser" role="dialog" aria-label="Choose execution"><button onClick={()=>setChooser(null)}>Close</button>{chooser.approximate&&<p>Underlying marker price is an approximate candle close.</p>}{chooser.trades.map(t=><button key={`${t.session_id}:${t.trade_id}`} onClick={()=>{setChooser(null);if(t.session_id)selectRef.current?.(t);else setUnavailableSnapshot(t)}}>{new Date(t.timestamp*1000).toISOString().slice(11,19)} · {t.side} · {t.quantity} @ {t.price}</button>)}</div>}
     {unavailableSnapshot&&<div className="analysis-marker-chooser" role="dialog"><button onClick={()=>setUnavailableSnapshot(null)}>Close</button><p>Captured snapshot execution · {unavailableSnapshot.side} {unavailableSnapshot.quantity} @ {unavailableSnapshot.price}</p><p>Execution provenance not captured.</p></div>}
@@ -216,5 +221,5 @@ export function ComparisonChart(props: ComparisonProps) {
   const right=isPattern?(props.instFilter==='CE'||props.instFilter==='PE'?props.instFilter:undefined):tab?.right
   const strike=isPattern?(right==='CE'?props.patternStrike?.ce:props.patternStrike?.pe):tab?.strike
   const expiry=isPattern?props.patternStrike?.exp:tab?.expiry
-  return <div className={`analysis-comparison-chart ${maximized?'comparison-chart-maximized':''}`}><nav><button onClick={()=>{setActive('');props.setInstFilter?.('underlying')}}>Underlying</button>{isPattern?(['CE','PE']as const).filter(r=>r==='CE'?props.patternStrike?.ce:props.patternStrike?.pe).map(r=><button key={r} onClick={()=>props.setInstFilter?.(r)}>{r}</button>):tabs.map(t=><button key={t.key} onClick={()=>setActive(t.key)}>{t.label} · {t.expiry}</button>)}</nav><DesktopAnalysisChart {...props} isMaximized={maximized} onMax={()=>setMaximized(n=>!n)} trades={tab?.trades??props.trades} right={right} exchange={tab?.exchange} product={tab?.product} strike={strike??undefined} expiry={expiry??undefined}/></div>
+  return <div className={`analysis-comparison-chart ${maximized?'comparison-chart-maximized':''}`}><nav><button onClick={()=>{setActive('');props.setInstFilter?.('underlying')}}>Underlying</button>{isPattern?(['CE','PE']as const).filter(r=>r==='CE'?props.patternStrike?.ce:props.patternStrike?.pe).map(r=><button key={r} onClick={()=>props.setInstFilter?.(r)}>{r}</button>):tabs.map(t=><button key={t.key} title={`${t.right} ${t.strike} · ${t.expiry} · ${t.exchange??''} · ${t.product??''}`} onClick={()=>setActive(t.key)}>{t.label}</button>)}</nav><DesktopAnalysisChart {...props} isMaximized={maximized} onMax={()=>setMaximized(n=>!n)} trades={tab?.trades??props.trades} right={right} exchange={tab?.exchange} product={tab?.product} strike={strike??undefined} expiry={expiry??undefined}/></div>
 }

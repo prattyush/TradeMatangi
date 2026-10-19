@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.request_logging import RequestLoggingMiddleware
 
+from app.routers import swing
 from app.config import LOG_DIR
 from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings, performance, desktop_analysis
 
@@ -60,6 +61,10 @@ async def lifespan(app: FastAPI):
     from app.services.desktop_paper_eod import reconciliation_loop
     seed_user()
     paper_reconciler = asyncio.create_task(reconciliation_loop())
+    from app.services.swing_portfolio_service import startup as start_swing
+    start_swing()
+    from app.services.real_sessions import startup as start_real
+    start_real()
     from app.services.order_service import exit_reconciliation_loop
     exit_reconciler = asyncio.create_task(exit_reconciliation_loop())
     diagnostics = None
@@ -75,6 +80,10 @@ async def lifespan(app: FastAPI):
         await shutdown()
         from app.services.real_trading_day import shutdown as shutdown_day_jobs
         await shutdown_day_jobs()
+        from app.services.real_sessions import shutdown as shutdown_real
+        await shutdown_real()
+        from app.services.real_close import shutdown as shutdown_close_jobs
+        await shutdown_close_jobs()
         from app.services.kotak_reports import shutdown as shutdown_reports
         await shutdown_reports()
         if diagnostics:
@@ -83,10 +92,14 @@ async def lifespan(app: FastAPI):
                 await diagnostics
             except asyncio.CancelledError:
                 pass
+        from app.services.swing_portfolio_service import shutdown as shutdown_swing
+        await shutdown_swing()
         from app.services.market_data import get_hub
         get_hub().shutdown()
         from app.services.kotak_service import get_service as get_kotak
         await asyncio.to_thread(get_kotak().shutdown)
+        from app.services.kite_execution import get_service as get_kite_execution
+        await asyncio.to_thread(get_kite_execution().shutdown)
         exit_reconciler.cancel()
         try:
             await exit_reconciler
@@ -116,6 +129,8 @@ app.add_middleware(
 )
 app.add_middleware(RequestLoggingMiddleware)
 
+app.include_router(swing.router,prefix="/api")
+app.include_router(swing.router,prefix="/api/desktop/v1",include_in_schema=False)
 app.include_router(auth.router)
 app.include_router(desktop.router)
 app.include_router(desktop_persistence.router)
@@ -135,6 +150,8 @@ app.include_router(strategies.router)
 app.include_router(users.router)
 app.include_router(admin.router)
 app.include_router(kotak.router)
+from app.routers import execution_brokers
+app.include_router(execution_brokers.router)
 app.include_router(breeze.router)
 app.include_router(guardrails.router)
 app.include_router(internal.router)
@@ -151,6 +168,8 @@ async def health():
 
 
 if os.getenv("TRADING_PERFORMANCE_DIAGNOSTICS") == "1":
+    from app.services import performance_diagnostics as diagnostics
+
     @app.middleware("http")
     async def trading_request_timing(request, call_next):
         started = time.monotonic()
@@ -159,8 +178,9 @@ if os.getenv("TRADING_PERFORMANCE_DIAGNOSTICS") == "1":
         finally:
             path = request.url.path
             if path.startswith(("/api/orders", "/api/snapshots", "/api/data")):
-                logger.info("trading_performance method=%s route=%s duration_ms=%.1f",
-                            request.method, path, (time.monotonic() - started) * 1000)
+                category = path.split("/")[2]
+                diagnostics.count(category + "_request_calls")
+                diagnostics.observe(category + "_request_ms", (time.monotonic() - started) * 1000)
 
 # Phase 20 read-only analytics boundary.
 app.include_router(performance.router)
