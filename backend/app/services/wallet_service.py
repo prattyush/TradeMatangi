@@ -397,10 +397,10 @@ def get_real_funds_snapshot(user_id: str, date: str) -> tuple[float, int]:
 def sync_real_account_funds(user_id, date, account, net, realized, committed, *, reason, execution_broker=None, capital_override=None):
     """Replace capital only on explicit Day start; other refreshes update cash only."""
     import math
-    # Kotak capital = Net - MarginUsed - max(realized, 0). MarginUsed already carries
-    # intraday losses below day-start capital and open-position margin, so only closed
-    # trade PROFIT is subtracted back out (a loss would be double-counted).
-    candidate = round(capital_override if capital_override is not None else net - committed - max(realized, 0.0), 2)
+    # Kotak capital = Net + MarginUsed - max(realized, 0). MarginUsed is used-up
+    # capital (recover it), and only closed-trade PROFIT is subtracted back out
+    # (a loss is already reflected in MarginUsed, so it would be double-counted).
+    candidate = round(capital_override if capital_override is not None else net + committed - max(realized, 0.0), 2)
     display = round(net - realized, 2)
     if not all(math.isfinite(value) for value in (net, realized, committed, candidate, display)):
         raise ValueError("Invalid real accounting snapshot")

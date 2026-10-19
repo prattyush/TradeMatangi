@@ -134,9 +134,9 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
             raise ValueError("Kotak account identity is missing")
 
         capital_override = required_number(limits.get("DayStartCapital"), "DayStartCapital") if broker_name == "kite" else None
-        candidate = capital_override if capital_override is not None else net - committed - max(realized, 0.0)
+        candidate = capital_override if capital_override is not None else net + committed - max(realized, 0.0)
         logger.info(
-            "real_capital_calc broker=%s user_id=%s reason=%s net=%s - margin_used=%s - profit_realized=%s = candidate=%s",
+            "real_capital_calc broker=%s user_id=%s reason=%s net=%s + margin_used=%s - profit_realized=%s = candidate=%s",
             broker_name or "kotak", user_id, reason, net, committed, max(realized, 0.0), round(candidate, 2),
         )
     except (ValueError, TypeError, KeyError) as exc:
