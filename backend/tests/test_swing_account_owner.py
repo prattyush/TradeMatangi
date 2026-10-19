@@ -104,6 +104,18 @@ def test_broker_product_scope_is_separate_from_generic_contract_scope():
     assert not in_book(swing, {'symbol': 'HDFCBANK', 'product': 'MIS'})
 
 
+def test_intraday_options_accept_both_mis_and_nrml():
+    from types import SimpleNamespace
+    from app.services.broker_reports import in_book
+    session = SimpleNamespace(symbol='NIFTY', instrument_type='options', execution_broker='kotak', trading_style='intraday')
+    swing = SimpleNamespace(**{**vars(session), 'trading_style': 'swing'})
+    assert in_book(session, {'symbol': 'NIFTY26OCT25000CE', 'product': 'MIS'})
+    assert in_book(session, {'symbol': 'NIFTY26OCT25000CE', 'product': 'NRML'})
+    assert not in_book(session, {'symbol': 'NIFTY26OCT25000CE', 'product': 'CNC'})
+    assert in_book(swing, {'symbol': 'NIFTY26OCT25000CE', 'product': 'NRML'})
+    assert not in_book(swing, {'symbol': 'NIFTY26OCT25000CE', 'product': 'MIS'})
+
+
 def test_changed_credentials_cannot_bypass_either_broker_slot(db):
     slots.claim('u', 'kite', 'original-account', 'intraday', 'day', 'token')
     with pytest.raises(HTTPException):
