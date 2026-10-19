@@ -23,7 +23,7 @@ interface Props {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
+    opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string; right?: 'CE' | 'PE' },
   ) => Promise<void>
   onSplitOrder?: (orderId: string, operationId: string) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
@@ -122,6 +122,7 @@ export default function OrderPanel({
 }: Props) {
   const [orderType, setOrderType] = useState<OrderTypeFull>('TARGET')
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
+  const [orderRight, setOrderRight] = useState<'CE' | 'PE'>(activeRight ?? 'CE')
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [ratio, setRatio] = useState<RatioKey>('l')
@@ -323,7 +324,7 @@ export default function OrderPanel({
     setError(null)
     setPlacing(true)
     // Build auto-stoploss opts for TARGET / LIMIT / MARKET orders
-    const entrySlOpts = { market_order: orderType === 'MARKET', execute_immediately: sessionType === 'real' && orderType === 'MARKET', ...((orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
+    const entrySlOpts = { right: instrumentType === 'options' ? orderRight : undefined, market_order: orderType === 'MARKET', execute_immediately: sessionType === 'real' && orderType === 'MARKET', ...((orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
       ? { entry_sl_price: slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0 ? parsedEntrySl : undefined, group_id: crypto.randomUUID() }
       : {}) }
     try {
@@ -338,7 +339,7 @@ export default function OrderPanel({
           await onPlaceOrder(side, 'LIMIT', mktPrice, quantity, { ...entrySlOpts })
         }
       } else if (orderType === 'STOPLOSS') {
-        await onPlaceOrder(side, 'STOPLOSS', parsedPrice, parsedSlQty, { is_stoploss: true })
+        await onPlaceOrder(side, 'STOPLOSS', parsedPrice, parsedSlQty, { is_stoploss: true, right: instrumentType === 'options' ? orderRight : undefined })
       } else if (sizingMode === 'riskRatio') {
         const riskPct = riskRatios[ratio]
         await onPlaceOrder(side, orderType, parsedPrice, null, {
@@ -1222,6 +1223,30 @@ export default function OrderPanel({
       {/* ── Order form (hidden when Strat tab is active) ─────────────── */}
       {orderType !== 'STRAT' && (
       <>
+      {/* CE / PE toggle (options) — choose the contract without selecting a chart */}
+      {instrumentType === 'options' && (
+        <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
+          {(['CE', 'PE'] as const).map(r => (
+            <button
+              key={r}
+              disabled={!isActive}
+              onClick={() => setOrderRight(r)}
+              title={`Place orders on ${r}`}
+              style={{
+                flex: 1, padding: '5px 0', fontSize: 12, fontWeight: 600,
+                cursor: isActive ? 'pointer' : 'not-allowed',
+                border: 'none',
+                background: orderRight === r ? (r === 'CE' ? '#238636' : '#da3633') : '#161b22',
+                color: orderRight === r ? '#fff' : '#8b949e',
+                transition: 'background 0.15s',
+              }}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* BUY / SELL toggle */}
       <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
         {(['BUY', 'SELL'] as const).map(s => (
