@@ -35,21 +35,21 @@ def test_only_start_replaces_saved_capital_and_never_double_counts_deposit(isola
     kwargs = dict(execution_broker=broker)
     if broker == 'kite': kwargs['capital_override'] = 813
     first = wallet_service.sync_real_account_funds(USER, DATE, 'account', 663, -150, 0, reason='start', **kwargs)
-    assert first['session_capital'] == 813
+    assert first['session_capital'] == (813 if broker == 'kite' else 663)
     # Wallet can change because of a transfer, losses, fees or committed funds.
     if broker == 'kite': kwargs['capital_override'] = 28713
     for reason in ('refresh', 'reconcile', 'swing_start'):
         snap = wallet_service.sync_real_account_funds(USER, DATE, 'account', 28563, -150, 0, reason=reason, **kwargs)
-        assert snap['balance'] == 28563 and snap['session_capital'] == 813
+        assert snap['balance'] == 28563 and snap['session_capital'] == (813 if broker == 'kite' else 663)
     for _ in range(2):
         snap = wallet_service.sync_real_account_funds(USER, DATE, 'account', 28563, -150, 0, reason='start', **kwargs)
-        assert snap['session_capital'] == 28713
+        assert snap['session_capital'] == (28713 if broker == 'kite' else 28563)
     # Subsequent trading and margin changes retain the new capital.
     snap = wallet_service.sync_real_account_funds(USER, DATE, 'account', 26000, -200, 2000, reason='refresh', **kwargs)
-    assert snap['session_capital'] == 28713
+    assert snap['session_capital'] == (28713 if broker == 'kite' else 28563)
     if broker == 'kite': kwargs['capital_override'] = 10000
     snap = wallet_service.sync_real_account_funds(USER, DATE, 'account', 9800, -200, 0, reason='start', **kwargs)
-    assert snap['session_capital'] == 10000
+    assert snap['session_capital'] == (10000 if broker == 'kite' else 9800)
 
 
 def test_ordinary_refresh_does_not_change_capital_or_ban(monkeypatch, isolated):

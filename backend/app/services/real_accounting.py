@@ -125,9 +125,6 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
             executions = bundle.executions if executions is None else executions
             positions = bundle.positions if positions is None else positions
         net = required_number(limits.get("Net"), "Net")
-        # Preserve the broker's signed adjustment, including negative values
-        # observed after exits. Finite-value validation still applies; clamping
-        # would change the existing capital-recovery calculation.
         committed = required_number(limits.get("MarginUsed"), "MarginUsed")
         realized = required_number(limits.get("RealizedPnl"), "RealizedPnl") if getattr(broker, "execution_broker", None) == "kite" else gross_realized_pnl(date, executions, positions)
         broker_name = getattr(broker, "execution_broker", None)
@@ -135,11 +132,18 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
 
         if not isinstance(account, str) or not account:
             raise ValueError("Kotak account identity is missing")
+
+        capital_override = required_number(limits.get("DayStartCapital"), "DayStartCapital") if broker_name == "kite" else None
+        candidate = capital_override if capital_override is not None else net - committed - max(realized, 0.0)
+        logger.info(
+            "real_capital_calc broker=%s user_id=%s reason=%s net=%s - margin_used=%s - profit_realized=%s = candidate=%s",
+            broker_name or "kotak", user_id, reason, net, committed, max(realized, 0.0), round(candidate, 2),
+        )
     except (ValueError, TypeError, KeyError) as exc:
         raise KotakError(str(exc)) from exc
     return await asyncio.to_thread(wallet_service.sync_real_account_funds, user_id, date,
         account, net, realized, committed, reason=reason, execution_broker=broker_name,
-        capital_override=required_number(limits.get("DayStartCapital"), "DayStartCapital") if broker_name == "kite" else None)
+        capital_override=capital_override)
 
 
 def apply_session_capital(session, capital, *, on_start=False):

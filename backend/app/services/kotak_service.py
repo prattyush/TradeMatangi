@@ -803,6 +803,7 @@ class KotakNeoService:
             funds = float(limits["Net"])
             if not math.isfinite(funds):
                 raise KotakError("Kotak limits response contains invalid available funds")
+            logger.info("kotak_limits_raw raw_limits=%s", limits)
             return limits
         except KotakError as exc:
             raise KotakError(f"Kotak limits: {exc}") from exc
