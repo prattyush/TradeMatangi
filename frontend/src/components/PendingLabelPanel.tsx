@@ -62,6 +62,8 @@ export default function PendingLabelPanel({
   const [categories, setCategories] = useState<string[]>([])
   const [entryTags, setEntryTags] = useState<string[]>([])
   const [exitTags, setExitTags] = useState<string[]>([])
+  const [exitsExpanded, setExitsExpanded] = useState(false)
+  useEffect(() => { setExitsExpanded(false) }, [sessionId])
   const [savingKey, setSavingKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   useFlashError(error, 'PendingLabelPanel')
@@ -159,7 +161,13 @@ export default function PendingLabelPanel({
             📝 Pending exit ({pendingExitLabels.length})
           </div>
         )}
-        {pendingExitLabels.map(rt => {
+        {pendingExitLabels.length > 2 && <button
+          type="button"
+          aria-expanded={exitsExpanded}
+          onClick={() => setExitsExpanded(value => !value)}
+          style={{ background: 'none', border: 'none', color: '#58a6ff', cursor: 'pointer', textAlign: 'left', padding: '2px 0', fontSize: 11 }}
+        >{exitsExpanded ? 'Show fewer pending exits' : `Show all ${pendingExitLabels.length} pending exits`}</button>}
+        {(exitsExpanded ? pendingExitLabels : pendingExitLabels.slice(0, 2)).map(rt => {
           const ageMin = Math.max(1, Math.round((Date.now() - rt.closed_at) / 60000))
           return (
             <button
