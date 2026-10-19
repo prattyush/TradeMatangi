@@ -4,9 +4,12 @@ from app.services.broker_reports import order_id as broker_report_id
 
 import asyncio
 import math
+import logging
 from datetime import datetime, timezone
 
 from app.services import broker_reports as reports
+
+logger = logging.getLogger(__name__)
 
 
 def required_number(value, name):
@@ -139,23 +142,41 @@ async def refresh(user_id, date, broker, *, reason, executions=None, positions=N
         capital_override=required_number(limits.get("DayStartCapital"), "DayStartCapital") if broker_name == "kite" else None)
 
 
-def apply_session_capital(session, capital):
-    """Persist corrected legacy capital and update sibling sessions on this account/day."""
-    from app.services import simulation
-    if getattr(session,"trading_style","intraday") == "swing" or getattr(session, "real_funding_period", None) or getattr(session,"real_active_claim",False):
+def apply_session_capital(session, capital, *, on_start=False):
+    """An explicit Day start replaces capital; ordinary refreshes never do."""
+    if not on_start or session.session_type != "real" or getattr(session, "trading_style", "intraday") == "swing":
         return
-    sessions = {session.session_id: session}
-    sessions.update({sid: other for sid, other in simulation._sessions.items()
-                     if other.user_id == session.user_id and other.date == session.date
-                     and other.session_type == "real" and getattr(other,"trading_style","intraday") != "swing"
-                     and other.execution_broker == session.execution_broker
-                     and other.broker_account_id == session.broker_account_id})
-    for other in sessions.values():
-        if other.session_capital != capital:
-            previous = other.session_capital
-            other.session_capital = capital
-            try:
-                simulation._upsert_session_to_db(other, strict=True)
-            except Exception:
-                other.session_capital = previous
-                raise
+    from app.services import simulation, guardrail_service
+    capital = required_number(capital, "session capital")
+    previous = (session.session_capital, session.guardrail_ban_active,
+                getattr(session, "guardrail_last_type", ""), getattr(session, "guardrail_last_reason", ""))
+    session.session_capital = capital
+    try:
+        guardrail_service.refresh_real_ban(session)
+        from app.services.trade_label_service import rebase_real_day_labels
+        rebase_real_day_labels(session.session_id, capital)
+        simulation._upsert_session_to_db(session, strict=True)
+    except Exception:
+        (session.session_capital, session.guardrail_ban_active,
+         session.guardrail_last_type, session.guardrail_last_reason) = previous
+        raise
+    logger.info("real_day_start_capital_updated session_id=%s previous=%s capital=%s banned=%s",
+                session.session_id, previous[0], capital, session.guardrail_ban_active)
+
+
+async def restart_capital(session, broker, allocation_pct=1):
+    """The explicit Start endpoint may also select an already-running engine."""
+    snapshot = await refresh(session.user_id, session.date, broker, reason="start")
+    if getattr(session, "real_funding_period", None) and getattr(session, "real_broker_restrictions_enabled", False):
+        # Existing allocated pools keep their own funding lifecycle.
+        capital = session.session_capital
+    else:
+        fraction = getattr(session, "real_day_allocation_pct", None) or allocation_pct
+        capital = snapshot["session_capital"] * fraction
+    old_fraction = getattr(session, "real_day_allocation_pct", None)
+    session.real_day_allocation_pct = capital / snapshot["session_capital"] if snapshot["session_capital"] > 0 else allocation_pct
+    try:
+        apply_session_capital(session, capital, on_start=True)
+    except Exception:
+        session.real_day_allocation_pct = old_fraction
+        raise

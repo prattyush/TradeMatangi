@@ -83,7 +83,7 @@ def _load_session(session_id: str) -> dict | None:
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Sessions")
-        resp = table.get_item(Key={"session_id": session_id})
+        resp = table.get_item(Key={"session_id": session_id}, ConsistentRead=True)
         return resp.get("Item")
     except Exception:
         logger.exception("Failed to load session %s", session_id)
@@ -417,6 +417,39 @@ def save_labels(session_id: str, labels: list[dict], user_id: str) -> list[dict]
     return [_serialize_label(item) for item in saved]
 
 
+def rebase_real_day_labels(session_id: str, capital: float) -> None:
+    """Refresh stored label percentages without overwriting labels or broker snapshots."""
+    from app.services.real_broker_state import read_labels
+    from app.services.db import get_dynamodb_resource
+    db = get_dynamodb_resource()
+    table = db.Table(TABLE_NAME)
+    for row in read_labels(db, session_id):
+        value = _safe_float(row.get("round_trip_pnl")) / capital * 100 if capital > 0 else 0.0
+        table.update_item(
+            Key={"session_id": session_id, "round_trip_index": row["round_trip_index"]},
+            UpdateExpression="SET round_trip_pnl_pct = :pct",
+            ConditionExpression="attribute_exists(session_id)",
+            ExpressionAttributeValues={":pct": Decimal(str(round(value, 4)))},
+        )
+
+
+def _current_real_day_label_percentages(items):
+    """Capital is authoritative even when reading an older broker snapshot label."""
+    sessions = {}
+    result = []
+    for row in items:
+        if row.get("session_type") == "real" and row.get("trading_style", "intraday") != "swing":
+            sid = row["session_id"]
+            if sid not in sessions:
+                sessions[sid] = _load_session(sid)
+            session = sessions[sid]
+            if session and session.get("trading_style", "intraday") != "swing":
+                capital = _safe_float(session.get("session_capital"))
+                row = {**row, "round_trip_pnl_pct": round(_safe_float(row.get("round_trip_pnl")) / capital * 100, 4) if capital > 0 else 0.0}
+        result.append(row)
+    return result
+
+
 def get_labels_for_session(session_id: str) -> list[dict]:
     """Return all labels for a session."""
     try:
@@ -438,8 +471,8 @@ def get_labels_for_session(session_id: str) -> list[dict]:
             current = [r for r in items if revision and r.get("broker_snapshot_revision") == revision]
             by_index = {int(r["round_trip_index"]): r for r in projected}
             by_index.update({int(r["round_trip_index"]): r for r in current})
-            return [_serialize_label(item) for item in by_index.values()]
-        return [_serialize_label(item) for item in items]
+            return [_serialize_label(item) for item in _current_real_day_label_percentages(by_index.values())]
+        return [_serialize_label(item) for item in _current_real_day_label_percentages(items)]
     except Exception as exc:
         logger.exception("Failed to get labels for session %s", session_id)
         raise RuntimeError("Saved labels could not be read; retry later") from exc
@@ -577,7 +610,7 @@ def get_stats(
             if owner and owner not in owners:
                 owners.add(owner)
                 canonical.extend(get_labels_for_session(owner))
-        labels = canonical
+        labels = _current_real_day_label_percentages(canonical)
 
         if symbol:
             labels = [l for l in labels if l.get("symbol") == symbol]

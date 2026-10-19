@@ -512,7 +512,9 @@ async def _start_simulation_impl(
             recovered = real_sessions.recovery_record()
             from app.services.real_broker_policy import enabled as restrictions_enabled
             if not restrictions_enabled():
-                funds = float(recovered.get("session_capital", funds)) if recovered else funds * req.allocation_pct
+                # Retain the existing book's allocation fraction, not its stale capital.
+                fraction = float(recovered.get("real_day_allocation_pct", req.allocation_pct)) if recovered else req.allocation_pct
+                funds = funds * fraction
                 funding_period = recovered.get("real_funding_period") if recovered else None
             else:
                 reference = float(recovered.get("session_capital", funds)) if recovered else account_wallet.get("balance", funds)
@@ -619,8 +621,8 @@ async def _start_simulation_impl(
             logger.info("start_simulation: returning already-active session %s", existing_session_id)
             if is_real:
                 active.wallet_ledger_id = real_ledger
-                active.session_capital = funds
-                sim_svc._upsert_session_to_db(active, strict=True)
+                active.real_day_allocation_pct = funds / account_wallet["session_capital"] if account_wallet["session_capital"] > 0 else req.allocation_pct
+                real_accounting.apply_session_capital(active, funds, on_start=True)
             return _session_response(active, group)
         else:
             # Paper/real: session exists in DB but not in memory — rebuild and resume.
@@ -662,8 +664,8 @@ async def _start_simulation_impl(
                 await real_sessions.bind_prepared(session)
                 if restrictions_enabled() and (session.instrument_type == "options" or chosen_broker == "kite"):
                     await _prepare_real_options_resume(session, kotak_svc)
-                session.session_capital = funds
-                sim_svc._upsert_session_to_db(session, strict=True)
+                session.real_day_allocation_pct = funds / account_wallet["session_capital"] if account_wallet["session_capital"] > 0 else req.allocation_pct
+                real_accounting.apply_session_capital(session, funds, on_start=True)
             if desktop_independent and not session.group_id:
                 session.desktop_created = True
             session.group_id = group["group_id"]
@@ -711,8 +713,8 @@ async def _start_simulation_impl(
         session.real_start_preparing = True
         session.execution_broker = "KotakNeo" if chosen_broker == "kotak" else "Kite"
         session.broker_account_id = broker_account
-        session.session_capital = funds
-        sim_svc._upsert_session_to_db(session, strict=True)
+        session.real_day_allocation_pct = funds / account_wallet["session_capital"] if account_wallet["session_capital"] > 0 else req.allocation_pct
+        real_accounting.apply_session_capital(session, funds, on_start=True)
         if restrictions_enabled() and chosen_broker == "kite":
             await _prepare_real_options_resume(session, kotak_svc)
     session.desktop_created = desktop_independent

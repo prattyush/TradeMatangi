@@ -221,7 +221,8 @@ class SimulationSession:
     last_price: float = 0.0           # equity or single-right options price
     last_price_ce: float = 0.0        # CE price (dual-stream options only)
     last_price_pe: float = 0.0        # PE price (dual-stream options only)
-    session_capital: float = 0.0      # wallet balance snapshotted at session start
+    session_capital: float = 0.0      # capital fixed until the next explicit session start
+    real_day_allocation_pct: float | None = None
     desktop_sizing_settings: Optional[dict] = None  # frozen on first desktop start/attachment
     instrument_type: str = "equity"   # equity, options, or Swing futures
     future_contract: dict | None = None
@@ -411,8 +412,10 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
         desktop_origin = getattr(session, "desktop_origin", None)
         if desktop_origin:
             item["desktop_origin"] = desktop_origin
-        if desktop_origin == "desktop_paper":
-            item["desktop_guardrail_state"] = {
+        if session.session_type == "real" and getattr(session, "real_day_allocation_pct", None) is not None:
+            item["real_day_allocation_pct"] = Decimal(str(session.real_day_allocation_pct))
+        if desktop_origin == "desktop_paper" or (session.session_type == "real" and session.trading_style != "swing"):
+            item["real_guardrail_state" if session.session_type == "real" else "desktop_guardrail_state"] = {
                 "block_until_bar": int(session.guardrail_block_until_bar),
                 "ban_active": bool(session.guardrail_ban_active),
                 "consecutive_losses": int(session.guardrail_consecutive_losses),
@@ -771,6 +774,7 @@ def rebuild_session_from_db(
     saved_last_price_pe = db_record.get("last_price_pe")
     if saved_last_price_pe is not None:
         session.last_price_pe = float(saved_last_price_pe)
+    session.real_day_allocation_pct = float(db_record["real_day_allocation_pct"]) if db_record.get("real_day_allocation_pct") is not None else None
     session.broker_projection_id = db_record.get("broker_projection_id")
     session.broker_projection_owner = db_record.get("broker_projection_owner", session.session_id)
     session.resume_event.set()
@@ -779,8 +783,8 @@ def rebuild_session_from_db(
         initialize_guardrails(session, user_id)
     # Restore restrictions before any resume write. Otherwise the initial
     # session upsert would replace a saved BAN/cooldown with default values.
-    if db_record.get("desktop_origin") == "desktop_paper":
-        guardrails = db_record.get("desktop_guardrail_state") or {}
+    if db_record.get("desktop_origin") == "desktop_paper" or (session.session_type == "real" and session.trading_style != "swing"):
+        guardrails = db_record.get("real_guardrail_state" if session.session_type == "real" else "desktop_guardrail_state") or {}
         session.guardrail_block_until_bar = int(guardrails.get("block_until_bar") or 0)
         session.guardrail_ban_active = bool(guardrails.get("ban_active"))
         session.guardrail_consecutive_losses = int(guardrails.get("consecutive_losses") or 0)

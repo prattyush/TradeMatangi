@@ -878,6 +878,7 @@ function ScreenController(props: ScreenControllerProps) {
     if (key && key !== guardrailSeen.current) setGuardrailPopup({ type: state!.ban_active ? 'BAN' : state!.type ?? 'BLOCK', reason: state!.reason })
     guardrailSeen.current = key
     if (!trading) setGuardrailPopup(null)
+    else if (state && !state.ban_active) setGuardrailPopup(previous => previous?.type === 'BAN' ? null : previous)
   }, [trading?.session.session_id, trading?.guardrails])
   useEffect(() => {
     if (!guardrailPopup) return
