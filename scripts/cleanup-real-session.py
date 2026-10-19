@@ -75,13 +75,16 @@ def main():
     if len(command) != 2 or command[0] != "delete" or not command[1].isdigit() or not 1 <= int(command[1]) <= len(sessions):
         raise ValueError("Expected delete N using a session number shown above")
     selected = sessions[int(command[1]) - 1]
-    changes = maintenance.session_inventory(client, selected)
+    def progress(message):
+        print(message, flush=True)
+    progress("Collecting this session's records across tables (some steps full-scan) ...")
+    changes = maintenance.session_inventory(client, selected, progress=progress)
     print(f"Selected session: {maintenance.native(selected)['session_id']}")
     print(f"Records to delete/change: {dict(Counter(c['table'] for c in changes))}")
     if args.no_backup:
         # Admin fast path: no durable backup and no rollback. Each record is still
         # verified in place via GetItem; the heavy post-delete re-scan is skipped.
-        maintenance.delete_inventory(client, changes)
+        maintenance.delete_inventory(client, changes, progress=progress)
         print("Selected session deleted (no backup taken). Other sessions and wallet balances preserved.")
         return
     path = maintenance.save_backup(client, changes, args.backup_dir, "session-cleanup")
