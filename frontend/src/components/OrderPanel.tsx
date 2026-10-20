@@ -9,6 +9,8 @@ type OrderTypeFull = 'TARGET' | 'LIMIT' | 'STOPLOSS' | 'MARKET' | 'STRAT'
 interface Props {
   sessionState: SessionState
   currentPrice: number
+  currentPriceCE?: number
+  currentPricePE?: number
   openOrders: Order[]
   position: Position
   sizingMode: 'quantity' | 'fundsRatio' | 'riskRatio'
@@ -90,7 +92,7 @@ function isClosingOrderForPosition(order: Order, position: Position, activeRight
 }
 
 export default function OrderPanel({
-  sessionState, currentPrice, openOrders, position,
+  sessionState, currentPrice: chartPrice, currentPriceCE, currentPricePE, openOrders, position,
   sizingMode, fundsRatios, riskRatios, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
   onPlaceOrder, onCancelOrder, onSplitOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
@@ -123,6 +125,10 @@ export default function OrderPanel({
   const [orderType, setOrderType] = useState<OrderTypeFull>('TARGET')
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
   const [orderRight, setOrderRight] = useState<'CE' | 'PE'>(activeRight ?? 'CE')
+  // Price of the contract being ordered (the CE/PE toggle), not the active chart.
+  const currentPrice = instrumentType === 'options'
+    ? (orderRight === 'CE' ? (currentPriceCE ?? 0) : (currentPricePE ?? 0))
+    : chartPrice
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [ratio, setRatio] = useState<RatioKey>('l')

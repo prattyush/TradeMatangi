@@ -2826,6 +2826,8 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
             <OrderPanel
               sessionState={sim.sessionState}
               currentPrice={tradePanelPrice}
+              currentPriceCE={sim.currentPriceCE}
+              currentPricePE={sim.currentPricePE}
               openOrders={sim.openOrders}
               position={tradePanelPosition}
               sizingMode={sizingMode}
