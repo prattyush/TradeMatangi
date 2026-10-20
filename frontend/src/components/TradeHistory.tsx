@@ -148,7 +148,7 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ color: '#8b949e', borderBottom: '1px solid #30363d' }}>
-                  {['Time (IST)', 'Side', 'Qty', 'Price'].map(h => (
+                  {['Side', 'Qty', 'Price', 'Right'].map(h => (
                     <th key={h} style={{ padding: '6px 10px', textAlign: 'left', fontWeight: 500 }}>{h}</th>
                   ))}
                 </tr>
@@ -156,12 +156,12 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
               <tbody>
                 {currentReversed.map(t => (
                   <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d' }}>
-                    <td style={{ padding: '6px 10px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
                     <td style={{ padding: '6px 10px', fontWeight: 600, color: t.side === 'BUY' ? '#26a641' : '#f85149' }}>
                       {t.side}
                     </td>
                     <td style={{ padding: '6px 10px' }}>{t.quantity}</td>
                     <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.price)}</td>
+                    <td style={{ padding: '6px 10px', color: t.right === 'CE' ? '#26a641' : t.right === 'PE' ? '#f85149' : '#8b949e' }}>{t.right ?? '—'}</td>
                   </tr>
                 ))}
                 {histReversed.length > 0 && (
@@ -169,12 +169,12 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
                     <tr><td colSpan={4} style={SEPARATOR_STYLE}>── Previous sessions ──</td></tr>
                     {histReversed.map(t => (
                       <tr key={t.trade_id} style={{ borderBottom: '1px solid #21262d', opacity: 0.55 }}>
-                        <td style={{ padding: '6px 10px', color: '#8b949e' }}>{toDate(t.timestamp)}</td>
                         <td style={{ padding: '6px 10px', fontWeight: 600, color: t.side === 'BUY' ? '#26a641' : '#f85149' }}>
                           {t.side}
                         </td>
                         <td style={{ padding: '6px 10px' }}>{t.quantity}</td>
                         <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>{fmt(t.price)}</td>
+                        <td style={{ padding: '6px 10px', color: t.right === 'CE' ? '#26a641' : t.right === 'PE' ? '#f85149' : '#8b949e' }}>{t.right ?? '—'}</td>
                       </tr>
                     ))}
                   </>

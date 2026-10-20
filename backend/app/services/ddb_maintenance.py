@@ -33,13 +33,15 @@ def native(item):
 
 
 def query(client, table, field, value):
-    return pages(client, "query", TableName=table, ConsistentRead=True,
+    # Offline admin tool: the backend is stopped, so eventually consistent reads
+    # are safe and avoid DynamoDB Local's slow strongly-consistent scans.
+    return pages(client, "query", TableName=table, ConsistentRead=False,
                  KeyConditionExpression="#k = :v", ExpressionAttributeNames={"#k": field},
                  ExpressionAttributeValues={":v": {"S": value}})
 
 
 def scan_equal(client, table, field, value):
-    return pages(client, "scan", TableName=table, ConsistentRead=True,
+    return pages(client, "scan", TableName=table, ConsistentRead=False,
                  FilterExpression="#k = :v", ExpressionAttributeNames={"#k": field},
                  ExpressionAttributeValues={":v": {"S": value}})
 

@@ -9,6 +9,8 @@ type OrderTypeFull = 'TARGET' | 'LIMIT' | 'STOPLOSS' | 'MARKET' | 'STRAT'
 interface Props {
   sessionState: SessionState
   currentPrice: number
+  currentPriceCE?: number
+  currentPricePE?: number
   openOrders: Order[]
   position: Position
   sizingMode: 'quantity' | 'fundsRatio' | 'riskRatio'
@@ -23,7 +25,7 @@ interface Props {
     orderType: 'TARGET' | 'LIMIT' | 'STOPLOSS',
     price: number,
     quantity: number | null,
-    opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string },
+    opts: { market_order?: boolean; execute_immediately?: boolean; is_stoploss?: boolean; funds_ratio_pct?: number; risk_pct?: number; risk_ratio_pct?: number; target_deviation_pct?: number; entry_sl_price?: number; group_id?: string; right?: 'CE' | 'PE' },
   ) => Promise<void>
   onSplitOrder?: (orderId: string, operationId: string) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
@@ -90,7 +92,7 @@ function isClosingOrderForPosition(order: Order, position: Position, activeRight
 }
 
 export default function OrderPanel({
-  sessionState, currentPrice, openOrders, position,
+  sessionState, currentPrice: chartPrice, currentPriceCE, currentPricePE, openOrders, position,
   sizingMode, fundsRatios, riskRatios, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
   onPlaceOrder, onCancelOrder, onSplitOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
@@ -122,6 +124,14 @@ export default function OrderPanel({
 }: Props) {
   const [orderType, setOrderType] = useState<OrderTypeFull>('TARGET')
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
+  const [orderRight, setOrderRight] = useState<'CE' | 'PE'>(activeRight ?? 'CE')
+  // Price of a given contract (CE/PE); falls back to the chart price for equity.
+  const priceForRight = (right: string | null | undefined) =>
+    instrumentType === 'options' && right
+      ? (right === 'CE' ? (currentPriceCE ?? 0) : (currentPricePE ?? 0))
+      : chartPrice
+  // Price of the contract being ordered (the CE/PE toggle), not the active chart.
+  const currentPrice = priceForRight(orderRight)
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [ratio, setRatio] = useState<RatioKey>('l')
@@ -323,7 +333,7 @@ export default function OrderPanel({
     setError(null)
     setPlacing(true)
     // Build auto-stoploss opts for TARGET / LIMIT / MARKET orders
-    const entrySlOpts = { market_order: orderType === 'MARKET', execute_immediately: sessionType === 'real' && orderType === 'MARKET', ...((orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
+    const entrySlOpts = { right: instrumentType === 'options' ? orderRight : undefined, market_order: orderType === 'MARKET', execute_immediately: sessionType === 'real' && orderType === 'MARKET', ...((orderType === 'TARGET' || orderType === 'LIMIT' || (orderType === 'MARKET' && slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0))
       ? { entry_sl_price: slOnEntry && !isNaN(parsedEntrySl) && parsedEntrySl > 0 ? parsedEntrySl : undefined, group_id: crypto.randomUUID() }
       : {}) }
     try {
@@ -338,7 +348,7 @@ export default function OrderPanel({
           await onPlaceOrder(side, 'LIMIT', mktPrice, quantity, { ...entrySlOpts })
         }
       } else if (orderType === 'STOPLOSS') {
-        await onPlaceOrder(side, 'STOPLOSS', parsedPrice, parsedSlQty, { is_stoploss: true })
+        await onPlaceOrder(side, 'STOPLOSS', parsedPrice, parsedSlQty, { is_stoploss: true, right: instrumentType === 'options' ? orderRight : undefined })
       } else if (sizingMode === 'riskRatio') {
         const riskPct = riskRatios[ratio]
         await onPlaceOrder(side, orderType, parsedPrice, null, {
@@ -358,7 +368,7 @@ export default function OrderPanel({
       setPrice('')
       setEntrySlPrice('')
       setSlOnEntry(false)
-      const rightTag = instrumentType === 'options' && activeRight ? ` ${activeRight}` : ''
+      const rightTag = instrumentType === 'options' ? ` ${orderRight}` : ''
       onSnapshotEvent?.({
         type: 'order_placed',
         description: `${side} ${orderType === 'MARKET' ? 'LIMIT(Mkt)' : orderType} @ ${orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * (1 + deviation) : currentPrice * (1 - deviation)).toFixed(2) : parsedPrice.toFixed(2)}${rightTag}`,
@@ -1222,6 +1232,30 @@ export default function OrderPanel({
       {/* ── Order form (hidden when Strat tab is active) ─────────────── */}
       {orderType !== 'STRAT' && (
       <>
+      {/* CE / PE toggle (options) — choose the contract without selecting a chart */}
+      {instrumentType === 'options' && (
+        <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
+          {(['CE', 'PE'] as const).map(r => (
+            <button
+              key={r}
+              disabled={!isActive}
+              onClick={() => setOrderRight(r)}
+              title={`Place orders on ${r}`}
+              style={{
+                flex: 1, padding: '5px 0', fontSize: 12, fontWeight: 600,
+                cursor: isActive ? 'pointer' : 'not-allowed',
+                border: 'none',
+                background: orderRight === r ? (r === 'CE' ? '#238636' : '#da3633') : '#161b22',
+                color: orderRight === r ? '#fff' : '#8b949e',
+                transition: 'background 0.15s',
+              }}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* BUY / SELL toggle */}
       <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
         {(['BUY', 'SELL'] as const).map(s => (
@@ -1618,6 +1652,11 @@ export default function OrderPanel({
                     <span style={{ color: order.is_stoploss ? '#f0883e' : '#484f58', fontSize: 10 }}>
                       {order.is_stoploss ? 'SL' : order.order_type}
                     </span>
+                    {order.right && (
+                      <span style={{ color: order.right === 'CE' ? '#26a641' : '#f85149', fontSize: 10, fontWeight: 600 }}>
+                        {order.right}
+                      </span>
+                    )}
                     <span style={{ color: '#e6edf3', flex: 1 }}>
                       {displayPrice.toFixed(2)} × {order.quantity}
                     </span>
@@ -1673,14 +1712,14 @@ export default function OrderPanel({
                           ⊕
                         </button>
                         <button
-                          onClick={() => currentPrice > 0 && setEditPrice(currentPrice.toFixed(2))}
-                          disabled={currentPrice <= 0}
+                          onClick={() => priceForRight(order.right) > 0 && setEditPrice(priceForRight(order.right).toFixed(2))}
+                          disabled={priceForRight(order.right) <= 0}
                           title="Use last traded price"
                           style={{
                             padding: '4px 7px', background: '#21262d',
                             border: '1px solid #30363d', borderRadius: 4,
-                            color: currentPrice > 0 ? '#8b949e' : '#484f58',
-                            cursor: currentPrice > 0 ? 'pointer' : 'not-allowed',
+                            color: priceForRight(order.right) > 0 ? '#8b949e' : '#484f58',
+                            cursor: priceForRight(order.right) > 0 ? 'pointer' : 'not-allowed',
                             fontSize: 10, whiteSpace: 'nowrap',
                           }}
                         >LTP</button>
