@@ -43,7 +43,7 @@ class Table:
 def env(monkeypatch):
     session = simulation.SimulationSession(session_id='snapshot-test', symbol='BSESEN', date='2026-10-01',
         start_time='09:15:00', speed=1, user_id='snapshot-user', session_type='real', instrument_type='options',
-        strike=71500, strike_ce=71500, strike_pe=71500, expiry='2026-10-01')
+        strike=71500, strike_ce=71500, strike_pe=71500, expiry='2026-10-01', session_capital=18000)
     session.current_time = str(reports.wall_time('2026-10-01 14:46:06'))
     tables = {name: Table(name) for name in ('Sessions', 'Trades', 'Orders', 'TradeLabels')}
     db = SimpleNamespace(Table=lambda name: tables[name])

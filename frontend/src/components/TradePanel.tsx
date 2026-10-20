@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Position } from '../services/api'
 import { SessionState, PendingExitRt, ActiveEntryStrategy } from '../hooks/useSimulation'
 import PendingLabelPanel from './PendingLabelPanel'
@@ -60,25 +61,38 @@ export default function TradePanel({
   }
   const sideColor = position.side === 'LONG' ? '#26a641' : position.side === 'SHORT' ? '#f85149' : '#8b949e'
   const active = sessionState === 'running' || sessionState === 'paused'
+  const [collapsed, setCollapsed] = useState(false)
 
   const showLabels = active && sessionId && onSaveEntry && onSaveExit
 
   return (
     <div style={{
       background: '#161b22', border: '1px solid #30363d', borderRadius: 8,
-      padding: 16, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 200,
+      padding: collapsed ? '8px 12px' : 16, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 200,
     }}>
-      {activeLabel && (
-        <div style={{ fontSize: 11, color: '#58a6ff', marginBottom: -4 }}>{activeLabel}</div>
-      )}
-
-      <div style={{ fontSize: 13, color: '#8b949e' }}>
-        LTP&nbsp;
-        <span style={{ fontSize: 20, fontWeight: 700, color: '#e6edf3', fontVariantNumeric: 'tabular-nums' }}>
-          {currentPrice ? fmt(currentPrice) : '—'}
-        </span>
+      {/* Always-visible header: collapse toggle, order label, LTP */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          title={collapsed ? 'Expand panel' : 'Collapse panel'}
+          aria-expanded={!collapsed}
+          style={{
+            background: 'transparent', border: 'none', color: '#8b949e',
+            cursor: 'pointer', fontSize: 11, padding: 0, width: 12, lineHeight: 1,
+          }}
+        >{collapsed ? '▸' : '▼'}</button>
+        {activeLabel && (
+          <div style={{ fontSize: 11, color: '#58a6ff' }}>{activeLabel}</div>
+        )}
+        <div style={{ fontSize: 13, color: '#8b949e', marginLeft: activeLabel ? 'auto' : 0 }}>
+          LTP&nbsp;
+          <span style={{ fontSize: 20, fontWeight: 700, color: '#e6edf3', fontVariantNumeric: 'tabular-nums' }}>
+            {currentPrice ? fmt(currentPrice) : '—'}
+          </span>
+        </div>
       </div>
 
+      {!collapsed && (<>
       {Object.keys(activeEntryStrategies).length > 0 && (
         <div style={{
           display: 'flex', flexDirection: 'column', gap: 2,
@@ -162,6 +176,7 @@ export default function TradePanel({
           onSaveExit={onSaveExit!}
         />
       )}
+      </>)}
     </div>
   )
 }

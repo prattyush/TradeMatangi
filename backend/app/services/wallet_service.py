@@ -395,28 +395,25 @@ def get_real_funds_snapshot(user_id: str, date: str) -> tuple[float, int]:
 
 
 def sync_real_account_funds(user_id, date, account, net, realized, committed, *, reason, execution_broker=None, capital_override=None):
-    """Initialize account/day capital once; retain raw cash for order affordability."""
+    """Replace capital only on explicit Day start; other refreshes update cash only."""
     import math
-    candidate = round(capital_override if capital_override is not None else net - realized + committed, 2)
+    # Kotak capital = Net + MarginUsed - max(realized, 0). MarginUsed is used-up
+    # capital (recover it), and only closed-trade PROFIT is subtracted back out
+    # (a loss is already reflected in MarginUsed, so it would be double-counted).
+    candidate = round(capital_override if capital_override is not None else net + committed - max(realized, 0.0), 2)
     display = round(net - realized, 2)
     if not all(math.isfinite(value) for value in (net, realized, committed, candidate, display)):
         raise ValueError("Invalid real accounting snapshot")
     _ensure_ledger_table()
     from app.services.db import get_dynamodb_resource
-    # Atomic initialization also works when another worker initializes the same day.
-    if execution_broker == 'kotak':
-        # Adopt only this same account's legacy dated baseline, never another broker's money.
-        legacy = get_dynamodb_resource().Table(_LEDGER_TABLE).get_item(
-            Key={'user_id': user_id, 'ledger_id': f'real-capital:{account}:{date}'}, ConsistentRead=True).get('Item', {})
-        if 'day_start_capital' in legacy:
-            candidate = float(legacy['day_start_capital'])
-            if not math.isfinite(candidate):
-                raise ValueError('Invalid legacy account capital')
+    # A refresh can change cash because of fills/margin/fees, not just transfers.
+    replace_capital = reason == "start"
     capital_account = f"{execution_broker}:{account}" if execution_broker else account
     row = get_dynamodb_resource().Table(_LEDGER_TABLE).update_item(
         Key={"user_id": user_id, "ledger_id": f"real-capital:{capital_account}:{date}"},
         UpdateExpression="SET #date = :date, ledger_kind = :kind, "
-                         "day_start_capital = if_not_exists(day_start_capital, :capital)",
+                         + ("day_start_capital = :capital" if replace_capital else
+                          "day_start_capital = if_not_exists(day_start_capital, :capital)"),
         ExpressionAttributeNames={"#date": "date"},
         ExpressionAttributeValues={":date": date, ":kind": "real-capital", ":capital": Decimal(str(candidate))},
         ReturnValues="ALL_NEW",

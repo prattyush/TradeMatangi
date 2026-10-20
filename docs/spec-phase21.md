@@ -2225,6 +2225,23 @@ on both hosts. No live orders or trading-data mutations were performed.
 
 ### Desktop Day P&L journey height follow-up (2026-10-17)
 
-- Desktop Trades tab: the trades list determines the top row height; the adjacent Day P&L journey matches it and scrolls internally when needed, keeping the price charts directly below the trades list.
+- Desktop Day analysis → Trades: the top row now fits the complete Day P&L journey, including axes and inspection details, without an internal journey scrollbar. The adjacent trades/order list scrolls within the same height. This replaces the initial absolute-positioned, scrolling journey fix.
+- The selected session fills the available height and the price charts expand into the remaining space instead of staying at a fixed 450px. The journey graph scales with window height; small windows can scroll the page to retain readable charts and details. Existing chart instances and resize handling are retained.
 - Website layout and narrow-screen stacked layout remain unchanged.
-- Validation: shared Day journey browser acceptance passed for both hosts, including desktop panel height/alignment and price-chart placement assertions; `git diff --check` passed.
+- Validation: shared Day journey browser acceptance passed for both hosts, including equal desktop panel heights, complete journey visibility and price charts filling the remaining height at 1920×1080 and 1366×768, plus narrow-screen stacking. Desktop production build (TypeScript + Vite) and `git diff --check` passed.
+
+### Real Day capital on explicit start (2026-10-19)
+
+- Explicit **Start Real Trading** recalculates account capital using existing broker accounting (funds, realized P&L and committed funds/open positions), and replaces the selected existing Real Day session's capital while retaining its identity, orders and executions. An already-running engine selected through Start follows the same rule.
+- Wallet refresh, trade-history refresh, reconnect and restoration keep session capital fixed. Wallet cash can change with trades, fees, margin or transfers without changing the percentage denominator mid-session. After adding funds, stop and explicitly start again to recalculate capital.
+- Day allocation fractions are retained for subsequent starts; existing enforced shared funding-pool allocations and Swing lifecycle rules remain authoritative. No account-wide allocation is silently assigned to a single allocated book.
+- Completed Real Day cycle, entry and matched-exit P&L percentages are rebuilt using replacement session capital, including trade history, analysis, Stats and the day journey. Stored TradeLabels percentages are refreshed; older immutable broker-snapshot labels use the current session capital when read. Report cache keys include the rebuilt cycle data, so capital changes produce a new result.
+- Execution quantities, prices, commissions and rupee P&L stay unchanged. Captured allocation/risk metadata, initial-risk percentages and R multiples retain their original decision basis. No deposit is recorded as trading profit and no original-capital history is introduced.
+- Capital-loss and losing-trade bans are reevaluated on Start without resetting unrelated cooldowns/manual blocks. Real guardrail state is persisted and restored with the session. Failed accounting does not replace session capital; failed session persistence rolls back the in-memory capital/restriction change.
+- No new table, polling loop, broad historical scan or broker order mutation is required.
+- Validation: 291 focused backend tests passed (240 capital/wallet/guardrail/lifecycle/performance tests plus 51 label/analysis/desktop-analysis tests), including a desktop Real Start path check. Website and desktop production builds (TypeScript + Vite) passed; `git diff --check` passed. No live broker orders or production-data changes were performed.
+
+### Compact pending exit labels (2026-10-19)
+
+- Website right panel and desktop left panel show the first two pending exit-label entries by default. When more than two are pending, a Show all / Show fewer control expands or collapses the list while keeping the total count visible. Open-trade labeling and pending orders are unchanged; changing sessions resets the collapsed view.
+- Validation: browser checks passed for 1, 2 and 5 entries, expand/collapse and session reset on both hosts. Website and desktop production builds passed; `git diff --check` passed.

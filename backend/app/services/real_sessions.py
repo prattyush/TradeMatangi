@@ -292,7 +292,8 @@ async def start(req, user_id, create):
                     "Close the active Real session before changing underlying or instrument type",
                 )
             from app.routers.simulation import _session_response
-
+            from app.services.real_accounting import restart_capital
+            await restart_capital(runtime, broker, req.allocation_pct)
             return _session_response(runtime)
         record = None
         if slot:
