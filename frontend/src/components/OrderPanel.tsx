@@ -125,10 +125,13 @@ export default function OrderPanel({
   const [orderType, setOrderType] = useState<OrderTypeFull>('TARGET')
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY')
   const [orderRight, setOrderRight] = useState<'CE' | 'PE'>(activeRight ?? 'CE')
+  // Price of a given contract (CE/PE); falls back to the chart price for equity.
+  const priceForRight = (right: string | null | undefined) =>
+    instrumentType === 'options' && right
+      ? (right === 'CE' ? (currentPriceCE ?? 0) : (currentPricePE ?? 0))
+      : chartPrice
   // Price of the contract being ordered (the CE/PE toggle), not the active chart.
-  const currentPrice = instrumentType === 'options'
-    ? (orderRight === 'CE' ? (currentPriceCE ?? 0) : (currentPricePE ?? 0))
-    : chartPrice
+  const currentPrice = priceForRight(orderRight)
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [ratio, setRatio] = useState<RatioKey>('l')
@@ -365,7 +368,7 @@ export default function OrderPanel({
       setPrice('')
       setEntrySlPrice('')
       setSlOnEntry(false)
-      const rightTag = instrumentType === 'options' && activeRight ? ` ${activeRight}` : ''
+      const rightTag = instrumentType === 'options' ? ` ${orderRight}` : ''
       onSnapshotEvent?.({
         type: 'order_placed',
         description: `${side} ${orderType === 'MARKET' ? 'LIMIT(Mkt)' : orderType} @ ${orderType === 'MARKET' ? (side === 'BUY' ? currentPrice * (1 + deviation) : currentPrice * (1 - deviation)).toFixed(2) : parsedPrice.toFixed(2)}${rightTag}`,
@@ -1649,6 +1652,11 @@ export default function OrderPanel({
                     <span style={{ color: order.is_stoploss ? '#f0883e' : '#484f58', fontSize: 10 }}>
                       {order.is_stoploss ? 'SL' : order.order_type}
                     </span>
+                    {order.right && (
+                      <span style={{ color: order.right === 'CE' ? '#26a641' : '#f85149', fontSize: 10, fontWeight: 600 }}>
+                        {order.right}
+                      </span>
+                    )}
                     <span style={{ color: '#e6edf3', flex: 1 }}>
                       {displayPrice.toFixed(2)} × {order.quantity}
                     </span>
@@ -1704,14 +1712,14 @@ export default function OrderPanel({
                           ⊕
                         </button>
                         <button
-                          onClick={() => currentPrice > 0 && setEditPrice(currentPrice.toFixed(2))}
-                          disabled={currentPrice <= 0}
+                          onClick={() => priceForRight(order.right) > 0 && setEditPrice(priceForRight(order.right).toFixed(2))}
+                          disabled={priceForRight(order.right) <= 0}
                           title="Use last traded price"
                           style={{
                             padding: '4px 7px', background: '#21262d',
                             border: '1px solid #30363d', borderRadius: 4,
-                            color: currentPrice > 0 ? '#8b949e' : '#484f58',
-                            cursor: currentPrice > 0 ? 'pointer' : 'not-allowed',
+                            color: priceForRight(order.right) > 0 ? '#8b949e' : '#484f58',
+                            cursor: priceForRight(order.right) > 0 ? 'pointer' : 'not-allowed',
                             fontSize: 10, whiteSpace: 'nowrap',
                           }}
                         >LTP</button>
