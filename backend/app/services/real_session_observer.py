@@ -80,6 +80,8 @@ async def start(req, user, broker, account, create):
             runtime = None
         if runtime and real_sessions.engine_healthy(runtime):
             from app.routers.simulation import _session_response
+            from app.services.real_accounting import restart_capital
+            await restart_capital(runtime, execution_broker.get_service(broker), req.allocation_pct)
             return _session_response(runtime)
         if runtime:
             await asyncio.to_thread(simulation._upsert_session_to_db, runtime)

@@ -77,7 +77,11 @@ def build_cycles(session, executions):
         from app.services.execution_analytics import normalize_metadata
 
         meta = normalize_metadata(row.get("analytics") or {})
-        capital = number(meta.get("capital", session.get("session_capital")))
+        # Rebase Real Day P&L percentages, including already completed trades.
+        # Captured sizing/risk metadata remains untouched for behavioral analysis.
+        capital = number(session.get("session_capital")) if (
+            session.get("session_type") == "real" and session.get("trading_style", "intraday") != "swing"
+        ) else number(meta.get("capital", session.get("session_capital")))
         action = str(
             meta.get("action_id")
             or (row.get("broker_order_id") or row.get("kotak_order_id"))
@@ -321,7 +325,7 @@ def build_cycles(session, executions):
             )
             entry["analytics"]["initial_risk"] = entry["initial_risk"]
             entry["analytics"]["effective_risk_pct"] = (
-                percent(entry["initial_risk"], entry["capital"])
+                percent(entry["initial_risk"], number(entry["analytics"].get("capital", entry["capital"])))
                 if entry["initial_risk"] is not None
                 else None
             )

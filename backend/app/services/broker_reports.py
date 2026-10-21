@@ -173,7 +173,12 @@ def in_book(session, row: dict) -> bool:
     if row.get('product_known') is False and (getattr(session, 'trading_style', 'intraday') == 'swing' or isinstance(getattr(session, 'real_funding_period', None), str) and session.real_funding_period):
         raise ValueError('Broker product is missing; account book reconciliation is pending')
     product = str(row.get("product") or "MIS").upper()
-    expected_product = ("NRML" if session.instrument_type in ("options","futures") else "CNC") if getattr(session, "trading_style", "intraday") == "swing" else "MIS"
-    if product != expected_product:
+    if getattr(session, "trading_style", "intraday") == "swing":
+        accepted = {"NRML"} if session.instrument_type in ("options", "futures") else {"CNC"}
+    elif session.instrument_type in ("options", "futures"):
+        accepted = {"MIS", "NRML"}
+    else:
+        accepted = {"MIS"}
+    if product not in accepted:
         return False
     return in_scope(session, row)

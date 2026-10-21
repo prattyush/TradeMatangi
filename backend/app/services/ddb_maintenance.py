@@ -33,14 +33,32 @@ def native(item):
 
 
 def query(client, table, field, value):
-    return pages(client, "query", TableName=table, ConsistentRead=True,
+    # Offline admin tool: the backend is stopped, so eventually consistent reads
+    # are safe and avoid DynamoDB Local's slow strongly-consistent scans.
+    return pages(client, "query", TableName=table, ConsistentRead=False,
                  KeyConditionExpression="#k = :v", ExpressionAttributeNames={"#k": field},
                  ExpressionAttributeValues={":v": {"S": value}})
 
 
 def scan_equal(client, table, field, value):
-    return pages(client, "scan", TableName=table, ConsistentRead=True,
+    return pages(client, "scan", TableName=table, ConsistentRead=False,
                  FilterExpression="#k = :v", ExpressionAttributeNames={"#k": field},
+                 ExpressionAttributeValues={":v": {"S": value}})
+
+
+# Session-scoped GSIs used to avoid full-table scans. Keys are table names and
+# values are the GSI whose hash key is session_id.
+SESSION_GSI = {"Strategies": "SessionIdIndex", "AICommands": "SessionCommandsIndex"}
+
+
+def query_index(client, table, index, field, value, schema=None):
+    """Query a GSI by attribute instead of scanning. Falls back to a consistent
+    scan when the index is absent (test/local tables created without it)."""
+    schema = schema or client.describe_table(TableName=table)["Table"]
+    if index not in {i["IndexName"] for i in schema.get("GlobalSecondaryIndexes", [])}:
+        return scan_equal(client, table, field, value)
+    return pages(client, "query", TableName=table, IndexName=index,
+                 KeyConditionExpression="#k = :v", ExpressionAttributeNames={"#k": field},
                  ExpressionAttributeValues={":v": {"S": value}})
 
 
@@ -180,8 +198,8 @@ def user_id_for_email(client, email):
 
 
 def list_sessions(client, user, date):
-    # Maintenance uses consistent reads; no eventually consistent GSI dependence.
-    rows = scan_equal(client, "Sessions", "user_id", user)
+    # Query the Sessions.UserIdIndex GSI instead of scanning the whole table.
+    rows = query_index(client, "Sessions", "UserIdIndex", "user_id", user)
     return sorted([r for r in rows if native(r).get("date") == date
                    and native(r).get("session_type") == "real"
                    and native(r).get("trading_style", "intraday") == "intraday"
@@ -190,7 +208,8 @@ def list_sessions(client, user, date):
                   key=lambda r: (str(native(r).get("created_at", "")), native(r)["session_id"]))
 
 
-def session_inventory(client, selected):
+def session_inventory(client, selected, progress=None):
+    notify = progress or (lambda message: None)
     row = native(selected)
     sid, user = row["session_id"], row["user_id"]
     available = set(tables(client))
@@ -202,11 +221,18 @@ def session_inventory(client, selected):
             continue
         schema = client.describe_table(TableName=name)["Table"]
         partition = next(k["AttributeName"] for k in schema["KeySchema"] if k["KeyType"] == "HASH")
-        # Consistent scans for non-session primary keys avoid missed GSI writes.
-        rows = query(client, name, "session_id", sid) if partition == "session_id" else scan_equal(client, name, "session_id", sid)
+        notify(f"Reading {name} for the session ...")
+        if name in SESSION_GSI:
+            rows = query_index(client, name, SESSION_GSI[name], "session_id", sid, schema)
+        elif partition == "session_id":
+            rows = query(client, name, "session_id", sid)
+        else:
+            rows = scan_equal(client, name, "session_id", sid)
+        notify(f"  {name}: {len(rows)} record(s)")
         for item in rows:
             add(name, item)
     if "WalletLedgers" in available:
+        notify("Reading WalletLedgers for the session (full scan) ...")
         for item in scan_equal(client, "WalletLedgers", "session_id", sid):
             data = native(item)
             if data.get("owner_user_id") == user and data.get("user_id") in ("real-session-slots", "real-observe:" + user):
@@ -216,8 +242,10 @@ def session_inventory(client, selected):
         if not root.startswith("broker-day:") or root == sid:
             raise ValueError("Unexpected broker projection identity; refusing cleanup")
         # All aliases must be considered, including other dates/users; never delete shared facts.
+        notify("Scanning Sessions for broker projection aliases ...")
         aliases = [r for r in scan_equal(client, "Sessions", "broker_projection_id", root)
                    if native(r)["session_id"] not in (sid, root)]
+        notify(f"  projection aliases: {len(aliases)}")
         manifest = client.get_item(TableName="Sessions", Key={"session_id": {"S": root}}, ConsistentRead=True).get("Item")
         if aliases:
             if (manifest and native(manifest).get("owner_session_id") == sid) or any(native(a).get("broker_projection_owner") == sid for a in aliases):
@@ -230,6 +258,7 @@ def session_inventory(client, selected):
             # Only this session's archived local facts are exclusive.
             for name in ("Trades", "Orders"):
                 if name in available:
+                    notify(f"Reading archived {name} for this session ...")
                     for item in query(client, name, "session_id", root + ":archive:" + sid):
                         add(name, item)
         else:
@@ -238,31 +267,47 @@ def session_inventory(client, selected):
                     continue
                 # Revisions have partition keys root:<uuid>; no prefix query is possible
                 # on a DynamoDB hash key. This offline scan includes old revisions.
+                notify(f"FULL-SCANNING {name} for projection revisions (the slow step) ...")
                 items = pages(client, "scan", TableName=name, ConsistentRead=True,
                               FilterExpression="begins_with(#s, :root)", ExpressionAttributeNames={"#s": "session_id"},
                               ExpressionAttributeValues={":root": {"S": root + ":"}})
+                notify(f"  {name} revisions: {len(items)} record(s)")
                 for item in items:
                     add(name, item)
             if manifest:
                 add("Sessions", manifest)
+    notify("Reading session root")
     add("Sessions", selected)  # Logical session root is always deleted last.
+    notify(f"Inventory ready: {len(changes)} record(s) to delete/change")
     return changes
 
 
-def delete_inventory(client, changes, backup):
-    """Inventory must match the verified durable backup; abort on changed data."""
-    if changes != backup["changes"]:
-        raise ValueError("Deletion inventory differs from backup")
-    check_target(client, backup)
+def delete_inventory(client, changes, backup=None, progress=None):
+    """Apply a session inventory. With a backup it must match and can be restored;
+    without one (admin fast path) there is no rollback."""
+    notify = progress or (lambda message: None)
+    if backup is not None:
+        if changes != backup["changes"]:
+            raise ValueError("Deletion inventory differs from backup")
+        check_target(client, backup)
+        schemas = backup["schemas"]
+    else:
+        schemas = {name: client.describe_table(TableName=name)["Table"] for name in {c["table"] for c in changes}}
+    notify(f"Verifying {len(changes)} record(s) are unchanged ...")
     for c in changes:
-        if get(client, c["table"], backup["schemas"][c["table"]], c["before"]) != c["before"]:
-            raise RuntimeError("Records changed after backup; stop backend and re-list sessions")
+        if get(client, c["table"], schemas[c["table"]], c["before"]) != c["before"]:
+            raise RuntimeError("Records changed after inventory; stop backend and re-list sessions")
     # Individual writes avoid unprocessed batch items and make failures explicit.
+    notify(f"Deleting/updating {len(changes)} record(s) ...")
     for c in changes:
         if c["after"] is None:
-            client.delete_item(TableName=c["table"], Key=key_for(backup["schemas"][c["table"]], c["before"]))
+            client.delete_item(TableName=c["table"], Key=key_for(schemas[c["table"]], c["before"]))
         else:
             client.put_item(TableName=c["table"], Item=c["after"])
+    notify("Verifying deletion ...")
     for c in changes:
-        if get(client, c["table"], backup["schemas"][c["table"]], c["before"]) != c["after"]:
-            raise RuntimeError("Cleanup verification failed; restore the backup before restarting")
+        if get(client, c["table"], schemas[c["table"]], c["before"]) != c["after"]:
+            raise RuntimeError("Cleanup verification failed"
+                               + ("; restore the backup before restarting" if backup is not None
+                                  else "; no backup exists to restore from"))
+    notify("Deletion verified.")

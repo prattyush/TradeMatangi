@@ -44,6 +44,7 @@ async def test_stop_bypasses_conditional_lock_failure_and_preserves_state(observ
     from app.routers import simulation as routes
     from app.services import real_recovery, real_broker_state, emergency_exit
     broker = broker_stub(monkeypatch)
+    monkeypatch.setattr('app.routers.execution_brokers.require_real_trading_access', lambda _: None)
     s = session(real_active_claim=True, real_claim_token='observation')
     simulation._sessions['book'] = s
     if populated: order = add_book(s)

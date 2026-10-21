@@ -73,7 +73,7 @@ def test_account_day_baseline_survives_restart_reservations_and_cancellations(is
     assert pending == {'balance': 14200, 'display_balance': 13000, 'session_capital': 18000}
     wallet_service._ledgers.clear()  # process restart; persistent baseline remains
     closed = wallet_service.sync_real_account_funds(USER, DATE, 'account', 16800, -1200, 0, reason='start')
-    assert closed == {'balance': 16800, 'display_balance': 18000, 'session_capital': 18000}
+    assert closed == {'balance': 16800, 'display_balance': 18000, 'session_capital': 16800}
     assert wallet_service.get_real_wallet_snapshot(USER, DATE)['balance'] == 16800
     # Affordability still uses raw funds, even when the displayed wallet is higher.
     assert wallet_service.get_ledger_balance(USER, DATE, f'real:{DATE}', 'real') == 16800
@@ -84,7 +84,7 @@ def test_account_day_baseline_survives_restart_reservations_and_cancellations(is
 
 
 @pytest.mark.asyncio
-async def test_first_midday_start_recovers_open_cost_without_adding_it_twice(isolated):
+async def test_first_midday_start_uses_net_plus_margin_minus_profit(isolated):
     broker = MagicMock()
     broker.account_identity.return_value = 'account'
     broker.get_limits.return_value = {'Net': 14200, 'MarginUsed': 5000, 'PremiumPrsnt': 5000}
@@ -158,7 +158,7 @@ async def test_negative_margin_used_after_exit_preserves_signed_broker_funds(iso
         execution('buy', 'B', 10, 100, time='09:00:00'), execution('exit', 'S', 10, 110)]
     broker.get_positions.return_value = []
     result = await accounting.refresh(USER, DATE, broker, reason='refresh')
-    # Existing formula: 18350 - 100 - 250 = 18000, never clamp or abs().
+    # Kotak capital = 18350 + (-250) - 100 = 18000, never clamp or abs().
     assert result == {'balance': 18350, 'display_balance': 18250, 'session_capital': 20000 if existing_capital else 18000}
     row = isolated.get_item(Key={'user_id': USER, 'ledger_id': f'real:{DATE}'})['Item']
     assert float(row['committed_funds']) == -250

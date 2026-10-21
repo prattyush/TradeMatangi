@@ -25,8 +25,8 @@ const group={key:'group',date:'2026-10-15',symbol:'NIFTY',instrument_type:'optio
 const trade=(i,session)=>({trade_id:String(i),session_id:session,user_id:'u',symbol:'NIFTY',side:i%2?'SELL':'BUY',quantity:20,price:100,timestamp:${start}+i*60,instrument_type:'options',right:'CE',strike:25000,expiry:'2026-10-15',commission:0});
 const api={getSessionDetail:async id=>({...sessions.find(s=>s.session_id===id),cycles:cycles.filter(c=>c.session_id===id),trades:Array.from({length:20},(_,i)=>trade(i,id)),orders:[]}),patternGetChartByDate:async()=>null};
 const app=createRoot(document.getElementById('root'));
-const chart=()=> <div data-testid="price-charts" style={{height:280,display:'flex'}}><div style={{flex:1}}>Underlying chart</div><div style={{flex:1}}>Option chart</div></div>;
-window.selectCycle='';window.show=(host,view)=>app.render(<React.StrictMode><AnalysisProvider value={{api,performance:{},desktop:host==='desktop',charts:{AnalysisChartPanel:chart},active:true}}><main data-host={host} style={{padding:12}}>{view==='trades'?<GroupCard key={host} group={group} initiallyExpanded/>:<DayPathBehavior paths={paths} onSelect={identity=>{window.selectCycle=identity.cycle_id}}/>}</main></AnalysisProvider></React.StrictMode>);
+const chart=()=> <div className="analysis-panels" data-testid="price-charts" style={{height:280,display:'flex'}}><div style={{flex:1}}>Underlying chart</div><div style={{flex:1}}>Option chart</div></div>;
+window.selectCycle='';window.show=(host,view)=>app.render(<React.StrictMode><AnalysisProvider value={{api,performance:{},desktop:host==='desktop',charts:{AnalysisChartPanel:chart},active:true}}><main className={host==='desktop'?'analysis-selected-session':undefined} data-host={host} style={{padding:12,...(host==='desktop'?{height:'100vh',boxSizing:'border-box'}:{})}}>{view==='trades'?<GroupCard key={host} group={group} initiallyExpanded/>:<DayPathBehavior paths={paths} onSelect={identity=>{window.selectCycle=identity.cycle_id}}/>}</main></AnalysisProvider></React.StrictMode>);
 `,resolveDir:root+'/frontend',loader:'tsx'},bundle:true,jsx:'automatic',outfile:dir+'/app.js',define:{'import.meta.env':'{}'},alias:{react:root+'/frontend/node_modules/react','react-dom':root+'/frontend/node_modules/react-dom'},logLevel:'silent'})
 await writeFile(dir+'/index.html','<html><head><link rel="stylesheet" href="/app.css"></head><body style="margin:0;background:#0d1117;color:#eee"><div id="root"></div><script type="module" src="/app.js"></script></body></html>')
 const server=createServer(async(req,res)=>{try{res.setHeader('Content-Type',req.url.endsWith('.js')?'text/javascript':req.url.endsWith('.css')?'text/css':'text/html');res.end(await readFile(dir+(req.url==='/'?'/index.html':req.url)))}catch{res.statusCode=404;res.end()}})
@@ -56,6 +56,18 @@ try{
    assert.ok(Math.abs(listBox.y-journeyBox.y)<1,'Desktop top panels align')
    const chartBox=await page.getByTestId('price-charts').boundingBox()
    assert.ok(chartBox.y>=listBox.y+listBox.height&&chartBox.y<=listBox.y+listBox.height+13,'Journey does not push charts down')
+  }
+  if(host==='desktop'){
+   for(const size of [{width:1920,height:1080},{width:1366,height:768}]){
+    await page.setViewportSize(size)
+    const fits=await journey.evaluate(el=>el.scrollHeight<=el.clientHeight+1)
+    assert.ok(fits,'Complete desktop journey fits without internal scrolling')
+    const chartBox=await page.getByTestId('price-charts').boundingBox()
+    assert.ok(Math.abs(chartBox.y+chartBox.height-(size.height-29))<3,'Price charts fill remaining desktop height')
+    const listBox=await page.locator('.analysis-trades-list').boundingBox()
+    const journeyBox=await journey.boundingBox()
+    assert.ok(Math.abs(listBox.height-journeyBox.height)<1,'Both top panels share height after resize')
+   }
   }
   await page.setViewportSize({width:760,height:1000})
   columns=await page.locator('.analysis-trades-top').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length)

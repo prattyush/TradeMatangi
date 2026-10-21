@@ -114,7 +114,7 @@ def test_real_stop_preserves_broker_orders(session):
 async def test_start_route_reconciles_and_selects_before_starting_engine(session,enforced):
     s = session
     req = SimulationStartRequest(symbol=s.symbol, date=s.date, start_time=s.start_time,
-        speed=1, session_type="real", instrument_type="options", strike=24200,
+        speed=1, session_type="real", execution_broker="kotak", instrument_type="options", strike=24200,
         strike_ce=24200, strike_pe=24300, expiry=s.expiry)
     group = {"group_id": "group", "date": s.date, "clock_family": "live",
         "strategy_interval_secs": 180, "member_session_ids": [], "state": "running"}
@@ -133,6 +133,7 @@ async def test_start_route_reconciles_and_selects_before_starting_engine(session
         "app.services.user_service.get_user_info": Mock(return_value={"is_admin": True}),
         "app.services.kotak_service.get_service": Mock(return_value=broker),
         "app.services.real_accounting.refresh": AsyncMock(return_value={"session_capital": 100000}),
+        "app.services.trade_label_service.rebase_real_day_labels": Mock(),
         "app.services.real_broker_state.refresh": AsyncMock(side_effect=refresh),
         "app.services.real_sessions.recovery_record": Mock(return_value={"session_id": s.session_id, "session_capital": 50000}),
         "app.services.real_sessions.prepared_identity": Mock(return_value=s.session_id),
@@ -151,7 +152,7 @@ async def test_start_route_reconciles_and_selects_before_starting_engine(session
             stack.enter_context(patch(target, new=replacement))
         result = await route._start_simulation_impl(req, s.user_id)
     assert result.strike_pe == (24000 if enforced else 24300) and result.strike_ce == 24200
-    assert result.session_capital == 50000
+    assert result.session_capital == (50000 if enforced else 100000)
     if enforced:
         assert patches["app.services.swing_funding_store.start_participant"].call_args.args[6] == .5
         patches["app.services.real_broker_state.refresh"].assert_awaited_once_with(s, broker)

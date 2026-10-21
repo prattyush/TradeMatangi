@@ -53,6 +53,7 @@ def main():
     identity.add_argument("--user-id", help="Internal UUID (optional alternative to --email)")
     parser.add_argument("--date", required=True, type=lambda value: date.fromisoformat(value).isoformat())
     parser.add_argument("--backend-stopped", action="store_true", help="Confirm every backend instance using this DB is stopped; needed to delete")
+    parser.add_argument("--no-backup", action="store_true", help="Admin only: skip the verified backup and just delete (no rollback). Requires --backend-stopped.")
     parser.add_argument("--backup-dir", type=Path, default=ROOT / "data" / "backups")
     args = parser.parse_args()
     from app.services.db import get_dynamodb_client
@@ -74,9 +75,18 @@ def main():
     if len(command) != 2 or command[0] != "delete" or not command[1].isdigit() or not 1 <= int(command[1]) <= len(sessions):
         raise ValueError("Expected delete N using a session number shown above")
     selected = sessions[int(command[1]) - 1]
-    changes = maintenance.session_inventory(client, selected)
+    def progress(message):
+        print(message, flush=True)
+    progress("Collecting this session's records across tables (some steps full-scan) ...")
+    changes = maintenance.session_inventory(client, selected, progress=progress)
     print(f"Selected session: {maintenance.native(selected)['session_id']}")
     print(f"Records to delete/change: {dict(Counter(c['table'] for c in changes))}")
+    if args.no_backup:
+        # Admin fast path: no durable backup and no rollback. Each record is still
+        # verified in place via GetItem; the heavy post-delete re-scan is skipped.
+        maintenance.delete_inventory(client, changes, progress=progress)
+        print("Selected session deleted (no backup taken). Other sessions and wallet balances preserved.")
+        return
     path = maintenance.save_backup(client, changes, args.backup_dir, "session-cleanup")
     print(f"Verified backup: {path}", flush=True)
     try:

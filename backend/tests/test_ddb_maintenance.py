@@ -252,6 +252,19 @@ def test_cli_delete_and_restore_round_trip(db, tmp_path):
     assert m.query(db, "Sessions", "session_id", "one") == [selected]
 
 
+def test_cli_no_backup_deletes_without_writing_backup(db, tmp_path):
+    session(db)
+    session(db, "two")
+    put(db, "Trades", session_id="one", trade_id="t", timestamp=12345, price=Decimal("1.2"))
+    cleanup = load_script("cleanup-real-session.py")
+    argv = ["cleanup-real-session.py", "--user-id", "user", "--date", "2026-10-15", "--backend-stopped", "--no-backup", "--backup-dir", str(tmp_path)]
+    with patch("sys.argv", argv), patch("app.services.db.get_dynamodb_client", return_value=db), patch("builtins.input", return_value="delete 1"):
+        cleanup.main()
+    assert not m.query(db, "Sessions", "session_id", "one")
+    assert not m.query(db, "Trades", "session_id", "one")
+    assert not list(tmp_path.glob("*.json"))
+
+
 def test_full_backup_recreates_secondary_indexes(db, tmp_path):
     db.create_table(TableName="Indexed", KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
         AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}, {"AttributeName": "gsi", "AttributeType": "S"}, {"AttributeName": "lsi", "AttributeType": "S"}],
