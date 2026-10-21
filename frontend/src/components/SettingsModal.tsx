@@ -999,8 +999,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         >
           <div role="dialog" aria-modal="true" aria-label="Settings" style={{
             background: '#161b22', border: '1px solid #30363d', borderRadius: 10,
-            padding: 24, width: 560, display: 'flex', flexDirection: 'column', gap: 16,
-            maxHeight: '90vh', boxSizing: 'border-box',
+            padding: 24, width: 'min(760px, 94vw)', display: 'flex', flexDirection: 'column', gap: 16,
+            height: 'min(720px, 90vh)', boxSizing: 'border-box',
           }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1012,53 +1012,49 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               >✕</button>
             </div>
 
-            {/* Tab bar */}
-            <div style={{
-              display: 'flex',
-              borderBottom: '1px solid #21262d',
-              marginBottom: 4,
-              marginTop: -8,
-              overflowX: 'auto',
-            }}>
-              {(isAdmin
-                ? ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'admin', 'profile'] as const
-                : ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'profile'] as const
-              ).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  style={{
-                    flex: '1 0 0',
-                    minWidth: 0,
-                    padding: '8px 6px',
-                    background: 'none',
-                    border: 'none',
-                    borderLeft: tab !== 'general' ? '1px solid #21262d' : 'none',
-                    borderBottom: activeTab === tab
-                      ? '2px solid #1f6feb'
-                      : '2px solid transparent',
-                    color: activeTab === tab ? '#79c0ff' : '#8b949e',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.3,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    transition: 'color 0.15s, background 0.15s',
-                  }}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
+            {/* Tabs (left) + content (right) */}
+            <div style={{ display: 'flex', gap: 16, flex: 1, minHeight: 0 }}>
+              <nav aria-label="Settings sections" style={{
+                width: 150, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2,
+                borderRight: '1px solid #21262d', paddingRight: 8, overflowY: 'auto',
+              }}>
+                {(isAdmin
+                  ? ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'admin', 'profile'] as const
+                  : ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'profile'] as const
+                ).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    style={{
+                      textAlign: 'left',
+                      padding: '8px 10px',
+                      background: activeTab === tab ? '#1f3a5f' : 'none',
+                      border: 'none',
+                      borderLeft: activeTab === tab ? '2px solid #1f6feb' : '2px solid transparent',
+                      borderRadius: 6,
+                      color: activeTab === tab ? '#79c0ff' : '#8b949e',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.3,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      transition: 'color 0.15s, background 0.15s',
+                    }}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </nav>
 
+              <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
             {activeTab === 'sharing' && <HistorySharingSettings request={sharingRequest} />}
             {settingsLoading && <p role="status">Loading settings…</p>}
             {status && <p role="status">{status}</p>}
             {settingsLoadFailed && <button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>}
-            <fieldset disabled={settingsLoading || settingsLoadFailed || preferenceSaving} style={{ overflowY: 'auto', flex: 1, border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+            <fieldset disabled={settingsLoading || settingsLoadFailed || preferenceSaving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
@@ -2345,13 +2341,16 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     <option value="kite">Kite (1 minute)</option>
                     <option value="kotak">Kotak Neo (1 minute)</option>
                   </select>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10 }}>
-                    <input type="checkbox" checked={historicalFallback} disabled={historicalSaving}
-                      onChange={e => void saveHistoricalSource(historicalSource, e.target.checked)} />
-                    Allow historical provider fallback
-                  </label>
-                  <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                    Paper/real history uses this provider independently of live streaming. Previous days reuse complete Breeze caches first. Today keeps providers separate. Replay and stepwise always use Breeze.
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                      <input type="checkbox" checked={historicalFallback} disabled={historicalSaving}
+                        onChange={e => void saveHistoricalSource(historicalSource, e.target.checked)} />
+                      Allow historical provider fallback
+                    </label>
+                    <span
+                      title="Paper/real history uses this provider independently of live streaming. Previous days reuse complete Breeze caches first. Today keeps providers separate. Replay and stepwise always use Breeze."
+                      style={{ color: '#8b949e', cursor: 'help', fontSize: 12 }}
+                    >ⓘ</span>
                   </div>
                 </div>
 
@@ -2644,6 +2643,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             )}
 
             </fieldset>{/* end scrollable tab content */}
+              </div>
+            </div>
           </div>
         </div>
       )}
