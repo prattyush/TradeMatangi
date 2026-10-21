@@ -255,12 +255,13 @@ class TestBreakEven:
         )
 
     def test_long_places_target_sl_at_breakeven_plus_buffer_when_no_exit_order(self):
-        """shift_sl mode: places TARGET at avg_entry + buffer once price passes trigger threshold."""
+        """shift_sl mode: places TARGET at breakeven + buffer once price passes trigger threshold."""
         session = _session()
         self._add_long_position()  # avg_entry = 100.0, qty = 10
-        # expected: main_buffer(100) = ceil(max(0.15, 0.25)) = 0.25
-        # new_sl_price = 100.25; trigger_buffer(100) = ceil(0.30) = 0.30
-        # shift_sl trigger threshold: 100.25 + 0.30 = 100.55
+        # expected: round-trip charges at 100.0 = 2.3708 → 0.23708 per share
+        # true_breakeven = 100.23708; main_buffer(100.23708) = 0.30
+        # new_sl_price = 100.55; trigger_buffer(100.23708) = 0.35
+        # shift_sl trigger threshold: 100.55 + 0.35 = 100.90
 
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
 
@@ -269,12 +270,12 @@ class TestBreakEven:
         assert len(order_service.get_open_orders(SESSION)) == 0
 
         # Price at trigger threshold → place SELL TARGET at new_sl_price
-        svc.on_tick(session, _tick(T0 + 1, c=100.55), None)
+        svc.on_tick(session, _tick(T0 + 1, c=100.90), None)
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].side == TradeSide.SELL
         assert orders[0].order_type == OrderType.TARGET
-        assert orders[0].trigger_price == pytest.approx(100.25)
+        assert orders[0].trigger_price == pytest.approx(100.55)
 
     def test_long_moves_existing_exit_order_to_breakeven_plus_buffer(self):
         """shift_sl mode: moves existing SL to avg_entry + buffer when threshold is reached."""
@@ -289,20 +290,20 @@ class TestBreakEven:
 
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
 
-        # Price at trigger threshold — should move existing SL to new_sl_price=100.25
-        svc.on_tick(session, _tick(T0 + 1, c=100.6), None)
+        # Price at trigger threshold — should move existing SL to new_sl_price=100.55
+        svc.on_tick(session, _tick(T0 + 1, c=100.95), None)
 
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].order_id == existing_sl.order_id
-        assert orders[0].trigger_price == pytest.approx(100.25)
+        assert orders[0].trigger_price == pytest.approx(100.55)
 
     def test_strategy_marked_completed_after_exit(self):
         session = _session()
         self._add_long_position()
 
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
-        svc.on_tick(session, _tick(T0, c=100.6), None)  # above trigger threshold → exits
+        svc.on_tick(session, _tick(T0, c=101.0), None)  # above trigger threshold → exits
 
         # Strategy should have been pruned from registry
         assert svc.list_running(SESSION) == []
@@ -316,81 +317,81 @@ class TestBreakEven:
 
     def test_breakeven_shift_sl_with_commission_long(self):
         """Commission inflates true_breakeven, raising new_sl_price and trigger threshold."""
-        session = MockSession(brokerage_per_order=10.0)  # 2×10/10 = 2.0 per share
+        session = MockSession(brokerage_per_order=10.0)  # round-trip = 25.9708 → 2.59708 per share
         self._add_long_position()  # avg_entry=100.0, qty=10
-        # true_breakeven = 102.0
-        # main_buffer(102.0) = ceil(max(0.15, 0.255)) = ceil(5.1)*0.05 = 0.30
-        # new_sl_price = ceil(102.30) = 102.30
-        # trigger_buffer(102.0) = ceil(0.306/0.05)*0.05 = ceil(6.12)*0.05 = 0.35
-        # shift_sl threshold = 102.30 + 0.35 = 102.65
+        # true_breakeven = 102.59708
+        # main_buffer(102.59708) = ceil(max(0.15, 0.2564927)) = 0.30
+        # new_sl_price = ceil_tick(102.89708) = 102.90
+        # trigger_buffer(102.59708) = ceil(0.30779124) = 0.35
+        # shift_sl threshold = 102.90 + 0.35 = 103.25
 
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
 
-        svc.on_tick(session, _tick(T0, c=102.64), None)
+        svc.on_tick(session, _tick(T0, c=103.24), None)
         assert len(order_service.get_open_orders(SESSION)) == 0
 
-        svc.on_tick(session, _tick(T0 + 1, c=102.65), None)
+        svc.on_tick(session, _tick(T0 + 1, c=103.25), None)
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].side == TradeSide.SELL
         assert orders[0].order_type == OrderType.TARGET
-        assert orders[0].trigger_price == pytest.approx(102.30)
+        assert orders[0].trigger_price == pytest.approx(102.90)
 
     def test_breakeven_shift_sl_short(self):
         """shift_sl SHORT: trigger when price falls to new_sl_price - trigger_buffer."""
         session = _session()
         self._add_short_position()  # avg_entry=100.0, qty=10 SHORT
-        # true_breakeven=100.0; new_sl_price=100.25; trigger_buffer=0.30
-        # threshold: price <= 100.25 - 0.30 = 99.95
+        # true_breakeven=99.76292; new_sl_price=100.05; trigger_buffer=0.30
+        # threshold: price <= 100.05 - 0.30 = 99.75
 
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
 
-        svc.on_tick(session, _tick(T0, c=99.96), None)
+        svc.on_tick(session, _tick(T0, c=99.76), None)
         assert len(order_service.get_open_orders(SESSION)) == 0
 
-        svc.on_tick(session, _tick(T0 + 1, c=99.95), None)
+        svc.on_tick(session, _tick(T0 + 1, c=99.75), None)
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].side == TradeSide.BUY
         assert orders[0].order_type == OrderType.TARGET
-        assert orders[0].trigger_price == pytest.approx(100.25)
+        assert orders[0].trigger_price == pytest.approx(100.05)
 
     def test_breakeven_limit_order_mode_long(self):
         """limit_order mode LONG: triggers at new_sl_price, places LIMIT (not TARGET)."""
         session = _session()
         self._add_long_position()  # avg_entry=100.0, qty=10
-        # new_sl_price=100.25 is the trigger threshold in limit_order mode
+        # new_sl_price=100.55 is the trigger threshold in limit_order mode
 
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "limit_order"})
 
-        svc.on_tick(session, _tick(T0, c=100.24), None)
+        svc.on_tick(session, _tick(T0, c=100.54), None)
         assert len(order_service.get_open_orders(SESSION)) == 0
 
-        svc.on_tick(session, _tick(T0 + 1, c=100.25), None)
+        svc.on_tick(session, _tick(T0 + 1, c=100.55), None)
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].side == TradeSide.SELL
         assert orders[0].order_type == OrderType.LIMIT
-        assert orders[0].limit_price == pytest.approx(100.25)
+        assert orders[0].limit_price == pytest.approx(100.55)
         assert svc.list_running(SESSION) == []
 
     def test_breakeven_limit_order_mode_short(self):
         """limit_order mode SHORT: triggers at true_breakeven, places BUY LIMIT at new_sl_price."""
         session = _session()
         self._add_short_position()  # avg_entry=100.0, qty=10 SHORT
-        # true_breakeven=100.0 is trigger; limit placed at new_sl_price=100.25
+        # true_breakeven=99.76292 is trigger; limit placed at new_sl_price=100.05
 
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "limit_order"})
 
-        svc.on_tick(session, _tick(T0, c=100.1), None)
+        svc.on_tick(session, _tick(T0, c=99.77), None)
         assert len(order_service.get_open_orders(SESSION)) == 0
 
-        svc.on_tick(session, _tick(T0 + 1, c=100.0), None)
+        svc.on_tick(session, _tick(T0 + 1, c=99.76), None)
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 1
         assert orders[0].side == TradeSide.BUY
         assert orders[0].order_type == OrderType.LIMIT
-        assert orders[0].limit_price == pytest.approx(100.25)
+        assert orders[0].limit_price == pytest.approx(100.05)
         assert svc.list_running(SESSION) == []
 
     def test_flat_position_completes_strategy(self):
@@ -708,8 +709,8 @@ class TestBreakEvenMultiSL:
 
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "shift_sl"})
 
-        # Trigger: price >= new_sl_price(100.25) + trigger_buffer(0.30) = 100.55
-        svc.on_tick(session, _tick(T0 + 1, c=100.6), None)
+        # Trigger: price >= new_sl_price(100.55) + trigger_buffer(0.35) = 100.90
+        svc.on_tick(session, _tick(T0 + 1, c=100.95), None)
 
         orders = order_service.get_open_orders(SESSION)
         assert len(orders) == 2
@@ -717,7 +718,7 @@ class TestBreakEvenMultiSL:
         assert sl1.order_id in ids
         assert sl2.order_id in ids
         for o in orders:
-            assert o.trigger_price == pytest.approx(100.25)
+            assert o.trigger_price == pytest.approx(100.55)
 
     def test_limit_order_mode_cancels_all_sl_orders(self):
         """limit_order mode cancels ALL open SL orders before placing exit LIMIT."""
@@ -738,13 +739,13 @@ class TestBreakEvenMultiSL:
         svc.start_strategy(session, "BreakEven", None, {"breakeven_mode": "limit_order"})
 
         # Trigger: price >= new_sl_price in limit_order mode
-        svc.on_tick(session, _tick(T0 + 1, c=100.25), None)
+        svc.on_tick(session, _tick(T0 + 1, c=100.55), None)
 
         open_orders = order_service.get_open_orders(SESSION)
         # The 2 SL orders should be cancelled; one LIMIT order remains
         assert len(open_orders) == 1
         assert open_orders[0].order_type == OrderType.LIMIT
-        assert open_orders[0].limit_price == pytest.approx(100.25)
+        assert open_orders[0].limit_price == pytest.approx(100.55)
 
 
 # ── Cancel All ────────────────────────────────────────────────────────────────
