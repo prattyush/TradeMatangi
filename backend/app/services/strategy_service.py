@@ -993,7 +993,7 @@ def _on_tick_breakeven(
     current_ts: int,
     loop=None,
 ) -> None:
-    from app.services.trading import get_position
+    from app.services.trading import get_position, compute_commission
     from app.models.schemas import TradeSide, OrderType
     from app.services.order_service import place_order
 
@@ -1007,7 +1007,13 @@ def _on_tick_breakeven(
 
     avg_entry = position.avg_entry_price
     brokerage = getattr(session, "brokerage_per_order", 0.0)
-    commission_per_share = (2.0 * brokerage) / position.quantity if position.quantity > 0 else 0.0
+    if position.quantity > 0:
+        commission_per_share = (
+            compute_commission(TradeSide.BUY, avg_entry, position.quantity, brokerage)
+            + compute_commission(TradeSide.SELL, avg_entry, position.quantity, brokerage)
+        ) / position.quantity
+    else:
+        commission_per_share = 0.0
 
     # True breakeven includes round-trip commissions
     if position.side == "LONG":

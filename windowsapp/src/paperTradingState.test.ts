@@ -79,8 +79,8 @@ describe('Paper trading incremental state', () => {
     const next = applyPaperStreamEvent(current, tick(11, 105))
     expect(next.pnl.day).toBe(side === 'LONG' ? 750 : 250)
     expect(next.pnl.day_pct).toBe(side === 'LONG' ? 0.75 : 0.25)
-    // Backend exit charges for 50 lots at 105: SELL=7.99825, BUY=1.3571575.
-    expect(next.pnl.contracts?.[key]).toBe(side === 'LONG' ? 490 : -503.36)
+    // Backend exit charges for 50 lots at 105: SELL=11.2623, BUY=3.5448.
+    expect(next.pnl.contracts?.[key]).toBe(side === 'LONG' ? 486.74 : -505.54)
     expect(next.pnl.ce).toBe(next.pnl.contracts?.[key])
   })
 
