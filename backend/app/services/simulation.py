@@ -2459,13 +2459,6 @@ def _emit_tick_and_check_orders_real(
     """
     from app.services.order_service import check_orders
     from app.services.trading import record_trade, settle_wallet_for_trade
-    if getattr(session, "broker_refresh_events", None) is not None:
-        if diagnostics.ENABLED:
-            diagnostics.count("real_ticks_suppressed_refresh")
-        return []
-    from app.services.execution_broker import get_service as get_kotak
-    from app.services.kotak_service import KotakError
-    from app.models.schemas import OrderType
 
     try:
         session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}))
@@ -2478,6 +2471,21 @@ def _emit_tick_and_check_orders_real(
         marks[key] = max(marks.get(key, 0), int(tick["time"]))
         session._history_watermarks = marks
         return []
+
+    # Chart ticks keep streaming while a broker refresh reconciles the book;
+    # only order checks pause, because the refresh rebuilds trades and orders.
+    if getattr(session, "broker_refresh_events", None) is not None:
+        if diagnostics.ENABLED:
+            diagnostics.count("real_ticks_suppressed_refresh")
+        if not getattr(session, "_order_checks_suppressed_logged", False):
+            session._order_checks_suppressed_logged = True
+            logger.info("real_order_checks_suppressed session=%s reason=broker_refresh tick_time=%s",
+                        session.session_id, tick.get("time"))
+        return []
+    session._order_checks_suppressed_logged = False
+    from app.services.execution_broker import get_service as get_kotak
+    from app.services.kotak_service import KotakError
+    from app.models.schemas import OrderType
 
     current_time = tick["time"]
     current_price = tick["close"]
