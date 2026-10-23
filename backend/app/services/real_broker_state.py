@@ -215,7 +215,21 @@ def build_orders(session, broker_orders, master=None):
         order.broker_product, order.broker_exchange = row["product"], row["exchange"]
         order.broker_filled_quantity = row["filled_quantity"]
         order.broker_filled_value = row["filled_quantity"] * row["filled_price"]
-        order.status = OrderStatus.FILLED if status in ("complete", "filled") else OrderStatus.CANCELLED if status in ("cancelled", "canceled", "rejected", "expired") else OrderStatus.PENDING
+        # Open-first: anything NOT in the known-open set is terminal. Within
+        # terminal, FILLED is explicit; every other string (including a
+        # Kotak status this mapping has never seen, e.g. "cancel pending")
+        # is CANCELLED rather than silently defaulting to PENDING forever.
+        if status in ("complete", "filled"):
+            order.status = OrderStatus.FILLED
+        elif status in OPEN:
+            order.status = OrderStatus.PENDING
+        else:
+            order.status = OrderStatus.CANCELLED
+            if status not in ("cancelled", "canceled", "rejected", "expired"):
+                logger.warning(
+                    "real_broker_unmapped_terminal_status session=%s broker_order_id=%s status=%r",
+                    session.session_id, order.broker_order_id, status,
+                )
         order.kotak_fill_confirmed = order.status == OrderStatus.FILLED
         if order.broker_filled_quantity:
             order.filled_price = row["filled_price"]
@@ -373,6 +387,20 @@ async def refresh(session, broker, *, protection=False, bundle=None):
         if getattr(session, "broker_refresh_events", None) is not None:
             raise ValueError("A broker refresh is already running")
         if not protection:
+            # Unlike the protection path below (which only opens this barrier
+            # right before commit), an explicit/manual refresh opens it here,
+            # before the broker fetch even starts, and holds it for the full
+            # fetch+build+verify+stage+commit+wallet duration — so a slow
+            # Kotak report fetch or FIFO-disagreement retry during a manual
+            # "Trade History refresh" blocks new order submissions for that
+            # entire time. Narrowing this to match the protection path's
+            # short window would require also adding its revision/staleness
+            # re-check (lines below, `if protection:`) to the manual path, to
+            # avoid silently committing a rebuild that's gone stale against a
+            # live fill/cancel that arrived during a shortened pre-commit
+            # window. Deliberately left as-is for now rather than risking a
+            # consistency bug in this path during an active investigation —
+            # tighten this as its own, separately tested change.
             session.broker_refresh_events = []
         try:
             bundle = prefetched or await kotak_reports.fetch(broker, background=protection)
