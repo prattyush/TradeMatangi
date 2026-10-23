@@ -258,8 +258,6 @@ def register_callbacks(session, order, broker, loop):
             if price != current.filled_price:
                 from app.services.kotak_reports import invalidate
                 invalidate(broker)
-                logger.info("broker_refresh_requested session=%s order=%s reason=fill_price_anomaly",
-                            session.session_id, current.order_id)
                 task = asyncio.create_task(real_broker_state.refresh(session, broker))
                 task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             return
@@ -282,8 +280,6 @@ def register_callbacks(session, order, broker, loop):
         if delta_price <= 0:
             from app.services.kotak_reports import invalidate
             invalidate(broker)
-            logger.info("broker_refresh_requested session=%s order=%s reason=fill_value_regression",
-                        session.session_id, current.order_id)
             task = asyncio.create_task(real_broker_state.refresh(session, broker))
             task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             return

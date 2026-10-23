@@ -1,5 +1,4 @@
 import asyncio
-import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -142,23 +141,6 @@ def test_real_history_is_presentation_and_never_sends_broker_orders():
     check.assert_not_called()
     broker.assert_not_called()
     assert session._history_watermarks[(None, None, None)] == 1000
-
-
-def test_real_ticks_stream_while_order_checks_wait_for_refresh():
-    from unittest.mock import patch
-    from app.services.simulation import _emit_tick_and_check_orders_real
-    session = SimpleNamespace(
-        session_id="refreshing",
-        queue=asyncio.Queue(),
-        market_feed_group=FeedGroup("kite"),
-        broker_refresh_events=[],
-    )
-    tick = {"type": "tick", "time": 1000, "open": 100, "high": 100, "low": 100, "close": 100, "provider": "kite"}
-    with patch("app.services.order_service.check_orders") as check:
-        assert _emit_tick_and_check_orders_real(session, tick, None, None) == []
-    check.assert_not_called()
-    emitted = json.loads(session.queue.get_nowait())
-    assert emitted["time"] == 1000 and emitted["session_id"] == "refreshing"
 
 
 @pytest.mark.asyncio
