@@ -1320,11 +1320,14 @@ async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id),
         verified = get_desktop_user_id(authorization=authorization if isinstance(authorization, str) else None, x_user_id=None)
         if verified != user_id:
             raise HTTPException(404, 'Session not found')
-        session = sim_svc.rebuild_session_from_db(record, user_id, read_only=True)
+        session = await asyncio.to_thread(sim_svc.rebuild_session_from_db, record, user_id, read_only=True)
         return _snapshot(session, user_id)
-    record, claim = _saved_desktop_paper(session_id, user_id)
-    claim = _reconcile_saved_paper(record, claim)
-    return _saved_paper_snapshot(record, user_id)
+
+    def _load_paper_snapshot():
+        record, claim = _saved_desktop_paper(session_id, user_id)
+        _reconcile_saved_paper(record, claim)
+        return _saved_paper_snapshot(record, user_id)
+    return await asyncio.to_thread(_load_paper_snapshot)
 
 
 @router.get("/{session_id}/events")
