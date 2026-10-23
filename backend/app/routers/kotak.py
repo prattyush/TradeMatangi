@@ -80,9 +80,10 @@ async def kotak_reconcile(
         raise HTTPException(status_code=404, detail="Session not found")
     if session.session_type != "real":
         raise HTTPException(status_code=400, detail="Only real sessions support reconciliation")
+    from app.services.broker_reports import UnknownContractError
     try:
         return await real_broker_state.refresh(session, get_service())
-    except (KotakError, ValueError) as exc:
+    except (KotakError, ValueError, UnknownContractError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except real_broker_state.SnapshotPersistenceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
