@@ -194,7 +194,14 @@ async def refresh_history(session_id: str, user_id: str = Depends(require_real_t
         identity = session.portfolio_id if session.trading_style == 'swing' else session.session_id
         if not slot or slot['owner_user_id'] != user_id or slot['session_id'] != identity:
             raise HTTPException(409, 'This book is no longer active; view its archived history')
-    return await real_broker_state.refresh(session, execution_broker.get_service(session))
+    from app.services.kotak_service import KotakError
+    from app.services.broker_reports import UnknownContractError
+    try:
+        return await real_broker_state.refresh(session, execution_broker.get_service(session))
+    except (KotakError, ValueError, UnknownContractError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except real_broker_state.SnapshotPersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/{session_id}/reconcile")
@@ -221,9 +228,11 @@ async def reconcile(
     from app.services.real_trading_day import market_date
     verification = await real_recovery.verify(session)
     if session.date == market_date() and simulation.get_session(session_id) is session:
+        from app.services.kotak_service import KotakError
+        from app.services.broker_reports import UnknownContractError
         try:
             await real_broker_state.refresh(session, execution_broker.get_service(session))
-        except (ValueError, real_broker_state.SnapshotPersistenceError) as exc:
+        except (KotakError, ValueError, UnknownContractError, real_broker_state.SnapshotPersistenceError) as exc:
             verification["reconciliation_error"] = str(exc)
     return verification
 
