@@ -2062,10 +2062,18 @@ function ScreenController(props: ScreenControllerProps) {
         if (event.type === 'order_filled' && Number(event.event_id) > previousCursor) recordRendererDiagnostic('trading_fill_applied', { session_id: sessionId, order_id: event.order_id, event_id: event.event_id, elapsed_ms: performance.now() - started })
       }
     }
-    const reconcileTimer = window.setInterval(() => controller.recover(), TRADING_RECONCILE_MS)
     if (trading.session.state === 'ended') {
-      return () => { cancelled = true; controller.stop(); window.clearInterval(reconcileTimer) }
+      // A frozen session has no SSE stream to reconcile against and its
+      // state cannot change on its own -- no periodic timer is needed.
+      controller.stop()
+      return () => { cancelled = true }
     }
+    const reconcileTimer = window.setInterval(() => {
+      // Skip the periodic reconcile if a recent gap-triggered recover()
+      // (receive(), the native stream-error path, etc.) already refreshed
+      // within the window -- no need to blindly refetch on top of that.
+      if (tradingRefreshRef.current.due(tradingRefreshKey(sessionId))) controller.recover()
+    }, TRADING_RECONCILE_MS)
     if (hasNativeHost) {
       const drain = new TradingStreamDrain(async () => {
         const stream = await readNativeStreamState<DesktopTradingStreamPayload>(key)
