@@ -253,3 +253,70 @@ coherent broker refresh, preserving individual execution deduplication and FIFO.
 Raw order/position wire evidence is available in `LOG_DIR/kotak-events.ndjson`
 (daily rotation, 30 backups, secrets redacted), alongside decoded DEBUG payloads and
 INFO position summaries. See [Phase 19](spec-phase19.md) for requirements and validation.
+
+## Scope discipline: per-order uncertainty must not become a session-wide block — 2026-10-23
+
+A live incident (right-click to add a stoploss froze the website's chart for
+several seconds, recurring; separately, an uncertain order on one contract was
+blocking "A Real broker operation is unconfirmed; reconcile before submitting
+new entries" for every other contract in the session) prompted a holistic
+review of every "unconfirmed, retry later" gate in this file and its
+neighbors (`order_split.py`, `broker_conversion.py`, `real_broker_state.py`,
+`real_close.py`, `real_trading_day.py`).
+
+**The underlying principle stays exactly as documented above**: never trust
+an SDK acknowledgement as confirmation, never resubmit an order whose first
+attempt is ambiguous. That's earned — it traces directly to the cancelled-
+exit and SENSEX dual-entry incidents this document exists to describe, plus
+the earlier silent-drop bugs in `docs/bugs.md`'s Real Trading Bugs section.
+None of that changed.
+
+**What changed is scope.** Every one of those single-order protections had
+been generalized into a session-wide aggregation — `kotak_protection.busy
+(session)` scanned every order's split/conversion state, `real_close.
+unresolved(session)` did the same for `recovery_state`, and both fed into
+blocking brand-new, unrelated entries and deferring the entry-protection
+audit for the whole session. No incident on record (including the one real
+concurrency bug, a duplicate AI-helper dispatch, fixed with a narrow atomic
+claim rather than a session lock) ever required that blast radius.
+
+- `kotak_protection.busy(session, contract=None)`: the session-wide flags
+  (closing/manual-edit/split-in-progress/refresh) stay global — those
+  genuinely mean the whole book is mid-mutation. The per-order split/
+  conversion-ACTIVE scan is now scoped to `contract` (a `key(order)` tuple)
+  when the caller is evaluating one specific entry; `audit()`'s per-entry
+  loop passes the entry's own contract, so a stuck split on one strike no
+  longer defers protection auditing for every other open position. The
+  cheap pre-fetch gate (before any entry's contract is known) now checks
+  only the global flags.
+- `real_close.unresolved(session, contract=None)`: scoped the same way.
+  `real_trading_day.require_entry_allowed` passes the new entry's own
+  `(right, strike, expiry)`, so an uncertain order elsewhere no longer blocks
+  it. Whole-book callers (Done-for-day, where "is the entire book resolved"
+  is the actually correct question) omit `contract` and get the original,
+  unscoped check.
+- `real_broker_state.refresh()`'s barrier (`session.broker_refresh_events`)
+  moved to open at the same point for both the manual and background
+  protection paths — right before `stage()`/`commit()` — instead of the
+  manual path opening it before the broker fetch even starts and holding it
+  through the full fetch+build+verify pipeline (empirically "tens of seconds
+  to ~2 minutes" per the original diagnostic commit that first streamed
+  ticks around this barrier). The only thing this barrier genuinely has to
+  protect — a fill/cancel/reject WebSocket callback racing the moment a
+  refresh publishes new authoritative state — only matters in that brief
+  stage+commit window; everything before it reads current, not-yet-stale
+  state, so narrowing to match the already-proven-safe protection-path
+  window doesn't weaken the protection, it just stops applying it where
+  nothing needed it.
+- `simulation.py`'s real-session tick handler streams chart ticks to the
+  website unconditionally again; only order-triggering (which does depend
+  on the in-flight rebuild) waits for the barrier to clear.
+
+**Deferred, not fixed in this pass**: `broker_order_service.sync_order_edit()`
+(used by the tick-driven automated strategy engine for BreakEven/
+TargetProfit/trailing-stop) makes unwrapped synchronous Kotak SDK calls
+directly on the shared asyncio event loop — a separate, likely larger
+contributor to chart freezes during active automated trading, needing its
+own async-ification design. `swing_real.refresh()` carries the same barrier-
+window asymmetry as the intraday path (and for swing, in both modes); not
+yet narrowed, since it wasn't today's active symptom.

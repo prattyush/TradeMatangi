@@ -2459,14 +2459,12 @@ def _emit_tick_and_check_orders_real(
     """
     from app.services.order_service import check_orders
     from app.services.trading import record_trade, settle_wallet_for_trade
-    if getattr(session, "broker_refresh_events", None) is not None:
-        if diagnostics.ENABLED:
-            diagnostics.count("real_ticks_suppressed_refresh")
-        return []
-    from app.services.execution_broker import get_service as get_kotak
-    from app.services.kotak_service import KotakError
-    from app.models.schemas import OrderType
 
+    # Chart ticks must always reach the browser, independent of any broker
+    # refresh in progress -- a reconciliation taking tens of seconds (a slow
+    # Kotak fetch, a FIFO-disagreement retry) must never freeze the website's
+    # candles the way it did before. Only order-triggering below depends on
+    # the in-flight rebuild of trades/orders, so only that is gated.
     try:
         session.queue.put_nowait(json.dumps({**tick, "session_id": session.session_id}))
     except asyncio.QueueFull:
@@ -2478,6 +2476,14 @@ def _emit_tick_and_check_orders_real(
         marks[key] = max(marks.get(key, 0), int(tick["time"]))
         session._history_watermarks = marks
         return []
+
+    if getattr(session, "broker_refresh_events", None) is not None:
+        if diagnostics.ENABLED:
+            diagnostics.count("real_order_checks_suppressed_refresh")
+        return []
+    from app.services.execution_broker import get_service as get_kotak
+    from app.services.kotak_service import KotakError
+    from app.models.schemas import OrderType
 
     current_time = tick["time"]
     current_price = tick["close"]

@@ -172,14 +172,26 @@ def request(session, *, reason, delay=.75, invalidate=True):
         _workers[identity] = asyncio.create_task(_drive(identity, broker))
 
 
-def busy(session):
+def busy(session, contract=None):
+    """Session-wide flags (closing/manual-edit/split-in-progress/refresh) are
+    genuinely global -- any of them means the whole book is mid-mutation.
+    An order's own stuck conversion/split, though, only has to pause work on
+    *that* contract: a split stuck on one strike must not defer protection
+    auditing for every other open position in the session. Pass `contract`
+    (the `key(order)` tuple) to scope that part of the check; omit it for
+    the cheap pre-fetch gate where no specific contract is known yet.
+    """
+    if (getattr(session, 'real_day_closing', False) or getattr(session, '_kotak_manual_busy', 0)
+            or getattr(session, 'order_split_in_progress', None)
+            or getattr(session, 'broker_refresh_events', None) is not None):
+        return True
+    if contract is None:
+        return False
     from app.services.broker_conversion import ACTIVE
     from app.services.order_split import ACTIVE as SPLIT_ACTIVE
-    return (getattr(session, 'real_day_closing', False) or getattr(session, '_kotak_manual_busy', 0) or getattr(session, 'order_split_in_progress', None)
-            or getattr(session, 'broker_refresh_events', None) is not None
-            or any((o.broker_conversion or {}).get('state') in ACTIVE or
-                   (o.split_operation or {}).get('state') in SPLIT_ACTIVE
-                   for o in order_service.get_all_orders(session.session_id)))
+    return any((o.broker_conversion or {}).get('state') in ACTIVE or
+               (o.split_operation or {}).get('state') in SPLIT_ACTIVE
+               for o in order_service.get_all_orders(session.session_id) if key(o) == contract)
 
 
 async def audit(session, broker):
@@ -236,7 +248,7 @@ async def audit(session, broker):
     for entry, required, covered, missing in gaps:
         if not enabled(session):
             return
-        if busy(session) or kotak_reports.state(broker).foreground:
+        if busy(session, key(entry)) or kotak_reports.state(broker).foreground:
             raise recovery.Deferred('Foreground trading operation has priority')
         root = intent_key(session, entry)
         job = intents.get(root)
@@ -279,7 +291,7 @@ async def audit(session, broker):
         recovery.emit(session, parent, operation, 'pending', f'Entry exit coverage: required {required}, covered {covered}, missing {missing}')
         await recovery.obtain_quote(session, parent, operation)
         async with kotak_reports.state(broker).submission, recovery.session_lock(session):
-            if (busy(session) or expected_account_revision != kotak_reports.state(broker).revision
+            if (busy(session, key(entry)) or expected_account_revision != kotak_reports.state(broker).revision
                     or session_revision != getattr(session, '_protection_revision', 0)):
                 raise recovery.Deferred('Foreground edit/fill invalidated the protection calculation')
             async with recovery.allocation_reservation(session, parent):
