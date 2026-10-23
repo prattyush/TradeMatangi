@@ -42,12 +42,14 @@ class MockSession:
     queue: object = field(default_factory=lambda: MagicMock())
 
 
-def _make_trade(side, price, qty=75, right=None, ts=34500):
+def _make_trade(side, price, qty=75, right=None, ts=34500, strike=None, expiry=None):
     t = MagicMock()
     t.side = TradeSide.BUY if side == "BUY" else TradeSide.SELL
     t.price = float(price)
     t.quantity = qty
     t.right = right
+    t.strike = strike
+    t.expiry = expiry
     t.timestamp = ts
     t.commission = 0.0
     return t
@@ -225,6 +227,24 @@ class TestCountConsecutiveLosses:
         with patch("app.services.trading.get_trades", return_value=trades):
             result = gsvc._count_consecutive_losses("sess-001")
         assert result == 2
+
+
+# ── _compute_round_trips (multi-strike regression) ────────────────────────────
+
+class TestComputeRoundTripsMultiStrike:
+    def test_overlapping_different_strikes_same_right_kept_separate(self):
+        """Two overlapping CE positions at different strikes (e.g. an ATM
+        roll where the old strike isn't closed before the new one opens)
+        must not be netted together — each strike's round trip is computed
+        on its own FIFO queue, keyed by (right, strike, expiry)."""
+        trades = [
+            _make_trade("BUY", 100, qty=50, right="CE", strike=23500, ts=1000),
+            _make_trade("BUY", 100, qty=50, right="CE", strike=23600, ts=2000),
+            _make_trade("SELL", 110, qty=50, right="CE", strike=23500, ts=3000),  # closes 23500: +500
+            _make_trade("SELL", 90, qty=50, right="CE", strike=23600, ts=4000),   # closes 23600: -500
+        ]
+        round_trips = gsvc._compute_round_trips(trades)
+        assert round_trips == pytest.approx([500.0, -500.0])
 
 
 # ── _compute_ban_check ────────────────────────────────────────────────────────
