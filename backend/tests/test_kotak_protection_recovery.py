@@ -565,3 +565,27 @@ async def test_user_cancellation_request_rows_do_not_break_resume(env, monkeypat
     monkeypatch.setattr(recovery, 'note_cancel', called)
     await recovery.resume(s)
     called.assert_not_called()
+
+
+def test_busy_scoped_to_contract_does_not_block_unrelated_strike():
+    """A split stuck 'unknown' on one strike must not, by itself, defer
+    protection auditing for an unrelated strike -- only the check scoped
+    to the stuck order's own contract should see it. The cheap pre-fetch
+    check (no contract known yet) only looks at session-wide flags now,
+    not every order's split/conversion state."""
+    from app.services import kotak_protection as kp
+    s = simulation.SimulationSession(session_id='busy-test', symbol='NIFTY', date='2026-10-09',
+        start_time='09:15:00', speed=1, user_id='u', session_type='real', instrument_type='options')
+    stuck = Order(order_id='stuck', session_id=s.session_id, user_id='u', symbol='NIFTY',
+        side=TradeSide.SELL, quantity=75, trigger_price=100, limit_price=99, created_at=1,
+        right='CE', strike=25000, expiry='2026-10-27', split_operation={'state': 'unknown'})
+    other = Order(order_id='other', session_id=s.session_id, user_id='u', symbol='NIFTY',
+        side=TradeSide.SELL, quantity=75, trigger_price=50, limit_price=49, created_at=1,
+        right='PE', strike=24000, expiry='2026-10-27')
+    order_service._orders[s.session_id] = {stuck.order_id: stuck, other.order_id: other}
+    try:
+        assert kp.busy(s, kp.key(other)) is False
+        assert kp.busy(s, kp.key(stuck)) is True
+        assert kp.busy(s) is False
+    finally:
+        order_service._orders.pop(s.session_id, None)

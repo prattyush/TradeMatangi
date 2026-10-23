@@ -386,22 +386,6 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             raise ValueError('Order split is in progress; retry broker refresh shortly')
         if getattr(session, "broker_refresh_events", None) is not None:
             raise ValueError("A broker refresh is already running")
-        if not protection:
-            # Unlike the protection path below (which only opens this barrier
-            # right before commit), an explicit/manual refresh opens it here,
-            # before the broker fetch even starts, and holds it for the full
-            # fetch+build+verify+stage+commit+wallet duration — so a slow
-            # Kotak report fetch or FIFO-disagreement retry during a manual
-            # "Trade History refresh" blocks new order submissions for that
-            # entire time. Narrowing this to match the protection path's
-            # short window would require also adding its revision/staleness
-            # re-check (lines below, `if protection:`) to the manual path, to
-            # avoid silently committing a rebuild that's gone stale against a
-            # live fill/cancel that arrived during a shortened pre-commit
-            # window. Deliberately left as-is for now rather than risking a
-            # consistency bug in this path during an active investigation —
-            # tighten this as its own, separately tested change.
-            session.broker_refresh_events = []
         try:
             bundle = prefetched or await kotak_reports.fetch(broker, background=protection)
             raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
@@ -478,15 +462,24 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             # New live facts are handled after publication; they cannot append duplicates.
             try:
                 manifest, members = await asyncio.to_thread(stage, session, account, trades, scoped_orders, positions, scoped_executions, orders)
-                if protection:
-                    if (version != getattr(session, '_protection_revision', 0)
-                            or bundle.revision != kotak_reports.state(broker).revision
-                            or kotak_reports.state(broker).foreground):
-                        from app.services.protection_recovery import Deferred
-                        raise Deferred('Trading changed during background staging; the existing revision remains active')
-                    # Publish under a short callback barrier; slow report reads
-                    # and history staging never make manual order edits busy.
-                    session.broker_refresh_events = []
+                if protection and (version != getattr(session, '_protection_revision', 0)
+                        or bundle.revision != kotak_reports.state(broker).revision
+                        or kotak_reports.state(broker).foreground):
+                    from app.services.protection_recovery import Deferred
+                    raise Deferred('Trading changed during background staging; the existing revision remains active')
+                # Publish under a short callback barrier -- everything above
+                # (fetch, build, FIFO verify, including its possible forced
+                # re-fetch on disagreement) runs with no barrier at all, for
+                # both the manual and background refresh paths, so a slow
+                # Kotak report fetch never blocks new order submission/edit/
+                # cancel. Only this brief stage+commit window (a handful of
+                # sequential DynamoDB writes, no further broker calls) does.
+                # A fill/cancel/reject callback that fires before this point
+                # runs immediately against still-current state (nothing
+                # authoritative has been republished yet, so there's no
+                # race); one that fires during this window is deferred and
+                # replayed right after commit below.
+                session.broker_refresh_events = []
                 await asyncio.to_thread(commit, session, manifest, members)
             except Deferred:
                 raise

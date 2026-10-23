@@ -457,3 +457,25 @@ async def test_background_history_staging_does_not_block_foreground_and_discards
         await real_broker_state.refresh(s, broker, protection=True)
     assert order_service._orders[s.session_id] is original_orders
     assert s.broker_refresh_events is None
+
+
+@pytest.mark.asyncio
+async def test_manual_refresh_barrier_opens_only_right_before_commit(env, monkeypatch):
+    """An explicit/manual refresh must not block new order submission/edit/
+    cancel for its whole fetch+build+verify duration -- only the brief
+    stage+commit window, matching the background protection path."""
+    from app.services import real_broker_state
+    s, broker, _ = env
+    entry(s, 'a', 20)
+    broker.get_trade_history.return_value = [execution(order='a')]
+    broker.get_positions.return_value = [reported_position()]
+    broker.get_order_history.return_value = [broker_order('a')]
+    stage = real_broker_state.stage
+    observed = []
+    def observing_stage(*args):
+        observed.append(getattr(s, 'broker_refresh_events', None))
+        return stage(*args)
+    monkeypatch.setattr(real_broker_state, 'stage', observing_stage)
+    await real_broker_state.refresh(s, broker, protection=False)
+    assert observed == [None]
+    assert s.broker_refresh_events is None
