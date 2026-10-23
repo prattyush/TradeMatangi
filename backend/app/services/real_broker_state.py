@@ -11,7 +11,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -216,7 +215,21 @@ def build_orders(session, broker_orders, master=None):
         order.broker_product, order.broker_exchange = row["product"], row["exchange"]
         order.broker_filled_quantity = row["filled_quantity"]
         order.broker_filled_value = row["filled_quantity"] * row["filled_price"]
-        order.status = OrderStatus.FILLED if status in ("complete", "filled") else OrderStatus.CANCELLED if status in ("cancelled", "canceled", "rejected", "expired") else OrderStatus.PENDING
+        # Open-first: anything NOT in the known-open set is terminal. Within
+        # terminal, FILLED is explicit; every other string (including a
+        # Kotak status this mapping has never seen, e.g. "cancel pending")
+        # is CANCELLED rather than silently defaulting to PENDING forever.
+        if status in ("complete", "filled"):
+            order.status = OrderStatus.FILLED
+        elif status in OPEN:
+            order.status = OrderStatus.PENDING
+        else:
+            order.status = OrderStatus.CANCELLED
+            if status not in ("cancelled", "canceled", "rejected", "expired"):
+                logger.warning(
+                    "real_broker_unmapped_terminal_status session=%s broker_order_id=%s status=%r",
+                    session.session_id, order.broker_order_id, status,
+                )
         order.kotak_fill_confirmed = order.status == OrderStatus.FILLED
         if order.broker_filled_quantity:
             order.filled_price = row["filled_price"]
@@ -335,8 +348,6 @@ def fill_deferred(session, callback, *args):
     events = getattr(session, "broker_refresh_events", None)
     if events is not None:
         events.append((callback, args))
-        logger.info("broker_refresh_deferred_callback session=%s callback=%s pending=%d",
-                    session.session_id, getattr(callback, "__name__", "callback"), len(events))
         return True
     return False
 
@@ -376,10 +387,21 @@ async def refresh(session, broker, *, protection=False, bundle=None):
         if getattr(session, "broker_refresh_events", None) is not None:
             raise ValueError("A broker refresh is already running")
         if not protection:
+            # Unlike the protection path below (which only opens this barrier
+            # right before commit), an explicit/manual refresh opens it here,
+            # before the broker fetch even starts, and holds it for the full
+            # fetch+build+verify+stage+commit+wallet duration — so a slow
+            # Kotak report fetch or FIFO-disagreement retry during a manual
+            # "Trade History refresh" blocks new order submissions for that
+            # entire time. Narrowing this to match the protection path's
+            # short window would require also adding its revision/staleness
+            # re-check (lines below, `if protection:`) to the manual path, to
+            # avoid silently committing a rebuild that's gone stale against a
+            # live fill/cancel that arrived during a shortened pre-commit
+            # window. Deliberately left as-is for now rather than risking a
+            # consistency bug in this path during an active investigation —
+            # tighten this as its own, separately tested change.
             session.broker_refresh_events = []
-            barrier_started = time.monotonic()
-            logger.info("broker_refresh_barrier_open session=%s account=%s protection=%s",
-                        session.session_id, account, protection)
         try:
             bundle = prefetched or await kotak_reports.fetch(broker, background=protection)
             raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
@@ -465,9 +487,6 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                     # Publish under a short callback barrier; slow report reads
                     # and history staging never make manual order edits busy.
                     session.broker_refresh_events = []
-                    barrier_started = time.monotonic()
-                    logger.info("broker_refresh_barrier_open session=%s account=%s protection=%s",
-                                session.session_id, account, protection)
                 await asyncio.to_thread(commit, session, manifest, members)
             except Deferred:
                 raise
@@ -486,8 +505,6 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             session._protection_revision = getattr(session, "_protection_revision", 0) + 1
             session._kotak_report_bundle = bundle
             events, session.broker_refresh_events = session.broker_refresh_events, None
-            logger.info("broker_refresh_barrier_close session=%s outcome=committed duration_s=%.1f deferred=%d",
-                        session.session_id, time.monotonic() - barrier_started, len(events or []))
             for callback, args in events:
                 callback(*args)
             for order in order_service.get_open_orders(session.session_id):
@@ -549,8 +566,6 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             events = getattr(session, "broker_refresh_events", None)
             session.broker_refresh_events = None
             if events:
-                logger.info("broker_refresh_barrier_close session=%s outcome=aborted duration_s=%.1f deferred=%d",
-                            session.session_id, time.monotonic() - barrier_started, len(events))
                 for callback, args in events:
                     callback(*args)
 

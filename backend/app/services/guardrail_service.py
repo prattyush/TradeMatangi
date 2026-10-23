@@ -218,15 +218,16 @@ def _check_ban(session: "SimulationSession") -> None:
 # ── Internal calculations ──────────────────────────────────────────────────────
 
 def _has_open_positions(trades: list) -> bool:
-    """Check whether any position group still has a non-zero net quantity."""
+    """Check whether any exact contract still has a non-zero net quantity."""
     from collections import defaultdict
 
     groups: dict = defaultdict(int)
     for t in trades:
+        key = (t.right, t.strike, t.expiry)
         if t.side == TradeSide.BUY:
-            groups[t.right] += t.quantity
+            groups[key] += t.quantity
         else:
-            groups[t.right] -= t.quantity
+            groups[key] -= t.quantity
 
     return any(qty != 0 for qty in groups.values())
 
@@ -299,29 +300,31 @@ def _count_consecutive_losses(session_id: str) -> int:
 
 def _compute_round_trips(trades: list) -> list[float]:
     """
-    Compute realized P&L for each completed round-trip across all rights,
-    ordered by close timestamp.
+    Compute realized P&L for each completed round-trip across all exact
+    contracts, ordered by close timestamp.
 
-    Uses FIFO matching per (right) group. When net qty returns to 0, a
-    round-trip P&L is recorded. Multiple closes within one right are each
-    individual entries in the result list.
+    Uses FIFO matching per (right, strike, expiry) group — not just `right` —
+    so trades on different strikes/expiries of the same right (e.g. an ATM
+    roll) are never netted against each other. When net qty returns to 0 for
+    a given contract, a round-trip P&L is recorded. Multiple closes within
+    one contract are each individual entries in the result list.
     """
     from collections import defaultdict, deque
 
-    # Group by right (None = equity, "CE", "PE")
+    # Group by exact contract: (right, strike, expiry); None = equity
     groups: dict = defaultdict(list)
     for t in sorted(trades, key=lambda x: x.timestamp):
-        groups[t.right].append(t)
+        groups[(t.right, t.strike, t.expiry)].append(t)
 
     # Each entry: (close_timestamp, pnl)
     completed: list[tuple[int, float]] = []
 
-    for right, right_trades in groups.items():
+    for contract, contract_trades in groups.items():
         buy_queue: deque = deque()   # (price, qty)
         sell_queue: deque = deque()  # (price, qty) for short entries
 
         net_qty = 0
-        for t in right_trades:
+        for t in contract_trades:
             qty = t.quantity
             price = t.price
 

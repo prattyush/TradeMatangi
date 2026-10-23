@@ -55,6 +55,20 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # asyncio.to_thread() shares one process-wide executor, sized by default
+    # to min(32, cpu_count + 4) — as few as ~6 threads on a small EC2
+    # instance. Every blocking Kotak SDK call and DynamoDB call in this app
+    # goes through to_thread, and the Kotak SDK itself can take up to ~90s
+    # worst case per call during a broker outage (3 retries x 30s timeout).
+    # With a running real session polling heartbeat/reports continuously,
+    # a handful of such slow calls can exhaust the default pool and stall
+    # *every* unrelated request (even GET /api/data/historical) behind it —
+    # this is the leading hypothesis for a full-process outage during a
+    # Kotak slowdown. Give the executor real headroom so one broker's bad
+    # day can't take the whole single-worker process down with it.
+    from concurrent.futures import ThreadPoolExecutor
+    asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=64))
+
     from app.services.kotak_protection import startup as start_protection
     start_protection()
     from app.services.user_service import seed_user
