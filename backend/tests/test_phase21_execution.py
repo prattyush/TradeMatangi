@@ -185,6 +185,29 @@ def test_refresh_adopts_unknown_kite_submission_once(monkeypatch):
     assert result.recovery_state is None
 
 
+def test_unrecognized_terminal_status_resolves_cancelled_not_stuck_pending(monkeypatch, caplog):
+    """A Kotak status string that's neither in the known-open set nor the
+    known-cancelled set (e.g. a manual-cancel-in-Kotak-app variant) must not
+    silently default to PENDING forever — it should resolve to CANCELLED
+    and log the unmapped string for visibility."""
+    from app.services import order_service, real_broker_state
+    session = simulation.SimulationSession('s', 'NIFTY', '2026-10-09', '09:15:00', 1,
+        user_id='u', session_type='real', execution_broker='KotakNeo', broker_account_id='kotak-account')
+    stuck = Order(session_id='s', user_id='u', symbol='NIFTY', side=TradeSide.SELL, quantity=75,
+                  order_type='STOPLOSS', trigger_price=100, limit_price=99, created_at=1,
+                  execution_broker='kotak', broker_order_id='sl-1')
+    monkeypatch.setattr(order_service, '_orders', {'s': {stuck.order_id: stuck}})
+    row = broker_reports.normalize_order(dict(broker_order_id='sl-1', execution_broker='kotak',
+        symbol='NIFTY', side='SELL', quantity=75, status='Cancel Pending', order_type='SL',
+        product='MIS', exchange='nse_fo'))
+    import logging
+    with caplog.at_level(logging.WARNING):
+        result = real_broker_state.build_orders(session, [row])
+    from app.models.schemas import OrderStatus
+    assert result[stuck.order_id].status == OrderStatus.CANCELLED
+    assert any('real_broker_unmapped_terminal_status' in r.message for r in caplog.records)
+
+
 @pytest.mark.asyncio
 async def test_confirmed_close_publishes_terminal_book_before_disposal(monkeypatch):
     import json
