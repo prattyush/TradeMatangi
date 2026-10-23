@@ -166,7 +166,7 @@ def request(session, *, reason, delay=.75, invalidate=True):
     old = pending.get(session.session_id)
     # One leading-edge window: continuous fills cannot postpone protection forever.
     due = min(old[1], time.monotonic() + delay) if old else time.monotonic() + delay
-    pending[session.session_id] = (session, due, reason)
+    pending[session.session_id] = (session, due, reason, 0)
     logger.info('kotak_protection_queued session=%s reason=%s coalesced=%s', session.session_id, reason, bool(old))
     if identity not in _workers or _workers[identity].done():
         _workers[identity] = asyncio.create_task(_drive(identity, broker))
@@ -361,7 +361,17 @@ async def snapshot(session, broker):
     return session._kotak_report_bundle, session._fifo_executions
 
 
+_MAX_AUDIT_FAILURES = 3  # genuine exceptions, not Deferred contention — see below
+
+
 async def _drive(identity, broker):
+    """Deferred (another foreground action is mid-flight) is worth a quick
+    retry — it should clear within a second or two on its own. A genuine
+    exception is not contention and will not resolve by repeating the same
+    failing call; retry it a few bounded times in case it's transient, then
+    stop and surface the error immediately instead of silently re-hammering
+    Kotak/the broker-refresh pipeline for the rest of the 30-second window.
+    """
     from app.services import simulation, protection_recovery as recovery
     started = time.monotonic()
     try:
@@ -373,7 +383,7 @@ async def _drive(identity, broker):
                 continue
             ready = [key for key, item in pending.items() if item[1] <= time.monotonic()]
             batch = [pending.pop(key) for key in ready]
-            for session, _, reason in batch:
+            for session, _, reason, failures in batch:
                 if (not enabled(session) or simulation.get_session(session.session_id) is not session or session.state.value not in ('running', 'paused')
                         or getattr(session, 'real_day_closing', False)):
                     continue
@@ -383,15 +393,19 @@ async def _drive(identity, broker):
                     if not enabled(session):
                         continue
                     logger.info('entry_protection_deferred session=%s reason=%s', session.session_id, exc)
-                    _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 1, reason)
+                    _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 1, reason, failures)
                 except Exception as exc:
                     if not enabled(session):
                         continue
-                    logger.exception('entry_protection_failed session=%s', session.session_id)
+                    logger.exception('entry_protection_failed session=%s attempt=%d', session.session_id, failures + 1)
+                    if failures + 1 >= _MAX_AUDIT_FAILURES:
+                        for entry in entries(session):
+                            recovery.emit(session, entry, '', 'needs_attention', f'Entry protection could not be verified after {failures + 1} attempts: {exc}')
+                        continue
                     for entry in entries(session):
                         recovery.emit(session, entry, '', 'needs_attention', f'Entry protection could not be verified: {exc}')
-                    _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 2, reason)
-        for session, _, _ in _pending.get(identity, {}).values():
+                    _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 2, reason, failures + 1)
+        for session, _, _, _ in _pending.get(identity, {}).values():
             for entry in entries(session):
                 recovery.emit(session, entry, '', 'needs_attention', 'Entry protection remains unresolved; use Trade History Refresh to retry')
     finally:

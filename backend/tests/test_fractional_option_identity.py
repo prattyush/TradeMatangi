@@ -38,3 +38,34 @@ def test_kotak_legacy_stock_key_resolves_exchange_option_underlying():
     row={'symbol':'RELIANCE26OCT2500CE','right':'CE','strike':2500,'expiry':'2026-10-27'}
     assert broker_reports.in_scope(session,row)
     assert broker_reports.contract(session,row)=={'right':'CE','strike':2500,'expiry':'2026-10-27'}
+
+
+def test_monthly_symbol_without_row_or_master_expiry_falls_back_to_session_expiry():
+    """A settled/older contract can roll off Kotak's current instrument
+    master, with its own report row carrying no expiry field at all
+    (reproduces the production UnknownContractError for NIFTY26OCT22300PE/
+    NIFTY26OCT23200CE). The session's own expiry is a safe fallback as long
+    as it independently matches the symbol's encoded year/month."""
+    session = SimpleNamespace(symbol='NIFTY', instrument_type='options', execution_broker='kotak', expiry='2026-10-27')
+    row = {'symbol': 'NIFTY26OCT22300PE', 'right': 'PE', 'strike': 22300, 'expiry': ''}
+    assert broker_reports.contract(session, row) == {'right': 'PE', 'strike': 22300, 'expiry': '2026-10-27'}
+
+
+def test_monthly_symbol_without_any_expiry_source_still_raises():
+    session = SimpleNamespace(symbol='NIFTY', instrument_type='options', execution_broker='kotak', expiry=None)
+    row = {'symbol': 'NIFTY26OCT22300PE', 'right': 'PE', 'strike': 22300, 'expiry': ''}
+    import pytest
+    from app.services.broker_reports import UnknownContractError
+    with pytest.raises(UnknownContractError):
+        broker_reports.contract(session, row)
+
+
+def test_monthly_symbol_session_expiry_mismatch_still_raises():
+    """A different session expiry (e.g. November) must not be wrongly
+    accepted for an October contract."""
+    session = SimpleNamespace(symbol='NIFTY', instrument_type='options', execution_broker='kotak', expiry='2026-11-24')
+    row = {'symbol': 'NIFTY26OCT22300PE', 'right': 'PE', 'strike': 22300, 'expiry': ''}
+    import pytest
+    from app.services.broker_reports import UnknownContractError
+    with pytest.raises(UnknownContractError):
+        broker_reports.contract(session, row)
