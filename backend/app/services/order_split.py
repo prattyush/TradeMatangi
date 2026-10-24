@@ -268,14 +268,14 @@ def reconcile_projection(orders, broker_orders):
     Never submit or resubmit a broker order during reconciliation.
     """
     reported = {broker_report_id(row): row for row in broker_orders}
-    for order in orders.values():
+    for order in list(orders.values()):
         job = order.split_operation or {}
         if job.get('parent_id') != order.order_id or job.get('state') != 'unknown':
             continue
         parent_row = reported.get(order.broker_order_id)
         child = orders.get(job.get('child_id'))
         child_row = reported.get(child.broker_order_id) if child else None
-        state, message = None, None
+        state, message, drop_child = None, None, False
         if parent_row and child_row and order.quantity == job.get('retained_quantity') and child.quantity == job.get('child_quantity'):
             if child.status == OrderStatus.CANCELLED or order.status == OrderStatus.CANCELLED:
                 state, message = 'failed', 'Broker cancelled or rejected part of the split; review remaining orders'
@@ -287,8 +287,21 @@ def reconcile_projection(orders, broker_orders):
             state = 'failed'
             message = ('Split was not applied' if order.quantity == job.get('original_quantity') else
                 'Broker reduced the original quantity; the second order was not submitted. Review remaining quantity')
+        elif parent_row and child is not None and not child.broker_order_id:
+            # The child was registered locally (so `child is None` above
+            # doesn't fire) but failed before it ever reached the broker --
+            # e.g. the staging transaction or a consistency check threw
+            # between registration and placement. It is not a live order;
+            # drop it rather than leaving a phantom pending order that no
+            # future refresh could ever resolve (its own condition never
+            # changes on its own).
+            state = 'failed'
+            message = 'Second split order was never placed with the broker; it has been removed'
+            drop_child = True
         if state:
             job = {**job, 'state': state, 'message': message}
             order.split_operation = job
-            if child:
+            if drop_child:
+                orders.pop(child.order_id, None)
+            elif child:
                 child.split_operation = dict(job)

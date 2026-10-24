@@ -371,3 +371,79 @@ barrier happens to be open can be permanently, silently missed by
 alert). Left unfixed on purpose — per the same design discussion, the fix
 for an automation blind spot is an always-open manual path, not more
 automated handling around it.
+## "Broker is the only source of truth" — closing two whole-book failure gaps — 2026-10-24
+
+The scope-discipline work above narrowed *who gets blocked* by an uncertain
+order. A separate, deeper question — prompted directly by the user's stated
+design principle for real trading ("the broker is the only source of truth;
+this software is a book-maintainer at best; if its own internal state ever
+stops a manual, broker-bound action from reaching Kotak, that is a critical
+failure") — was *whether refresh itself can ever fail to reflect broker
+truth at all*, for reasons that have nothing to do with any specific order
+the user is trying to act on.
+
+Three independent investigations, verifying the principle against the code
+rather than assuming it held, found two concrete, reachable violations:
+
+- **One unresolvable or disagreeing contract aborted the entire refresh.**
+  `aggregate()`, `normalize_positions()`, and `build_orders()`
+  (`real_broker_state.py`) called `reports.contract()` per row with no
+  per-row isolation — one row's `UnknownContractError` (even after the
+  PR #708 session-expiry fallback) propagated out of the whole function.
+  `fifo_agrees()`/`quantities_agree()` had the identical all-or-nothing
+  shape for a quantity disagreement on any single contract. Either way,
+  `stage()`/`commit()` never ran — *no* strike's data published, not just
+  the problematic one's. This directly contradicted "under any scenario,
+  data not being synced is not possible": one broken contract anywhere in
+  the book blocked the refresh for the specific order the user actually
+  wanted resolved, too.
+- **A reachable split-failure window left a permanent phantom order and a
+  permanently locked parent.** `order_split.reconcile_projection()` only
+  had two resolving branches (both legs confirmed, or the child never
+  created at all). A real third window — the child registered in memory
+  (`order_split.py:206`) but failing before it ever received a
+  `broker_order_id` (a staging-transaction error, a consistency check
+  throwing) — matched neither branch. No future refresh could ever clear
+  it, since the condition that would resolve it never changes on its own.
+
+Both are now fixed:
+
+- `aggregate()`/`normalize_positions()`/`build_orders()` gained an opt-in
+  `strict=False` (default `strict=True` preserves the original raise
+  exactly, since `protection_recovery.py`/`real_recovery.py`/
+  `kotak_protection.py` already have their own retry-with-master handling
+  around these same functions and must not be disrupted) plus an
+  `unresolved` collector list. `refresh()`'s own calls use `strict=False`:
+  an unresolvable row is logged and skipped, not raised, and every other
+  order/trade/position still publishes. The existing "fetch the instrument
+  master and retry" shape is preserved, just now triggered by whether
+  anything was actually skipped on the cheap pass rather than by a raised
+  exception. The `quantities_agree()` closure got the same per-row skip.
+- `reconcile_projection()` gained the missing third branch: parent
+  confirmed at the broker, child registered locally but never placed →
+  resolve to `'failed'` and drop the phantom child, clearing the parent's
+  `ACTIVE` lock the same way the two existing branches already do.
+
+**Confirmed already correct, no change needed**: once a refresh succeeds,
+it genuinely includes every strike/expiry of the underlying (`in_scope()`/
+`in_book()` match on symbol+product only). Every gate in the manual
+edit/cancel chain (`_require_confirmed_recovery`, `broker_conversion.busy`,
+`kotak_protection.suppress`/`handles`, `real_close.unresolved(session,
+contract)`) is correctly order-scoped, and the actual broker calls
+(`modify_sl_order`, `modify_sl_to_limit_order`, `cancel_order`) are strictly
+keyed to the target order's own `broker_order_id` — a manual action on one
+contract is never silently filtered or dropped because of another
+contract's state.
+
+**Deliberately out of scope, flagged not dropped**: restructuring
+`fifo_agrees()`/`quantities_agree()` for a genuine per-contract
+partial-publish (right now they compute one whole-book boolean, just
+without raising) needs careful thought about whether wallet/P&L figures
+stay coherent when one contract's positions data disagrees — a separate,
+dedicated change. `protection_recovery.session_lock(session)` is a single
+per-session mutex shared by every foreground mutation *and* the background
+protection-audit's own broker-submission step — an edit on one contract can
+still queue briefly (one broker round trip, or a whole split's duration)
+behind another contract's in-flight broker call. It is never rejected or
+dropped, just delayed; narrowing it to per-contract is a nice-to-have, not
+urgent.

@@ -89,7 +89,14 @@ def read_projection(session_id):
     return sorted([{**row, "session_id": session_id} for row in rows], key=lambda row: (int(row["timestamp"]), row["trade_id"]))
 
 
-def aggregate(session, executions, account_id, master=None):
+def aggregate(session, executions, account_id, master=None, strict=True, unresolved=None):
+    """`strict=False` (used only by refresh()'s own resilient pass) skips a
+    single execution whose contract can't be resolved instead of raising --
+    every other caller (direct protection/recovery callers) keeps the
+    original raise-on-unknown-contract behavior they already handle
+    themselves. `unresolved`, if given, collects the skipped rows so the
+    caller can decide whether to fetch the instrument master and retry.
+    """
     from app.services.trading import compute_commission
     groups, seen = {}, set()
     for execution in executions:
@@ -101,7 +108,20 @@ def aggregate(session, executions, account_id, master=None):
         if identity in seen:
             continue
         seen.add(identity)
-        contract = reports.contract(session, execution, master)
+        try:
+            contract = reports.contract(session, execution, master)
+        except reports.UnknownContractError as exc:
+            if strict:
+                raise
+            # One execution whose contract can't be resolved must not drop
+            # every other trade in this refresh -- skip just this one; it
+            # can resolve on a later refresh (a fresh instrument master, a
+            # session.expiry that now matches).
+            logger.warning("real_broker_execution_unresolved_contract session=%s execution_id=%s symbol=%s: %s",
+                            session.session_id, execution.get("execution_id"), execution.get("symbol", ""), exc)
+            if unresolved is not None:
+                unresolved.append(execution)
+            continue
         key = (execution.get("exchange", ""), broker_report_id(execution))
         group = groups.setdefault(key, {"row": execution, "contract": contract, "quantity": 0, "value": 0., "first": execution["timestamp"], "ids": []})
         if group["contract"] != contract or group["row"]["side"] != execution["side"]:
@@ -150,13 +170,26 @@ def book_reports(session, raw_orders, executions):
     return [r for r in orders if current_order(r)], fills
 
 
-def normalize_positions(session, raw_positions, master=None):
+def normalize_positions(session, raw_positions, master=None, strict=True, unresolved=None):
+    """See aggregate() for the `strict`/`unresolved` contract."""
     positions = []
     for raw in raw_positions:
         row = reports.normalize_order(raw)
         if not reports.in_book(session, row):
             continue
-        contract = reports.contract(session, row, master)
+        try:
+            contract = reports.contract(session, row, master)
+        except reports.UnknownContractError as exc:
+            if strict:
+                raise
+            # Same principle as aggregate()/build_orders(): one position
+            # whose contract can't be resolved must not drop every other
+            # contract's position from this refresh.
+            logger.warning("real_broker_position_unresolved_contract session=%s symbol=%s: %s",
+                            session.session_id, row.get("symbol", ""), exc)
+            if unresolved is not None:
+                unresolved.append(raw)
+            continue
         buy = reports.number(raw.get("cfBuyQty")) + reports.number(raw.get("flBuyQty"))
         sell = reports.number(raw.get("cfSellQty")) + reports.number(raw.get("flSellQty"))
         net = int(reports.number(raw.get("netQty", raw.get("net_quantity", raw.get("quantity", buy - sell)))))
@@ -171,7 +204,8 @@ def normalize_positions(session, raw_positions, master=None):
     return positions
 
 
-def build_orders(session, broker_orders, master=None):
+def build_orders(session, broker_orders, master=None, strict=True, unresolved=None):
+    """See aggregate() for the `strict`/`unresolved` contract."""
     from app.services import order_service
     original = order_service.get_all_orders(session.session_id)
     tracked = {o.broker_order_id: o for o in original if o.broker_order_id}
@@ -188,9 +222,24 @@ def build_orders(session, broker_orders, master=None):
         kind = OrderType.STOPLOSS if row["order_type"] in ("SL", "SL-M", "STOPLOSS") else OrderType.LIMIT
         previous = tracked.get(broker_report_id(row))
         tagged = split_children.get(row.get('tag')) or uncertain.get(row.get('tag'))
-        if previous is None and tagged is not None and row['quantity'] == tagged.quantity and row['side'] == tagged.side.value and (kind == tagged.order_type or (tagged.order_type == OrderType.TARGET and kind == OrderType.LIMIT)):
-            contract = reports.contract(session, row, master)
-            if (contract.get('right'), contract.get('strike'), contract.get('expiry')) == (tagged.right, tagged.strike, tagged.expiry):
+        if previous is None:
+            # An unresolvable contract must only drop this one broker row,
+            # never abort the whole refresh -- every other order in this
+            # batch (and every other refresh caller: aggregate/
+            # normalize_positions) still needs to publish.
+            try:
+                contract = reports.contract(session, row, master)
+            except reports.UnknownContractError as exc:
+                if strict:
+                    raise
+                logger.warning("real_broker_order_unresolved_contract session=%s broker_order_id=%s symbol=%s: %s",
+                                session.session_id, broker_report_id(row), row.get("symbol", ""), exc)
+                if unresolved is not None:
+                    unresolved.append(row)
+                continue
+            if (tagged is not None and row['quantity'] == tagged.quantity and row['side'] == tagged.side.value
+                    and (kind == tagged.order_type or (tagged.order_type == OrderType.TARGET and kind == OrderType.LIMIT))
+                    and (contract.get('right'), contract.get('strike'), contract.get('expiry')) == (tagged.right, tagged.strike, tagged.expiry)):
                 previous = tagged
         if previous is None and row["order_type"] == "MARKET" and status in OPEN:
             continue
@@ -198,7 +247,7 @@ def build_orders(session, broker_orders, master=None):
             user_id=session.user_id, symbol=session.symbol, side=TradeSide(row["side"]), order_type=kind,
             quantity=row["quantity"], trigger_price=row["trigger_price"], limit_price=row["limit_price"],
             created_at=reports.wall_time(row["order_time"]) if row.get("order_time") else 0,
-            source="broker_external", broker_order_id=broker_report_id(row), execution_broker=getattr(session, "execution_broker", "KotakNeo"), **reports.contract(session, row, master))
+            source="broker_external", broker_order_id=broker_report_id(row), execution_broker=getattr(session, "execution_broker", "KotakNeo"), **contract)
         order.execution_broker = getattr(session, "execution_broker", "KotakNeo")
         order.broker_account_id = getattr(session, "broker_account_id", None)
         order.broker_order_id = broker_report_id(row)
@@ -410,16 +459,27 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
             scoped_orders, scoped_executions = book_reports(session, raw_orders, executions)
             master = None
-            try:
-                trades = aggregate(session, scoped_executions, account)
-                positions = normalize_positions(session, raw_positions)
-                orders = build_orders(session, scoped_orders)
-            except reports.UnknownContractError:
+            # strict=False: an unresolvable contract drops only that one
+            # row (logged) instead of aborting every other order/trade/
+            # position in this refresh -- see aggregate()'s docstring. If
+            # anything was dropped on the cheap (no-master) pass, fetch the
+            # instrument master once and retry the whole batch with it,
+            # same as the original try/retry shape; whatever is still
+            # unresolved after that genuinely can't be identified right now.
+            unresolved = []
+            trades = aggregate(session, scoped_executions, account, master, strict=False, unresolved=unresolved)
+            positions = normalize_positions(session, raw_positions, master, strict=False, unresolved=unresolved)
+            orders = build_orders(session, scoped_orders, master, strict=False, unresolved=unresolved)
+            if unresolved:
                 from app.services.kotak_service import _get_kotak_instruments
                 master = await asyncio.to_thread(_get_kotak_instruments)
-                trades = aggregate(session, scoped_executions, account, master)
-                positions = normalize_positions(session, raw_positions, master)
-                orders = build_orders(session, scoped_orders, master)
+                unresolved = []
+                trades = aggregate(session, scoped_executions, account, master, strict=False, unresolved=unresolved)
+                positions = normalize_positions(session, raw_positions, master, strict=False, unresolved=unresolved)
+                orders = build_orders(session, scoped_orders, master, strict=False, unresolved=unresolved)
+                if unresolved:
+                    logger.warning("real_broker_contracts_remain_unresolved session=%s count=%d",
+                                    session.session_id, len(unresolved))
             # Independent broker endpoints can straddle a fill. Retry once
             # before publishing a revision whose reported fills disagree.
             def quantities_agree():
@@ -435,7 +495,15 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                     row = reports.normalize_order(raw)
                     if not reports.in_book(session, row) or not all(k in raw for k in ("flBuyQty", "flSellQty")):
                         continue
-                    contract = reports.contract(session, row, master)
+                    try:
+                        contract = reports.contract(session, row, master)
+                    except reports.UnknownContractError:
+                        # Same principle as aggregate()/build_orders()/
+                        # normalize_positions(): leave this one contract out
+                        # of the agreement check rather than raising and
+                        # aborting the whole refresh. It's already logged by
+                        # normalize_positions()'s own pass over this row.
+                        continue
                     key = (contract["right"], contract["strike"], contract["expiry"])
                     checked.add(key)
                     actual[(*key, "BUY")] += int(reports.number(raw["flBuyQty"]))
@@ -460,9 +528,9 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 bundle = await kotak_reports.fetch(broker, background=True, force=True)
                 raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
                 scoped_orders, scoped_executions = book_reports(session, raw_orders, executions)
-                trades = aggregate(session, scoped_executions, account, master)
-                positions = normalize_positions(session, raw_positions, master)
-                orders = build_orders(session, scoped_orders, master)
+                trades = aggregate(session, scoped_executions, account, master, strict=False)
+                positions = normalize_positions(session, raw_positions, master, strict=False)
+                orders = build_orders(session, scoped_orders, master, strict=False)
                 if not fifo_agrees():
                     raise ValueError("Kotak execution history/positions are incomplete or still updating; FIFO refresh was not applied")
             positions = verified_positions(session, scoped_executions, positions, master)
