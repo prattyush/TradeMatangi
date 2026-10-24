@@ -15,6 +15,15 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 - **Diagnostic coverage**: `%LOCALAPPDATA%\Trade Matangi Charts\logs\desktop-live.ndjson` records native SSE candle events (including complete OHLC), recovery snapshot timing/size when needed, frontend chart initialization/disposal, reset/incremental update outcomes, and JavaScript errors/unhandled rejections. The journal rotates at 16 MiB and keeps the prior file as `desktop-live.previous.ndjson`.
 - **Reproduction evidence to collect**: After the next black screen, preserve both journal files plus `desktop-cache.sqlite3`, then identify the last `chart_*_success` record followed by the first `*_error`, `window_error`, `unhandled_rejection`, or native stream failure. Do not mark resolved until that trace establishes root cause.
 
+## Desktop Trading Bugs
+
+**[RESOLVED]** First "Find strike" click after entering a max price fails with `error sending request for url (.../api/desktop/v1/trading/prepare-session)`; retry succeeds (2026-10-24).
+- **Symptom**: In the desktop app, choosing options and entering a max price, then clicking "Find strike price," fails on the first attempt with a reqwest-level send error (not an HTTP error response). Clicking again immediately succeeds.
+- **Root cause**: `desktop_drawing_request` (Tauri command, `windowsapp/src-tauri/src/lib.rs`) built a brand-new `reqwest::Client` on every single invocation instead of reusing a pooled one. "Find strike price" is typically the first trading-authenticated desktop request of a session, so it hit a cold DNS/TLS/connection path with no warm pool — occasionally failing the handshake outright. The retry succeeded because the OS-level connection state was already warmed up from the first attempt.
+- **Fix**: `desktop_drawing_request` now builds its `reqwest::Client` once per timeout tier (screen vs. trading) behind a function-local `OnceLock` and clones the cheap, `Arc`-backed handle on every call, so the underlying connection pool/TLS session is reused across requests instead of being rebuilt cold each time.
+- **File**: `windowsapp/src-tauri/src/lib.rs`.
+- **Note**: The same per-call `reqwest::Client::builder()`/`::new()` pattern appears at ~16 other call sites in this file (e.g. lines 170, 188, 214, 457, 581, 664, 695, 958, 998, 1042, 1078, 1123, 1220, 1893, 2027). Only the reported `desktop_drawing_request` path was fixed; the others are lower-traffic/less latency-sensitive calls and were left as-is to keep this fix scoped, but they carry the same latent cold-connection risk if any becomes a hot path.
+
 ## Phase-VII PaperTrading
 
 ### Open Bugs
