@@ -321,6 +321,56 @@ own async-ification design. `swing_real.refresh()` carries the same barrier-
 window asymmetry as the intraday path (and for swing, in both modes); not
 yet narrowed, since it wasn't today's active symptom.
 
+## Manual broker-bound actions must wait through the barrier, not hard-fail — 2026-10-24
+
+The scope-narrowed barrier above is still *correct* (it genuinely only
+protects a brief commit window) but a follow-up design discussion narrowed
+"broker is the only source of truth" to a precise, actionable line: creating
+a new stoploss exit order, updating an open SL/LIMIT exit, converting an
+exit between SL and LIMIT, cancelling an exit, and market orders for a new
+position talk to Kotak immediately and must never be blocked by internal
+state — including this barrier itself. LIMIT/TARGET orders for a *new*
+position are watched/simulated locally before they ever reach the broker, so
+software gating those remains correct.
+
+Six call sites (`orders.py` place/cancel, `broker_order_service.
+sync_order_edit_async`, `broker_conversion.start`, `trading.py`'s direct Buy/
+Sell, `emergency_exit.exit_all`, `swing_order_actions.act`) still raised an
+instant 409/502 the moment the barrier was open, with a "retry shortly"
+message that was never actually true — neither the website nor desktop
+client retries these calls; a click landing in that sub-second window simply
+failed.
+
+**Fix**: `real_broker_state.await_refresh_barrier(session, timeout=3.0)`
+polls the local barrier flag (no broker calls, so it cannot interact with
+Kotak's own rate limits) and lets the action through once it closes, raising
+the original error only if it's still open after 3 seconds — far longer
+than the barrier is ever open in practice, and short enough to be invisible
+against normal multi-second manual reaction time. The six sites above now
+wait via this helper, scoped by `_is_position_exit(session, order)` wherever
+the same site also handles new-position orders. `swing_real.refresh()`'s
+barrier was also narrowed to open only right before `commit()`, closing the
+asymmetry flagged (but left unfixed) in the entry above.
+
+**Deliberately left untouched**: `sync_order_edit()`'s synchronous twin
+(`broker_order_service.py`, only reached via `strategy_service.py`'s
+automated amendments running directly on the event loop) was not given the
+same wait — a blocking wait there would freeze the whole backend for up to
+3 seconds on every session, trading one bug for a worse one. Its callers are
+background/automatic, not a manual click, so the "must never block" rule
+doesn't apply to it the same way.
+
+**Also evaluated, no fix** — the software-automated paths touching the same
+order types (`entry_sl_watcher.py` auto-SL-on-fill, `futures_real.py`/
+`swing_real.py` quote-driven protection renewal, `simulation.py`'s
+tick-driven TARGET/LIMIT trigger detection) were all confirmed self-healing
+or already surfaced via `protection_recovery`'s `needs_attention` path,
+except one: a transient price crossing that lands on a tick where the
+barrier happens to be open can be permanently, silently missed by
+`simulation.py`'s level-check trigger logic (only a diagnostics counter, no
+alert). Left unfixed on purpose — per the same design discussion, the fix
+for an automation blind spot is an always-open manual path, not more
+automated handling around it.
 ## "Broker is the only source of truth" — closing two whole-book failure gaps — 2026-10-24
 
 The scope-discipline work above narrowed *who gets blocked* by an uncertain
