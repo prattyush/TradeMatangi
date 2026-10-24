@@ -109,7 +109,11 @@ async def start(session, order, new_type, price):
     if busy(order) and order.broker_conversion.get('state') != 'queued':
         raise KotakError('Conversion is unconfirmed; refresh broker state before changing this order')
     if getattr(session, 'broker_refresh_events', None) is not None:
-        raise KotakError('Broker refresh is in progress; retry conversion shortly')
+        from app.services.real_broker_state import await_refresh_barrier
+        # Conversion is exit-only in this app's semantics (SL exit <-> LIMIT
+        # exit); the request-path gate must always wait through a refresh.
+        if not await await_refresh_barrier(session):
+            raise KotakError('Broker refresh is in progress; retry conversion shortly')
     candidate = candidate_for(order, new_type, price)
     operation = 'conversion:' + str(uuid.uuid4())
     job = dict(operation_id=operation, session_id=session.session_id, order_id=order.order_id,

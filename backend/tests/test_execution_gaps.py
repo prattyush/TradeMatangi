@@ -106,7 +106,7 @@ def test_direct_market_path_uses_account_gap(real):
     session, broker, settings = real
     settings['target_deviation_pct'] = 0.025
     async def submit():
-        trade_routes._place_kotak_direct(session, TradeSide.SELL, 100, 1, None)
+        await trade_routes._place_kotak_direct(session, TradeSide.SELL, 100, 1, None)
     asyncio.run(submit())
     assert broker.place_limit_order.call_args.kwargs['price'] == 97.5
 

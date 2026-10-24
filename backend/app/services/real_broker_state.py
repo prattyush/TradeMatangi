@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -350,6 +351,24 @@ def fill_deferred(session, callback, *args):
         events.append((callback, args))
         return True
     return False
+
+
+async def await_refresh_barrier(session, timeout=3.0, poll=0.05):
+    """Wait for an in-flight refresh's commit barrier to close.
+
+    The barrier is normally open only for a brief, local commit window
+    (a single DynamoDB write, no broker calls happen while it's open), so
+    a short bounded wait lets a manually-requested broker action through
+    once that window passes, instead of rejecting it outright for a race
+    it will usually win if given a moment. Returns False only if the
+    barrier is still open after `timeout` -- a genuinely abnormal condition.
+    """
+    deadline = time.monotonic() + timeout
+    while getattr(session, "broker_refresh_events", None) is not None:
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(poll)
+    return True
 
 
 @diagnostics.timed("broker_refresh")
