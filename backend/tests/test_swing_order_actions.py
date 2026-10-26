@@ -157,6 +157,8 @@ async def test_real_fill_racing_edit_preserves_latest_fill_and_real_cancel_rejec
     with pytest.raises(HTTPException, match='Broker cancellation rejected'):
         await actions.act('u', parent['session_id'], order.order_id, cancel=True)
     assert order.status == OrderStatus.PENDING
+    from app.services import real_broker_state
+    monkeypatch.setattr(real_broker_state, 'await_refresh_barrier', AsyncMock(return_value=False))
     child.broker_refresh_events = []
     with pytest.raises(HTTPException, match='refresh is in progress'):
         await actions.act('u', parent['session_id'], order.order_id, cancel=True)

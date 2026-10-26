@@ -27,7 +27,14 @@ async def act(user, portfolio_id, order_id, *, price=None, quantity=None, cancel
             from app.services.swing_paper_recovery import require_amendable
             require_amendable(order)
         if child.session_type == 'real' and getattr(child, 'broker_refresh_events', None) is not None:
-            raise HTTPException(409, 'Broker refresh is in progress; retry shortly')
+            from app.services.real_broker_state import await_refresh_barrier
+            # Amending/cancelling an open exit must go through; amending a
+            # pending new-position order stays gate-able, same split as
+            # orders.py's place/cancel.
+            position = trading.get_position(child.session_id, child.symbol, right=order.right, strike=order.strike, expiry=order.expiry, exact_contract=True)
+            is_exit = (position.side == 'LONG' and order.side == TradeSide.SELL) or (position.side == 'SHORT' and order.side == TradeSide.BUY)
+            if not is_exit or not await await_refresh_barrier(child):
+                raise HTTPException(409, 'Broker refresh is in progress; retry shortly')
         try:
             if cancel:
                 await _cancel_order_locked(order_id, child.session_id, child)

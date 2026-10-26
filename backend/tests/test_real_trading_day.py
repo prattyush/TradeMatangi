@@ -32,6 +32,26 @@ def test_other_modes_are_not_banned(user,mode):
     user.session_type=mode
     day.require_entry_allowed(user,TradeSide.BUY,100)
 
+def test_unresolved_order_on_one_contract_does_not_block_entry_on_another(user,monkeypatch):
+    """An uncertain recovery_state on one contract must not, by itself,
+    block a brand new entry on an unrelated contract -- only an entry on
+    the SAME contract should stay blocked."""
+    from app.models.schemas import Order, TradeSide as Side
+    monkeypatch.setattr(day,'state',lambda *a:{'date':'2026-10-07','state':'active'})
+    monkeypatch.setattr(trading,'get_position',lambda *a,**k:Position(symbol=user.symbol,side='FLAT',quantity=0,avg_entry_price=0))
+    stuck=Order(session_id=user.session_id,user_id=user.user_id,symbol=user.symbol,side=Side.SELL,
+        quantity=75,trigger_price=100,limit_price=99,created_at=1,right='CE',strike=25000,expiry='2026-10-27',
+        recovery_state='unknown')
+    order_service._orders[user.session_id]={stuck.order_id:stuck}
+    try:
+        day.require_entry_allowed(user,TradeSide.BUY,75,right='PE',strike=24000,expiry='2026-10-27')
+        with pytest.raises(HTTPException) as error:
+            day.require_entry_allowed(user,TradeSide.BUY,75,right='CE',strike=25000,expiry='2026-10-27')
+        assert error.value.status_code==409
+    finally:
+        order_service._orders.pop(user.session_id,None)
+
+
 def test_lock_read_failure_fails_closed(user,monkeypatch):
     monkeypatch.setattr(day,'state',MagicMock(side_effect=RuntimeError('database down')))
     with pytest.raises(HTTPException) as error:day.require_entry_allowed(user,TradeSide.BUY,1)

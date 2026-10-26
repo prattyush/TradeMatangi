@@ -24,10 +24,13 @@ export function projectedPositionPnl(
     position.side === "LONG" ? 1 : position.side === "SHORT" ? -1 : 0;
   if (!direction || price <= 0 || position.quantity <= 0) return 0;
   const exitRate =
-    direction === 1 ? (0.0625 + 1.18 * 0.06) / 100 : 0.006803 / 100;
+    direction === 1
+      ? (0.15 + 1.18 * 0.03563) / 100
+      : (0.003 + 1.18 * 0.03563) / 100;
   const exitCommission =
     Math.round(
-      (price * position.quantity * exitRate + brokeragePerOrder) * 10000,
+      (price * position.quantity * exitRate + 1.18 * brokeragePerOrder) *
+        10000,
     ) / 10000;
   return (
     direction * position.quantity * (price - position.avg_entry_price) -
@@ -61,10 +64,14 @@ export function projectedTotalPnlPctAtTarget(
   )
     return null;
   const exitRate =
-    direction === 1 ? (0.0625 + 1.18 * 0.06) / 100 : 0.006803 / 100;
+    direction === 1
+      ? (0.15 + 1.18 * 0.03563) / 100
+      : (0.003 + 1.18 * 0.03563) / 100;
   const exitCommission =
     Math.round(
-      (targetPrice * position.quantity * exitRate + brokeragePerOrder) * 10000,
+      (targetPrice * position.quantity * exitRate +
+        1.18 * brokeragePerOrder) *
+        10000,
     ) / 10000;
   return (
     ((totalPnl +
@@ -96,7 +103,9 @@ export function positionPnlLevels(
     return [];
   const direction = position.side === "LONG" ? 1 : -1;
   const exitRate =
-    direction === 1 ? (0.0625 + 1.18 * 0.06) / 100 : 0.006803 / 100;
+    direction === 1
+      ? (0.15 + 1.18 * 0.03563) / 100
+      : (0.003 + 1.18 * 0.03563) / 100;
   const levels: PositionPnlLevel[] = [
     {
       key: "entry",
@@ -113,7 +122,7 @@ export function positionPnlLevels(
       (targetPnl +
         direction * position.quantity * position.avg_entry_price +
         position.entry_commission +
-        brokeragePerOrder) /
+        1.18 * brokeragePerOrder) /
       denominator;
     if (!Number.isFinite(estimate) || estimate <= 0) continue;
     const candidates = [Math.floor(estimate * 100), Math.ceil(estimate * 100)]

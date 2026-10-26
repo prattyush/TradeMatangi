@@ -65,13 +65,16 @@ def _margin_rate_for(session, right: str | None = None) -> float:
     return EQUITY_MIS_MARGIN_RATE if _uses_equity_intraday_margin(session, right) else 1.0
 
 
-def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, right, capital_fraction=None) -> JSONResponse:
+async def _place_kotak_direct(session, side: TradeSide, price: float, lot_size: int, right, capital_fraction=None) -> JSONResponse:
     """Place an immediate, tracked marketable LIMIT with exact contract identity."""
     from app.services import order_service
     from app.services.broker_order_service import submit_immediate
     from app.models.schemas import Order, OrderType
     if getattr(session, "broker_refresh_events", None) is not None:
-        raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
+        from app.services.real_broker_state import await_refresh_barrier
+        # Buy/Sell is a direct market order; it must always reach the broker.
+        if not await await_refresh_barrier(session):
+            raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
     from app.services.execution_price_service import gap_for, limit_price
     gap = gap_for(session.user_id)
     from app.services.execution_analytics import snapshot
@@ -137,7 +140,7 @@ async def buy(req: TradeRequest):
         blocked, reason = check_maxsize(session, price, quantity, "BUY", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
         if blocked:
             raise HTTPException(status_code=403, detail=reason)
-        return _place_kotak_direct(session, TradeSide.BUY, price, quantity, right, req.funds_ratio_pct)
+        return await _place_kotak_direct(session, TradeSide.BUY, price, quantity, right, req.funds_ratio_pct)
 
     from app.services.guardrail_service import check_maxsize
     blocked, reason = check_maxsize(session, price, quantity, "BUY", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
@@ -201,7 +204,7 @@ async def sell(req: TradeRequest):
         blocked, reason = check_maxsize(session, price, quantity, "SELL", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)
         if blocked:
             raise HTTPException(status_code=403, detail=reason)
-        return _place_kotak_direct(session, TradeSide.SELL, price, quantity, right, req.funds_ratio_pct)
+        return await _place_kotak_direct(session, TradeSide.SELL, price, quantity, right, req.funds_ratio_pct)
 
     from app.services.guardrail_service import check_maxsize
     blocked, reason = check_maxsize(session, price, quantity, "SELL", right=right, strike=_strike_for_right(session, right), expiry=session.expiry)

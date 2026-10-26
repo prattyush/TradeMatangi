@@ -43,6 +43,7 @@ def database(monkeypatch):
     simulation._sessions.clear()
     order_service._orders.clear()
     trading._trades.clear()
+    desktop_trading._saved_snapshot_cache.clear()
 
 
 def test_stop_without_local_engine_preserves_position_and_cancels_pending_order(database, monkeypatch):
@@ -131,6 +132,47 @@ def test_stop_remains_stopped_when_cleanup_fails_then_retries(database, monkeypa
     monkeypatch.setattr(order_service, "cancel_all_pending_orders", cancel)
     assert asyncio.run(desktop_trading.stop_stepwise(session_id, user_id=user)) == {"status": "stopped"}
     assert asyncio.run(desktop_trading.snapshot(session_id, user_id=user)).cleanup_pending is False
+
+
+def test_stopped_session_snapshot_is_cached_until_claim_state_changes(database, monkeypatch):
+    """A fully-settled stopped session's snapshot cannot change on its own --
+    repeated polling must not repeat the full rebuild. A genuine state change
+    (here: an engine_generation bump, as a resume would cause) must still
+    invalidate the cache and force exactly one rebuild."""
+    from unittest.mock import Mock
+    user, date, symbol, session_id = "desktop-user", "2026-09-28", "NIFTY", "snapshot-cache"
+    monkeypatch.setattr(desktop_paper_eod, "_due", lambda _: False)
+    paper_wallet.read(user, date)
+    token, _ = paper_wallet.claim_session(user, date, symbol)
+    paper_wallet.finish_session_claim(user, date, symbol, token, session_id, desktop=True)
+    database.Table("Sessions").put_item(Item={"session_id": session_id, "user_id": user,
+        "date": date, "symbol": symbol, "start_time": "09:15:00", "speed": Decimal("1"),
+        "state": "running", "session_capital": Decimal("100000"), "instrument_type": "equity",
+        "session_type": "paper", "wallet_ledger_id": f"paper:{date}",
+        "desktop_origin": "desktop_paper", "desktop_mode": "paper"})
+    assert asyncio.run(desktop_trading.stop_stepwise(session_id, user_id=user)) == {"status": "stopped"}
+    assert paper_wallet.session_claim(user, date, symbol)["cleanup_pending"] is False
+
+    desktop_trading._saved_snapshot_cache.clear()
+    rebuild = Mock(wraps=simulation.rebuild_session_from_db)
+    monkeypatch.setattr(simulation, "rebuild_session_from_db", rebuild)
+
+    first = asyncio.run(desktop_trading.snapshot(session_id, user_id=user))
+    second = asyncio.run(desktop_trading.snapshot(session_id, user_id=user))
+    assert first.cleanup_pending is False and second.cleanup_pending is False
+    assert rebuild.call_count == 1  # second poll served from cache, no rebuild
+
+    # Simulate a resume bumping engine_generation -- the next poll must
+    # detect the changed claim state and rebuild exactly once more.
+    paper_wallet._table().update_item(
+        Key={"user_id": user, "ledger_id": f"paper:{date}:session:{symbol}"},
+        UpdateExpression="SET engine_generation = engine_generation + :one",
+        ExpressionAttributeValues={":one": 1})
+    third = asyncio.run(desktop_trading.snapshot(session_id, user_id=user))
+    assert rebuild.call_count == 2
+
+    fourth = asyncio.run(desktop_trading.snapshot(session_id, user_id=user))
+    assert rebuild.call_count == 2  # unchanged again -> served from cache
 
 
 def test_resumed_paper_option_tick_serializes_saved_contract_numbers(database, monkeypatch):

@@ -159,11 +159,20 @@ def contract(session, row: dict, master=None) -> dict:
     if not metadata.get("expiry") and master:
         metadata = next((r for r in master if str(r.get("symbol", "")).upper() == symbol), row)
     monthly = re.fullmatch(re.escape(base) + r"(\d{2})([A-Z]{3})(\d+(?:\.\d+)?)(CE|PE)", symbol)
-    if monthly and metadata.get("expiry"):
+    if monthly:
         year, month, strike, right = monthly.groups()
-        expiry = expiry_date(metadata["expiry"])
-        if expiry and datetime.fromisoformat(expiry).strftime("%y%b").upper() == (year + month):
-            return {"right": right, "strike": strike_number(strike), "expiry": expiry}
+        # A settled/older contract can roll off Kotak's current instrument
+        # master, and its own report row may carry no expiry field at all.
+        # The session's own expiry is already known; accept it as a
+        # fallback source, under the exact same year/month validation used
+        # for the master lookup, rather than failing to resolve a contract
+        # this session itself is actively trading.
+        for candidate in (metadata.get("expiry"), getattr(session, "expiry", None)):
+            if not candidate:
+                continue
+            expiry = expiry_date(candidate)
+            if expiry and datetime.fromisoformat(expiry).strftime("%y%b").upper() == (year + month):
+                return {"right": right, "strike": strike_number(strike), "expiry": expiry}
     raise UnknownContractError(f"Cannot resolve exact broker expiry for {symbol}")
 
 

@@ -26,11 +26,20 @@ def emit(session, message):
     session.queue.put_nowait(json.dumps({'type': 'real_session_status', **summary(session), 'message': message}))
 
 
-def unresolved(session):
+def unresolved(session, contract=None):
+    """An uncertain order on one contract must not, by itself, block a brand
+    new entry on an unrelated one -- pass `contract` (a `(right, strike,
+    expiry)` tuple) to scope the check to that contract. Whole-book callers
+    (session close/Done-for-day, where "is everything resolved" is the
+    actually correct question) omit it and get the original, unscoped check.
+    """
     from app.services.broker_conversion import busy
     from app.services.order_split import ACTIVE
+    orders = order_service.get_all_orders(session.session_id)
+    if contract is not None:
+        orders = [o for o in orders if (o.right, o.strike, o.expiry) == contract]
     return any(busy(o) or (o.split_operation or {}).get('state') in ACTIVE or o.recovery_state in ('submitting', 'unknown')
-               for o in order_service.get_all_orders(session.session_id))
+               for o in orders)
 
 
 async def finish(session):

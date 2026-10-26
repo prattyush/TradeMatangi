@@ -166,20 +166,32 @@ def request(session, *, reason, delay=.75, invalidate=True):
     old = pending.get(session.session_id)
     # One leading-edge window: continuous fills cannot postpone protection forever.
     due = min(old[1], time.monotonic() + delay) if old else time.monotonic() + delay
-    pending[session.session_id] = (session, due, reason)
+    pending[session.session_id] = (session, due, reason, 0)
     logger.info('kotak_protection_queued session=%s reason=%s coalesced=%s', session.session_id, reason, bool(old))
     if identity not in _workers or _workers[identity].done():
         _workers[identity] = asyncio.create_task(_drive(identity, broker))
 
 
-def busy(session):
+def busy(session, contract=None):
+    """Session-wide flags (closing/manual-edit/split-in-progress/refresh) are
+    genuinely global -- any of them means the whole book is mid-mutation.
+    An order's own stuck conversion/split, though, only has to pause work on
+    *that* contract: a split stuck on one strike must not defer protection
+    auditing for every other open position in the session. Pass `contract`
+    (the `key(order)` tuple) to scope that part of the check; omit it for
+    the cheap pre-fetch gate where no specific contract is known yet.
+    """
+    if (getattr(session, 'real_day_closing', False) or getattr(session, '_kotak_manual_busy', 0)
+            or getattr(session, 'order_split_in_progress', None)
+            or getattr(session, 'broker_refresh_events', None) is not None):
+        return True
+    if contract is None:
+        return False
     from app.services.broker_conversion import ACTIVE
     from app.services.order_split import ACTIVE as SPLIT_ACTIVE
-    return (getattr(session, 'real_day_closing', False) or getattr(session, '_kotak_manual_busy', 0) or getattr(session, 'order_split_in_progress', None)
-            or getattr(session, 'broker_refresh_events', None) is not None
-            or any((o.broker_conversion or {}).get('state') in ACTIVE or
-                   (o.split_operation or {}).get('state') in SPLIT_ACTIVE
-                   for o in order_service.get_all_orders(session.session_id)))
+    return any((o.broker_conversion or {}).get('state') in ACTIVE or
+               (o.split_operation or {}).get('state') in SPLIT_ACTIVE
+               for o in order_service.get_all_orders(session.session_id) if key(o) == contract)
 
 
 async def audit(session, broker):
@@ -236,7 +248,7 @@ async def audit(session, broker):
     for entry, required, covered, missing in gaps:
         if not enabled(session):
             return
-        if busy(session) or kotak_reports.state(broker).foreground:
+        if busy(session, key(entry)) or kotak_reports.state(broker).foreground:
             raise recovery.Deferred('Foreground trading operation has priority')
         root = intent_key(session, entry)
         job = intents.get(root)
@@ -279,7 +291,7 @@ async def audit(session, broker):
         recovery.emit(session, parent, operation, 'pending', f'Entry exit coverage: required {required}, covered {covered}, missing {missing}')
         await recovery.obtain_quote(session, parent, operation)
         async with kotak_reports.state(broker).submission, recovery.session_lock(session):
-            if (busy(session) or expected_account_revision != kotak_reports.state(broker).revision
+            if (busy(session, key(entry)) or expected_account_revision != kotak_reports.state(broker).revision
                     or session_revision != getattr(session, '_protection_revision', 0)):
                 raise recovery.Deferred('Foreground edit/fill invalidated the protection calculation')
             async with recovery.allocation_reservation(session, parent):
@@ -361,7 +373,17 @@ async def snapshot(session, broker):
     return session._kotak_report_bundle, session._fifo_executions
 
 
+_MAX_AUDIT_FAILURES = 3  # genuine exceptions, not Deferred contention — see below
+
+
 async def _drive(identity, broker):
+    """Deferred (another foreground action is mid-flight) is worth a quick
+    retry — it should clear within a second or two on its own. A genuine
+    exception is not contention and will not resolve by repeating the same
+    failing call; retry it a few bounded times in case it's transient, then
+    stop and surface the error immediately instead of silently re-hammering
+    Kotak/the broker-refresh pipeline for the rest of the 30-second window.
+    """
     from app.services import simulation, protection_recovery as recovery
     started = time.monotonic()
     try:
@@ -373,7 +395,7 @@ async def _drive(identity, broker):
                 continue
             ready = [key for key, item in pending.items() if item[1] <= time.monotonic()]
             batch = [pending.pop(key) for key in ready]
-            for session, _, reason in batch:
+            for session, _, reason, failures in batch:
                 if (not enabled(session) or simulation.get_session(session.session_id) is not session or session.state.value not in ('running', 'paused')
                         or getattr(session, 'real_day_closing', False)):
                     continue
@@ -383,15 +405,19 @@ async def _drive(identity, broker):
                     if not enabled(session):
                         continue
                     logger.info('entry_protection_deferred session=%s reason=%s', session.session_id, exc)
-                    _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 1, reason)
+                    _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 1, reason, failures)
                 except Exception as exc:
                     if not enabled(session):
                         continue
-                    logger.exception('entry_protection_failed session=%s', session.session_id)
+                    logger.exception('entry_protection_failed session=%s attempt=%d', session.session_id, failures + 1)
+                    if failures + 1 >= _MAX_AUDIT_FAILURES:
+                        for entry in entries(session):
+                            recovery.emit(session, entry, '', 'needs_attention', f'Entry protection could not be verified after {failures + 1} attempts: {exc}')
+                        continue
                     for entry in entries(session):
                         recovery.emit(session, entry, '', 'needs_attention', f'Entry protection could not be verified: {exc}')
-                    _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 2, reason)
-        for session, _, _ in _pending.get(identity, {}).values():
+                    _pending.setdefault(identity, {})[session.session_id] = (session, time.monotonic() + 2, reason, failures + 1)
+        for session, _, _, _ in _pending.get(identity, {}).values():
             for entry in entries(session):
                 recovery.emit(session, entry, '', 'needs_attention', 'Entry protection remains unresolved; use Trade History Refresh to retry')
     finally:

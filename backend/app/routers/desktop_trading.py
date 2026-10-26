@@ -74,6 +74,7 @@ router = APIRouter(prefix="/api/desktop/v1/trading", tags=["desktop"], dependenc
 logger = logging.getLogger(__name__)
 HEARTBEAT_INTERVAL = 15
 _start_locks = WeakValueDictionary()
+_saved_snapshot_cache: dict[str, tuple[tuple, "DesktopTradingSnapshot"]] = {}
 
 
 class DesktopTradingSnapshot(ContractModel):
@@ -348,10 +349,35 @@ def _reconcile_saved_paper(record: dict, claim: dict) -> dict:
 
 
 def _saved_paper_snapshot(record: dict, user_id: str) -> DesktopTradingSnapshot:
+    """A stopped session's snapshot cannot change until something resumes,
+    resets, or settles it -- all of which show up in these claim fields.
+    Skip the EOD check, full session rebuild and cross-session historical-
+    trades query entirely when nothing has moved since the last poll; the
+    independent desktop_paper_eod.reconciliation_loop() background task
+    already drives EOD settlement on its own schedule regardless of whether
+    anyone polls this snapshot.
+    """
+    session_id = record["session_id"]
+    claim = paper_wallet.session_claim(user_id, record["date"], record["symbol"])
+    cache_key = (
+        claim.get("session_status") if claim else None,
+        claim.get("engine_generation") if claim else None,
+        bool(claim and claim.get("cleanup_pending")),
+        bool(claim and claim.get("settlement_pending")),
+    )
+    cached = _saved_snapshot_cache.get(session_id)
+    if cached and cached[0] == cache_key:
+        return cached[1]
     from app.services import desktop_paper_eod
     if desktop_paper_eod._due(record["date"]):
         desktop_paper_eod.reconcile_session(record)
-    claim = paper_wallet.session_claim(user_id, record["date"], record["symbol"])
+        claim = paper_wallet.session_claim(user_id, record["date"], record["symbol"])
+        cache_key = (
+            claim.get("session_status") if claim else None,
+            claim.get("engine_generation") if claim else None,
+            bool(claim and claim.get("cleanup_pending")),
+            bool(claim and claim.get("settlement_pending")),
+        )
     session = sim_svc.rebuild_session_from_db(record, user_id, read_only=True,
         repair_fills=not claim or claim.get("session_status") != "running")
     session.state = sim_svc.SimulationState.ENDED
@@ -360,6 +386,7 @@ def _saved_paper_snapshot(record: dict, user_id: str) -> DesktopTradingSnapshot:
     snapshot.cleanup_pending = bool(claim and claim.get("cleanup_pending"))
     snapshot.settlement_pending = bool(claim and claim.get("settlement_pending"))
     snapshot.engine_generation = int(claim.get("engine_generation") or 0) if claim else None
+    _saved_snapshot_cache[session_id] = (cache_key, snapshot)
     return snapshot
 
 
@@ -1313,11 +1340,14 @@ async def snapshot(session_id: str, user_id: str = Depends(get_desktop_user_id),
         verified = get_desktop_user_id(authorization=authorization if isinstance(authorization, str) else None, x_user_id=None)
         if verified != user_id:
             raise HTTPException(404, 'Session not found')
-        session = sim_svc.rebuild_session_from_db(record, user_id, read_only=True)
+        session = await asyncio.to_thread(sim_svc.rebuild_session_from_db, record, user_id, read_only=True)
         return _snapshot(session, user_id)
-    record, claim = _saved_desktop_paper(session_id, user_id)
-    claim = _reconcile_saved_paper(record, claim)
-    return _saved_paper_snapshot(record, user_id)
+
+    def _load_paper_snapshot():
+        record, claim = _saved_desktop_paper(session_id, user_id)
+        _reconcile_saved_paper(record, claim)
+        return _saved_paper_snapshot(record, user_id)
+    return await asyncio.to_thread(_load_paper_snapshot)
 
 
 @router.get("/{session_id}/events")

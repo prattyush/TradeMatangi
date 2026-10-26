@@ -245,7 +245,15 @@ async def place_order(req: PlaceOrderRequest):
 async def _place_order_locked(req: PlaceOrderRequest):
     session = sim_svc.get_session(req.session_id)
     if session and session.session_type == "real" and getattr(session, "broker_refresh_events", None) is not None:
-        raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
+        from app.services.real_broker_state import await_refresh_barrier
+        # New SL exits always talk to the broker immediately and must go
+        # through. A new-position order only does so when execute_immediately
+        # forces an instant submit_immediate() call below; without it, even a
+        # market-priced LIMIT just stays a local trigger like any other new
+        # entry, so it's fine to keep rejecting it during a refresh.
+        broker_bound = req.order_type == OrderType.STOPLOSS or bool(req.execute_immediately)
+        if not broker_bound or not await await_refresh_barrier(session):
+            raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.current_time is None:
@@ -635,7 +643,13 @@ async def get_orders(session_id: str = Query(...), open_only: bool = Query(defau
 async def cancel_order(order_id: str, session_id: str = Query(...)):
     session = sim_svc.get_session(session_id)
     if session and session.session_type == "real" and getattr(session, "broker_refresh_events", None) is not None:
-        raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
+        from app.services.real_broker_state import await_refresh_barrier
+        existing = order_service.get_order(session_id, order_id)
+        # Cancelling an open exit (SL/LIMIT) must go through; cancelling a pending
+        # new-position LIMIT/TARGET order stays gate-able, same split as placement.
+        is_exit = existing is not None and sim_svc._is_position_exit(session, existing)
+        if not is_exit or not await await_refresh_barrier(session):
+            raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
     if session:
         async with _session_edit_lock(session):
             return await _cancel_order_locked(order_id, session_id, session)

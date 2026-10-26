@@ -136,7 +136,11 @@ export class TradingStreamController {
       this.required = result.retry || this.recoveryVersion !== version
       this.callbacks.publish(result.snapshot)
       this.callbacks.onRecovery?.(performance.now() - started)
-      this.backoff = 1000
+      // A successful fetch that still needs another retry (unresolved gap,
+      // a concurrent recover() bumping the version) is not quiescence --
+      // back off the same as a failed fetch, so a persistently unresolved
+      // staleness reason can't sustain a steady ~1-second poll forever.
+      this.backoff = this.required ? Math.min(this.backoff * 2, 30_000) : 1000
     }).catch(error => {
       if (this.stopped) return
       this.required = true

@@ -29,10 +29,13 @@ export function unrealizedPnl(position: Position, price: number | null, brokerag
   if (position.side === 'FLAT' || !position.quantity) return 0
   if (price === null || !Number.isFinite(price) || price <= 0) return null
   const value = price * position.quantity
-  const exitFees = position.side === 'LONG'
-    ? value * 0.0625 / 100 + 1.18 * (0.06 / 100) * value : value * 0.006803 / 100
+  // Fee rates must stay aligned with backend/app/services/trading.py:compute_commission.
+  // LONG exit sells (STT 0.15%), SHORT exit buys (stamp duty 0.003%); both add txn 0.03553%,
+  // SEBI 0.0001%, and GST 18% on (charges + brokerage).
+  const exitRate = position.side === 'LONG' ? (0.15 + 1.18 * 0.03563) / 100 : (0.003 + 1.18 * 0.03563) / 100
+  const exitFees = value * exitRate + 1.18 * brokerage
   return (position.side === 'LONG' ? 1 : -1) * position.quantity * (price - position.avg_entry_price)
-    - (position.entry_commission ?? 0) - exitFees - brokerage
+    - (position.entry_commission ?? 0) - exitFees
 }
 
 export interface PositionClock { version: number; generation: string | null; retired: string[] }
