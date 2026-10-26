@@ -2450,7 +2450,7 @@ export function KLineChart({
               </button>
               {indicatorsMenuOpen && (
                 <div className="chart-dropdown-menu">
-                  {["EMA", "PositionPnL"].map((name) => (
+                  {["MA", "PositionPnL"].map((name) => (
                     <label key={name}>
                       <input
                         type="checkbox"
