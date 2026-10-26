@@ -14,7 +14,7 @@ import {
   announceDrawingChange as localAnnounce,
   watchDrawingChanges as localWatch,
 } from "./drawingEvents";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDismissMessage } from "./useDismissMessage";
 import {
   dispose,
@@ -336,7 +336,7 @@ export function KLineChart({
   interval,
   supportedIntervals,
   onIntervalChange,
-  candles = demo,
+  candles: rawCandles = demo,
   loadOlder,
   viewportResetKey,
   loading,
@@ -498,8 +498,14 @@ export function KLineChart({
 }) {
   // Defend against malformed/partial candle data from a mid-flight refresh or
   // reconnect; every downstream effect assumes every entry has a timestamp.
-  candles = candles.filter(
-    (c): c is Candle => Boolean(c) && Number.isFinite(c.timestamp),
+  // Memoized so effects keyed on the `candles` reference (not just its
+  // content) don't re-run on every render.
+  const candles = useMemo(
+    () =>
+      rawCandles.filter(
+        (c): c is Candle => Boolean(c) && Number.isFinite(c.timestamp),
+      ),
+    [rawCandles],
   );
   const announceDrawingChange = drawingEvents?.announce ?? localAnnounce;
   const watchDrawingChanges = drawingEvents?.watch ?? localWatch;
