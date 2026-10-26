@@ -23,8 +23,8 @@ const recalcPaperPnl = (previous: DesktopTradingSnapshot, next: DesktopTradingSn
     if (!position || position.side === 'FLAT' || position.quantity <= 0 || price <= 0) return 0
     const direction = position.side === 'LONG' ? 1 : -1
     // Match trading.compute_commission: closing a long sells, closing a short buys.
-    const rate = direction === 1 ? (0.0625 + 1.18 * 0.06) / 100 : 0.006803 / 100
-    const exitCommission = Math.round((price * position.quantity * rate + (next.session.brokerage_per_order ?? 1)) * 10000) / 10000
+    const rate = direction === 1 ? (0.15 + 1.18 * 0.03563) / 100 : (0.003 + 1.18 * 0.03563) / 100
+    const exitCommission = Math.round((price * position.quantity * rate + 1.18 * (next.session.brokerage_per_order ?? 1)) * 10000) / 10000
     return round((price - position.avg_entry_price) * position.quantity * direction - position.entry_commission - exitCommission)
   }
   const contracts: Record<string, number> = {}

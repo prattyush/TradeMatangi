@@ -80,7 +80,7 @@ def require_entry_allowed(session, side, quantity, right=None, strike=None, expi
         raise HTTPException(409, 'Real entries are paused or recovering; existing positions remain manageable')
     if not pure_exit:
         from app.services.real_close import unresolved
-        if unresolved(session):
+        if unresolved(session, (right, strike, expiry)):
             raise HTTPException(409, 'A Real broker operation is unconfirmed; reconcile before submitting new entries')
         from app.services.real_funding import require_entry
         require_entry(session)

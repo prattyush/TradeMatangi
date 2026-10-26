@@ -33,18 +33,18 @@ describe('position P&L levels', () => {
     expect(first.find(level => level.key === '1')?.price).not.toBe(scaled.find(level => level.key === '1')?.price)
   })
 
-  it('includes entry charges, exit STT and exchange charges, and brokerage', () => {
+  it('includes entry charges, exit statutory charges, and brokerage', () => {
     const long = { side: 'LONG' as const, quantity: 50, avg_entry_price: 200, entry_commission: 4 }
     const short = { ...long, side: 'SHORT' as const }
-    expect(projectedPositionPnl(long, 200, 2)).toBeCloseTo(-19.33, 4)
-    expect(projectedPositionPnl(short, 200, 2)).toBeCloseTo(-6.6803, 4)
+    expect(projectedPositionPnl(long, 200, 2)).toBeCloseTo(-25.5643, 4)
+    expect(projectedPositionPnl(short, 200, 2)).toBeCloseTo(-10.8643, 4)
   })
 
   it('projects total P&L at the target without double-counting the current position mark', () => {
     const position = { side: 'LONG' as const, quantity: 10, avg_entry_price: 100, entry_commission: 2 }
     const desktop = projectedTotalPnlPctAtTarget(position, 110, 120, 500, 10000, 1)
     const website = websiteTotalAtTarget(position, 110, 120, 500, 10000, 1)
-    expect(desktop).toBeCloseTo(5.974, 2)
+    expect(desktop).toBeCloseTo(5.965, 2)
     expect(website).toBe(desktop)
     expect(projectedTotalPnlPctAtTarget(position, 110, 120, 500, 0, 1)).toBeNull()
   })

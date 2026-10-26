@@ -25,7 +25,11 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
     from app.services.execution_price_service import reprice_trigger
     from app.services.simulation import _is_position_exit
     if getattr(session, "broker_refresh_events", None) is not None:
-        raise KotakError("Broker refresh is in progress; retry the edit shortly")
+        from app.services.real_broker_state import await_refresh_barrier
+        # Editing an open SL/LIMIT exit must go through; editing a pending
+        # new-position order stays gate-able, same split as placement/cancel.
+        if not _is_position_exit(session, order) or not await await_refresh_barrier(session):
+            raise KotakError("Broker refresh is in progress; retry the edit shortly")
     require_entry_allowed(session, order)
     previous = order_service.get_order(session.session_id, order.order_id)
     from app.services.order_split import ACTIVE

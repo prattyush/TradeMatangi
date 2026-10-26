@@ -167,6 +167,38 @@ async def test_buy_survives_next_day_holdings_and_restart(real_book, db, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_swing_refresh_barrier_opens_only_right_before_commit(real_book, db, monkeypatch):
+    """A swing refresh must not block manual broker-bound order actions for
+    its whole fetch+build+verify duration -- only the brief commit window,
+    matching the intraday real_broker_state.refresh() fix."""
+    child, broker, _current = real_book
+    bundle = SimpleNamespace(
+        orders=[],
+        executions=[execution()],
+        positions=[
+            {"symbol": "HDFCBANK", "product": "CNC", "netQty": 10, "buyAvgPrc": 100}
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.kotak_reports.fetch", AsyncMock(return_value=bundle)
+    )
+    observed = []
+    real_stage = state.stage
+    def observing_stage(*args, **kwargs):
+        observed.append(("stage", getattr(child, "broker_refresh_events", None)))
+        return real_stage(*args, **kwargs)
+    monkeypatch.setattr(state, "stage", observing_stage)
+    real_commit = swing_real.commit
+    def observing_commit(*args, **kwargs):
+        observed.append(("commit", getattr(child, "broker_refresh_events", None)))
+        return real_commit(*args, **kwargs)
+    monkeypatch.setattr(swing_real, "commit", observing_commit)
+    await swing_real.refresh(child)
+    assert observed == [("stage", None), ("commit", [])]
+    assert child.broker_refresh_events is None
+
+
+@pytest.mark.asyncio
 async def test_gap_preserves_previous_revision(real_book, monkeypatch):
     child, _broker, _current = real_book
     bundle = SimpleNamespace(

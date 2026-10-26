@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::{
     fs,
     path::PathBuf,
@@ -1168,8 +1168,26 @@ async fn desktop_drawing_request(
         path.trim_start_matches('/')
     );
     let client = if is_screen_request {
-        reqwest::Client::builder().timeout(Duration::from_secs(4)).build().map_err(|e| e.to_string())?
-    } else { reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())? };
+        static SCREEN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+        SCREEN_CLIENT
+            .get_or_init(|| {
+                reqwest::Client::builder()
+                    .timeout(Duration::from_secs(4))
+                    .build()
+                    .expect("failed to build screen reqwest client")
+            })
+            .clone()
+    } else {
+        static TRADING_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+        TRADING_CLIENT
+            .get_or_init(|| {
+                reqwest::Client::builder()
+                    .timeout(Duration::from_secs(30))
+                    .build()
+                    .expect("failed to build trading reqwest client")
+            })
+            .clone()
+    };
     let request = match method.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),

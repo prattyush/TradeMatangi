@@ -196,7 +196,10 @@ async def exit_all(session):
     if session.state not in (simulation.SimulationState.RUNNING, simulation.SimulationState.PAUSED):
         raise HTTPException(409, 'Session is not active')
     if session.session_type == 'real' and getattr(session, 'broker_refresh_events', None) is not None:
-        raise HTTPException(409, 'Broker refresh is in progress; retry shortly')
+        from app.services.real_broker_state import await_refresh_barrier
+        # "Exit All Now" is always exit-related; it must always reach the broker.
+        if not await await_refresh_barrier(session):
+            raise HTTPException(409, 'Broker refresh is in progress; retry shortly')
     lock = getattr(session, '_emergency_exit_lock', None)
     if lock is None:
         lock = session._emergency_exit_lock = asyncio.Lock()

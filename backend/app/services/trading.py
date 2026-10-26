@@ -131,19 +131,20 @@ def ensure_session(session_id: str) -> None:
 
 def compute_commission(side: TradeSide, price: float, quantity: int, brokerage_per_order: float = 1.0) -> float:
     """
-    Compute total commission for one order.
+    Compute total commission for one options order (NSE statutory charges).
 
-    Exchange charges (ICICI Direct / Indian markets):
-      BUY:  STT 0.006803% of order value
-      SELL: STT 0.0625% + (exchange txn charge 0.06% × 1.18 GST) of order value
-    Plus flat brokerage per order.
+    BUY:  stamp duty 0.003% of premium turnover
+    SELL: STT 0.15% of premium
+    Both: exchange transaction charge 0.03553% of premium, SEBI turnover fee 0.0001%,
+          GST 18% on (brokerage + transaction charge + SEBI fee), plus flat brokerage per order.
     """
     total_value = price * quantity
-    if side == TradeSide.BUY:
-        charges = total_value * 0.006803 / 100
-    else:
-        charges = total_value * 0.0625 / 100 + 1.18 * (0.06 / 100) * total_value
-    return round(charges + brokerage_per_order, 4)
+    brokerage = brokerage_per_order
+    txn = total_value * 0.03553 / 100
+    sebi = total_value * 0.0001 / 100
+    gst = 0.18 * (brokerage + txn + sebi)
+    statutory = total_value * (0.003 if side == TradeSide.BUY else 0.15) / 100
+    return round(statutory + txn + sebi + gst + brokerage, 4)
 
 
 def _write_trade_to_db(trade: Trade) -> None:
