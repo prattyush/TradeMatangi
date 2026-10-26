@@ -50,7 +50,6 @@ const defaults = {
   movingAverageType: "MA" as const,
   movingAveragePeriods: "9,21",
   showChartInfo: true,
-  websiteShowMovingAverage: undefined as boolean | undefined,
   horizontalLineColor: "#facc15",
   horizontalLineWidth: 2,
   trendLineColor: "#60a5fa",
@@ -97,20 +96,32 @@ export default function WebsiteKLineChart(
   const [catalogue, setCatalogue] = useState<SymbolInfo[]>([]);
   useEffect(() => {
     let active = true;
-    const request = catalogueRequest ?? (catalogueRequest = api.getSymbols().catch(error => { catalogueRequest = undefined; throw error; }));
-    void request
-      .then((value) => {
-        if (active && Array.isArray(value)) setCatalogue(value);
-        else if (active)
-          reportError(
-            new Error(
-              "Instrument catalogue is unavailable; retry chart data or change renderer in Settings",
-            ),
-          );
-      })
-      .catch(reportError);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = 1000;
+    const attempt = () => {
+      const request = catalogueRequest ?? (catalogueRequest = api.getSymbols().catch(error => { catalogueRequest = undefined; throw error; }));
+      void request
+        .then((value) => {
+          if (!active) return;
+          if (Array.isArray(value)) setCatalogue(value);
+          else
+            reportError(
+              new Error(
+                "Instrument catalogue is unavailable; retry chart data or change renderer in Settings",
+              ),
+            );
+        })
+        .catch((error) => {
+          if (!active) return;
+          reportError(error);
+          delay = Math.min(delay * 2, 30000);
+          timer = setTimeout(() => { if (active) attempt(); }, delay);
+        });
+    };
+    attempt();
     return () => {
       active = false;
+      if (timer) clearTimeout(timer);
     };
   }, [refresh]);
   const [settings, setSettings] = useState(defaults),
@@ -141,6 +152,14 @@ export default function WebsiteKLineChart(
   const [command, setCommand] = useState<{ id: number; tool: string } | null>(
     null,
   );
+  const toggleIndicator = useCallback((name: string) => {
+    setIndicators((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    );
+  }, []);
+  const selectDrawingTool = useCallback((tool: string) => {
+    setCommand({ id: ++sequence.current, tool });
+  }, []);
   const [action, setAction] = useState<{
     id: number;
     action: "delete" | "hide" | "lock";
@@ -162,7 +181,6 @@ export default function WebsiteKLineChart(
     const apply = (next: Partial<typeof defaults> = {}) => {
       if (!active || rendererAccountKey() !== owner) return;
       setSettings({ ...defaults, ...next });
-      if (typeof next.websiteShowMovingAverage === "boolean") setIndicators(previous => next.websiteShowMovingAverage ? [...new Set([...previous, "MA"])] : previous.filter(name => name !== "MA"));
     };
     const onChange = (event: Event) => {
       const detail = (event as CustomEvent).detail;
@@ -331,9 +349,7 @@ export default function WebsiteKLineChart(
                   }
                   aria-label={t.label}
                   disabled={!rows.length || loading || !!props.onPriceSelect}
-                  onClick={() =>
-                    setCommand({ id: ++sequence.current, tool: t.tool })
-                  }
+                  onClick={() => selectDrawingTool(t.tool)}
                 >
                   {t.icon}
                 </button>
@@ -358,13 +374,7 @@ export default function WebsiteKLineChart(
               <button
                 key={name}
                 aria-pressed={indicators.includes(name)}
-                onClick={() =>
-                  setIndicators((prev) =>
-                    prev.includes(name)
-                      ? prev.filter((n) => n !== name)
-                      : [...prev, name],
-                  )
-                }
+                onClick={() => toggleIndicator(name)}
               >
                 {indicatorLabel(name)}
               </button>
@@ -397,41 +407,6 @@ export default function WebsiteKLineChart(
     );
   return (
     <div className="website-kline" style={{ height: props.height ?? 350 }}>
-      <div className="website-kline-controls">
-        {!sharedTools && <button
-          aria-label="Toggle drawing and indicator tools"
-          aria-expanded={!collapsed}
-          onClick={() => setCollapsed((v) => !v)}
-        >
-          ✎
-        </button>}
-        <button
-          aria-label="Refresh chart and drawings"
-          title="Refresh chart and drawings"
-          disabled={busy}
-          onClick={() => {
-            props.retained.current.clear();
-            setRefresh((v) => v + 1);
-            props.onManualRefresh?.();
-          }}
-        >
-          ↻
-        </button>
-        {props.onMaximize && (
-          <button
-            title={props.isMaximized ? "Restore chart" : "Maximize chart"}
-            onClick={props.onMaximize}
-          >
-            ⛶
-          </button>
-        )}
-        {props.swapTargets?.map((t) => (
-          <button key={t.dir} title="Move chart" onClick={t.onClick}>
-            {t.dir}
-          </button>
-        ))}
-        {busy && <span role="status">Updating…</span>}
-      </div>
       {message && rows.length > 0 && (
         <div role="status" className="website-kline-error">
           {message}
@@ -504,12 +479,23 @@ export default function WebsiteKLineChart(
           baseUrl={BACKEND_URL}
           drawingRequest={drawingRequest}
           onDrawingError={reportError}
-          hideWindowActions
+          hideInstrumentPicker
+          hideMaximizeButton={!props.onMaximize}
           onConfigure={() => {}}
           onMaximize={() => props.onMaximize?.()}
           maximized={props.isMaximized ?? false}
           active={props.isActive ?? true}
           onActivate={() => props.onActivate?.()}
+          onTogglePanel={!sharedTools ? () => setCollapsed((v) => !v) : undefined}
+          onToggleIndicator={toggleIndicator}
+          onSelectDrawingTool={selectDrawingTool}
+          onReload={() => {
+            props.retained.current.clear();
+            setRefresh((v) => v + 1);
+            props.onManualRefresh?.();
+          }}
+          busy={busy}
+          swapTargets={props.swapTargets?.map((t) => ({ ...t, label: "Move chart" }))}
           indicators={indicators}
           drawingCommand={command}
           drawingAction={action}

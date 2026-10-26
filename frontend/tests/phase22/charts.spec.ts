@@ -405,7 +405,7 @@ test("website Day markers show the open cycle and can reveal closed cycles", asy
     );
   await expect.poll(markerCount).toBe(1);
   await page
-    .getByRole("button", { name: "Show closed trade markers", exact: true })
+    .getByRole("button", { name: "All markers", exact: true })
     .click();
   await expect.poll(markerCount).toBe(3);
   expect(
@@ -748,7 +748,8 @@ test('website appearance settings apply two moving averages and hide symbol/OHLC
   await page.waitForSelector('.website-kline canvas');
   await page.evaluate(() => (window as any).setProps({appearanceUI:true}));
   await expect(page.getByRole('button',{name:'Save chart appearance'})).toBeEnabled();
-  await page.getByLabel('Show moving averages on website charts').check();
+  await page.getByRole('button',{name:'Toggle drawing and indicator tools'}).click();
+  await page.getByRole('button',{name:'MA',exact:true}).click();
   await page.getByLabel('KLine moving average type',{exact:true}).selectOption('EMA');
   await page.getByLabel('KLine moving average periods',{exact:true}).fill('9,21');
   await page.getByLabel('Show symbol and OHLC values').uncheck();

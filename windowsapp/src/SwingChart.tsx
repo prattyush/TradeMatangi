@@ -151,7 +151,8 @@ export default function SwingChart(
         candleAnchorSeconds={pane.interval === "1D" ? 0 : 33300}
         showHistoricalMarkers={props.showHistoricalTrades}
         externalTradeMarkers={props.showHistoricalTrades === true}
-        hideWindowActions
+        hideInstrumentPicker
+        hideMaximizeButton
         readOnlyOrders
         symbol={pane.symbol}
         interval={

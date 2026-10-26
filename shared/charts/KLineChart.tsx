@@ -37,6 +37,7 @@ import { buildTradeMarkers } from "./tradeMarkers";
 import { targetProfitLabel, targetProfitLinePrice } from "./targetProfitLabel";
 import { positionPnlLevels, type PositionPnlLevel } from "./positionPnlLevels";
 import { TradingOverlayRegistry } from "./tradingOverlays";
+import { drawingTools, indicatorLabel } from "./catalogue";
 
 interface ChartSettings {
   background: string;
@@ -323,7 +324,13 @@ export function KLineChart({
   legacyDrawingScope,
   drawingScope,
   candleAnchorSeconds = 0,
-  hideWindowActions = false,
+  hideInstrumentPicker = false,
+  hideMaximizeButton = false,
+  onTogglePanel,
+  onToggleIndicator,
+  onSelectDrawingTool,
+  onReload,
+  busy = false,
   readOnlyOrders = false,
   symbol,
   interval,
@@ -401,7 +408,13 @@ export function KLineChart({
   legacyDrawingScope?: string;
   drawingScope?: string;
   candleAnchorSeconds?: number;
-  hideWindowActions?: boolean;
+  hideInstrumentPicker?: boolean;
+  hideMaximizeButton?: boolean;
+  onTogglePanel?: () => void;
+  onToggleIndicator?: (name: string) => void;
+  onSelectDrawingTool?: (tool: string) => void;
+  onReload?: () => void;
+  busy?: boolean;
   readOnlyOrders?: boolean;
   symbol: string;
   interval: string;
@@ -492,6 +505,45 @@ export function KLineChart({
   const [historicalMarkersVisible, setHistoricalMarkersVisible] = useState(
     showHistoricalMarkers,
   );
+  const [indicatorsMenuOpen, setIndicatorsMenuOpen] = useState(false);
+  const [drawMenuOpen, setDrawMenuOpen] = useState(false);
+  const [intervalMenuOpen, setIntervalMenuOpen] = useState(false);
+  const indicatorsMenuRef = useRef<HTMLSpanElement>(null);
+  const drawMenuRef = useRef<HTMLSpanElement>(null);
+  const intervalMenuRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!indicatorsMenuOpen) return;
+    const close = (event: MouseEvent) => {
+      if (
+        indicatorsMenuRef.current &&
+        !indicatorsMenuRef.current.contains(event.target as Node)
+      )
+        setIndicatorsMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [indicatorsMenuOpen]);
+  useEffect(() => {
+    if (!drawMenuOpen) return;
+    const close = (event: MouseEvent) => {
+      if (drawMenuRef.current && !drawMenuRef.current.contains(event.target as Node))
+        setDrawMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [drawMenuOpen]);
+  useEffect(() => {
+    if (!intervalMenuOpen) return;
+    const close = (event: MouseEvent) => {
+      if (
+        intervalMenuRef.current &&
+        !intervalMenuRef.current.contains(event.target as Node)
+      )
+        setIntervalMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [intervalMenuOpen]);
   const strategySavesRef = useRef(new Set<string>());
   const chartRef = useRef<Chart | null>(null);
   const positionLevelFallbackRef = useRef<{
@@ -2365,26 +2417,165 @@ export function KLineChart({
     >
       <div className="chart-head">
         <span>
-          {tradingSettings?.desktop_hide_chart_labels ? "" : `${symbol} · `}
-          {supportedIntervals.length ? (
-            <select
-              className="interval-picker"
-              value={interval.replace("m", "")}
-              onChange={(event) => onIntervalChange(event.target.value)}
-              aria-label="Candle interval"
-            >
-              {supportedIntervals.map((value) => (
-                <option key={value} value={value}>
-                  {value}m
-                </option>
-              ))}
-            </select>
-          ) : (
-            <strong>{interval}</strong>
-          )}
-          {tradingSettings?.desktop_hide_chart_labels ? "" : " · IST"}
+          {tradingSettings?.desktop_hide_chart_labels
+            ? ""
+            : supportedIntervals.length
+              ? `${symbol} · IST`
+              : `${symbol} · `}
+          {supportedIntervals.length ? null : <strong>{interval}</strong>}
+          {tradingSettings?.desktop_hide_chart_labels || supportedIntervals.length
+            ? ""
+            : " · IST"}
         </span>
         <span className="chart-actions">
+          {onTogglePanel && (
+            <button
+              className="icon-button"
+              title="Toggle drawing and indicator tools"
+              aria-label="Toggle drawing and indicator tools"
+              onClick={onTogglePanel}
+            >
+              ✎
+            </button>
+          )}
+          {onToggleIndicator && (
+            <span className="chart-dropdown" ref={indicatorsMenuRef}>
+              <button
+                className="dropdown-toggle"
+                aria-haspopup="true"
+                aria-expanded={indicatorsMenuOpen}
+                onClick={() => setIndicatorsMenuOpen((v) => !v)}
+              >
+                Indicators ▾
+              </button>
+              {indicatorsMenuOpen && (
+                <div className="chart-dropdown-menu">
+                  {["EMA", "PositionPnL"].map((name) => (
+                    <label key={name}>
+                      <input
+                        type="checkbox"
+                        checked={indicators.includes(name)}
+                        onChange={() => onToggleIndicator(name)}
+                      />
+                      {indicatorLabel(name)}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </span>
+          )}
+          {onSelectDrawingTool && (
+            <span className="chart-dropdown" ref={drawMenuRef}>
+              <button
+                className="dropdown-toggle"
+                aria-haspopup="true"
+                aria-expanded={drawMenuOpen}
+                onClick={() => setDrawMenuOpen((v) => !v)}
+              >
+                Draw ▾
+              </button>
+              {drawMenuOpen && (
+                <div className="chart-dropdown-menu">
+                  {drawingTools
+                    .filter((t) => t.tool === "Horizontal" || t.tool === "Trend")
+                    .map((t) => (
+                      <button
+                        key={t.tool}
+                        onClick={() => {
+                          onSelectDrawingTool(t.tool);
+                          setDrawMenuOpen(false);
+                        }}
+                      >
+                        {t.icon} {t.label}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </span>
+          )}
+          {supportedIntervals.length > 0 && (
+            <span className="chart-dropdown" ref={intervalMenuRef}>
+              <button
+                className="dropdown-toggle"
+                aria-haspopup="listbox"
+                aria-expanded={intervalMenuOpen}
+                aria-label="Candle interval"
+                onClick={() => setIntervalMenuOpen((v) => !v)}
+              >
+                {interval} ▾
+              </button>
+              {intervalMenuOpen && (
+                <div className="chart-dropdown-menu" role="listbox">
+                  {supportedIntervals.map((value) => (
+                    <button
+                      key={value}
+                      role="option"
+                      aria-selected={interval.replace("m", "") === String(value)}
+                      onClick={() => {
+                        onIntervalChange(String(value));
+                        setIntervalMenuOpen(false);
+                      }}
+                    >
+                      {value}m
+                    </button>
+                  ))}
+                </div>
+              )}
+            </span>
+          )}
+          {onReload && (
+            <button
+              className="icon-button"
+              title="Refresh chart and drawings"
+              aria-label="Refresh chart and drawings"
+              disabled={busy}
+              onClick={onReload}
+            >
+              ↻
+            </button>
+          )}
+          <button
+            className="icon-button"
+            title="Fit data to chart"
+            aria-label="Fit data to chart"
+            onClick={fitChart}
+          >
+            ⤧
+          </button>
+          {swapButtons}
+          {!externalTradeMarkers && (
+            <button
+              title="All markers"
+              aria-label="All markers"
+              aria-pressed={historicalMarkersVisible}
+              onClick={() => {
+                setHistoricalMarkersVisible((value) => !value);
+                onToggleHistoricalMarkers?.();
+              }}
+            >
+              All markers
+            </button>
+          )}
+          {!hideMaximizeButton && (
+            <button
+              className="icon-button"
+              title={maximized ? "Restore chart" : "Maximize chart"}
+              aria-label={maximized ? "Restore chart" : "Maximize chart"}
+              onClick={onMaximize}
+            >
+              {maximized ? "⊡" : "⛶"}
+            </button>
+          )}
+          {!hideInstrumentPicker && (
+            <button
+              className="icon-button"
+              title="Choose instrument"
+              aria-label="Choose instrument"
+              onClick={onConfigure}
+            >
+              ⌕
+            </button>
+          )}
           <ChartMenuButton chart={element} visible={tradingEnabled || Boolean(onSwingChartContext)} />
           {pricePickAction && (
             <span className="candle-close">
@@ -2420,56 +2611,7 @@ export function KLineChart({
               </button>
             ) : null;
           })}
-          {swapButtons}
-          <button
-            className="icon-button"
-            title="Fit data to chart"
-            aria-label="Fit data to chart"
-            onClick={fitChart}
-          >
-            ⤧
-          </button>
-          {!externalTradeMarkers && (
-            <button
-              className="icon-button"
-              title={
-                historicalMarkersVisible
-                  ? "Hide closed trade markers"
-                  : "Show closed trade markers"
-              }
-              aria-label={
-                historicalMarkersVisible
-                  ? "Hide closed trade markers"
-                  : "Show closed trade markers"
-              }
-              onClick={() => {
-                setHistoricalMarkersVisible((value) => !value);
-                onToggleHistoricalMarkers?.();
-              }}
-            >
-              ◎
-            </button>
-          )}
-          {!hideWindowActions && (
-            <>
-              <button
-                className="icon-button"
-                title="Choose instrument"
-                aria-label="Choose instrument"
-                onClick={onConfigure}
-              >
-                ⌕
-              </button>
-              <button
-                className="icon-button"
-                title={maximized ? "Restore chart" : "Maximize chart"}
-                aria-label={maximized ? "Restore chart" : "Maximize chart"}
-                onClick={onMaximize}
-              >
-                {maximized ? "⊡" : "⛶"}
-              </button>
-            </>
-          )}
+          {busy && <span role="status" className="candle-close">Updating…</span>}
         </span>
       </div>
       <div className="kline-container">

@@ -44,7 +44,6 @@ export default function WebsiteChartAppearanceSettings() {
       const saved = await requestChartAppearance({ ...latest,
         movingAverageType: draft.movingAverageType ?? 'MA', movingAveragePeriods: periods.join(','),
         showChartInfo: draft.showChartInfo !== false,
-        websiteShowMovingAverage: draft.websiteShowMovingAverage === true,
       });
       if (owner !== rendererAccountKey()) return;
       setDraft(saved); setMessage('Chart appearance saved.');
@@ -54,7 +53,6 @@ export default function WebsiteChartAppearanceSettings() {
   }
   return <><fieldset disabled={!draft || busy} style={{ border: '1px solid #30363d', borderRadius: 6, padding: 12, marginBottom: 16 }}>
     <legend>KLine chart appearance</legend>
-    <label style={{ display: 'block', marginBottom: 8 }}><input type="checkbox" checked={draft?.websiteShowMovingAverage === true} onChange={event => setDraft(prev => ({ ...prev, websiteShowMovingAverage: event.target.checked }))} /> Show moving averages on website charts</label>
     <label style={{ display: 'block', marginBottom: 8 }}>Moving average <select aria-label="KLine moving average type" value={String(draft?.movingAverageType ?? 'MA')} onChange={event => setDraft(prev => ({ ...prev, movingAverageType: event.target.value }))}><option value="MA">Simple MA</option><option value="EMA">Exponential MA</option></select></label>
     <label style={{ display: 'block', marginBottom: 8 }}>MA/EMA periods <input aria-label="KLine moving average periods" value={String(draft?.movingAveragePeriods ?? '9,21')} onChange={event => setDraft(prev => ({ ...prev, movingAveragePeriods: event.target.value }))} placeholder="9,21" /></label>
     <label style={{ display: 'block', marginBottom: 8 }}><input type="checkbox" checked={draft?.showChartInfo !== false} onChange={event => setDraft(prev => ({ ...prev, showChartInfo: event.target.checked }))} /> Show symbol and OHLC values</label>
