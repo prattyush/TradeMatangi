@@ -496,6 +496,11 @@ export function KLineChart({
   ) => void;
   swapTargets?: TileSwap[];
 }) {
+  // Defend against malformed/partial candle data from a mid-flight refresh or
+  // reconnect; every downstream effect assumes every entry has a timestamp.
+  candles = candles.filter(
+    (c): c is Candle => Boolean(c) && Number.isFinite(c.timestamp),
+  );
   const announceDrawingChange = drawingEvents?.announce ?? localAnnounce;
   const watchDrawingChanges = drawingEvents?.watch ?? localWatch;
   const pendingEdits = usePendingOrderEdits();
