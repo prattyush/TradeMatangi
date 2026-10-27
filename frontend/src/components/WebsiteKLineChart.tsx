@@ -40,6 +40,9 @@ import type {
 } from "../../../windowsapp/src/contracts";
 import "../../../shared/charts/websiteKLine.css";
 let catalogueRequest: Promise<SymbolInfo[]> | undefined;
+// Stable sentinel: avoids a fresh [] (and the KLineChart effect re-runs that
+// come with it) every render when props.openOrders is absent.
+const EMPTY_ORDERS: DesktopOrder[] = [];
 const defaults = {
   background: "#0d1117",
   textColor: "#c9d1d9",
@@ -198,35 +201,47 @@ export default function WebsiteKLineChart(
     };
   }, []);
   const symbolInfo = catalogue.find((s) => s.symbol === props.symbol);
-  const instrument =
-    props.paneType === "options"
-      ? {
-          kind: "option",
-          underlying: props.symbol,
-          exchange: props.swingChart
-            ? props.symbol === "BSESEN"
-              ? "BFO"
-              : "NFO"
-            : props.symbol === "BSESEN"
-              ? "BSE"
-              : "NSE",
-          right: props.right,
-          strike: props.strike,
-          expiry: props.expiry,
-        }
-      : props.paneType === "futures"
+  const instrument = useMemo(
+    () =>
+      props.paneType === "options"
         ? {
-            kind: "future",
+            kind: "option",
             underlying: props.symbol,
-            exchange: props.symbol === "BSESEN" ? "BFO" : "NFO",
+            exchange: props.swingChart
+              ? props.symbol === "BSESEN"
+                ? "BFO"
+                : "NFO"
+              : props.symbol === "BSESEN"
+                ? "BSE"
+                : "NSE",
+            right: props.right,
+            strike: props.strike,
             expiry: props.expiry,
           }
-        : {
-            kind: props.chartKind ?? symbolInfo?.chart_type ?? "equity",
-            symbol: props.symbol,
-            exchange: props.symbol === "BSESEN" ? "BSE" : "NSE",
-          };
-  const dragOrder = async (order: DesktopOrder, price: number) => {
+        : props.paneType === "futures"
+          ? {
+              kind: "future",
+              underlying: props.symbol,
+              exchange: props.symbol === "BSESEN" ? "BFO" : "NFO",
+              expiry: props.expiry,
+            }
+          : {
+              kind: props.chartKind ?? symbolInfo?.chart_type ?? "equity",
+              symbol: props.symbol,
+              exchange: props.symbol === "BSESEN" ? "BSE" : "NSE",
+            },
+    [
+      props.paneType,
+      props.symbol,
+      props.swingChart,
+      props.right,
+      props.strike,
+      props.expiry,
+      props.chartKind,
+      symbolInfo?.chart_type,
+    ],
+  );
+  const dragOrder = useCallback(async (order: DesktopOrder, price: number) => {
     if (busy || !current.current.onOrderDrag) return;
     if (pendingOrderEdits.get(order.session_id, order.order_id)) {
       reportError(
@@ -275,7 +290,7 @@ export default function WebsiteKLineChart(
       setBusy(false);
       endActivity();
     }
-  };
+  }, [busy, props.realTrading, reportError]);
   const convertedCandles = useMemo(
     () => rows.map((c) => ({ ...c, timestamp: c.time })),
     [rows],
@@ -291,27 +306,57 @@ export default function WebsiteKLineChart(
     })) as unknown as DesktopTrade[];
   }, [props.trades]);
   const position = props.position ?? null;
-  const strategies = (props.targetProfitStrategies ?? []).filter(
-    (s) =>
-      s.symbol === props.symbol &&
-      s.status === "RUNNING" &&
-      (!s.expiry ||
-        s.expiry === props.expiry ||
-        props.paneType !== "options") &&
-      (s.strike == null ||
-        props.paneType !== "options" ||
-        s.strike === props.strike) &&
-      props.strategyPaneActive &&
-      (["UnderlyingTargetProfit", "UnderlyingStoploss"].includes(
-        s.strategy_type,
-      )
-        ? props.paneType !== "options"
-        : (s.right ?? null) === (props.right ?? null)),
+  const strategies = useMemo(
+    () =>
+      (props.targetProfitStrategies ?? []).filter(
+        (s) =>
+          s.symbol === props.symbol &&
+          s.status === "RUNNING" &&
+          (!s.expiry ||
+            s.expiry === props.expiry ||
+            props.paneType !== "options") &&
+          (s.strike == null ||
+            props.paneType !== "options" ||
+            s.strike === props.strike) &&
+          props.strategyPaneActive &&
+          (["UnderlyingTargetProfit", "UnderlyingStoploss"].includes(
+            s.strategy_type,
+          )
+            ? props.paneType !== "options"
+            : (s.right ?? null) === (props.right ?? null)),
+      ),
+    [
+      props.targetProfitStrategies,
+      props.symbol,
+      props.expiry,
+      props.paneType,
+      props.strike,
+      props.strategyPaneActive,
+      props.right,
+    ],
   );
-  const chartSettings = {
-    desktop_hide_chart_labels: !settings.showChartInfo,
-    desktop_pnl_display_mode: props.pnlPctMode ? "percent" : "currency",
-  } as DesktopTradingSettings;
+  const chartSettings = useMemo(
+    () =>
+      ({
+        desktop_hide_chart_labels: !settings.showChartInfo,
+        desktop_pnl_display_mode: props.pnlPctMode ? "percent" : "currency",
+      }) as DesktopTradingSettings,
+    [settings.showChartInfo, props.pnlPctMode],
+  );
+  const pricePickAction = useMemo(
+    () => (props.onPriceSelect ? { label: props.pricePickLabel } : null),
+    [props.onPriceSelect, props.pricePickLabel],
+  );
+  const handleStrategyDrag = useCallback(
+    async (id: string, price: number) => {
+      try {
+        await props.onStrategyDrag!(id, price);
+      } catch (e) {
+        reportError(e);
+      }
+    },
+    [props.onStrategyDrag, reportError],
+  );
   const context = (price: number, x: number, y: number) =>
     props.onContextMenu?.(price, x, y, {
       paneType: props.paneType ?? "equity",
@@ -507,7 +552,7 @@ export default function WebsiteKLineChart(
           externalTradeMarkers={props.externalTradeMarkers}
           showHistoricalMarkers={props.defaultShowAllMarkers}
           trades={markerTrades}
-          openOrders={(props.openOrders ?? []) as DesktopOrder[]}
+          openOrders={(props.openOrders as DesktopOrder[] | undefined) ?? EMPTY_ORDERS}
           strategies={strategies as DesktopStrategy[]}
           position={position}
           authoritativePnl={props.pnl}
@@ -520,9 +565,7 @@ export default function WebsiteKLineChart(
           tradingSettings={chartSettings}
           readOnlyOrders
           tradingEnabled={!!props.onContextMenu || !!props.onPriceSelect}
-          pricePickAction={
-            props.onPriceSelect ? { label: props.pricePickLabel } : null
-          }
+          pricePickAction={pricePickAction}
           onPricePickCancel={props.onCancelPricePick}
           onPricePick={(price) => {
             if (Number.isFinite(price) && price > 0)
@@ -533,17 +576,7 @@ export default function WebsiteKLineChart(
             props.onOrderSelect as ((o: DesktopOrder) => void) | undefined
           }
           onOrderDrag={props.onOrderDrag ? dragOrder : undefined}
-          onStrategyDrag={
-            props.onStrategyDrag
-              ? async (id, price) => {
-                  try {
-                    await props.onStrategyDrag!(id, price);
-                  } catch (e) {
-                    reportError(e);
-                  }
-                }
-              : undefined
-          }
+          onStrategyDrag={props.onStrategyDrag ? handleStrategyDrag : undefined}
           onStrategyCancel={props.onStrategyCancel}
           onStrategyTargetProfitPct={props.onStrategyTargetProfitPct}
         />

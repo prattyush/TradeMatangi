@@ -14,7 +14,7 @@ import {
   announceDrawingChange as localAnnounce,
   watchDrawingChanges as localWatch,
 } from "./drawingEvents";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDismissMessage } from "./useDismissMessage";
 import {
   dispose,
@@ -113,6 +113,16 @@ const applyChartStyles = (chart: Chart, settings: ChartSettings) =>
     yAxis: { tickText: { color: settings.textColor } },
   });
 
+// Stable empty-array sentinels used as default-parameter values below.
+// A caller passing `undefined` for these props must not force a fresh []
+// allocation on every render (default-parameter expressions re-evaluate on
+// every call). Nothing in this file mutates these arrays in place, so
+// sharing one reference across every chart instance is safe.
+const EMPTY_TRADES: DesktopTrade[] = [];
+const EMPTY_ORDERS: DesktopOrder[] = [];
+const EMPTY_STRATEGIES: DesktopStrategy[] = [];
+const EMPTY_SWAP_TARGETS: TileSwap[] = [];
+
 const demo: Candle[] = [
   { timestamp: 1746522900, open: 23100, high: 23124, low: 23080, close: 23112 },
   { timestamp: 1746522960, open: 23112, high: 23140, low: 23101, close: 23132 },
@@ -204,6 +214,17 @@ interface FloatingLabel {
   y: number;
   text: string;
   color: string;
+}
+/** Data-space source for a floating label, re-projected to pixels on every
+ * geometryVersion bump without redoing the order/strategy rebuild that
+ * produced it. */
+interface LabelSource {
+  key: string;
+  timestamp: number;
+  value: number;
+  text: string;
+  color: string;
+  align: "left" | "right";
 }
 interface PersistedDrawing {
   tool: string;
@@ -359,9 +380,9 @@ export function KLineChart({
   drawingMode,
   onDrawingComplete,
   onActivate,
-  trades = [],
-  openOrders = [],
-  strategies = [],
+  trades = EMPTY_TRADES,
+  openOrders = EMPTY_ORDERS,
+  strategies = EMPTY_STRATEGIES,
   position = null,
   levelsPosition = null,
   brokeragePerOrder = 1,
@@ -393,7 +414,7 @@ export function KLineChart({
   onOrderConvertRequest,
   onOrderQuantityUpdate,
   onChartOrderAction,
-  swapTargets = [],
+  swapTargets = EMPTY_SWAP_TARGETS,
 }: {
   initialTimeRange?: { from: number; to: number };
   onTimeRangeChange?: (range: { from: number; to: number }) => void;
@@ -625,6 +646,63 @@ export function KLineChart({
   const [clock, setClock] = useState(() => Date.now());
   const indicatorKey = indicators.join("|");
   const tradingOverlaysRef = useRef(new TradingOverlayRegistry());
+  const labelSourcesRef = useRef<LabelSource[]>([]);
+  // A pure scroll/zoom only shifts pixel positions, never the underlying
+  // order/strategy data -- re-project the cached data-space sources instead
+  // of rebuilding them, so panning doesn't redo the order/strategy loop.
+  const positionLabels = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const width = element.current?.clientWidth ?? 0;
+    const next: FloatingLabel[] = [];
+    for (const source of labelSourcesRef.current) {
+      const converted = (chart as any).convertToPixel?.(
+        [{ timestamp: source.timestamp, value: source.value }],
+        { paneId: "candle_pane" },
+      );
+      const pixel = Array.isArray(converted) ? converted[0] : undefined;
+      if (!pixel || !Number.isFinite(pixel.x) || !Number.isFinite(pixel.y))
+        continue;
+      next.push({
+        key: source.key,
+        x: source.align === "right" ? Math.max(8, width - 122) : 8,
+        y: pixel.y,
+        text: source.text,
+        color: source.color,
+      });
+    }
+    setFloatingLabels(next);
+  }, []);
+  const pnlLabelSourceRef = useRef<{
+    timestamp: number;
+    value: number;
+    text: string;
+    color: string;
+  } | null>(null);
+  const positionPnlLabel = useCallback(() => {
+    const chart = chartRef.current;
+    const source = pnlLabelSourceRef.current;
+    if (!chart || !source) {
+      setPnlLabel(null);
+      return;
+    }
+    const converted = (chart as any).convertToPixel?.(
+      [{ timestamp: source.timestamp, value: source.value }],
+      { paneId: "candle_pane" },
+    );
+    const pixel = Array.isArray(converted) ? converted[0] : undefined;
+    if (pixel && Number.isFinite(pixel.x) && Number.isFinite(pixel.y)) {
+      setPnlLabel({
+        key: "position-pnl",
+        x: pixel.x,
+        y: Math.max(12, pixel.y - 24),
+        text: source.text,
+        color: source.color,
+      });
+    } else {
+      setPnlLabel(null);
+    }
+  }, []);
   const swingInteractions = useRef({ onOrderSelect, onSwingChartContext });
   swingInteractions.current = { onOrderSelect, onSwingChartContext };
   const swingDragPending = useRef(new Set<string>());
@@ -653,15 +731,25 @@ export function KLineChart({
   const tradingEnabledRef = useRef(tradingEnabled);
   const onChartOrderActionRef = useRef(onChartOrderAction);
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const { writeInstrument: drawingInstrument, readKeys: drawingReadKeys } =
-    drawingIdentity(
+  const {
+    drawingInstrument,
+    drawingInstrumentKey,
+    drawingReadKeys,
+    drawingReadSignature,
+  } = useMemo(() => {
+    const { writeInstrument, readKeys } = drawingIdentity(
       instrument,
       drawingScope,
       legacyDrawingScope,
       shareDayDrawings,
     );
-  const drawingInstrumentKey = canonicalInstrumentKey(drawingInstrument);
-  const drawingReadSignature = JSON.stringify(drawingReadKeys);
+    return {
+      drawingInstrument: writeInstrument,
+      drawingInstrumentKey: canonicalInstrumentKey(writeInstrument),
+      drawingReadKeys: readKeys,
+      drawingReadSignature: JSON.stringify(readKeys),
+    };
+  }, [instrument, drawingScope, legacyDrawingScope, shareDayDrawings]);
   const drawingContextRef = useRef(drawingInstrumentKey);
   drawingContextRef.current = drawingInstrumentKey;
   const previousDrawingContextRef = useRef(drawingInstrumentKey);
@@ -689,20 +777,24 @@ export function KLineChart({
     },
     [],
   );
-  const latestPositionFill = trades.reduce((latest, trade) => {
-    const matches =
-      instrument.kind === "future"
-        ? trade.instrument_type === "futures" &&
-          trade.symbol === instrument.underlying &&
-          trade.expiry === instrument.expiry
-        : instrument.kind === "option"
-          ? trade.symbol === instrument.underlying &&
-            trade.right === instrument.right &&
-            trade.strike === instrument.strike &&
-            (!trade.expiry || trade.expiry === instrument.expiry)
-          : trade.symbol === instrument.symbol && !trade.right;
-    return matches ? Math.max(latest, trade.timestamp) : latest;
-  }, 0);
+  const latestPositionFill = useMemo(
+    () =>
+      trades.reduce((latest, trade) => {
+        const matches =
+          instrument.kind === "future"
+            ? trade.instrument_type === "futures" &&
+              trade.symbol === instrument.underlying &&
+              trade.expiry === instrument.expiry
+            : instrument.kind === "option"
+              ? trade.symbol === instrument.underlying &&
+                trade.right === instrument.right &&
+                trade.strike === instrument.strike &&
+                (!trade.expiry || trade.expiry === instrument.expiry)
+              : trade.symbol === instrument.symbol && !trade.right;
+        return matches ? Math.max(latest, trade.timestamp) : latest;
+      }, 0),
+    [trades, instrument],
+  );
   useEffect(() => {
     drawingsRef.current = drawings;
   }, [drawings]);
@@ -1815,17 +1907,7 @@ export function KLineChart({
       (lastRendered?.timestamp ??
         lastCandle?.timestamp ??
         Math.floor(Date.now() / 1000)) * 1000;
-    const nextLabels: FloatingLabel[] = [];
-    const pointToPixel = (time: number, value: number) => {
-      const converted = (chart as any).convertToPixel?.(
-        [{ timestamp: time, value }],
-        { paneId: "candle_pane" },
-      );
-      const pixel = Array.isArray(converted) ? converted[0] : undefined;
-      return pixel && Number.isFinite(pixel.y) && Number.isFinite(pixel.x)
-        ? pixel
-        : undefined;
-    };
+    const nextLabelSources: LabelSource[] = [];
     for (const order of openOrders.filter(
       (item) => item.status === "PENDING",
     )) {
@@ -1845,15 +1927,14 @@ export function KLineChart({
         tradingSettings,
         sessionCapital,
       );
-      const pixel = pointToPixel(timestamp, price);
-      if (pixel && typeof pixel.y === "number")
-        nextLabels.push({
-          key: order.order_id,
-          x: Math.max(8, (element.current?.clientWidth ?? 0) - 122),
-          y: pixel.y,
-          text: label,
-          color,
-        });
+      nextLabelSources.push({
+        key: order.order_id,
+        timestamp,
+        value: price,
+        text: label,
+        color,
+        align: "right",
+      });
       if (pendingEdit) {
         const proposedKey = `pending:${order.order_id}`;
         retained.add(proposedKey);
@@ -1871,18 +1952,14 @@ export function KLineChart({
             },
           },
         });
-        const proposedPixel = pointToPixel(
+        nextLabelSources.push({
+          key: proposedKey,
           timestamp,
-          pendingEdit.requestedPrice,
-        );
-        if (proposedPixel)
-          nextLabels.push({
-            key: proposedKey,
-            x: 8,
-            y: proposedPixel.y,
-            text: `${pendingEdit.requestedPrice.toFixed(2)} · ${pendingEdit.message}`,
-            color: "#fbbf24",
-          });
+          value: pendingEdit.requestedPrice,
+          text: `${pendingEdit.requestedPrice.toFixed(2)} · ${pendingEdit.message}`,
+          color: "#fbbf24",
+          align: "left",
+        });
       }
       const overlayKey = `order:${order.order_id}`;
       retained.add(overlayKey);
@@ -2026,16 +2103,14 @@ export function KLineChart({
         brokeragePerOrder,
       );
       if (projectedLabel) {
-        const pixel = pointToPixel(timestamp, price);
-        if (pixel && typeof pixel.y === "number") {
-          nextLabels.push({
-            key: strategy.strategy_id,
-            x: 8,
-            y: pixel.y,
-            text: projectedLabel,
-            color: projectedLabel.startsWith("TP -") ? "#ef4444" : "#22c55e",
-          });
-        }
+        nextLabelSources.push({
+          key: strategy.strategy_id,
+          timestamp,
+          value: price,
+          text: projectedLabel,
+          color: projectedLabel.startsWith("TP -") ? "#ef4444" : "#22c55e",
+          align: "left",
+        });
       }
       const overlayKey = `strategy:${strategy.strategy_id}`;
       retained.add(overlayKey);
@@ -2149,7 +2224,8 @@ export function KLineChart({
         removed_at_ms: Date.now(),
         renderer_time_ms: performance.now(),
       });
-    setFloatingLabels(nextLabels);
+    labelSourcesRef.current = nextLabelSources;
+    positionLabels();
   }, [
     openOrders,
     strategies,
@@ -2170,20 +2246,24 @@ export function KLineChart({
     onStrategyDrag,
     pendingRevision,
     pendingStrategyIds,
-    geometryVersion,
     pricePickAction,
+    positionLabels,
   ]);
+  // The data rebuild above already re-projects immediately; this effect only
+  // needs to reposition existing labels when the chart pans/zooms/resizes.
   useEffect(() => {
-    const chart = chartRef.current;
+    positionLabels();
+  }, [geometryVersion, positionLabels]);
+  useEffect(() => {
     const latest = candles[candles.length - 1];
     if (
-      !chart ||
       !latest ||
       !position ||
       position.side === "FLAT" ||
       position.quantity <= 0
     ) {
-      setPnlLabel(null);
+      pnlLabelSourceRef.current = null;
+      positionPnlLabel();
       return;
     }
     const dir = position.side === "LONG" ? 1 : -1;
@@ -2195,22 +2275,13 @@ export function KLineChart({
       sessionCapital > 0
         ? `${pnl >= 0 ? "+" : ""}${((pnl / sessionCapital) * 100).toFixed(2)}%`
         : `${pnl >= 0 ? "+" : ""}${authoritativePnl === undefined ? Math.round(pnl) : pnl.toFixed(2)}`;
-    const converted = (chart as any).convertToPixel?.(
-      [{ timestamp: latest.timestamp * 1000, value: latest.high }],
-      { paneId: "candle_pane" },
-    );
-    const pixel = Array.isArray(converted) ? converted[0] : undefined;
-    if (pixel && Number.isFinite(pixel.x) && Number.isFinite(pixel.y)) {
-      setPnlLabel({
-        key: "position-pnl",
-        x: pixel.x,
-        y: Math.max(12, pixel.y - 24),
-        text,
-        color: !pnlAvailable || !Number.isFinite(pnl) ? "#94a3b8" : pnl >= 0 ? "#22c55e" : "#ef4444",
-      });
-    } else {
-      setPnlLabel(null);
-    }
+    pnlLabelSourceRef.current = {
+      timestamp: latest.timestamp * 1000,
+      value: latest.high,
+      text,
+      color: !pnlAvailable || !Number.isFinite(pnl) ? "#94a3b8" : pnl >= 0 ? "#22c55e" : "#ef4444",
+    };
+    positionPnlLabel();
   }, [
     candles,
     position,
@@ -2220,8 +2291,12 @@ export function KLineChart({
     sessionCapital,
     symbol,
     interval,
-    geometryVersion,
+    positionPnlLabel,
   ]);
+  // Same split as the order/strategy labels above: only re-project on scroll/zoom.
+  useEffect(() => {
+    positionPnlLabel();
+  }, [geometryVersion, positionPnlLabel]);
   const closeCountdown = formatCandleCloseCountdown(
     isLive ? clock / 1000 : countdownTime ?? clock / 1000,
     interval === "1D" ? 1440 : Number(interval.replace("m", "")),

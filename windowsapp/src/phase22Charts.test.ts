@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   mergeKLineHistory,
   mergeKLineTick,
+  sameCandles,
 } from "../../frontend/src/services/klineCandles";
 import { PendingOrderEdits } from "../../shared/charts/pendingOrderEdits";
 import { drawingIdentity } from "../../shared/charts/drawingIdentity";
@@ -50,6 +51,32 @@ describe("Phase 22 chart data compatibility", () => {
   it("ignores out-of-order ticks", () => {
     const rows = [bar];
     expect(mergeKLineTick(rows, tick(100), 3)).toBe(rows);
+  });
+  it("keeps the same reference for a duplicate tick that doesn't move the bucket", () => {
+    const rows = [bar];
+    const duplicate = {
+      type: "tick" as const,
+      time: 200,
+      open: 105,
+      high: 108,
+      low: 95,
+      close: 105,
+    };
+    expect(mergeKLineTick(rows, duplicate, 3)).toBe(rows);
+  });
+  it("still updates when a duplicate-bucket tick genuinely moves high/low/close", () => {
+    const rows = [bar];
+    const next = mergeKLineTick(rows, tick(200, 108), 3);
+    expect(next).not.toBe(rows);
+    expect(next).toEqual([{ time: 180, open: 100, high: 111, low: 90, close: 108 }]);
+  });
+  it("sameCandles treats identical-content arrays as equal and detects real changes", () => {
+    const a = [bar, { ...bar, time: 360 }];
+    const b = [bar, { ...bar, time: 360 }];
+    expect(sameCandles(a, a)).toBe(true);
+    expect(sameCandles(a, b)).toBe(true);
+    expect(sameCandles(a, [bar])).toBe(false);
+    expect(sameCandles(a, [bar, { ...bar, time: 360, close: 999 }])).toBe(false);
   });
   it("keeps refreshed history authoritative and deduplicates overlap", () => {
     expect(
