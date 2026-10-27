@@ -3,7 +3,7 @@ import type { Props } from "../components/Chart";
 import api, { type OHLCCandle } from "../services/api";
 import { rememberChartData } from "../services/chartDataCache";
 import { RecentLiveTicks } from "../services/tradingChartState";
-import { checkedChartCandles, mergeKLineHistory, mergeKLineTick } from "../services/klineCandles";
+import { checkedChartCandles, mergeKLineHistory, mergeKLineTick, sameCandles } from "../services/klineCandles";
 
 export function useKLineCandles(
   props: Props,
@@ -157,7 +157,7 @@ export function useKLineCandles(
         );
         for (const tick of ticks.current.values())
           next = mergeKLineTick(next, tick, interval);
-        setRows(next);
+        setRows((current) => (sameCandles(current, next) ? current : next));
       } catch (error) {
         if (!disposed) setMessage(String(error));
       } finally {
@@ -202,12 +202,13 @@ export function useKLineCandles(
       bar.time % (interval * 60) !== 0
     )
       return;
-    setRows((current) =>
-      mergeKLineHistory(
+    setRows((current) => {
+      const next = mergeKLineHistory(
         [...current.filter((c) => c.time !== bar.time), bar],
         [],
-      ),
-    );
+      );
+      return sameCandles(current, next) ? current : next;
+    });
   }, [props.completedBar, interval]);
   const actual = props.externalCandles ?? rows;
   const publish = useRef(props.onCandlesChange);
