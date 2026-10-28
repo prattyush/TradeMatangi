@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Order, Position, StrategyResponse } from '../services/api'
 import { SessionState } from '../hooks/useSimulation'
 import { FundsRatios } from './SettingsModal'
+import ConfirmModal from './ConfirmModal'
 
 type OrderTypeFull = 'TARGET' | 'LIMIT' | 'STOPLOSS' | 'MARKET' | 'STRAT'
 
@@ -29,6 +30,7 @@ interface Props {
   ) => Promise<void>
   onSplitOrder?: (orderId: string, operationId: string) => Promise<void>
   onCancelOrder: (orderId: string) => Promise<void>
+  onForceCancelOrder?: (orderId: string) => Promise<void>
   onConvertOrder?: (orderId: string, newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', price?: number) => Promise<void>
   onUpdateOrder: (orderId: string, triggerPrice?: number, limitPrice?: number, quantity?: number) => Promise<void>
   // Price-pick from chart
@@ -94,7 +96,7 @@ function isClosingOrderForPosition(order: Order, position: Position, activeRight
 export default function OrderPanel({
   sessionState, currentPrice: chartPrice, currentPriceCE, currentPricePE, openOrders, position,
   sizingMode, fundsRatios, riskRatios, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
-  onPlaceOrder, onCancelOrder, onSplitOrder, onConvertOrder, onUpdateOrder,
+  onPlaceOrder, onCancelOrder, onForceCancelOrder, onSplitOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
   injectedTpPrice,
@@ -138,6 +140,17 @@ export default function OrderPanel({
   const [slQty, setSlQty] = useState('1')
   const [splittingId, setSplittingId] = useState<string | null>(null)
   const splitRequests = useRef<Record<string, string>>({})
+  const [forceConfirmOrderId, setForceConfirmOrderId] = useState<string | null>(null)
+  const [forceCancelling, setForceCancelling] = useState(false)
+  const forceCancel = async (orderId: string) => {
+    if (!onForceCancelOrder) return
+    setForceCancelling(true)
+    try {
+      await onForceCancelOrder(orderId)
+      setForceConfirmOrderId(null)
+    } catch (err) { setError(String(err)) }
+    finally { setForceCancelling(false) }
+  }
   const split = async (order: Order) => {
     if (!onSplitOrder || splittingId) return
     setSplittingId(order.order_id)
@@ -1679,6 +1692,17 @@ export default function OrderPanel({
                     >
                       ✕
                     </button>
+                    {onForceCancelOrder && <button
+                      aria-label="Force cancel order"
+                      onClick={e => { e.stopPropagation(); setForceConfirmOrderId(order.order_id) }}
+                      style={{
+                        background: 'none', border: 'none', color: '#f85149',
+                        cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1,
+                      }}
+                      title="Force cancel (bypass broker confirmation)"
+                    >
+                      ⊗
+                    </button>}
                   </div>
 
                   {/* Inline edit row */}
@@ -1796,6 +1820,13 @@ export default function OrderPanel({
             })}
           </div>
         </div>
+      )}
+      {forceConfirmOrderId && (
+        <ConfirmModal
+          message="This order's broker confirmation couldn't be resolved. Force-cancel it locally anyway? This will be flagged for review against the broker's own order book."
+          onYes={() => void forceCancel(forceConfirmOrderId)}
+          onNo={() => !forceCancelling && setForceConfirmOrderId(null)}
+        />
       )}
     </div>
   )

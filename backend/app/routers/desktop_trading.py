@@ -1617,10 +1617,10 @@ async def update_order(session_id: str, order_id: str, req: UpdateOrderRequest, 
 
 
 @router.delete("/{session_id}/orders/{order_id}", response_model=Order | None)
-async def cancel_order(session_id: str, order_id: str, user_id: str = Depends(get_desktop_user_id)):
+async def cancel_order(session_id: str, order_id: str, force: bool = False, user_id: str = Depends(get_desktop_user_id)):
     _require_session(session_id, user_id)
     from app.routers.orders import cancel_order as web_cancel_order
-    return await web_cancel_order(order_id, session_id=session_id)
+    return await web_cancel_order(order_id, session_id=session_id, force=force)
 
 
 @router.post("/{session_id}/orders/{order_id}/convert", response_model=Order)

@@ -7,7 +7,7 @@ import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) { super(message); this.name = 'ApiError' }
+  constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); this.name = 'ApiError' }
 }
 
 export function _authHeaders(): Record<string, string> {
@@ -1357,8 +1357,8 @@ const api = {
     return res.json()
   },
 
-  async cancelOrder(session_id: string, order_id: string): Promise<Order | null> {
-    const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
+  async cancelOrder(session_id: string, order_id: string, force = false): Promise<Order | null> {
+    const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}${force ? '&force=true' : ''}`, {
       method: 'DELETE',
       headers: _authHeaders(),
     })
@@ -1366,7 +1366,10 @@ const api = {
     if (res.status === 404) return null
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
-      throw new Error(typeof error.detail === 'string' ? error.detail : `Cancel order failed: ${res.status}`)
+      const detail = error.detail
+      const message = typeof detail === 'string' ? detail : detail?.message ?? `Cancel order failed: ${res.status}`
+      const code = typeof detail === 'object' ? detail?.code : undefined
+      throw new ApiError(message, res.status, code)
     }
     return res.json()
   },
