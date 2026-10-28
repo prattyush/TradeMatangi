@@ -177,6 +177,67 @@ async def test_malformed_ack_does_not_allow_duplicate_submission(env):
 
 
 @pytest.mark.asyncio
+async def test_unacknowledged_child_carries_its_own_broker_tag(env):
+    """A child protection_recovery submits must carry its own submission tag
+    in analytics so real_broker_state's absent-tag resolution can see it --
+    previously only submit_once's direct path did this."""
+    env[2].place_options_sl_order.side_effect = TimeoutError('timeout')
+    with pytest.raises(recovery.Deferred, match='unknown'):
+        await attempt(env)
+    child_record = env[5]['children'][0]
+    assert child_record['order']['analytics']['broker_tag'] == child_record['tag']
+
+
+@pytest.mark.asyncio
+async def test_unacknowledged_child_gives_up_once_old_enough(env):
+    """A child that never got a broker acknowledgement, whose tag is
+    genuinely absent from a complete report, resolves to failed instead of
+    deferring forever once old enough -- mirrors build_orders' absent-tag
+    resolution so reconcile_children can't starve other entries forever."""
+    env[2].place_options_sl_order.side_effect = TimeoutError('timeout')
+    with pytest.raises(recovery.Deferred, match='unknown'):
+        await attempt(env)
+    env[5]['children'][0]['order']['broker_submission_at'] -= 10_000
+    with pytest.raises(recovery.Deferred, match='never acknowledged'):
+        await attempt(env)
+    assert env[5]['children'][0]['state'] == 'failed'
+    assert env[2].place_options_sl_order.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unacknowledged_child_too_soon_keeps_deferring(env):
+    """Companion to the above: an equally-unmatched child that's still fresh
+    must not prematurely give up."""
+    env[2].place_options_sl_order.side_effect = TimeoutError('timeout')
+    with pytest.raises(recovery.Deferred, match='unknown'):
+        await attempt(env)
+    with pytest.raises(recovery.Deferred, match='uncertain'):
+        await attempt(env)
+    assert env[5]['children'][0]['state'] == 'unknown'
+
+
+@pytest.mark.asyncio
+async def test_acknowledged_child_with_vanished_order_keeps_deferring(env):
+    """An already-acknowledged child (known kotak_order_id) that disappears
+    from a report is a more alarming situation than a never-acknowledged
+    one -- must keep deferring, not give up."""
+    original = env[2].place_options_sl_order.side_effect
+    def accepted_then_timeout(**kwargs):
+        original(**kwargs)
+        raise TimeoutError('connection lost after acceptance')
+    env[2].place_options_sl_order.side_effect = accepted_then_timeout
+    with pytest.raises(recovery.Deferred):
+        await attempt(env)
+    assert await attempt(env)
+    assert env[5]['children'][0]['state'] == 'acknowledged'
+    env[3][:] = [row for row in env[3] if not row['kotak_order_id'].startswith('new-')]
+    env[5]['children'][0]['order']['broker_submission_at'] -= 10_000
+    with pytest.raises(recovery.Deferred, match='uncertain'):
+        await attempt(env)
+    assert env[5]['children'][0]['state'] == 'acknowledged'
+
+
+@pytest.mark.asyncio
 async def test_timeout_after_acceptance_reconciles_by_tag(env):
     original = env[2].place_options_sl_order.side_effect
     def accepted_then_timeout(**kwargs):

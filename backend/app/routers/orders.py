@@ -138,6 +138,43 @@ def _require_confirmed_recovery(order):
         raise HTTPException(status_code=409, detail="Recovery submission is unconfirmed; refresh broker state before changing it")
 
 
+async def _require_cancelable(session, order, *, force=False):
+    """Cancelling an exit must never be hard-blocked forever by this exact
+    order's own submission ambiguity -- unlike edit/convert/split, cancel
+    carries no risk of inventing a duplicate submission: the user's intent
+    (get rid of this order) is unambiguous whether or not it ever reached
+    the broker. Split-active and conversion-busy stay hard blocks (racing
+    either really can act on a stale/duplicate identity); only the
+    recovery_state branch of `_require_confirmed_recovery` is replaced here.
+    """
+    from app.services.order_split import ACTIVE
+    if (order.split_operation or {}).get('state') in ACTIVE:
+        raise HTTPException(409, detail="Split is unconfirmed; refresh broker orders before changing this order")
+    from app.services.broker_conversion import busy
+    if busy(order):
+        raise HTTPException(status_code=409, detail="Conversion is unconfirmed; refresh broker state before changing this order")
+    if order.broker_order_id or order.recovery_state not in ("prepared", "submitting", "unknown"):
+        return  # a known broker order, or nothing ambiguous about this one
+    from app.services.execution_broker import get_service as get_kotak
+    from app.services.real_broker_state import resolve_pending_tag
+    try:
+        if await resolve_pending_tag(session, order, get_kotak(session), timeout=3.0):
+            return  # resolved either way: matched at the broker, or proven never placed
+    except Exception:
+        logger.warning("resolve_pending_tag_failed order=%s", order.order_id, exc_info=True)
+    if force:
+        order.analytics = {**(order.analytics or {}), 'cancel_forced_unconfirmed': True}
+        logger.warning("order_cancel_forced_unconfirmed order=%s session=%s", order.order_id, session.session_id)
+        from app.services import protection_recovery
+        protection_recovery.emit(session, order, order.recovery_operation_id or '', 'needs_attention',
+                                  "Cancelled while this order's broker acknowledgement was still unconfirmed; verify at the broker")
+        return
+    raise HTTPException(status_code=409, detail={
+        "code": "cancel_confirmation_ambiguous",
+        "message": "Couldn't confirm this order's status with the broker within a few seconds; retry, or cancel with force=true",
+    })
+
+
 async def _convert_with_broker_async(session, order, new_type, price=None):
     from app.services.broker_order_service import convert_order_async
     from app.services.kotak_service import KotakError
@@ -640,7 +677,7 @@ async def get_orders(session_id: str = Query(...), open_only: bool = Query(defau
 
 
 @router.delete("/{order_id}", response_model=Order)
-async def cancel_order(order_id: str, session_id: str = Query(...)):
+async def cancel_order(order_id: str, session_id: str = Query(...), force: bool = False):
     session = sim_svc.get_session(session_id)
     if session and session.session_type == "real" and getattr(session, "broker_refresh_events", None) is not None:
         from app.services.real_broker_state import await_refresh_barrier
@@ -652,16 +689,16 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
             raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
     if session:
         async with _session_edit_lock(session):
-            return await _cancel_order_locked(order_id, session_id, session)
-    return await _cancel_order_locked(order_id, session_id, session)
+            return await _cancel_order_locked(order_id, session_id, session, force=force)
+    return await _cancel_order_locked(order_id, session_id, session, force=force)
 
 
-async def _cancel_order_locked(order_id, session_id, session):
+async def _cancel_order_locked(order_id, session_id, session, *, force=False):
     trading_date = session.date if session else ""
     existing = order_service.get_order(session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or already closed")
-    _require_confirmed_recovery(existing)
+    await _require_cancelable(session, existing, force=force)
     if existing.broker_order_id:
         from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
         previous = await suppress(session, existing, max(0, existing.quantity - existing.broker_filled_quantity))

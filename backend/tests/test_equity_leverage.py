@@ -266,7 +266,7 @@ def test_real_order_failure_refunds_owning_ledger(monkeypatch, failure):
     order = order_service.place_order(SESSION, session.symbol, TradeSide.BUY, OrderType.LIMIT, 100,
         1778058900, DATE, limit_price=100, user_id=USER, margin_rate=.2, wallet_ledger_id=LEDGER)
     assert wallet_service.get_ledger_balance(USER, DATE, LEDGER) == 98_000
-    sim_svc._emit_tick_and_check_orders_real(session, _tick(100), None, Mock())
+    asyncio.run(sim_svc._emit_tick_and_check_orders_real(session, _tick(100), None, Mock()))
     if failure == "rejected":
         callback = broker.register_reject_callback.call_args.args[1]
         callback("broker-id", "rejected")

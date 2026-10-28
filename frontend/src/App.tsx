@@ -2871,6 +2871,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
                 }
               }
               onCancelOrder={sim.cancelOrder}
+              onForceCancelOrder={orderId => sim.cancelOrder(orderId, true)}
               onSplitOrder={sim.splitOrder}
               onConvertOrder={async (orderId, newOrderType, price) => {
                 const updated = await api.convertOrder(sim.sessionId!, orderId, newOrderType, price)

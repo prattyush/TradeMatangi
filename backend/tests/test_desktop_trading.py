@@ -732,6 +732,29 @@ def test_desktop_equity_buy_orders_reserve_intraday_margin_on_session_ledger(no_
     _clear()
 
 
+def test_desktop_cancel_order_forwards_force_param(no_db, monkeypatch):
+    """desktop_trading's cancel endpoint must thread force=true through to
+    the shared cancel path, matching the website's own endpoint."""
+    _clear()
+    session = _equity_session()
+    order = asyncio.run(desktop_trading.place_order(
+        session.session_id,
+        PlaceOrderRequest(session_id=session.session_id, side=TradeSide.BUY,
+            order_type=OrderType.LIMIT, limit_price=100, quantity=100),
+        user_id="desktop-user",
+    ))
+    from app.routers import orders
+    calls = []
+    original = orders.cancel_order
+    async def spy(order_id, session_id, force=False):
+        calls.append(force)
+        return await original(order_id, session_id=session_id, force=force)
+    monkeypatch.setattr(orders, "cancel_order", spy)
+    asyncio.run(desktop_trading.cancel_order(session.session_id, order.order_id, force=True, user_id="desktop-user"))
+    assert calls == [True]
+    _clear()
+
+
 def test_equity_anchored_desktop_session_can_place_same_underlying_option_order(no_db):
     _clear()
     session = _equity_session()
