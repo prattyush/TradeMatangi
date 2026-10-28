@@ -46,7 +46,16 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       'funds_ratio',
       'risk_ratio'
     ]),
+    toggle('restrict_high_tier_until_profitable', 'Disable High tier until this session\'s closed trades are profitable'),
+    toggle('merge_exit_orders_on_consolidate', 'Merge exit orders when consolidating (Move SL / Move to Limit)'),
     ...(['l', 'm', 'h'] as const).flatMap((size) => [
+      number(
+        `quantity_${size}`,
+        `Quantity ${size.toUpperCase()}`,
+        1,
+        undefined,
+        1
+      ),
       number(
         `funds_ratio_${size}_pct`,
         `Capital ${size.toUpperCase()} (%)`,

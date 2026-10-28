@@ -307,7 +307,23 @@ export function DesktopSettingsModal({
       setSaving(false)
     }
   }
+  const tierGroups: [string, string, string, string][] = [
+    ['quantity_l', 'quantity_m', 'quantity_h', 'Quantity'],
+    ['funds_ratio_l_pct', 'funds_ratio_m_pct', 'funds_ratio_h_pct', 'Capital %'],
+    ['risk_ratio_l_pct', 'risk_ratio_m_pct', 'risk_ratio_h_pct', 'Risk %']
+  ]
   const save = async () => {
+    if (tab === 'Trading') {
+      for (const [lowKey, midKey, highKey, label] of tierGroups) {
+        const low = Number(userDraft[lowKey])
+        const mid = Number(userDraft[midKey])
+        const high = Number(userDraft[highKey])
+        if (!(low < mid && mid < high)) {
+          setStatus(`${label} tiers must be strictly increasing: Low < Medium < High`)
+          return
+        }
+      }
+    }
     await action(async () => {
       if (tab === 'Drawing & Display') await onSave(draft)
       else if (tab === 'GuardRails') {

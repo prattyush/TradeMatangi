@@ -44,14 +44,22 @@ export interface RiskRatios {
   h: number
 }
 
+export interface QuantityTiers {
+  l: number
+  m: number
+  h: number
+}
+
 export type SizingMode = 'quantity' | 'fundsRatio' | 'riskRatio'
 
 const DEFAULT_FUNDS_RATIOS: FundsRatios = { l: 3, m: 6, h: 12 }
 const DEFAULT_RISK_RATIOS: RiskRatios = { l: 1, m: 2, h: 4 }
+const DEFAULT_QUANTITY_TIERS: QuantityTiers = { l: 1, m: 2, h: 5 }
 const FUNDS_RATIO_MODE_KEY = 'fundsRatioMode'
 const FUNDS_RATIOS_KEY = 'fundsRatios'
 const SIZING_MODE_KEY = 'sizingMode'
 const RISK_RATIOS_KEY = 'riskRatios'
+const QUANTITY_TIERS_KEY = 'quantityTiers'
 const DEFAULT_SL_PCT_KEY = 'defaultSlPct'
 const CONTEXT_MENU_SL_MODE_KEY = 'contextMenuSLMode'
 const TARGET_DEVIATION_KEY = 'targetDeviationPct'
@@ -234,6 +242,14 @@ export function loadRiskRatios(): RiskRatios {
   return { ...DEFAULT_RISK_RATIOS }
 }
 
+export function loadQuantityTiers(): QuantityTiers {
+  try {
+    const stored = localStorage.getItem(QUANTITY_TIERS_KEY)
+    if (stored) return { ...DEFAULT_QUANTITY_TIERS, ...JSON.parse(stored) }
+  } catch { /* ignore */ }
+  return { ...DEFAULT_QUANTITY_TIERS }
+}
+
 export function loadDefaultSlPct(): number {
   const v = parseFloat(localStorage.getItem(DEFAULT_SL_PCT_KEY) ?? '')
   return isNaN(v) || v < 1 || v > 50 ? 20 : v
@@ -312,6 +328,7 @@ export interface GuardRailSettingsLocal {
   banLossTradePct: number
   banMinTrades: number
   banEnabled: boolean
+  banHalfwayAlertEnabled: boolean
   cooldownEnabled: boolean
   maxSizeEnabled: boolean
   maxSizeMode: "percentage" | "value"
@@ -326,12 +343,13 @@ interface Props {
   sessionActive?: boolean
   onWalletReset: () => void
   onAttachRealSession?: (id: string) => Promise<void>
-  onSizingModeChange: (mode: SizingMode, fundsRatios: FundsRatios, riskRatios: RiskRatios, defaultSlPct: number) => void
+  onSizingModeChange: (mode: SizingMode, fundsRatios: FundsRatios, riskRatios: RiskRatios, defaultSlPct: number, quantityTiers: QuantityTiers) => void
   onTargetDeviationChange: (pct: number) => void  // fraction e.g. 0.01
   onBrokerageChange: (brokerage: number) => void  // rupees per order
   onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number, breakevenMode: 'shift_sl' | 'limit_order', bufferTicks: number, aggrSlOnlyInProfit: boolean) => void
   onHistoricalDaysChange?: (days: number) => void
   onPnlPctModeChange?: (enabled: boolean) => void
+  onRestrictHighTierChange?: (enabled: boolean) => void
   onGuardRailSettingsChange?: (settings: GuardRailSettingsLocal) => void
   onAutoStartSnapshotsChange?: (enabled: boolean) => void
   onStepwiseLabelingPopupChange?: (enabled: boolean) => void
@@ -339,7 +357,7 @@ interface Props {
   onTradingIndicatorSettingsChange?: (ratioMode: RocRatioMode) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onRestrictHighTierChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
   const [open, setOpen] = useState(false)
   const sharingRequest = useCallback(async (method: 'GET'|'PUT', emails?: string[]): Promise<HistorySharingState> => {
     const response = await fetch(`${BACKEND_URL}/api/users/real-history-sharing`, {method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='PUT'?JSON.stringify({emails}):undefined})
@@ -395,6 +413,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     const r = loadFundsRatios()
     return { l: String(r.l), m: String(r.m), h: String(r.h) }
   })
+  const [quantityTiers, setQuantityTiers] = useState<QuantityTiers>(loadQuantityTiers)
+  const [quantityTierInputs, setQuantityTierInputs] = useState<{ l: string; m: string; h: string }>(() => {
+    const q = loadQuantityTiers()
+    return { l: String(q.l), m: String(q.m), h: String(q.h) }
+  })
 
   // TARGET deviation state (stored as % 0-100 in localStorage, exposed as fraction)
   const [deviationInput, setDeviationInput] = useState<string>(() => {
@@ -439,6 +462,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
+  const [grBanHalfwayAlertEnabled, setGrBanHalfwayAlertEnabled] = useState(false)
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
   const [, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
@@ -448,6 +472,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [maxPriceThresholdCE, setMaxPriceThresholdCE] = useState(loadMaxPriceThresholdCE)
   const [maxPriceThresholdPE, setMaxPriceThresholdPE] = useState(loadMaxPriceThresholdPE)
   const [overrideSessionEnabled, setOverrideSessionEnabled] = useState(loadOverrideSessionEnabled)
+  const [restrictHighTierUntilProfitable, setRestrictHighTierUntilProfitable] = useState(false)
   const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
   const [grCooldownBlockBarsInput, setGrCooldownBlockBarsInput] = useState(() => String(loadGuardRailCooldownBlockBars()))
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
@@ -598,6 +623,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setOverrideSessionEnabled(s.override_session_enabled)
           localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(s.override_session_enabled))
         }
+        if (s.restrict_high_tier_until_profitable != null) {
+          setRestrictHighTierUntilProfitable(s.restrict_high_tier_until_profitable)
+          onRestrictHighTierChange?.(s.restrict_high_tier_until_profitable)
+        }
         // Sync risk ratio settings from backend
         if (s.risk_ratio_l_pct != null && s.risk_ratio_m_pct != null && s.risk_ratio_h_pct != null) {
           const synced = {
@@ -608,6 +637,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setRiskRatios(synced)
           setRiskRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
           localStorage.setItem(RISK_RATIOS_KEY, JSON.stringify(synced))
+        }
+        if (s.quantity_l != null && s.quantity_m != null && s.quantity_h != null) {
+          const synced = { l: s.quantity_l, m: s.quantity_m, h: s.quantity_h }
+          setQuantityTiers(synced)
+          setQuantityTierInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
+          localStorage.setItem(QUANTITY_TIERS_KEY, JSON.stringify(synced))
         }
         if (s.default_sl_pct != null) {
           const pct = Math.round(s.default_sl_pct * 100)
@@ -628,6 +663,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setGrBanLossTradeInput(String(s.guardrail_ban_loss_trade_pct))
           setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
           setGrBanEnabled(s.guardrail_ban_enabled)
+          setGrBanHalfwayAlertEnabled(s.guardrail_ban_halfway_alert_enabled ?? false)
           setGrCooldownEnabled(s.guardrail_cooldown_enabled)
           localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
           localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(s.guardrail_cooldown_block_bars))
@@ -646,7 +682,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
           localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
         }
-        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0 })
+        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0 })
         if (tokens) { setIciciMasked(tokens.icici_session); setKiteMasked(tokens.kite_access); setFyersAccessMasked(tokens.fyers_access); setFyersRefreshMasked(tokens.fyers_refresh) }
         if (stream) setStreamSource(stream.source)
         if (history) { setHistoricalSource(history.source); setHistoricalFallback(history.allow_fallback) }
@@ -662,10 +698,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     saveSizingMode(sizingMode)
     localStorage.setItem(FUNDS_RATIOS_KEY, JSON.stringify(ratios))
     localStorage.setItem(RISK_RATIOS_KEY, JSON.stringify(riskRatios))
+    localStorage.setItem(QUANTITY_TIERS_KEY, JSON.stringify(quantityTiers))
     localStorage.setItem(DEFAULT_SL_PCT_KEY, String(defaultSlPct))
     localStorage.setItem(CONTEXT_MENU_SL_MODE_KEY, contextMenuSLMode)
-    onSizingModeChange(sizingMode, ratios, riskRatios, defaultSlPct)
-  }, [sizingMode, ratios, riskRatios, defaultSlPct, contextMenuSLMode])
+    onSizingModeChange(sizingMode, ratios, riskRatios, defaultSlPct, quantityTiers)
+  }, [sizingMode, ratios, riskRatios, quantityTiers, defaultSlPct, contextMenuSLMode])
 
   const savePreference = async (values: Partial<UserSettingsResponse>, apply: () => void) => {
     setPreferenceSaving(true)
@@ -695,6 +732,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       setStatus('Ratios must be 1–100')
       return
     }
+    if (!(l < m && m < h)) {
+      setStatus('Capital % tiers must be strictly increasing: Low < Medium < High')
+      return
+    }
     try {
       await api.updateUserSettings({
         funds_ratio_l_pct: l / 100,
@@ -718,6 +759,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       setStatus('Risk ratios must be 1–100')
       return
     }
+    if (!(l < m && m < h)) {
+      setStatus('Risk % tiers must be strictly increasing: Low < Medium < High')
+      return
+    }
     try {
       await api.updateUserSettings({
         risk_ratio_l_pct: l,
@@ -729,6 +774,33 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       return
     }
     setRiskRatios({ l, m, h })
+    setStatus('Saved')
+    setTimeout(() => setStatus(null), 2000)
+  }
+
+  const saveQuantityTiersFn = async () => {
+    const l = parseInt(quantityTierInputs.l, 10)
+    const m = parseInt(quantityTierInputs.m, 10)
+    const h = parseInt(quantityTierInputs.h, 10)
+    if ([l, m, h].some(v => isNaN(v) || v <= 0)) {
+      setStatus('Quantity tiers must be positive whole numbers')
+      return
+    }
+    if (!(l < m && m < h)) {
+      setStatus('Quantity tiers must be strictly increasing: Low < Medium < High')
+      return
+    }
+    try {
+      await api.updateUserSettings({
+        quantity_l: l,
+        quantity_m: m,
+        quantity_h: h,
+      })
+    } catch (error) {
+      setStatus(`Failed to save sizing presets: ${String(error)}`)
+      return
+    }
+    setQuantityTiers({ l, m, h })
     setStatus('Saved')
     setTimeout(() => setStatus(null), 2000)
   }
@@ -830,6 +902,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         guardrail_ban_loss_trade_pct: banLossTradePct,
         guardrail_ban_min_trades: banMinTrades,
         guardrail_ban_enabled: grBanEnabled,
+        guardrail_ban_halfway_alert_enabled: grBanHalfwayAlertEnabled,
         guardrail_cooldown_enabled: grCooldownEnabled,
         guardrail_maxsize_enabled: grMaxSizeEnabled,
         guardrail_maxsize_mode: grMaxSizeMode,
@@ -848,7 +921,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, grMaxSizeMode)
       localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(maxSizePct))
       localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(maxSizeValue))
-      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue })
+      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue })
       setStatus('GuardRail settings saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -1387,11 +1460,66 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   ? 'Orders sized by % of session capital (L/M/H)'
                   : sizingMode === 'riskRatio'
                   ? 'Quantity so loss at SL = this % of capital (L/M/H)'
-                  : 'Orders sized by explicit quantity'}
+                  : 'Orders sized by explicit quantity (L/M/H)'}
               </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 11, color: '#8b949e', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={restrictHighTierUntilProfitable}
+                  onChange={e => {
+                    const next = e.target.checked
+                    void savePreference({ restrict_high_tier_until_profitable: next }, () => {
+                      setRestrictHighTierUntilProfitable(next)
+                      onRestrictHighTierChange?.(next)
+                    })
+                  }}
+                />
+                Disable High tier until this session's closed trades are profitable
+              </label>
             </div>
 
             {status && <div role="status" style={{ color: status.startsWith('Failed') ? '#f85149' : '#3fb950', marginTop: 8 }}>{status}</div>}
+            {/* Quantity tiers */}
+            {sizingMode === 'quantity' && (
+              <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                  QUANTITY
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                  {(['l', 'm', 'h'] as const).map(key => (
+                    <div key={key} style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3, textAlign: 'center' }}>
+                        {key.toUpperCase()}
+                      </div>
+                      <input
+                        type="number"
+                        value={quantityTierInputs[key]}
+                        onChange={e => setQuantityTierInputs(r => ({ ...r, [key]: e.target.value }))}
+                        min={1} step={1}
+                        style={{
+                          width: '100%', padding: '5px 6px', background: '#0d1117',
+                          border: '1px solid #30363d', borderRadius: 6,
+                          color: '#e6edf3', fontSize: 13, textAlign: 'center',
+                        }}
+                      />
+                    </div>
+                  ))}
+                  <button
+                    onClick={saveQuantityTiersFn}
+                    style={{
+                      marginTop: 16, padding: '5px 12px', background: '#1f6feb',
+                      border: 'none', borderRadius: 6, color: '#fff',
+                      cursor: 'pointer', fontSize: 12, alignSelf: 'flex-end',
+                    }}
+                  >
+                    Save
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: '#484f58' }}>
+                  Current: L={quantityTiers.l} · M={quantityTiers.m} · H={quantityTiers.h}
+                </div>
+              </div>
+            )}
             {/* FundsRatio % settings */}
             {sizingMode === 'fundsRatio' && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
@@ -2122,6 +2250,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                         onChange={e => setGrBanCapitalInput(e.target.value)}
                         style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
                       />
+                      <label title="Turn the top bar red once this session's closed-trade loss reaches 50% of this limit" style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={grBanHalfwayAlertEnabled}
+                          onChange={e => setGrBanHalfwayAlertEnabled(e.target.checked)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        <span style={{ fontSize: 10, color: '#8b949e' }}>Alert at 50%</span>
+                      </label>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Losing trades limit (y%)</span>

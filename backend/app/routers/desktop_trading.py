@@ -180,6 +180,7 @@ class BulkChartConvertRequest(ContractModel):
     strike: int | float | None = None
     expiry: str | None = None
     price: float = Field(gt=0)
+    merge: bool = False
 
 
 class BulkChartUpdateSLRequest(ContractModel):
@@ -187,6 +188,7 @@ class BulkChartUpdateSLRequest(ContractModel):
     right: str | None = None
     strike: int | float | None = None
     expiry: str | None = None
+    merge: bool = False
 
 
 class DesktopSettingsUpdateRequest(ContractModel):
@@ -766,6 +768,7 @@ _SIZING_DEFAULTS = {
     "desktop_order_size_mode": "quantity",
     "funds_ratio_l_pct": 0.03, "funds_ratio_m_pct": 0.06, "funds_ratio_h_pct": 0.12,
     "risk_ratio_l_pct": 1.0, "risk_ratio_m_pct": 2.0, "risk_ratio_h_pct": 4.0,
+    "quantity_l": 1, "quantity_m": 2, "quantity_h": 5,
 }
 
 
@@ -869,6 +872,11 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "risk_ratio_l_pct": settings.get("risk_ratio_l_pct", 1.0),
             "risk_ratio_m_pct": settings.get("risk_ratio_m_pct", 2.0),
             "risk_ratio_h_pct": settings.get("risk_ratio_h_pct", 4.0),
+            "quantity_l": settings.get("quantity_l", 1),
+            "quantity_m": settings.get("quantity_m", 2),
+            "quantity_h": settings.get("quantity_h", 5),
+            "restrict_high_tier_until_profitable": settings.get("restrict_high_tier_until_profitable", False),
+            "merge_exit_orders_on_consolidate": settings.get("merge_exit_orders_on_consolidate", False),
             "default_sl_pct": settings.get("default_sl_pct", 0.20),
         },
     )
@@ -1569,44 +1577,41 @@ async def place_chart_order(session_id: str, intent: ChartOrderIntent, user_id: 
 async def bulk_convert(session_id: str, req: BulkChartConvertRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
     right, strike, expiry = _target_scope(session, req.right, req.strike, req.expiry)
-    converted: list[Order] = []
-    results = []
-    for order in _closing_orders(session, right, strike, expiry):
-        from app.routers.orders import _convert_with_broker_async
-        try:
-            updated = await _convert_with_broker_async(session, order, req.new_order_type, req.price)
-            if updated:
-                converted.append(updated)
-                state = (updated.broker_conversion or {}).get('state', 'confirmed')
-                results.append({'order_id': order.order_id, 'state': state, 'message': (updated.broker_conversion or {}).get('message')})
-                if not updated.broker_conversion:
-                    _emit_order_converted(session, updated)
-        except HTTPException as exc:
-            results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)})
-    return {"converted": sum(r['state'] == 'confirmed' for r in results), "orders": converted, "results": results}
-
+    closing_orders = _closing_orders(session, right, strike, expiry)
+    if not closing_orders:
+        return {"converted": 0, "orders": []}
+    from app.routers.orders import _bulk_convert_merge_aware
+    result = await _bulk_convert_merge_aware(session, closing_orders, req.new_order_type, req.price, merge=req.merge)
+    cancelled_ids = set(result.get("cancelled_order_ids") or [])
+    for order in result["orders"]:
+        if order.order_id in cancelled_ids:
+            continue
+        if not order.broker_conversion:
+            _emit_order_converted(session, order)
+    return result
 
 
 @router.patch("/{session_id}/orders/bulk-update-sl")
 async def bulk_update_sl(session_id: str, req: BulkChartUpdateSLRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
     right, strike, expiry = _target_scope(session, req.right, req.strike, req.expiry)
-    updated: list[Order] = []
-    for order in _closing_orders(session, right, strike, expiry):
-        if not order.is_stoploss:
+    closing_orders = [order for order in _closing_orders(session, right, strike, expiry) if order.is_stoploss]
+    if not closing_orders:
+        return {"updated": 0, "orders": []}
+    from app.routers.orders import _bulk_update_sl_merge_aware
+    result = await _bulk_update_sl_merge_aware(session, closing_orders, req.trigger_price, merge=req.merge)
+    cancelled_ids = set(result.get("cancelled_order_ids") or [])
+    for order in result["orders"]:
+        if order.order_id in cancelled_ids:
             continue
-        from app.routers.orders import update_order as web_update_order
-        result = await web_update_order(order.order_id, UpdateOrderRequest(trigger_price=req.trigger_price), session_id=session_id)
-        if result:
-            updated.append(result)
-            _emit_order_event(session, {
-                "type": "order_updated",
-                "order_id": result.order_id,
-                "trigger_price": result.trigger_price,
-                "limit_price": result.limit_price,
-                "is_stoploss": result.is_stoploss,
-            })
-    return {"updated": len(updated), "orders": updated}
+        _emit_order_event(session, {
+            "type": "order_updated",
+            "order_id": order.order_id,
+            "trigger_price": order.trigger_price,
+            "limit_price": order.limit_price,
+            "is_stoploss": order.is_stoploss,
+        })
+    return result
 
 
 @router.patch("/{session_id}/orders/{order_id}", response_model=Order)

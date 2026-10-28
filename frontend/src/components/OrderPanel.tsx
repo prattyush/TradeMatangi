@@ -2,7 +2,7 @@ import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect, useRef } from 'react'
 import { Order, Position, StrategyResponse } from '../services/api'
 import { SessionState } from '../hooks/useSimulation'
-import { FundsRatios } from './SettingsModal'
+import { FundsRatios, QuantityTiers } from './SettingsModal'
 import ConfirmModal from './ConfirmModal'
 
 type OrderTypeFull = 'TARGET' | 'LIMIT' | 'STOPLOSS' | 'MARKET' | 'STRAT'
@@ -17,6 +17,9 @@ interface Props {
   sizingMode: 'quantity' | 'fundsRatio' | 'riskRatio'
   fundsRatios: FundsRatios
   riskRatios: { l: number; m: number; h: number }
+  quantityTiers: QuantityTiers
+  restrictHighTierUntilProfitable: boolean
+  closedTradePnl: number
   defaultSlPct: number
   sessionCapital: number
   sessionType: string
@@ -73,15 +76,14 @@ interface Props {
   onCancelStrategy?: (strategyId: string) => Promise<void>
   onUpdateStrategySize?: (strategyId: string, size: 'full' | 'half') => Promise<void>
   onUpdateStrategyPrice?: (strategyId: string, price: number) => Promise<void>
-  onBulkUpdateSL?: (triggerPrice: number, right: string | null) => Promise<{ updated: number }>
-  onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number) => Promise<{ converted: number; results?: { order_id: string; state: string; message?: string | null }[] }>
+  onBulkUpdateSL?: (triggerPrice: number, right: string | null, merge: boolean) => Promise<{ updated: number; merged_from?: number; merged_to?: number; cancelled_order_ids?: string[] }>
+  onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price: number | undefined, merge: boolean) => Promise<{ converted: number; results?: { order_id: string; state: string; message?: string | null }[]; merged_from?: number; merged_to?: number; cancelled_order_ids?: string[] }>
   onRequestLpPick?: () => void
   injectedLpPrice?: number | null
   onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
   onSnapshotEvent?: (event: { type: string; description: string; details: Record<string, unknown> }) => void
 }
 
-const QUANTITY_OPTIONS = [1, 2, 3, 5, 10]
 const RATIO_LABELS = ['L', 'M', 'H'] as const
 type RatioKey = 'l' | 'm' | 'h'
 
@@ -95,7 +97,7 @@ function isClosingOrderForPosition(order: Order, position: Position, activeRight
 
 export default function OrderPanel({
   sessionState, currentPrice: chartPrice, currentPriceCE, currentPricePE, openOrders, position,
-  sizingMode, fundsRatios, riskRatios, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
+  sizingMode, fundsRatios, riskRatios, quantityTiers, restrictHighTierUntilProfitable, closedTradePnl, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
   onPlaceOrder, onCancelOrder, onForceCancelOrder, onSplitOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
@@ -208,6 +210,7 @@ export default function OrderPanel({
   const [selectedStrategy, setSelectedStrategy] = useState<string>('AutoStop')
   const [bulkSLPrice, setBulkSLPrice] = useState('')
   const [bulkUpdating, setBulkUpdating] = useState(false)
+  const [bulkMerge, setBulkMerge] = useState(false)
 
   // Per-strategy cancel/edit state
   const [cancellingStrategyId, setCancellingStrategyId] = useState<string | null>(null)
@@ -588,7 +591,10 @@ export default function OrderPanel({
     setBulkUpdating(true)
     try {
       const right = instrumentType === 'options' ? activeRight : null
-      await onBulkUpdateSL(p, right ?? null)
+      const result = await onBulkUpdateSL(p, right ?? null, bulkMerge)
+      if (bulkMerge && result.merged_from !== undefined && result.merged_to !== undefined && result.merged_from !== result.merged_to) {
+        setStratError(`Merged ${result.merged_from} orders into ${result.merged_to}`)
+      }
       setBulkSLPrice('')
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to bulk update SL')
@@ -603,10 +609,12 @@ export default function OrderPanel({
     try {
       const right = instrumentType === 'options' ? activeRight : null
       const p = parseFloat(bulkSLPrice)
-      const result = await onBulkConvert(newType, right ?? null, !isNaN(p) && p > 0 ? p : undefined)
+      const result = await onBulkConvert(newType, right ?? null, !isNaN(p) && p > 0 ? p : undefined, bulkMerge)
       const pending = result.results?.filter(item => ['queued', 'modifying', 'cancelling', 'replacing', 'unknown'].includes(item.state)) ?? []
       const failed = result.results?.filter(item => item.state === 'failed') ?? []
-      setStratError(result.results ? `${result.converted} confirmed, ${pending.length} pending, ${failed.length} failed${failed[0]?.message ? `: ${failed[0].message}` : ''}` : null)
+      const mergeSuffix = bulkMerge && result.merged_from !== undefined && result.merged_to !== undefined && result.merged_from !== result.merged_to
+        ? `, merged ${result.merged_from} into ${result.merged_to}` : ''
+      setStratError(result.results ? `${result.converted} confirmed, ${pending.length} pending, ${failed.length} failed${mergeSuffix}${failed[0]?.message ? `: ${failed[0].message}` : ''}` : null)
     } catch (e) {
       setStratError(e instanceof Error ? e.message : 'Failed to bulk convert')
     } finally {
@@ -648,17 +656,19 @@ export default function OrderPanel({
     <div style={{ display: 'flex', gap: 4 }}>
       {RATIO_LABELS.map(lbl => {
         const key = lbl.toLowerCase() as RatioKey
+        const tierDisabled = key === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
         return (
           <button
             key={lbl}
-            disabled={!isActive}
+            disabled={!isActive || tierDisabled}
+            title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined}
             onClick={() => setRatio(key)}
             style={{
               flex: 1, padding: '5px 0', fontSize: 12, fontWeight: 700,
-              borderRadius: 4, cursor: isActive ? 'pointer' : 'not-allowed',
+              borderRadius: 4, cursor: isActive && !tierDisabled ? 'pointer' : 'not-allowed',
               border: `1px solid ${ratio === key ? '#388bfd' : '#30363d'}`,
               background: ratio === key ? '#1f3a5f' : '#161b22',
-              color: ratio === key ? '#79c0ff' : '#8b949e',
+              color: tierDisabled ? '#30363d' : ratio === key ? '#79c0ff' : '#8b949e',
             }}
           >
             {lbl}
@@ -751,39 +761,49 @@ export default function OrderPanel({
               )}
               {sizingMode === 'fundsRatio' ? (
                 <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
-                  {(['l', 'm', 'h'] as RatioKey[]).map(k => (
-                    <button key={k} onClick={() => setStratRatio(k)} style={{
-                      flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
-                      border: `1px solid ${stratRatio === k ? '#388bfd' : '#30363d'}`,
-                      borderRadius: 4, cursor: 'pointer',
-                      background: stratRatio === k ? '#1f3a5f' : '#161b22',
-                      color: stratRatio === k ? '#79c0ff' : '#8b949e',
-                    }}>{k.toUpperCase()}<span style={{ fontSize: 9, display: 'block' }}>{fundsRatios[k]}%</span></button>
-                  ))}
+                  {(['l', 'm', 'h'] as RatioKey[]).map(k => {
+                    const tierDisabled = k === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+                    return (
+                      <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratRatio(k)} style={{
+                        flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
+                        border: `1px solid ${stratRatio === k ? '#388bfd' : '#30363d'}`,
+                        borderRadius: 4, cursor: tierDisabled ? 'not-allowed' : 'pointer',
+                        background: stratRatio === k ? '#1f3a5f' : '#161b22',
+                        color: tierDisabled ? '#30363d' : stratRatio === k ? '#79c0ff' : '#8b949e',
+                      }}>{k.toUpperCase()}<span style={{ fontSize: 9, display: 'block' }}>{fundsRatios[k]}%</span></button>
+                    )
+                  })}
                 </div>
               ) : sizingMode === 'riskRatio' ? (
                 <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
-                  {(['l', 'm', 'h'] as RatioKey[]).map(k => (
-                    <button key={k} onClick={() => setStratRatio(k)} style={{
-                      flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
-                      border: `1px solid ${stratRatio === k ? '#f0883e' : '#30363d'}`,
-                      borderRadius: 4, cursor: 'pointer',
-                      background: stratRatio === k ? '#3d2200' : '#161b22',
-                      color: stratRatio === k ? '#f0883e' : '#8b949e',
-                    }}>RR {riskRatios[k]}%</button>
-                  ))}
+                  {(['l', 'm', 'h'] as RatioKey[]).map(k => {
+                    const tierDisabled = k === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+                    return (
+                      <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratRatio(k)} style={{
+                        flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
+                        border: `1px solid ${stratRatio === k ? '#f0883e' : '#30363d'}`,
+                        borderRadius: 4, cursor: tierDisabled ? 'not-allowed' : 'pointer',
+                        background: stratRatio === k ? '#3d2200' : '#161b22',
+                        color: tierDisabled ? '#30363d' : stratRatio === k ? '#f0883e' : '#8b949e',
+                      }}>RR {riskRatios[k]}%</button>
+                    )
+                  })}
                 </div>
               ) : (
                 <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
-                  {[1, 2, 5, 10].map(q => (
-                    <button key={q} onClick={() => setStratQty(q)} style={{
-                      flex: 1, padding: '3px 0', fontSize: 11, borderRadius: 4,
-                      border: `1px solid ${stratQty === q ? '#388bfd' : '#30363d'}`,
-                      background: stratQty === q ? '#1f3a5f' : '#161b22',
-                      color: stratQty === q ? '#79c0ff' : '#8b949e',
-                      cursor: 'pointer',
-                    }}>{q}</button>
-                  ))}
+                  {(['l', 'm', 'h'] as RatioKey[]).map(k => {
+                    const q = quantityTiers[k]
+                    const tierDisabled = k === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+                    return (
+                      <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratQty(q)} style={{
+                        flex: 1, padding: '3px 0', fontSize: 11, borderRadius: 4,
+                        border: `1px solid ${stratQty === q ? '#388bfd' : '#30363d'}`,
+                        background: stratQty === q ? '#1f3a5f' : '#161b22',
+                        color: tierDisabled ? '#30363d' : stratQty === q ? '#79c0ff' : '#8b949e',
+                        cursor: tierDisabled ? 'not-allowed' : 'pointer',
+                      }}>{q}</button>
+                    )
+                  })}
                 </div>
               )}
               <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, marginBottom: 4 }}>
@@ -1408,22 +1428,26 @@ export default function OrderPanel({
         <div>
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Risk Ratio</div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {(['l', 'm', 'h'] as const).map(key => (
-              <button
-                key={key}
-                disabled={!isActive}
-                onClick={() => setRatio(key)}
-                style={{
-                  padding: '3px 8px', fontSize: 12, borderRadius: 4,
-                  border: `1px solid ${ratio === key ? '#f0883e' : '#30363d'}`,
-                  background: ratio === key ? '#3d2200' : '#161b22',
-                  color: ratio === key ? '#f0883e' : '#8b949e',
-                  cursor: isActive ? 'pointer' : 'not-allowed',
-                }}
-              >
-                RR {riskRatios[key]}%
-              </button>
-            ))}
+            {(['l', 'm', 'h'] as const).map(key => {
+              const tierDisabled = key === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+              return (
+                <button
+                  key={key}
+                  disabled={!isActive || tierDisabled}
+                  title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined}
+                  onClick={() => setRatio(key)}
+                  style={{
+                    padding: '3px 8px', fontSize: 12, borderRadius: 4,
+                    border: `1px solid ${ratio === key ? '#f0883e' : '#30363d'}`,
+                    background: ratio === key ? '#3d2200' : '#161b22',
+                    color: tierDisabled ? '#30363d' : ratio === key ? '#f0883e' : '#8b949e',
+                    cursor: isActive && !tierDisabled ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  RR {riskRatios[key]}%
+                </button>
+              )
+            })}
           </div>
           {minimumExceedsRisk && (
             <div style={{ fontSize: 10, color: '#f0883e', marginTop: 4 }}>
@@ -1435,22 +1459,27 @@ export default function OrderPanel({
         <div>
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Quantity</div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {QUANTITY_OPTIONS.map(q => (
-              <button
-                key={q}
-                disabled={!isActive}
-                onClick={() => setQuantity(q)}
-                style={{
-                  padding: '3px 8px', fontSize: 12, borderRadius: 4,
-                  border: `1px solid ${quantity === q ? '#388bfd' : '#30363d'}`,
-                  background: quantity === q ? '#1f3a5f' : '#161b22',
-                  color: quantity === q ? '#79c0ff' : '#8b949e',
-                  cursor: isActive ? 'pointer' : 'not-allowed',
-                }}
-              >
-                {q}
-              </button>
-            ))}
+            {(['l', 'm', 'h'] as const).map(key => {
+              const q = quantityTiers[key]
+              const tierDisabled = key === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+              return (
+                <button
+                  key={key}
+                  disabled={!isActive || tierDisabled}
+                  title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined}
+                  onClick={() => setQuantity(q)}
+                  style={{
+                    padding: '3px 8px', fontSize: 12, borderRadius: 4,
+                    border: `1px solid ${quantity === q ? '#388bfd' : '#30363d'}`,
+                    background: quantity === q ? '#1f3a5f' : '#161b22',
+                    color: tierDisabled ? '#30363d' : quantity === q ? '#79c0ff' : '#8b949e',
+                    cursor: isActive && !tierDisabled ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  {q}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
@@ -1589,6 +1618,15 @@ export default function OrderPanel({
                     }}
                   >{bulkUpdating ? '…' : 'Update All'}</button>
                 </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 9, color: '#8b949e', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={bulkMerge}
+                    onChange={e => setBulkMerge(e.target.checked)}
+                    style={{ margin: 0 }}
+                  />
+                  Merge into fewest orders
+                </label>
                 {onBulkConvert && (
                   <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
                     <button

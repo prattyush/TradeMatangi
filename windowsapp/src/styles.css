@@ -3,6 +3,7 @@
 body { margin: 0; overflow: hidden; }
 main { height: 100vh; display: grid; grid-template-rows: 48px minmax(0, 1fr); }
 header { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #181d27; border-bottom: 1px solid #293142; white-space: nowrap; overflow-x: auto; }
+header.guardrail-alert { background: #450a0a; border-bottom-color: #7f1d1d; }
 main > header { overflow-y: hidden; }
 button, select, input { color: inherit; background: #252c39; border: 1px solid #3b4659; border-radius: 4px; padding: 6px 9px; }
 button { position: relative; cursor: pointer; transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease; }

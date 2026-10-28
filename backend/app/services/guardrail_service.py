@@ -73,6 +73,7 @@ def initialize_guardrails(session: "SimulationSession", user_id: str) -> None:
     session.guardrail_ban_loss_trade_pct = float(settings.get("guardrail_ban_loss_trade_pct", 60.0))
     session.guardrail_ban_min_trades = int(settings.get("guardrail_ban_min_trades", 5))
     session.guardrail_ban_enabled = bool(settings.get("guardrail_ban_enabled", False))
+    session.guardrail_ban_halfway_alert_enabled = bool(settings.get("guardrail_ban_halfway_alert_enabled", False))
     session.guardrail_cooldown_enabled = bool(settings.get("guardrail_cooldown_enabled", False))
     session.guardrail_maxsize_enabled = bool(settings.get("guardrail_maxsize_enabled", False))
     session.guardrail_maxsize_mode = str(settings.get("guardrail_maxsize_mode", "percentage"))
