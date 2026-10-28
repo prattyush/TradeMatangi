@@ -202,7 +202,6 @@ export interface UserSettingsResponse {
   quantity_l?: number
   quantity_m?: number
   quantity_h?: number
-  restrict_high_tier_until_profitable?: boolean
   merge_exit_orders_on_consolidate?: boolean
   default_sl_pct?: number
   context_menu_sl_mode?: string
@@ -718,6 +717,7 @@ export interface GuardRailSettings {
   guardrail_ban_min_trades: number
   guardrail_ban_enabled: boolean
   guardrail_ban_halfway_alert_enabled?: boolean
+  high_tier_pnl_threshold_pct?: number
   guardrail_cooldown_enabled: boolean
   guardrail_maxsize_enabled: boolean
   guardrail_maxsize_mode: "percentage" | "value"

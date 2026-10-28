@@ -77,7 +77,6 @@ export interface DesktopTradingSettings {
   funds_ratio_l_pct: number; funds_ratio_m_pct: number; funds_ratio_h_pct: number
   risk_ratio_l_pct: number; risk_ratio_m_pct: number; risk_ratio_h_pct: number
   quantity_l?: number; quantity_m?: number; quantity_h?: number
-  restrict_high_tier_until_profitable?: boolean
   merge_exit_orders_on_consolidate?: boolean
   default_sl_pct: number
 }

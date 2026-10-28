@@ -451,7 +451,6 @@ class UserSettingsResponse(ContractModel):
     quantity_l: int = 1
     quantity_m: int = 2
     quantity_h: int = 5
-    restrict_high_tier_until_profitable: bool = False
     merge_exit_orders_on_consolidate: bool = False
     analysis_price_source: str = "options"
     experimental_patterns_enabled: bool = False
@@ -497,7 +496,6 @@ class UserSettingsUpdateRequest(ContractModel):
     quantity_l: int | None = Field(default=None, ge=1)
     quantity_m: int | None = Field(default=None, ge=1)
     quantity_h: int | None = Field(default=None, ge=1)
-    restrict_high_tier_until_profitable: bool | None = None
     merge_exit_orders_on_consolidate: bool | None = None
     analysis_price_source: Literal["options", "underlying"] | None = None
     experimental_patterns_enabled: bool | None = None
@@ -666,6 +664,7 @@ class GuardRailSettingsResponse(ContractModel):
     guardrail_ban_min_trades: int = 5
     guardrail_ban_enabled: bool = False
     guardrail_ban_halfway_alert_enabled: bool = False
+    high_tier_pnl_threshold_pct: float = 0.0
     guardrail_cooldown_enabled: bool = False
     guardrail_maxsize_enabled: bool = False
     guardrail_maxsize_mode: str = "percentage"
@@ -682,6 +681,7 @@ class GuardRailSettingsUpdateRequest(ContractModel):
     guardrail_ban_min_trades: int | None = Field(default=None, ge=1, le=100)
     guardrail_ban_enabled: bool | None = None
     guardrail_ban_halfway_alert_enabled: bool | None = None
+    high_tier_pnl_threshold_pct: float | None = Field(default=None, ge=-100.0, le=100.0)
     guardrail_cooldown_enabled: bool | None = None
     guardrail_maxsize_enabled: bool | None = None
     guardrail_maxsize_mode: str | None = None

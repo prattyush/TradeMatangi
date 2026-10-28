@@ -263,7 +263,6 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
   const [riskRatios, setRiskRatios] = useState<RiskRatios>(loadRiskRatios)
   const [quantityTiers, setQuantityTiers] = useState<QuantityTiers>(loadQuantityTiers)
-  const [restrictHighTierUntilProfitable, setRestrictHighTierUntilProfitable] = useState(false)
   const [guardRailSettings, setGuardRailSettings] = useState<GuardRailSettingsLocal | null>(null)
   const [defaultSlPct, setDefaultSlPct] = useState(loadDefaultSlPct)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
@@ -312,8 +311,11 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [roundTrips, setRoundTrips] = useState<import('./services/api').RoundTrip[]>([])
   const closedTradePnl = roundTrips.reduce((sum, rt) => sum + rt.pnl, 0)
-  const closedLossPct = closedTradePnl < 0 && sim.sessionCapital > 0 ? (Math.abs(closedTradePnl) / sim.sessionCapital) * 100 : 0
+  // Signed % of session capital from CLOSED trades only — never running/unrealized P&L.
+  const closedPnlPct = sim.sessionCapital > 0 ? (closedTradePnl / sim.sessionCapital) * 100 : 0
+  const closedLossPct = closedPnlPct < 0 ? Math.abs(closedPnlPct) : 0
   const guardRailAlertActive = Boolean(guardRailSettings?.banHalfwayAlertEnabled) && closedLossPct >= 0.5 * (guardRailSettings?.banCapitalPct ?? Infinity)
+  const highTierDisabled = Boolean(guardRailSettings?.banEnabled) && closedPnlPct <= (guardRailSettings?.highTierPnlThresholdPct ?? -Infinity)
   const [tradeLabels, setTradeLabels] = useState<import('./services/api').TradeLabel[]>([])
 
   // ── Context menu state ─────────────────────────────────────────────────────
@@ -2498,7 +2500,6 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           }}
           onHistoricalDaysChange={setHistoricalDays}
           onPnlPctModeChange={setPnlPctMode}
-          onRestrictHighTierChange={setRestrictHighTierUntilProfitable}
           onGuardRailSettingsChange={setGuardRailSettings}
           onAutoStartSnapshotsChange={setAutoStartSnapshots}
           onStepwiseLabelingPopupChange={setStepwiseLabelingPopup}
@@ -2842,8 +2843,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
               fundsRatios={fundsRatios}
               riskRatios={riskRatios}
               quantityTiers={quantityTiers}
-              restrictHighTierUntilProfitable={restrictHighTierUntilProfitable}
-              closedTradePnl={closedTradePnl}
+              highTierDisabled={highTierDisabled}
               defaultSlPct={defaultSlPct}
               sessionCapital={sim.sessionCapital}
               sessionType={sim.sessionType}
@@ -2961,7 +2961,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
         />
       )}
 
-      {contextMenuEntryTicket && <ChartEntryTicket ref={contextMenuEntryTicketRef} ticket={contextMenuEntryTicket} fundsRatios={fundsRatios} riskRatios={riskRatios} quantityTiers={quantityTiers} restrictHighTierUntilProfitable={restrictHighTierUntilProfitable} closedTradePnl={closedTradePnl} instrumentType={instrumentType} sessionType={sim.sessionType} onChange={setContextMenuEntryTicket} onSubmit={submitContextMenuEntry} onClose={() => setContextMenuEntryTicket(null)} />}
+      {contextMenuEntryTicket && <ChartEntryTicket ref={contextMenuEntryTicketRef} ticket={contextMenuEntryTicket} fundsRatios={fundsRatios} riskRatios={riskRatios} quantityTiers={quantityTiers} highTierDisabled={highTierDisabled} instrumentType={instrumentType} sessionType={sim.sessionType} onChange={setContextMenuEntryTicket} onSubmit={submitContextMenuEntry} onClose={() => setContextMenuEntryTicket(null)} />}
     </div>
   )
 }

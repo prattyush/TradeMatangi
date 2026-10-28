@@ -13,8 +13,7 @@ interface Props {
   fundsRatios: FundsRatios
   riskRatios: RiskRatios
   quantityTiers: QuantityTiers
-  restrictHighTierUntilProfitable?: boolean
-  closedTradePnl?: number
+  highTierDisabled?: boolean
   instrumentType: string
   sessionType: string
   onChange: (ticket: EntryTicket) => void
@@ -28,8 +27,7 @@ const choices = [
 ] as const
 
 /** One compact ticket; the second selection submits through the existing handler. */
-export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ ticket, fundsRatios, riskRatios, quantityTiers, restrictHighTierUntilProfitable = false, closedTradePnl = 0, instrumentType, sessionType, onChange, onSubmit, onClose }, ref) {
-  const highTierDisabled = restrictHighTierUntilProfitable && closedTradePnl <= 0
+export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ ticket, fundsRatios, riskRatios, quantityTiers, highTierDisabled = false, instrumentType, sessionType, onChange, onSubmit, onClose }, ref) {
   const root = useRef<HTMLDivElement | null>(null)
   const submitted = useRef(false)
   const chooseDirection = useRef(ticket.side === null).current

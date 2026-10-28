@@ -18,8 +18,7 @@ interface Props {
   fundsRatios: FundsRatios
   riskRatios: { l: number; m: number; h: number }
   quantityTiers: QuantityTiers
-  restrictHighTierUntilProfitable: boolean
-  closedTradePnl: number
+  highTierDisabled: boolean
   defaultSlPct: number
   sessionCapital: number
   sessionType: string
@@ -97,7 +96,7 @@ function isClosingOrderForPosition(order: Order, position: Position, activeRight
 
 export default function OrderPanel({
   sessionState, currentPrice: chartPrice, currentPriceCE, currentPricePE, openOrders, position,
-  sizingMode, fundsRatios, riskRatios, quantityTiers, restrictHighTierUntilProfitable, closedTradePnl, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
+  sizingMode, fundsRatios, riskRatios, quantityTiers, highTierDisabled, defaultSlPct, sessionCapital, sessionType, targetDeviationPct,
   onPlaceOrder, onCancelOrder, onForceCancelOrder, onSplitOrder, onConvertOrder, onUpdateOrder,
   onRequestPricePick, injectedEditPrice,
   onRequestTpPick,
@@ -656,7 +655,7 @@ export default function OrderPanel({
     <div style={{ display: 'flex', gap: 4 }}>
       {RATIO_LABELS.map(lbl => {
         const key = lbl.toLowerCase() as RatioKey
-        const tierDisabled = key === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+        const tierDisabled = key === 'h' && highTierDisabled
         return (
           <button
             key={lbl}
@@ -762,7 +761,7 @@ export default function OrderPanel({
               {sizingMode === 'fundsRatio' ? (
                 <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
                   {(['l', 'm', 'h'] as RatioKey[]).map(k => {
-                    const tierDisabled = k === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+                    const tierDisabled = k === 'h' && highTierDisabled
                     return (
                       <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratRatio(k)} style={{
                         flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
@@ -777,7 +776,7 @@ export default function OrderPanel({
               ) : sizingMode === 'riskRatio' ? (
                 <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
                   {(['l', 'm', 'h'] as RatioKey[]).map(k => {
-                    const tierDisabled = k === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+                    const tierDisabled = k === 'h' && highTierDisabled
                     return (
                       <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratRatio(k)} style={{
                         flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
@@ -793,7 +792,7 @@ export default function OrderPanel({
                 <div style={{ display: 'flex', gap: 3, marginBottom: 4 }}>
                   {(['l', 'm', 'h'] as RatioKey[]).map(k => {
                     const q = quantityTiers[k]
-                    const tierDisabled = k === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+                    const tierDisabled = k === 'h' && highTierDisabled
                     return (
                       <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratQty(q)} style={{
                         flex: 1, padding: '3px 0', fontSize: 11, borderRadius: 4,
@@ -1429,7 +1428,7 @@ export default function OrderPanel({
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 3 }}>Risk Ratio</div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {(['l', 'm', 'h'] as const).map(key => {
-              const tierDisabled = key === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+              const tierDisabled = key === 'h' && highTierDisabled
               return (
                 <button
                   key={key}
@@ -1461,7 +1460,7 @@ export default function OrderPanel({
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {(['l', 'm', 'h'] as const).map(key => {
               const q = quantityTiers[key]
-              const tierDisabled = key === 'h' && restrictHighTierUntilProfitable && closedTradePnl <= 0
+              const tierDisabled = key === 'h' && highTierDisabled
               return (
                 <button
                   key={key}

@@ -329,6 +329,7 @@ export interface GuardRailSettingsLocal {
   banMinTrades: number
   banEnabled: boolean
   banHalfwayAlertEnabled: boolean
+  highTierPnlThresholdPct: number
   cooldownEnabled: boolean
   maxSizeEnabled: boolean
   maxSizeMode: "percentage" | "value"
@@ -349,7 +350,6 @@ interface Props {
   onStrategySettingsChange: (intervalSecs: number, triggerType: 'bar' | 'deviation', deviationPct: number, breakevenMode: 'shift_sl' | 'limit_order', bufferTicks: number, aggrSlOnlyInProfit: boolean) => void
   onHistoricalDaysChange?: (days: number) => void
   onPnlPctModeChange?: (enabled: boolean) => void
-  onRestrictHighTierChange?: (enabled: boolean) => void
   onGuardRailSettingsChange?: (settings: GuardRailSettingsLocal) => void
   onAutoStartSnapshotsChange?: (enabled: boolean) => void
   onStepwiseLabelingPopupChange?: (enabled: boolean) => void
@@ -357,7 +357,7 @@ interface Props {
   onTradingIndicatorSettingsChange?: (ratioMode: RocRatioMode) => void
 }
 
-export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onRestrictHighTierChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
+export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
   const [open, setOpen] = useState(false)
   const sharingRequest = useCallback(async (method: 'GET'|'PUT', emails?: string[]): Promise<HistorySharingState> => {
     const response = await fetch(`${BACKEND_URL}/api/users/real-history-sharing`, {method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='PUT'?JSON.stringify({emails}):undefined})
@@ -463,6 +463,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
   const [grBanHalfwayAlertEnabled, setGrBanHalfwayAlertEnabled] = useState(false)
+  const [grHighTierThresholdInput, setGrHighTierThresholdInput] = useState('0')
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
   const [, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
@@ -472,7 +473,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [maxPriceThresholdCE, setMaxPriceThresholdCE] = useState(loadMaxPriceThresholdCE)
   const [maxPriceThresholdPE, setMaxPriceThresholdPE] = useState(loadMaxPriceThresholdPE)
   const [overrideSessionEnabled, setOverrideSessionEnabled] = useState(loadOverrideSessionEnabled)
-  const [restrictHighTierUntilProfitable, setRestrictHighTierUntilProfitable] = useState(false)
   const [grBlockBarsInput, setGrBlockBarsInput] = useState(() => String(loadGuardRailBlockBars()))
   const [grCooldownBlockBarsInput, setGrCooldownBlockBarsInput] = useState(() => String(loadGuardRailCooldownBlockBars()))
   const [grCooldownLossesInput, setGrCooldownLossesInput] = useState(() => String(loadGuardRailCooldownLosses()))
@@ -623,10 +623,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setOverrideSessionEnabled(s.override_session_enabled)
           localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(s.override_session_enabled))
         }
-        if (s.restrict_high_tier_until_profitable != null) {
-          setRestrictHighTierUntilProfitable(s.restrict_high_tier_until_profitable)
-          onRestrictHighTierChange?.(s.restrict_high_tier_until_profitable)
-        }
         // Sync risk ratio settings from backend
         if (s.risk_ratio_l_pct != null && s.risk_ratio_m_pct != null && s.risk_ratio_h_pct != null) {
           const synced = {
@@ -664,6 +660,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
           setGrBanEnabled(s.guardrail_ban_enabled)
           setGrBanHalfwayAlertEnabled(s.guardrail_ban_halfway_alert_enabled ?? false)
+          setGrHighTierThresholdInput(String(s.high_tier_pnl_threshold_pct ?? 0))
           setGrCooldownEnabled(s.guardrail_cooldown_enabled)
           localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
           localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(s.guardrail_cooldown_block_bars))
@@ -682,7 +679,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
           localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
         }
-        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0 })
+        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0 })
         if (tokens) { setIciciMasked(tokens.icici_session); setKiteMasked(tokens.kite_access); setFyersAccessMasked(tokens.fyers_access); setFyersRefreshMasked(tokens.fyers_refresh) }
         if (stream) setStreamSource(stream.source)
         if (history) { setHistoricalSource(history.source); setHistoricalFallback(history.allow_fallback) }
@@ -885,12 +882,14 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     const banMinTrades = parseInt(grBanMinTradesInput)
     const maxSizePct = parseFloat(grMaxSizePctInput)
     const maxSizeValue = parseFloat(grMaxSizeValueInput)
+    const highTierPnlThresholdPct = parseFloat(grHighTierThresholdInput)
     if (isNaN(blockBars) || blockBars < 0 || blockBars > 20) { setStatus('Block bars must be 0–20'); return }
     if (isNaN(cooldownBlockBars) || cooldownBlockBars < 1 || cooldownBlockBars > 20) { setStatus('Cooldown block bars must be 1–20'); return }
     if (isNaN(cooldownLosses) || cooldownLosses < 1 || cooldownLosses > 20) { setStatus('Cooldown losses must be 1–20'); return }
     if (isNaN(banCapitalPct) || banCapitalPct < 1 || banCapitalPct > 100) { setStatus('Capital % must be 1–100'); return }
     if (isNaN(banLossTradePct) || banLossTradePct < 1 || banLossTradePct > 100) { setStatus('Loss trade % must be 1–100'); return }
     if (isNaN(banMinTrades) || banMinTrades < 1 || banMinTrades > 100) { setStatus('Min trades must be 1–100'); return }
+    if (isNaN(highTierPnlThresholdPct) || highTierPnlThresholdPct < -100 || highTierPnlThresholdPct > 100) { setStatus('High tier P&L % threshold must be -100–100'); return }
     if (grMaxSizeMode === 'percentage' && (isNaN(maxSizePct) || maxSizePct < 1 || maxSizePct > 100)) { setStatus('Max size % must be 1–100'); return }
     if (grMaxSizeMode === 'value' && (isNaN(maxSizeValue) || maxSizeValue < 0)) { setStatus('Max size value must be ≥ 0'); return }
     try {
@@ -903,6 +902,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         guardrail_ban_min_trades: banMinTrades,
         guardrail_ban_enabled: grBanEnabled,
         guardrail_ban_halfway_alert_enabled: grBanHalfwayAlertEnabled,
+        high_tier_pnl_threshold_pct: highTierPnlThresholdPct,
         guardrail_cooldown_enabled: grCooldownEnabled,
         guardrail_maxsize_enabled: grMaxSizeEnabled,
         guardrail_maxsize_mode: grMaxSizeMode,
@@ -921,7 +921,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, grMaxSizeMode)
       localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(maxSizePct))
       localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(maxSizeValue))
-      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue })
+      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, highTierPnlThresholdPct, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue })
       setStatus('GuardRail settings saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -1462,20 +1462,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   ? 'Quantity so loss at SL = this % of capital (L/M/H)'
                   : 'Orders sized by explicit quantity (L/M/H)'}
               </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 11, color: '#8b949e', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={restrictHighTierUntilProfitable}
-                  onChange={e => {
-                    const next = e.target.checked
-                    void savePreference({ restrict_high_tier_until_profitable: next }, () => {
-                      setRestrictHighTierUntilProfitable(next)
-                      onRestrictHighTierChange?.(next)
-                    })
-                  }}
-                />
-                Disable High tier until this session's closed trades are profitable
-              </label>
             </div>
 
             {status && <div role="status" style={{ color: status.startsWith('Failed') ? '#f85149' : '#3fb950', marginTop: 8 }}>{status}</div>}
@@ -2259,6 +2245,17 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                         />
                         <span style={{ fontSize: 10, color: '#8b949e' }}>Alert at 50%</span>
                       </label>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }} title="Closed-trade P&amp;L % of capital above which the High sizing tier is enabled. Can be negative — e.g. -6 enables High once loss is less than 6%. Only applies while Ban is enabled.">
+                        High tier enabled above P&L % (closed trades)
+                      </span>
+                      <input
+                        type="number" min={-100} max={100} step={0.5}
+                        value={grHighTierThresholdInput}
+                        onChange={e => setGrHighTierThresholdInput(e.target.value)}
+                        style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Losing trades limit (y%)</span>

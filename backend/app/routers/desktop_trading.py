@@ -875,7 +875,6 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "quantity_l": settings.get("quantity_l", 1),
             "quantity_m": settings.get("quantity_m", 2),
             "quantity_h": settings.get("quantity_h", 5),
-            "restrict_high_tier_until_profitable": settings.get("restrict_high_tier_until_profitable", False),
             "merge_exit_orders_on_consolidate": settings.get("merge_exit_orders_on_consolidate", False),
             "default_sl_pct": settings.get("default_sl_pct", 0.20),
         },
