@@ -199,6 +199,10 @@ export interface UserSettingsResponse {
   risk_ratio_l_pct?: number
   risk_ratio_m_pct?: number
   risk_ratio_h_pct?: number
+  quantity_l?: number
+  quantity_m?: number
+  quantity_h?: number
+  merge_exit_orders_on_consolidate?: boolean
   default_sl_pct?: number
   context_menu_sl_mode?: string
 }
@@ -712,6 +716,8 @@ export interface GuardRailSettings {
   guardrail_ban_loss_trade_pct: number
   guardrail_ban_min_trades: number
   guardrail_ban_enabled: boolean
+  guardrail_ban_halfway_alert_enabled?: boolean
+  high_tier_pnl_threshold_pct?: number
   guardrail_cooldown_enabled: boolean
   guardrail_maxsize_enabled: boolean
   guardrail_maxsize_mode: "percentage" | "value"
@@ -1652,11 +1658,11 @@ const api = {
     }
   },
 
-  async bulkUpdateSL(session_id: string, trigger_price: number, right: string | null): Promise<{ updated: number; orders: Order[] }> {
+  async bulkUpdateSL(session_id: string, trigger_price: number, right: string | null, merge = false): Promise<{ updated: number; orders: Order[]; merged_from?: number; merged_to?: number; cancelled_order_ids?: string[] }> {
     const res = await fetch(`${BACKEND_URL}/api/orders/bulk-update-sl`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ session_id, trigger_price, right }),
+      body: JSON.stringify({ session_id, trigger_price, right, merge }),
     })
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
@@ -1665,11 +1671,11 @@ const api = {
     return res.json()
   },
 
-  async bulkConvertOrders(session_id: string, new_order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number): Promise<{ converted: number; orders: Order[]; results?: ConversionResult[] }> {
+  async bulkConvertOrders(session_id: string, new_order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number, merge = false): Promise<{ converted: number; orders: Order[]; results?: ConversionResult[]; merged_from?: number; merged_to?: number; cancelled_order_ids?: string[] }> {
     const res = await fetch(`${BACKEND_URL}/api/orders/bulk-convert`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ session_id, new_order_type, right, price: price ?? null }),
+      body: JSON.stringify({ session_id, new_order_type, right, price: price ?? null, merge }),
     })
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))

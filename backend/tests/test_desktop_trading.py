@@ -1642,8 +1642,9 @@ def test_missing_sl_large_real_options_split_in_whole_lots():
     from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
     session = _session()
     session.session_type = "real"
+    # NIFTY freeze limit is 3510 (65-lot multiple); 3900 needs two chunks: 3510 + 390.
     trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
-        quantity=1950, symbol=session.symbol, right="CE", strike=session.strike_ce,
+        quantity=3900, symbol=session.symbol, right="CE", strike=session.strike_ce,
         expiry=session.expiry, instrument_type="options", user_id=session.user_id)
     broker = Mock()
     broker.place_options_sl_order.side_effect = ["chunk-1", "chunk-2"]
@@ -1652,10 +1653,10 @@ def test_missing_sl_large_real_options_split_in_whole_lots():
     try:
         with patch("app.services.kotak_service.get_service", return_value=broker):
             result = asyncio.run(fill_missing_stoploss(request, session.user_id))
-            assert result["quantity"] == 1950
+            assert result["quantity"] == 3900
             assert len(result["orders"]) == 2
-            assert all(o.quantity % 65 == 0 and o.quantity <= 1800 for o in result["orders"])
-            assert sum(call.kwargs["qty"] for call in broker.place_options_sl_order.call_args_list) == 1950
+            assert all(o.quantity % 65 == 0 and o.quantity <= 3510 for o in result["orders"])
+            assert sum(call.kwargs["qty"] for call in broker.place_options_sl_order.call_args_list) == 3900
             asyncio.run(fill_missing_stoploss(request, session.user_id))
             assert broker.place_options_sl_order.call_count == 2
     finally:

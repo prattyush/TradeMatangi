@@ -46,7 +46,15 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       'funds_ratio',
       'risk_ratio'
     ]),
+    toggle('merge_exit_orders_on_consolidate', 'Merge exit orders when consolidating (Move SL / Move to Limit)'),
     ...(['l', 'm', 'h'] as const).flatMap((size) => [
+      number(
+        `quantity_${size}`,
+        `Quantity ${size.toUpperCase()}`,
+        1,
+        undefined,
+        1
+      ),
       number(
         `funds_ratio_${size}_pct`,
         `Capital ${size.toUpperCase()} (%)`,

@@ -66,15 +66,23 @@ DEFAULT_FUNDS_RATIOS: dict[str, float] = {"l": 3.0, "m": 6.0, "h": 12.0}
 # Supported symbols: key is the canonical ID used throughout the system.
 # options_exchange_code: exchange used for F&O data (NFO for NSE, BFO for BSE).
 # options_only: True for indices that cannot be traded as equity.
-# NSE/BSE max contracts per order for index options (SEBI circular)
+# NSE/BSE max contracts per order for index options (SEBI circular).
+# NSE index limits revised effective 2026-10-05 (circular NSE/FAOP/76693);
+# BSE limits (SENSEX/BANKEX) unchanged by that circular. Re-check periodically —
+# NSE revises these every few months.
 MAX_CONTRACTS_PER_ORDER: dict[str, int] = {
-    "NIFTY": 1800,
+    "NIFTY": 3510,
     "SENSEX": 1000,
     "BANKEX": 900,
-    "FINNIFTY": 1800,
-    "MIDCPNIFTY": 2800,
-    "BANKNIFTY": 900,
+    "FINNIFTY": 3240,
+    "MIDCPNIFTY": 5760,
+    "BANKNIFTY": 1440,
 }
+
+# NSE cash-equity per-order cap (50,000 shares / ₹50L turnover, whichever lower —
+# we use the share-count bound). Also doubles as get_max_contracts()'s fallback
+# for any symbol without a tabulated index freeze limit.
+EQUITY_MAX_QTY_PER_ORDER: int = 50_000
 
 # NSE equity MIS (intraday) margin requirement: broker extends 5× leverage,
 # so only 20% of trade value is deducted from the wallet.

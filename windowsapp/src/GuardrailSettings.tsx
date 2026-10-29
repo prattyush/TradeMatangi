@@ -5,6 +5,8 @@ export const guardrailFields = [
   ['guardrail_cooldown_block_bars', 'Cooldown duration (additional bars)', 1, 20, 1],
   ['guardrail_ban_enabled', 'Enable Ban'],
   ['guardrail_ban_capital_pct', 'Capital loss limit (%)', 1, 100, 0.1],
+  ['guardrail_ban_halfway_alert_enabled', 'Flash header red at 50% of capital loss limit'],
+  ['high_tier_pnl_threshold_pct', 'High tier enabled above P&L % (closed trades, applies while Ban is enabled)', -100, 100, 0.5],
   ['guardrail_ban_loss_trade_pct', 'Losing trades limit (%)', 1, 100, 0.1],
   ['guardrail_ban_min_trades', 'Minimum completed trades for Ban', 1, 100, 1],
   ['guardrail_maxsize_enabled', 'Enable Max Size'],
