@@ -2,6 +2,7 @@ import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalysisChart, OptionsChart } from './TradeAnalysis'
 import { AnalysisTrade, RoundTrip, TradeLabel } from './api'
+import PatternNameSelect from './PatternNameSelect'
 
 interface TradeLabelingProps {
   readOnly?: boolean
@@ -121,6 +122,13 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
 
     }
   }, [roundTrips, labels, environment.onDataChanged])
+
+  // Persisted immediately: the name joins the user's registry and shows up in every dropdown, including the Pattern Library.
+  const addName = useCallback(async (kind: 'category' | 'strategy', name: string) => {
+    if (kind === 'category') setCategories((await api.patternAddCategory(name)).categories)
+    else setStrategies((await api.patternAddStrategy(name)).strategies)
+    return name.trim()
+  }, [api])
 
   // Group round-trips by session for header display
   const sessionGroups = new Map<string, (RoundTrip & { session_id: string })[]>()
@@ -316,43 +324,23 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
                     <div>
                       <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Expected Pattern</div>
                       <div style={{ display: 'flex', gap: 4 }}>
-                        <select disabled={readOnly || saving}
-                          value={l.expected_category}
-                          onChange={e => updateLabel(key, { expected_category: e.target.value })}
-                          style={selectStyle}
-                        >
-                          <option value="">— Category —</option>
-                          {displayedCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <select disabled={readOnly || saving}
-                          value={l.expected_strategy}
-                          onChange={e => updateLabel(key, { expected_strategy: e.target.value })}
-                          style={selectStyle}
-                        >
-                          <option value="">— Strategy —</option>
-                          {displayedStrategies.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <PatternNameSelect noun="category" placeholder="— Category —" disabled={readOnly || saving}
+                          value={l.expected_category} options={displayedCategories} style={selectStyle}
+                          onChange={v => updateLabel(key, { expected_category: v })} onCreate={name => addName('category', name)} />
+                        <PatternNameSelect noun="strategy" placeholder="— Strategy —" disabled={readOnly || saving}
+                          value={l.expected_strategy} options={displayedStrategies} style={selectStyle}
+                          onChange={v => updateLabel(key, { expected_strategy: v })} onCreate={name => addName('strategy', name)} />
                       </div>
                     </div>
                     <div>
                       <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Actual Pattern</div>
                       <div style={{ display: 'flex', gap: 4 }}>
-                        <select disabled={readOnly || saving}
-                          value={l.actual_category}
-                          onChange={e => updateLabel(key, { actual_category: e.target.value })}
-                          style={selectStyle}
-                        >
-                          <option value="">— Category —</option>
-                          {displayedCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <select disabled={readOnly || saving}
-                          value={l.actual_strategy}
-                          onChange={e => updateLabel(key, { actual_strategy: e.target.value })}
-                          style={selectStyle}
-                        >
-                          <option value="">— Strategy —</option>
-                          {displayedStrategies.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <PatternNameSelect noun="category" placeholder="— Category —" disabled={readOnly || saving}
+                          value={l.actual_category} options={displayedCategories} style={selectStyle}
+                          onChange={v => updateLabel(key, { actual_category: v })} onCreate={name => addName('category', name)} />
+                        <PatternNameSelect noun="strategy" placeholder="— Strategy —" disabled={readOnly || saving}
+                          value={l.actual_strategy} options={displayedStrategies} style={selectStyle}
+                          onChange={v => updateLabel(key, { actual_strategy: v })} onCreate={name => addName('strategy', name)} />
                       </div>
                     </div>
                     <div>

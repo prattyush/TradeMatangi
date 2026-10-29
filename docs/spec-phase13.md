@@ -116,7 +116,7 @@ Two features: **Trade Labelling** and **Stats Dashboard** — extending the Anal
 *Trade Labeling (`TradeLabeling.tsx`):*
 - "Label Trades" tab inside expanded GroupCard in Trade Analysis
 - Split view: OHLC chart (left) with round-trip-numbered markers, label forms (right) in a scrollable column
-- Per round-trip: expected pattern (category + strategy dropdowns from Pattern Library), actual pattern (same), entry tag (creatable datalist), exit tag (creatable datalist)
+- Per round-trip: expected pattern (category + strategy dropdowns from the `PatternNames` registry, each with a "+ Add new…" entry), actual pattern (same), entry tag (creatable datalist), exit tag (creatable datalist)
 - Auto-save on any field change (debounced, per-field upsert)
 - Labels persist across sessions (keyed by `session_id + round_trip_index`)
 
@@ -128,6 +128,15 @@ Two features: **Trade Labelling** and **Stats Dashboard** — extending the Anal
 - Mismatch Summary card (mismatch rate, profit comparison, most mismatched)
 - Entry Tag and Exit Tag tables side by side
 - Auto-refreshes on filter change
+
+**Category / strategy registry (`PatternNames`):**
+- Per-user table, PK=`user_id`, SK=`name_key` (`category#<name>` / `strategy#<name>`). It is the single source for the category and strategy dropdowns in both the Pattern Library and Label Trades.
+- `GET /api/pattern/categories|strategies` read the registry for the user and for every owner who shared patterns with them, so shared users also see the owner's names.
+- `POST /api/pattern/categories|strategies` (`{name}`) register a name and return the updated list. Names are trimmed, 1–60 characters, and must not contain `::` (the risk/reward key separator). Saving or updating a Pattern Library chart registers its annotation names too.
+- Names are not removed when charts are deleted. Removal/rename is not implemented.
+- Legacy names that exist only inside saved charts are imported once per owner on first read (marker item `_meta#backfilled`).
+- Label Trades uses `shared/analysis/PatternNameSelect.tsx` on both the website and the desktop app. Desktop required allowing `POST pattern/strategies|categories` in `desktop_analysis.py`, `windowsapp/src/analysisApi.ts` and `valid_analysis_path` in `windowsapp/src-tauri/src/lib.rs`.
+- The in-session labelling UIs (button panel, Stepwise popup, desktop popup) are select-only; they show registry names but cannot add them.
 
 **Files changed:**
 
