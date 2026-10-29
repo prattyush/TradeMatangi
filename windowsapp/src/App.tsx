@@ -271,7 +271,8 @@ function WorkspaceToolPanel({ toolsCollapsed, setToolsCollapsed, snapshot, tiles
   </aside>
 }
 
-function TradeHistoryModal({ trades, roundTrips, labels, sessionCapital, onClose }: { trades: DesktopTrade[]; roundTrips: DesktopRoundTrip[]; labels: DesktopTradeLabel[]; sessionCapital: number; onClose: () => void }) {
+function TradeHistoryModal({ trades, roundTrips, labels, sessionCapital, onClose, onRefresh }: { trades: DesktopTrade[]; roundTrips: DesktopRoundTrip[]; labels: DesktopTradeLabel[]; sessionCapital: number; onClose: () => void; onRefresh?: () => Promise<void> }) {
+  const [refreshing, setRefreshing] = useState(false)
   const rows = [...trades].sort((left, right) => Number(right.timestamp ?? right.created_at ?? 0) - Number(left.timestamp ?? left.created_at ?? 0))
   const exitSummary = new Map<string, { pnl: number; pnlPct: number; strategy: string }>()
   for (const roundTrip of roundTrips) {
@@ -296,7 +297,7 @@ function TradeHistoryModal({ trades, roundTrips, labels, sessionCapital, onClose
   }
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section className="trade-history-modal" role="dialog" aria-modal="true" aria-label="Trade history">
-      <header><strong>Trade History</strong><button onClick={onClose}>x</button></header>
+      <header><strong>Trade History</strong>{onRefresh && <button disabled={refreshing} onClick={() => { setRefreshing(true); void onRefresh().finally(() => setRefreshing(false)) }}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>}<button onClick={onClose}>x</button></header>
       <div className="trade-history-table">
         <div className="trade-history-row trade-history-head"><span>Time</span><span>Side</span><span>Qty</span><span>Price</span><span>Instrument</span><span>P&L %</span><span>Strategy</span></div>
         {rows.length === 0 && <div className="trade-history-empty">No trades yet</div>}
@@ -1202,15 +1203,29 @@ function ScreenController(props: ScreenControllerProps) {
       setLabelMetadataError(String(error))
     }
   }
+  // Real/swing round-trips are cycle-based and can transiently 500 if a write
+  // races the read right as a position goes flat -- retry a couple of times
+  // instead of silently leaving tradeLabelState (and the GuardRails High-tier
+  // gate) stuck on stale, pre-flattening data for the rest of the session.
   useEffect(() => {
     if (!isTradingMode(mode) || !trading?.session.session_id) {
       setTradeLabelState(null)
       return
     }
     let cancelled = false
-    void desktopTradingRequest<DesktopTradeLabelState>(`${trading.session.session_id}/trade-labels`, 'GET')
-      .then(state => { if (!cancelled) setTradeLabelState(state) })
-      .catch(error => { if (!cancelled) console.warn('desktop label state unavailable', error) })
+    const sessionId = trading.session.session_id
+    void (async () => {
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+        try {
+          const state = await desktopTradingRequest<DesktopTradeLabelState>(`${sessionId}/trade-labels`, 'GET')
+          if (!cancelled) setTradeLabelState(state)
+          return
+        } catch (error) {
+          if (attempt === 2) { if (!cancelled) console.warn('desktop label state unavailable', error) }
+          else await new Promise(resolve => setTimeout(resolve, 400))
+        }
+      }
+    })()
     return () => { cancelled = true }
   }, [mode, trading?.session.session_id, trading?.trades.length])
   useEffect(() => {
@@ -2753,7 +2768,13 @@ function ScreenController(props: ScreenControllerProps) {
       {toolPanelOpen && <WorkspaceToolPanel toolsCollapsed={toolsCollapsed} setToolsCollapsed={setToolsCollapsed} snapshot={trading} tiles={activeScreen.tiles} activeTileId={activeToolTile} setActiveTileId={setActiveToolTileId} activeTileLabel={(() => { const tile = activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0]; return tile?.kind === 'option' ? `${tile.symbol} ${tile.strike}${tile.right}` : tile?.symbol ?? 'Chart' })()} activePosition={isTradingMode(mode) ? positionForTile(activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0], trading) : null} sessionCapital={trading?.session.session_capital ?? 0} positionMarginRate={trading?.session.instrument_type === 'equity' && (activeScreen.tiles.find(item => item.id === activeToolTile) ?? activeScreen.tiles[0])?.kind !== 'option' ? 0.2 : 1} indicators={selectedIndicators} toggleIndicator={toggleIndicator} clearIndicators={clearIndicators} sendDrawing={sendDrawing} sendDrawingAction={sendDrawingAction} activeDrawingTool={activeDrawingTool} drawingMode={drawingMode} setDrawingMode={setDrawingMode} tradeHistoryCount={trading?.trades.length ?? 0} onOpenTradeHistory={() => setTradeHistoryOpen(true)} tradingActive={Boolean(trading) && !companion} ordersReadOnly={trading?.session.state === 'ended'} openOrders={trading?.open_orders ?? []} orderLotSize={trading?.option_lot_size ?? trading?.session.lot_size ?? 1} onSplitOrder={splitListedOrder} onUpdateOrder={updateListedOrder} onCancelOrder={cancelOrderLine} priceForOrder={order => { const tile = tileForOrder(order); return tile ? paneCurrentPrice(tile) : 0 }} onPickPrice={pickOrderEditPrice} onCancelPick={cancelDraftPick} labelState={isTradingMode(mode) ? tradeLabelState : null} labelMetadata={labelMetadata} labelMetadataStatus={labelMetadataStatus} labelMetadataError={labelMetadataError} onReloadLabelMetadata={() => void loadLabelMetadata()} onSaveTradeLabel={saveTradeLabel} strategies={isTradingMode(mode) ? trading?.strategies ?? [] : []} onCancelStrategy={id => { void cancelDesktopStrategy(id).catch(reportTradingError) }} onUpdateStrategySize={(id, size) => { if (!trading) return; void desktopTradingRequest(`${trading.session.session_id}/strategies/${id}/size`, 'PATCH', { session_id: trading.session.session_id, target_profit_size: size }).then(() => desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET')).then(setTrading).catch(reportTradingError) }} onUpdateStrategyPrice={requestDesktopStrategyPrice} />}
       <section className={`tile-grid tiles-${activeScreen.layout} ${maximizedTileId ? 'has-maximized' : ''}`}>{activeScreen.tiles.map((tile, tileIndex) => { const state = replay?.tile_states.find(item => item.tile_id === tile.id); const liveState = (mode === 'Browse' || isLiveTradingMode(mode)) ? live?.tiles.find(item => item.tile_id === tile.id) : undefined; const cacheKey = liveState?.instrument ? canonicalKey(liveState.instrument) : instrumentKeyForTile(tile, catalogue); return <DesktopTile key={tile.id} refreshVersion={chartRefreshVersion} contextDays={Number(sharedPreferences.historical_days ?? 2)} config={tile} catalogue={catalogue} connection={connection} api={api} settings={chartSettings} serverUrl={serverUrl} drawingRequest={drawingRequest} onDrawingError={reportDrawingError} replayCursor={replay?.cursor} replayRunId={replay?.run_id} replayCandle={state?.interval_minutes === Number(tile.interval) ? state.candle : undefined} replayAttached={Boolean(state && state.interval_minutes === Number(tile.interval))} liveTile={liveState} liveTicks={liveTickCache[cacheKey] ?? []} onLiveTick={onLiveTick} maximized={maximizedTileId === tile.id} active={props.workspaceVisible && activeToolTile === tile.id} indicators={tileIndicators[tile.id] ?? noIndicators} drawingCommand={drawingCommand} drawingAction={drawingAction} drawingMode={drawingMode} onDrawingComplete={onDrawingComplete} onActivate={() => setActiveToolTileId(tile.id)} onConfigure={() => setPickerTileId(tile.id)} onMaximize={() => setMaximizedTileId(current => current === tile.id ? null : tile.id)} onIntervalChange={interval => saveTile({ ...tile, interval })} tradingSnapshot={isTradingMode(mode) ? trading : null} pricePickAction={pricePickAction?.draft ? pricePickAction.draft.tileId === tile.id ? pricePickAction : null : activeToolTile === tile.id ? pricePickAction : null} onPricePick={price => void completePricePick(price).catch(error => { setTradingNotice(''); reportTradingError(error) })} onOrderDrag={updateOrderLine} onStrategyDrag={updateDesktopStrategyPrice} onOrderCancel={cancelOrderLine} onOrderConvertRequest={requestOrderConvert} onOrderQuantityUpdate={updateOrderQuantity} onChartOrderAction={(tileForAction, action, price, anchor) => void placeChartOrder(tileForAction, action, price, anchor).catch(error => { setTradingNotice(''); reportTradingError(error) })} onStrategyTargetProfitPct={updateDesktopTargetProfitPct} onStrategyCancel={!companion ? cancelDesktopStrategy : undefined} swapTargets={swapTargetsForLayout(activeScreen.layout, tileIndex).map(target => ({ dir: target.dir, label: target.label, onClick: () => swapTiles(tileIndex, target.target) }))} />})}</section>
     </section>
-    {tradeHistoryOpen && <TradeHistoryModal trades={trading?.trades ?? []} roundTrips={[...(tradeLabelState?.open ?? []), ...(tradeLabelState?.completed ?? [])]} labels={tradeLabelState?.labels ?? []} sessionCapital={trading?.session.session_capital ?? 0} onClose={() => setTradeHistoryOpen(false)} />}
+    {tradeHistoryOpen && <TradeHistoryModal trades={trading?.trades ?? []} roundTrips={[...(tradeLabelState?.open ?? []), ...(tradeLabelState?.completed ?? [])]} labels={tradeLabelState?.labels ?? []} sessionCapital={trading?.session.session_capital ?? 0} onClose={() => setTradeHistoryOpen(false)} onRefresh={trading?.session.session_id ? async () => {
+      const sessionId = trading.session.session_id
+      try {
+        const state = await desktopTradingRequest<DesktopTradeLabelState>(`${sessionId}/trade-labels`, 'GET')
+        setTradeLabelState(state)
+      } catch (error) { reportTradingError(error) }
+    } : undefined} />}
     {guardrailPopup && <div className={guardrailPopup.type === 'BAN' ? 'guardrail-ban-notice' : 'modal-backdrop'}><section className="instrument-modal" role="alertdialog" aria-modal={guardrailPopup.type !== 'BAN'} aria-label="Guardrail active"><header><strong>{guardrailPopup.type === 'BAN' ? 'Trading Suspended' : guardrailPopup.type === 'COOLDOWN' ? 'Cooldown Active' : 'Trading Paused'}</strong></header><p>{guardrailPopup.reason}</p>{guardrailPopup.type === 'BAN' ? <p>Trading is suspended for this session. Start a new session to resume trading.</p> : <footer><button onClick={() => setGuardrailPopup(null)}>Got it</button></footer>}</section></div>}
     {trading && trading.session.state !== 'ended' && <FloatingOrderWindow key={`${serverUrl}:${trading.session.session_id}`} visible={orderWindowOpen && props.workspaceVisible && (Boolean(props.assignedId) || props.selectedId === activeScreenId)} tiles={activeScreen.tiles} activeTileId={activeToolTile} snapshot={trading} priceForTile={paneCurrentPrice} onSubmit={submitFloatingOrder} onReconcile={async () => { const snapshot = await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET'); setTrading(snapshot); return snapshot }} onClose={() => { cancelDraftPick(); setOrderWindowOpen(false) }} onPickPrice={requestDraftPrice} onCancelPick={cancelDraftPick} highTierDisabled={screenHighTierDisabled} />}
     {showKotakLogin && <KotakLoginDialog request={settingsAccountRequest} onCancel={()=>setShowKotakLogin(false)} onConnected={()=>{setShowKotakLogin(false);const context=contextRef.current;void settingsAccountRequest<{broker:string;authenticated:boolean;active_session_id?:string|null;restrictions_enabled?:boolean}>('broker/status','GET').then(value=>{if(context===contextRef.current)setRealBroker(value)}).catch(reportTradingError)}}/>}

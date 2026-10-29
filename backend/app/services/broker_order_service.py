@@ -2,10 +2,13 @@
 from app.services import performance_diagnostics as diagnostics
 import asyncio
 import logging
+import uuid
 from app.models.schemas import Order, OrderType, TradeSide
 from app.services import order_service
 
 logger = logging.getLogger(__name__)
+
+CANCEL_CONFIRM_TIMEOUT = 30.0  # matches broker_conversion.CONFIRM_WAIT, the only existing precedent
 
 
 def require_entry_allowed(session, order):
@@ -14,6 +17,73 @@ def require_entry_allowed(session, order):
     else:
         from app.services.real_trading_day import require_entry_allowed as guard
     guard(session, order.side, max(0, order.quantity - order.broker_filled_quantity), order.right, order.strike, order.expiry)
+
+
+async def cancel_and_confirm(session, order: Order, *, timeout: float = CANCEL_CONFIRM_TIMEOUT) -> str:
+    """Cancel a real-session broker order and wait for its WS-confirmed terminal
+    state. Returns "cancelled" | "filled" | "rejected" | "ambiguous".
+
+    Uses register_order_observer -- the multi-subscriber, broadcast-safe
+    registry also used by broker_conversion.py -- never register_cancel_callback
+    / register_fill_callback / register_reject_callback. Those three are
+    single-slot, last-writer-wins maps; every order already has a production
+    registration there (register_callbacks, below) doing the real bookkeeping
+    (position updates, protection_recovery.note_cancel, SSE events, reservation
+    release). Clobbering those slots here would silently and permanently break
+    that bookkeeping for the rest of the session.
+    """
+    if session.session_type != "real" or not order.broker_order_id:
+        return "cancelled"
+    from app.services.execution_broker import get_service
+    from app.services.broker_reports import normalize_order, order_id as broker_report_id
+    broker = get_service(session)
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future = loop.create_future()
+    token = f"cancel-confirm:{order.order_id}:{uuid.uuid4()}"
+
+    def observe(raw):
+        if future.done():
+            return
+        try:
+            row = normalize_order(raw)
+        except Exception:
+            return
+        if broker_report_id(row) != order.broker_order_id:
+            return
+        status = row["status"]
+        if status in ("cancelled", "canceled"):
+            future.set_result("cancelled")
+        elif status in ("complete", "filled"):
+            future.set_result("filled")
+        elif status == "rejected":
+            future.set_result("rejected")
+        # open / trigger pending / modify pending / modified -- keep waiting
+
+    broker.register_order_observer(token, observe, loop)
+    try:
+        from app.routers.orders import _session_edit_lock
+        async with _session_edit_lock(session):
+            await asyncio.to_thread(
+                broker.cancel_order, order.broker_order_id,
+                initiator="user", purpose="merge_consolidation",
+                context={"session_id": session.session_id, "order_id": order.order_id, "user_id": session.user_id},
+            )
+    except Exception:
+        broker.deregister_order_observer(token)
+        raise
+    try:
+        outcome = await asyncio.wait_for(future, timeout=timeout)
+    except asyncio.TimeoutError:
+        outcome = "ambiguous"
+    finally:
+        broker.deregister_order_observer(token)
+    # The production cancel/fill callback (register_callbacks, below) is
+    # scheduled from the same _dispatch_order_record pass via the same
+    # call_soon_threadsafe mechanism; yield twice so it has run before the
+    # caller re-reads order_service state.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    return outcome
 
 
 async def sync_order_edit_async(session, order: Order, new_order_type: OrderType, *, reprice: bool = False, split_operation_id: str | None = None) -> None:

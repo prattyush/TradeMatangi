@@ -1506,18 +1506,28 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect, handleSSEUnavailable, [...(sim.group?.members.filter(member => member.session_type === 'real').map(member => member.session_id) ?? []), ...(sim.sessionType === 'real' && sim.sessionId ? [sim.sessionId] : [])])
 
-  // Fetch round-trips and labels for trade history when session is active
+  // Fetch round-trips and labels for trade history when session is active.
+  // Real/swing round-trips are cycle-based and can transiently 500 if a
+  // write races the read right as a position goes flat -- retry a couple of
+  // times instead of silently leaving closedTradePnl (and the GuardRails
+  // High-tier gate) stuck on stale, pre-flattening data for the rest of the
+  // session.
   useEffect(() => {
     if (!sim.sessionId) { setRoundTrips([]); setTradeLabels([]); return }
     let cancelled = false
     const fetch = async () => {
-      try {
-        const [rts, lbs] = await Promise.all([
-          api.getRoundTrips(sim.sessionId!),
-          api.getLabels(sim.sessionId!),
-        ])
-        if (!cancelled) { setRoundTrips(rts); setTradeLabels(lbs) }
-      } catch { /* ignore */ }
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+        try {
+          const [rts, lbs] = await Promise.all([
+            api.getRoundTrips(sim.sessionId!),
+            api.getLabels(sim.sessionId!),
+          ])
+          if (!cancelled) { setRoundTrips(rts); setTradeLabels(lbs) }
+          return
+        } catch {
+          if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400))
+        }
+      }
     }
     fetch()
     return () => { cancelled = true }
@@ -2932,6 +2942,14 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
               } catch (error) {
                 if (simRef.current.sessionId === sessionId) setBrokerError(error instanceof Error ? error.message : String(error))
               }
+              // Also re-fetch round-trips/labels so the GuardRails High-tier
+              // gate re-evaluates immediately against fresh closed-trade P&L,
+              // independent of whether a new trade ever re-triggers the
+              // automatic fetch effect again.
+              try {
+                const [rts, lbs] = await Promise.all([api.getRoundTrips(sessionId), api.getLabels(sessionId)])
+                if (simRef.current.sessionId === sessionId) { setRoundTrips(rts); setTradeLabels(lbs) }
+              } catch { /* transient; the automatic fetch effect's own retry will catch up */ }
             } : undefined}
             roundTrips={roundTrips}
             labels={tradeLabels}

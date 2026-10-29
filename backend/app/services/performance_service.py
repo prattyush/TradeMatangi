@@ -713,7 +713,32 @@ def query_all(table, **params):
         params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
 
+LOAD_SESSION_CYCLES_RETRY_ATTEMPTS = 3
+LOAD_SESSION_CYCLES_RETRY_DELAY_SECONDS = 0.25
+
+
 def load_session_cycles(session, include_labels=True, apply_fee_correction=True):
+    """Read one committed book, retrying the transient "changed during
+    analytics read" race a few times before giving up.
+
+    The two reads below (Trades table, then Orders table) are not
+    transactional; a write landing between them -- most likely exactly when
+    a position has just gone flat, which is precisely when callers like the
+    GuardRails High-tier gate need a fresh answer most -- trips the
+    membership-mismatch RuntimeError this function raises internally. A short
+    bounded retry resolves this before it ever surfaces as an API 500.
+    """
+    import time
+    for attempt in range(LOAD_SESSION_CYCLES_RETRY_ATTEMPTS):
+        try:
+            return _load_session_cycles_once(session, include_labels, apply_fee_correction)
+        except RuntimeError:
+            if attempt == LOAD_SESSION_CYCLES_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(LOAD_SESSION_CYCLES_RETRY_DELAY_SECONDS)
+
+
+def _load_session_cycles_once(session, include_labels=True, apply_fee_correction=True):
     """Read one committed book. Never call a broker or use in-memory pending state."""
     from app.services.db import get_dynamodb_resource
     from app.services.real_broker_state import link_for
