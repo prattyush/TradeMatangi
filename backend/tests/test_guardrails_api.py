@@ -159,6 +159,23 @@ class TestGetSettingsEndpoint:
         assert data["guardrail_ban_enabled"] is True
 
 
+class TestHighTierAndHalfwayAlertRoundTrip:
+    """Regression: GET/POST returned defaults for these two persisted settings, so the UI showed them reset."""
+    STORED = {"guardrail_ban_halfway_alert_enabled": True, "high_tier_pnl_threshold_pct": -2.5}
+
+    def test_get_returns_stored_values(self):
+        with patch("app.services.user_settings_service.get_settings", return_value=self.STORED):
+            data = client.get("/api/guardrails/settings", headers=HEADERS).json()
+        assert data["guardrail_ban_halfway_alert_enabled"] is True
+        assert data["high_tier_pnl_threshold_pct"] == -2.5
+
+    def test_post_returns_saved_values(self):
+        with patch("app.services.user_settings_service.update_settings", return_value=self.STORED):
+            data = client.post("/api/guardrails/settings", json=self.STORED, headers=HEADERS).json()
+        assert data["guardrail_ban_halfway_alert_enabled"] is True
+        assert data["high_tier_pnl_threshold_pct"] == -2.5
+
+
 # ── POST /api/guardrails/settings ─────────────────────────────────────────────
 
 class TestUpdateSettingsEndpoint:
