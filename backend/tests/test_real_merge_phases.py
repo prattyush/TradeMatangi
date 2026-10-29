@@ -34,10 +34,11 @@ def _real_session():
 
 class FakeBroker:
     """Captures observer registration; call fire() to simulate a WS event."""
-    def __init__(self):
+    def __init__(self, order_history=None):
         self.observers = {}
         self.cancel_calls = []
         self.single_slot_calls = []
+        self._order_history = order_history if order_history is not None else []
 
     def register_order_observer(self, token, callback, loop):
         self.observers[token] = (callback, loop)
@@ -56,9 +57,44 @@ class FakeBroker:
         for callback, _loop in list(self.observers.values()):
             callback(raw)
 
+    def get_order_history(self):
+        return self._order_history
+
 
 def _raw_event(broker_order_id: str, status: str) -> dict:
     return {"nOrdNo": broker_order_id, "ordSt": status, "trnsTp": "S", "qty": 20, "fldQty": 0}
+
+
+def _history_row(broker_order_id: str, status: str) -> dict:
+    return {"broker_order_id": broker_order_id, "status": status}
+
+
+@pytest.mark.asyncio
+class TestResolveBrokerOrderStatus:
+    async def test_finds_cancelled(self):
+        broker = FakeBroker(order_history=[_history_row("B1", "cancelled")])
+        assert await broker_order_service.resolve_broker_order_status(broker, "B1") == "cancelled"
+
+    async def test_finds_filled(self):
+        broker = FakeBroker(order_history=[_history_row("B1", "complete")])
+        assert await broker_order_service.resolve_broker_order_status(broker, "B1") == "filled"
+
+    async def test_finds_rejected(self):
+        broker = FakeBroker(order_history=[_history_row("B1", "rejected")])
+        assert await broker_order_service.resolve_broker_order_status(broker, "B1") == "rejected"
+
+    async def test_still_open_is_ambiguous(self):
+        broker = FakeBroker(order_history=[_history_row("B1", "open")])
+        assert await broker_order_service.resolve_broker_order_status(broker, "B1") == "ambiguous"
+
+    async def test_not_found_is_ambiguous(self):
+        broker = FakeBroker(order_history=[_history_row("OTHER", "cancelled")])
+        assert await broker_order_service.resolve_broker_order_status(broker, "B1") == "ambiguous"
+
+    async def test_query_failure_is_ambiguous(self):
+        broker = MagicMock()
+        broker.get_order_history.side_effect = RuntimeError("transport error")
+        assert await broker_order_service.resolve_broker_order_status(broker, "B1") == "ambiguous"
 
 
 @pytest.mark.asyncio
@@ -110,15 +146,25 @@ class TestCancelAndConfirm:
             outcome = await task
         assert outcome == "rejected"
 
-    async def test_timeout_returns_ambiguous(self):
+    async def test_timeout_with_no_sync_fallback_answer_returns_ambiguous(self):
         session = _real_session()
         order = _order("a", 100, broker_order_id="B1")
-        broker = FakeBroker()
+        broker = FakeBroker()  # empty order_history -- sync fallback also finds nothing
         with patch("app.services.execution_broker.get_service", return_value=broker), \
              patch("app.routers.orders._session_edit_lock", return_value=_noop_lock()):
             outcome = await broker_order_service.cancel_and_confirm(session, order, timeout=0.05)
         assert outcome == "ambiguous"
         assert broker.observers == {}  # deregistered even on timeout
+
+    async def test_timeout_falls_back_to_sync_query_and_finds_cancelled(self):
+        """A WS message can simply be missed -- the sync fallback catches it."""
+        session = _real_session()
+        order = _order("a", 100, broker_order_id="B1")
+        broker = FakeBroker(order_history=[_history_row("B1", "cancelled")])
+        with patch("app.services.execution_broker.get_service", return_value=broker), \
+             patch("app.routers.orders._session_edit_lock", return_value=_noop_lock()):
+            outcome = await broker_order_service.cancel_and_confirm(session, order, timeout=0.05)
+        assert outcome == "cancelled"
 
     async def test_ignores_events_for_other_orders(self):
         session = _real_session()

@@ -19,8 +19,41 @@ def require_entry_allowed(session, order):
     guard(session, order.side, max(0, order.quantity - order.broker_filled_quantity), order.right, order.strike, order.expiry)
 
 
+async def resolve_broker_order_status(broker, broker_order_id: str) -> str:
+    """Synchronous fallback for ANY "wait for a broker ack" primitive: query
+    the broker's current order book directly for one order's real status,
+    for use when a WS confirmation hasn't arrived within the wait window (a
+    dropped/missed event is always possible) but the broker itself may
+    already have resolved the order. Returns "cancelled" | "filled" |
+    "rejected" | "ambiguous" (not found in the book, still open/pending, or
+    the query itself failed -- genuinely unresolved either way).
+
+    Mirrors order_split.py's _confirmed() polling idiom (broker.get_order_
+    history(), off-loop), but as a single one-shot check rather than a
+    retry loop, since this only ever runs after a WS wait has already timed
+    out. Store/reuse this helper for any future "wait for broker ack, then
+    fall back to a direct query" code path rather than re-deriving it.
+    """
+    try:
+        rows = await asyncio.to_thread(broker.get_order_history)
+    except Exception:
+        return "ambiguous"
+    for row in rows:
+        if row.get("broker_order_id") != broker_order_id:
+            continue
+        status = row.get("status", "")
+        if status in ("cancelled", "canceled"):
+            return "cancelled"
+        if status in ("complete", "filled"):
+            return "filled"
+        if status == "rejected":
+            return "rejected"
+        return "ambiguous"  # found, but still genuinely open/pending at the broker
+    return "ambiguous"  # not present in the broker's current book
+
+
 async def cancel_and_confirm(session, order: Order, *, timeout: float = CANCEL_CONFIRM_TIMEOUT) -> str:
-    """Cancel a real-session broker order and wait for its WS-confirmed terminal
+    """Cancel a real-session broker order and wait for its confirmed terminal
     state. Returns "cancelled" | "filled" | "rejected" | "ambiguous".
 
     Uses register_order_observer -- the multi-subscriber, broadcast-safe
@@ -31,6 +64,11 @@ async def cancel_and_confirm(session, order: Order, *, timeout: float = CANCEL_C
     (position updates, protection_recovery.note_cancel, SSE events, reservation
     release). Clobbering those slots here would silently and permanently break
     that bookkeeping for the rest of the session.
+
+    If no WS confirmation arrives within `timeout`, falls back to one direct
+    synchronous query of the broker's order book (resolve_broker_order_status)
+    before giving up and calling the outcome "ambiguous" -- a dropped/missed
+    WS message doesn't actually mean the broker hasn't already resolved it.
     """
     if session.session_type != "real" or not order.broker_order_id:
         return "cancelled"
@@ -74,7 +112,9 @@ async def cancel_and_confirm(session, order: Order, *, timeout: float = CANCEL_C
     try:
         outcome = await asyncio.wait_for(future, timeout=timeout)
     except asyncio.TimeoutError:
-        outcome = "ambiguous"
+        # The WS event may simply have been missed -- ask the broker directly
+        # before giving up and calling this ambiguous.
+        outcome = await resolve_broker_order_status(broker, order.broker_order_id)
     finally:
         broker.deregister_order_observer(token)
     # The production cancel/fill callback (register_callbacks, below) is
