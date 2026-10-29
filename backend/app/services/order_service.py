@@ -93,6 +93,33 @@ def plan_merge(closing_orders: list[Order], max_qty: int, lot_size: int = 1) -> 
     return MergePlan(keep=keep, cancel=redundant)
 
 
+def distribute_freed_quantity(keep: list[tuple[Order, int]], freed: int, cap: int) -> list[tuple[Order, int]]:
+    """Additive-only: given the original keeper list (plan_merge's own
+    deterministic order) and the quantity actually freed by a real-session
+    merge's cancel phase (which may be less than originally planned, since a
+    sibling may have filled or failed to cancel), return (order, new_absolute_
+    target) pairs. Never proposes a target below an order's current remaining
+    quantity; fills keepers in order up to `cap`; a keeper beyond the point the
+    freed pool runs out is simply omitted, never bumped to a smaller or zero
+    value.
+    """
+    left = freed
+    result: list[tuple[Order, int]] = []
+    for order, _original_target in keep:
+        if left <= 0:
+            break
+        current_remaining = max(0, order.quantity - order.broker_filled_quantity)
+        room = cap - current_remaining
+        if room <= 0:
+            continue
+        take = min(room, left)
+        result.append((order, order.quantity + take))
+        left -= take
+    if left > 0:
+        logger.warning("distribute_freed_quantity_excess freed=%d could not be redistributed to any keeper", left)
+    return result
+
+
 def _ensure_session(session_id: str) -> None:
     if session_id not in _orders:
         _orders[session_id] = {}

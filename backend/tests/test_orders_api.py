@@ -523,3 +523,41 @@ class TestBulkUpdateSLEndpoint:
         assert len(survivors) == 2
         assert {o["order_type"] for o in survivors} == {"LIMIT"}
         assert sum(o["quantity"] for o in survivors) == 3
+
+    async def test_bulk_update_sl_merge_one_cancel_failure_does_not_abort_request(self):
+        """Regression for the missing try/except around bulk-update-sl's merge
+        cancel loop (bug fix #1) -- mirrors production request_ids
+        12d16345d90542e7ba7643b155324669 etc., where a single stale sibling's
+        404 aborted the entire request."""
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 3)), \
+             patch("app.services.order_service.get_max_contracts", return_value=2):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                for _ in range(3):
+                    await client.post("/api/orders", json={
+                        "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                        "trigger_price": 95.0, "quantity": 1, "is_stoploss": True,
+                    })
+
+                real_cancel = orders.order_service.cancel_order
+                calls = {"n": 0}
+
+                def flaky_cancel_order(*args, **kwargs):
+                    calls["n"] += 1
+                    if calls["n"] == 1:
+                        from fastapi import HTTPException
+                        raise HTTPException(status_code=404, detail="Order not found or already closed")
+                    return real_cancel(*args, **kwargs)
+
+                with patch("app.services.order_service.cancel_order", side_effect=flaky_cancel_order):
+                    resp = await client.patch("/api/orders/bulk-update-sl", json={
+                        "session_id": SESSION, "trigger_price": 97.0, "merge": True,
+                    })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        failed = [r for r in data["results"] if r["state"] == "failed"]
+        assert len(failed) == 1
+        # the request completed and reported the other orders despite the one failure
+        assert len(data["orders"]) >= 2

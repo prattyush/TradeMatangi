@@ -1,4 +1,4 @@
-import { forwardRef, useLayoutEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SizingMode, FundsRatios, RiskRatios, QuantityTiers } from './SettingsModal'
 
 export type EntryOrderType = 'MARKET' | 'AUTO_STOP' | 'AUTO_STOP_LIMIT' | 'TARGET' | 'LIMIT' | 'TARGET_PERCENT'
@@ -32,6 +32,7 @@ export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ tic
   const submitted = useRef(false)
   const chooseDirection = useRef(ticket.side === null).current
   const [sizeKey, setSizeKey] = useState<string | null>(null)
+  useEffect(() => { if (sizeKey === 'h' && highTierDisabled) setSizeKey(null) }, [sizeKey, highTierDisabled])
   const [position, setPosition] = useState({ left: ticket.x, top: ticket.y })
   const isTarget = ticket.orderType === 'TARGET_PERCENT'
   const mode = isTarget ? 'riskRatio' : ticket.sizingMode
@@ -57,7 +58,9 @@ export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ tic
       onSubmit(next, null, next.sizingMode === 'fundsRatio' ? fundsRatios[preset] / 100 : undefined, next.sizingMode === 'riskRatio' ? riskRatios[preset] : undefined)
     }
   }
-  const buttonStyle = (active: boolean) => ({ width: '100%', padding: '5px 6px', minHeight: 25, background: active ? '#1f3a5f' : '#21262d', color: active ? '#79c0ff' : '#e6edf3', border: `1px solid ${active ? '#388bfd' : '#30363d'}`, borderRadius: 4, cursor: 'pointer', fontSize: 10 })
+  const buttonStyle = (active: boolean, disabled = false) => disabled
+    ? { width: '100%', padding: '5px 6px', minHeight: 25, background: '#2a1616', color: '#a35a5a', border: '1px solid #5a2a2a', borderRadius: 4, cursor: 'not-allowed', fontSize: 10, textDecoration: 'line-through' as const }
+    : { width: '100%', padding: '5px 6px', minHeight: 25, background: active ? '#1f3a5f' : '#21262d', color: active ? '#79c0ff' : '#e6edf3', border: `1px solid ${active ? '#388bfd' : '#30363d'}`, borderRadius: 4, cursor: 'pointer', fontSize: 10 }
   return <div ref={element => { root.current = element; if (typeof ref === 'function') ref(element); else if (ref) ref.current = element }} role="dialog" aria-modal="false" aria-label="Chart entry ticket" style={{ position: 'fixed', ...position, zIndex: 10002, width: 'min(260px, calc(100vw - 16px))', maxHeight: 'calc(100dvh - 16px)', overflowY: 'auto', boxSizing: 'border-box', background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: 9, boxShadow: '0 8px 24px #0006', color: '#e6edf3', fontSize: 10 }}>
     <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}><strong style={{ fontSize: 11 }}>Use as SL · {ticket.side ?? 'Choose direction'}</strong><button aria-label="Close order ticket" onClick={onClose} style={{ border: 0, background: 'transparent', color: '#8b949e', cursor: 'pointer' }}>×</button></header>
     <div style={{ color: '#8b949e', marginBottom: 7 }}>SL ₹{ticket.price.toFixed(2)}</div>
@@ -66,7 +69,7 @@ export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ tic
       <section aria-label="Entry order type"><div style={{ color: '#8b949e', marginBottom: 5 }}>Order type</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 4 }}>{choices.map(([orderType, label, name]) => <button key={orderType} title={name} aria-label={name} aria-pressed={ticket.orderType === orderType} disabled={!ticket.side || submitted.current} style={{ ...buttonStyle(ticket.orderType === orderType), padding: '3px 4px', minHeight: 23 }} onClick={() => { const next = { ...ticket, orderType }; if ((orderType === 'TARGET_PERCENT') !== isTarget) {setSizeKey(null);onChange(next);return} if (sizeKey) submit(next, sizeKey); else onChange(next) }}>{label}</button>)}</div></section>
       <section aria-label="Entry sizing">
         {isTarget ? <div style={{marginBottom:5}}>Target %</div> : mode !== 'quantity' ? <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5, minHeight: 14 }}><span>Risk</span><button type="button" role="switch" aria-label="Use Capital % instead of Risk % for this order" aria-checked={mode === 'fundsRatio'} onClick={() => { setSizeKey(null); onChange({ ...ticket, sizingMode: mode === 'fundsRatio' ? 'riskRatio' : 'fundsRatio' }) }} style={{ width: 27, height: 15, border: 0, padding: 2, borderRadius: 10, background: mode === 'fundsRatio' ? '#1d4ed8' : '#475569', cursor: 'pointer' }}><span style={{ display: 'block', width: 11, height: 11, borderRadius: '50%', background: '#fff', transform: mode === 'fundsRatio' ? 'translateX(12px)' : undefined }}/></button><span>Capital %</span></div> : <div style={{ color: '#8b949e', marginBottom: 5 }}>Quantity</div>}
-        <div style={{ display: 'grid', gap: 5 }}>{(['l', 'm', 'h'] as const).map(key => { const value = mode === 'quantity' ? quantityTiers[key] : (mode === 'riskRatio' ? riskRatios : fundsRatios)[key]; const tierDisabled = key === 'h' && highTierDisabled; return <button key={key} aria-pressed={sizeKey === key} disabled={!ticket.side || submitted.current || tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} style={buttonStyle(sizeKey === key)} onClick={() => { setSizeKey(key); if (ticket.orderType) submit(ticket, key) }}>{mode === 'quantity' ? `Qty ${value}` : `${isTarget ? 'Target' : mode === 'riskRatio' ? 'Risk' : 'Capital'} ${value}%`}</button> })}</div>
+        <div style={{ display: 'grid', gap: 5 }}>{(['l', 'm', 'h'] as const).map(key => { const value = mode === 'quantity' ? quantityTiers[key] : (mode === 'riskRatio' ? riskRatios : fundsRatios)[key]; const tierDisabled = key === 'h' && highTierDisabled; return <button key={key} aria-pressed={sizeKey === key} disabled={!ticket.side || submitted.current || tierDisabled} title={tierDisabled ? 'High tier disabled by the GuardRails BAN P&L % threshold' : undefined} style={buttonStyle(sizeKey === key, tierDisabled)} onClick={() => { setSizeKey(key); if (ticket.orderType) submit(ticket, key) }}>{mode === 'quantity' ? `Qty ${value}` : `${isTarget ? 'Target' : mode === 'riskRatio' ? 'Risk' : 'Capital'} ${value}%`}</button> })}</div>
       </section>
     </div>
     <small style={{ display: 'block', color: '#8b949e', marginTop: 7, fontSize: 9 }}>{isTarget ? 'Select Target %, then click the target price. Market entry with this SL; no target exit is created.' : 'Select order type and size in either order.'}</small>

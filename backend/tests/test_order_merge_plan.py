@@ -1,5 +1,5 @@
 """Unit tests for order_service.plan_merge (pure consolidation planning logic)."""
-from app.services.order_service import plan_merge
+from app.services.order_service import plan_merge, distribute_freed_quantity
 from app.models.schemas import Order, OrderType, TradeSide
 
 
@@ -103,3 +103,46 @@ def test_lot_size_rounds_cap_down():
     assert len(plan.cancel) == 1
     assert sum(q for _, q in plan.keep) == 1800
     assert all(q <= 1755 for _, q in plan.keep)
+
+
+# ── distribute_freed_quantity (Fix 1 Phase 2 recomputation) ───────────────────
+
+def test_distribute_full_freed_matches_original_plan():
+    orders = [_order("a", 1000, created_at=1), _order("b", 1000, created_at=2), _order("c", 1000, created_at=3)]
+    plan = plan_merge(orders, max_qty=1800)
+    # Simulate: all 1 redundant order cancelled cleanly, freeing its full remaining qty.
+    freed_total = sum(o.quantity for o in plan.cancel)
+    bumps = distribute_freed_quantity(plan.keep, freed_total, cap=1800)
+    assert {order.order_id: new_qty for order, new_qty in bumps} == {order.order_id: new_qty for order, new_qty in plan.keep}
+
+
+def test_distribute_partial_freed_only_bumps_earlier_keepers():
+    keeper_a = _order("a", 100, created_at=1)
+    keeper_b = _order("b", 100, created_at=2)
+    # cap=100: a and b can each absorb up to 100 more, i.e. up to 200 total each is capped at 100 increase.
+    bumps = distribute_freed_quantity([(keeper_a, 999), (keeper_b, 999)], freed=150, cap=200)
+    result = {order.order_id: new_qty for order, new_qty in bumps}
+    assert result["a"] == 200  # fully filled to cap first
+    assert result["b"] == 150  # only partially filled with the remainder
+    for order, new_qty in bumps:
+        assert new_qty >= order.quantity  # additive-only, never a decrease
+
+
+def test_distribute_omits_trailing_keeper_when_pool_exhausted():
+    keeper_a = _order("a", 100, created_at=1)
+    keeper_b = _order("b", 100, created_at=2)
+    bumps = distribute_freed_quantity([(keeper_a, 999), (keeper_b, 999)], freed=50, cap=200)
+    result = {order.order_id: new_qty for order, new_qty in bumps}
+    assert result == {"a": 150}
+    assert "b" not in result  # omitted, never bumped to a smaller or zero value
+
+
+def test_distribute_zero_freed_returns_empty():
+    keeper_a = _order("a", 100, created_at=1)
+    assert distribute_freed_quantity([(keeper_a, 999)], freed=0, cap=200) == []
+
+
+def test_distribute_excess_freed_logs_and_drops_remainder(caplog):
+    keeper_a = _order("a", 100, created_at=1)
+    bumps = distribute_freed_quantity([(keeper_a, 999)], freed=500, cap=200)
+    assert bumps == [(keeper_a, 200)]  # capped at 200, the extra 400 can't be placed anywhere

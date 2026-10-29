@@ -758,52 +758,188 @@ def _merge_lot_size(session, closing_orders: list[Order]) -> int:
     return LOT_SIZES.get(session.symbol, 1) if any(o.right for o in closing_orders) else 1
 
 
+async def _cancel_merge_redundant(session, order: Order) -> tuple[Order, int, dict]:
+    """Cancel one redundant merge order for a real session, waiting for a
+    genuine broker-confirmed terminal state before the caller treats its
+    quantity as freed. Never raises -- every outcome is captured in the
+    returned results entry. Returns (final snapshot, freed quantity, result).
+    """
+    existing = order_service.get_order(session.session_id, order.order_id)
+    if existing is None or existing.status != order_service.OrderStatus.PENDING:
+        return existing or order, 0, {'order_id': order.order_id, 'state': 'skipped', 'message': 'Already closed'}
+    try:
+        await _require_cancelable(session, existing, force=False)
+    except HTTPException as exc:
+        return existing, 0, {'order_id': order.order_id, 'state': 'cancel_failed', 'message': str(exc.detail)}
+    trading_date = session.date if session else ""
+    if not existing.broker_order_id:
+        remaining = max(0, existing.quantity - existing.broker_filled_quantity)
+        cancelled = order_service.cancel_order(session.session_id, order.order_id, trading_date)
+        return cancelled, remaining, {'order_id': order.order_id, 'state': 'cancelled', 'message': None}
+    from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
+    from app.services.broker_order_service import cancel_and_confirm
+    previous = await suppress(session, existing, max(0, existing.quantity - existing.broker_filled_quantity))
+    try:
+        outcome = await cancel_and_confirm(session, existing)
+    except Exception as exc:
+        if definitive_refusal(exc):
+            await rollback_suppression(existing, previous)
+        return existing, 0, {'order_id': order.order_id, 'state': 'cancel_failed', 'message': str(exc)}
+    current = order_service.get_order(session.session_id, order.order_id) or existing
+    if outcome == "cancelled":
+        freed = max(0, current.quantity - current.broker_filled_quantity)
+        return current, freed, {'order_id': order.order_id, 'state': 'cancelled', 'message': None}
+    if outcome == "filled":
+        return current, 0, {
+            'order_id': order.order_id, 'state': 'cancel_raced_fill',
+            'message': 'Order filled before the cancel reached the broker; quantity is a realized trade, not freed margin',
+        }
+    if outcome == "rejected":
+        await rollback_suppression(existing, previous)
+        return current, 0, {'order_id': order.order_id, 'state': 'cancel_rejected', 'message': 'Broker refused the cancellation; order remains open'}
+    # ambiguous: do not roll back suppression, the cancel may still land later.
+    from app.services import protection_recovery
+    protection_recovery.emit(
+        session, existing, existing.recovery_operation_id or '', 'needs_attention',
+        "Cancellation could not be confirmed with the broker within the timeout; verify at the broker before relying on consolidated coverage",
+    )
+    return current, 0, {
+        'order_id': order.order_id, 'state': 'cancel_ambiguous',
+        'message': "Couldn't confirm cancellation with the broker within a few seconds; verify at the broker",
+    }
+
+
+async def _run_merge_cancel_phase(session, plan: "order_service.MergePlan") -> tuple[int, list[dict], list[str], list[Order]]:
+    """Real-session merge Phase 1: cancel each redundant order sequentially,
+    each confirmed before moving to the next."""
+    total_freed = 0
+    results: list[dict] = []
+    cancelled_order_ids: list[str] = []
+    snapshots: list[Order] = []
+    for order in plan.cancel:
+        snapshot, freed, result = await _cancel_merge_redundant(session, order)
+        results.append(result)
+        snapshots.append(snapshot)
+        total_freed += freed
+        if result['state'] == 'cancelled':
+            cancelled_order_ids.append(order.order_id)
+    return total_freed, results, cancelled_order_ids, snapshots
+
+
+async def _run_merge_bump_phase(session, keep: list[tuple[Order, int]], total_freed: int, lot_size: int) -> tuple[list[Order], list[dict]]:
+    """Real-session merge Phase 2: recompute keeper targets from what was
+    actually freed (not the original static plan) and bump each, individually
+    isolated so one keeper's failure doesn't affect the others."""
+    max_qty = order_service.get_max_contracts(session.symbol)
+    cap = (max_qty // lot_size) * lot_size if lot_size > 1 else max_qty
+    bumps = order_service.distribute_freed_quantity(keep, total_freed, cap)
+    placed = sum(new_target - order.quantity for order, new_target in bumps)
+    bumped_ids = {order.order_id for order, _ in bumps}
+    snapshots: list[Order] = []
+    results: list[dict] = []
+    for order, new_target in bumps:
+        try:
+            updated = await _bump_quantity_locked(session, order.order_id, new_target)
+            snapshots.append(updated or order)
+            results.append({'order_id': order.order_id, 'state': 'bumped', 'message': None})
+        except HTTPException as exc:
+            snapshots.append(order)
+            results.append({'order_id': order.order_id, 'state': 'bump_failed', 'message': str(exc.detail)})
+    for order, _target in keep:
+        if order.order_id not in bumped_ids:
+            snapshots.append(order)
+    if placed < total_freed:
+        results.append({
+            'order_id': None, 'state': 'excess_freed_quantity',
+            'message': f'{total_freed - placed} units freed but could not be redistributed to any keeper within the per-order limit; review manually',
+        })
+    return snapshots, results
+
+
 async def _bulk_update_sl_merge_aware(session, closing_orders: list[Order], trigger_price: float, *, merge: bool) -> dict:
     """Reprice all closing SL orders; when merge, also consolidate into the fewest orders."""
-    if merge:
-        plan = order_service.plan_merge(closing_orders, order_service.get_max_contracts(session.symbol), _merge_lot_size(session, closing_orders))
-    else:
-        plan = order_service.MergePlan(keep=[], cancel=[])
+    lot_size = _merge_lot_size(session, closing_orders)
+    plan = (
+        order_service.plan_merge(closing_orders, order_service.get_max_contracts(session.symbol), lot_size)
+        if merge else order_service.MergePlan(keep=[], cancel=[])
+    )
+
+    async def _reprice_one(order: Order):
+        update_kwargs = {"limit_price": trigger_price} if order.order_type == OrderType.LIMIT else {"trigger_price": trigger_price}
+        try:
+            updated = await update_order(order.order_id, UpdateOrderRequest(**update_kwargs), session_id=session.session_id)
+            return updated, {'order_id': order.order_id, 'state': 'confirmed', 'message': None}
+        except HTTPException as exc:
+            return None, {'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)}
 
     if not plan.keep and not plan.cancel:
-        updated_orders = []
+        updated_orders, results = [], []
         for order in closing_orders:
-            update_kwargs = (
-                {"limit_price": trigger_price} if order.order_type == OrderType.LIMIT else {"trigger_price": trigger_price}
-            )
-            updated_order = await update_order(order.order_id, UpdateOrderRequest(**update_kwargs), session_id=session.session_id)
-            if updated_order:
-                updated_orders.append(updated_order)
-        return {"updated": len(updated_orders), "orders": updated_orders}
+            updated, result = await _reprice_one(order)
+            results.append(result)
+            if updated:
+                updated_orders.append(updated)
+        return {"updated": len(updated_orders), "orders": updated_orders, "results": results}
 
-    # Bump keepers first (coverage only rises), cancel redundant orders second
-    # (each individually suppressed) -- never the reverse, so the Kotak
-    # protection audit never observes a transient coverage gap.
-    updated_orders: list[Order] = []
-    for order, target_qty in plan.keep:
-        update_kwargs = {"limit_price": trigger_price} if order.order_type == OrderType.LIMIT else {"trigger_price": trigger_price}
-        updated = await update_order(order.order_id, UpdateOrderRequest(**update_kwargs), session_id=session.session_id)
-        if updated and updated.status == order_service.OrderStatus.PENDING and updated.quantity != target_qty:
-            updated = await _bump_quantity_locked(session, updated.order_id, target_qty)
-        updated_orders.append(updated or order)
+    # Phase 0 (both session types): reprice every closing order, keepers and
+    # redundants alike -- repricing has no margin impact, and this leaves a
+    # redundant order that fails to cancel in Phase 1 at the correct price.
+    repriced: dict[str, Order] = {}
+    results: list[dict] = []
+    for order in closing_orders:
+        updated, result = await _reprice_one(order)
+        results.append(result)
+        repriced[order.order_id] = updated or order
+    confirmed_count = sum(1 for r in results if r['state'] == 'confirmed')
 
-    cancelled_order_ids: list[str] = []
-    for order in plan.cancel:
-        cancelled = await _cancel_order_locked(order.order_id, session.session_id, session)
-        updated_orders.append(cancelled)
-        cancelled_order_ids.append(order.order_id)
+    if session.session_type == "real":
+        fresh_keep = [(repriced[order.order_id], target) for order, target in plan.keep]
+        total_freed, cancel_results, cancelled_order_ids, cancel_snapshots = await _run_merge_cancel_phase(session, plan)
+        results.extend(cancel_results)
+        bumped_snapshots, bump_results = await _run_merge_bump_phase(session, fresh_keep, total_freed, lot_size)
+        results.extend(bump_results)
+        updated_orders = bumped_snapshots + cancel_snapshots
+    else:
+        # Non-real: no margin concept -- bump keepers first (coverage only
+        # rises), cancel redundant orders second, as originally designed.
+        updated_orders = []
+        for order, target_qty in plan.keep:
+            updated = repriced[order.order_id]
+            if updated and updated.status == order_service.OrderStatus.PENDING and updated.quantity != target_qty:
+                try:
+                    updated = await _bump_quantity_locked(session, updated.order_id, target_qty)
+                    results.append({'order_id': order.order_id, 'state': 'bumped', 'message': None})
+                except HTTPException as exc:
+                    results.append({'order_id': order.order_id, 'state': 'bump_failed', 'message': str(exc.detail)})
+            updated_orders.append(updated or order)
+
+        cancelled_order_ids = []
+        for order in plan.cancel:
+            try:
+                cancelled = await _cancel_order_locked(order.order_id, session.session_id, session)
+                updated_orders.append(cancelled)
+                cancelled_order_ids.append(order.order_id)
+            except HTTPException as exc:
+                results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)})
 
     return {
-        "updated": len(updated_orders),
+        "updated": confirmed_count,
         "orders": updated_orders,
         "merged_from": len(closing_orders),
         "merged_to": len(closing_orders) - len(cancelled_order_ids),
         "cancelled_order_ids": cancelled_order_ids,
+        "results": results,
     }
 
 
 async def _bulk_convert_merge_aware(session, closing_orders: list[Order], new_order_type: OrderType, price: float | None, *, merge: bool) -> dict:
     """Convert all closing orders to one type/price; when merge, also consolidate into the fewest orders."""
+    lot_size = _merge_lot_size(session, closing_orders)
+    plan = (
+        order_service.plan_merge(closing_orders, order_service.get_max_contracts(session.symbol), lot_size)
+        if merge else order_service.MergePlan(keep=[], cancel=[])
+    )
+
     async def _convert_one(order: Order):
         try:
             updated = await _convert_with_broker_async(session, order, new_order_type, price)
@@ -811,11 +947,6 @@ async def _bulk_convert_merge_aware(session, closing_orders: list[Order], new_or
             return updated, {'order_id': order.order_id, 'state': state, 'message': (updated.broker_conversion or {}).get('message')}
         except (HTTPException, ValueError) as exc:
             return None, {'order_id': order.order_id, 'state': 'failed', 'message': str(getattr(exc, 'detail', exc))}
-
-    if merge:
-        plan = order_service.plan_merge(closing_orders, order_service.get_max_contracts(session.symbol), _merge_lot_size(session, closing_orders))
-    else:
-        plan = order_service.MergePlan(keep=[], cancel=[])
 
     if not plan.keep and not plan.cancel:
         converted_orders, results = [], []
@@ -826,26 +957,46 @@ async def _bulk_convert_merge_aware(session, closing_orders: list[Order], new_or
                 converted_orders.append(updated)
         return {"converted": sum(r['state'] == 'confirmed' for r in results), "orders": converted_orders, "results": results}
 
-    converted_orders, results = [], []
-    for order, target_qty in plan.keep:
+    # Phase 0 (both session types): convert/reprice every closing order,
+    # keepers and redundants alike -- see _bulk_update_sl_merge_aware.
+    converted: dict[str, Order] = {}
+    results: list[dict] = []
+    for order in closing_orders:
         updated, result = await _convert_one(order)
         results.append(result)
-        if updated is not None:
+        converted[order.order_id] = updated if updated is not None else order
+    confirmed_count = sum(1 for r in results if r['state'] == 'confirmed')
+
+    if session.session_type == "real":
+        fresh_keep = [(converted[order.order_id], target) for order, target in plan.keep]
+        total_freed, cancel_results, cancelled_order_ids, cancel_snapshots = await _run_merge_cancel_phase(session, plan)
+        results.extend(cancel_results)
+        bumped_snapshots, bump_results = await _run_merge_bump_phase(session, fresh_keep, total_freed, lot_size)
+        results.extend(bump_results)
+        converted_orders = bumped_snapshots + cancel_snapshots
+    else:
+        converted_orders = []
+        for order, target_qty in plan.keep:
+            updated = converted[order.order_id]
             if updated.status == order_service.OrderStatus.PENDING and updated.quantity != target_qty:
-                updated = await _bump_quantity_locked(session, updated.order_id, target_qty)
+                try:
+                    updated = await _bump_quantity_locked(session, updated.order_id, target_qty)
+                    results.append({'order_id': order.order_id, 'state': 'bumped', 'message': None})
+                except HTTPException as exc:
+                    results.append({'order_id': order.order_id, 'state': 'bump_failed', 'message': str(exc.detail)})
             converted_orders.append(updated)
 
-    cancelled_order_ids: list[str] = []
-    for order in plan.cancel:
-        try:
-            cancelled = await _cancel_order_locked(order.order_id, session.session_id, session)
-            converted_orders.append(cancelled)
-            cancelled_order_ids.append(order.order_id)
-        except HTTPException as exc:
-            results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)})
+        cancelled_order_ids = []
+        for order in plan.cancel:
+            try:
+                cancelled = await _cancel_order_locked(order.order_id, session.session_id, session)
+                converted_orders.append(cancelled)
+                cancelled_order_ids.append(order.order_id)
+            except HTTPException as exc:
+                results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)})
 
     return {
-        "converted": sum(r['state'] == 'confirmed' for r in results),
+        "converted": confirmed_count,
         "orders": converted_orders,
         "results": results,
         "merged_from": len(closing_orders),

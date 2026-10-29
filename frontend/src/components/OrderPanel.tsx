@@ -138,6 +138,15 @@ export default function OrderPanel({
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [ratio, setRatio] = useState<RatioKey>('l')
+  // If the High tier becomes disabled while already selected, snap back to L
+  // instead of leaving a disabled-looking button still silently selected
+  // (matches FloatingOrderWindow.tsx's existing equivalent effect).
+  useEffect(() => {
+    if (highTierDisabled) {
+      if (ratio === 'h') setRatio('l')
+      if (quantity === quantityTiers.h) setQuantity(quantityTiers.l)
+    }
+  }, [highTierDisabled, ratio, quantity, quantityTiers])
   const [slQty, setSlQty] = useState('1')
   const [splittingId, setSplittingId] = useState<string | null>(null)
   const splitRequests = useRef<Record<string, string>>({})
@@ -192,6 +201,12 @@ export default function OrderPanel({
   const [stratRight, setStratRight] = useState<'CE' | 'PE'>(activeRight ?? 'CE')
   const [stratRatio, setStratRatio] = useState<RatioKey>('l')
   const [stratQty, setStratQty] = useState(1)
+  useEffect(() => {
+    if (highTierDisabled) {
+      if (stratRatio === 'h') setStratRatio('l')
+      if (stratQty === quantityTiers.h) setStratQty(quantityTiers.l)
+    }
+  }, [highTierDisabled, stratRatio, stratQty, quantityTiers])
   const [stratLoading, setStratLoading] = useState<string | null>(null)
   const [stratError, setStratError] = useState<string | null>(null)
   useFlashError(stratError, 'OrderPanel')
@@ -660,14 +675,15 @@ export default function OrderPanel({
           <button
             key={lbl}
             disabled={!isActive || tierDisabled}
-            title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined}
+            title={tierDisabled ? 'High tier disabled by the GuardRails BAN P&L % threshold' : undefined}
             onClick={() => setRatio(key)}
             style={{
               flex: 1, padding: '5px 0', fontSize: 12, fontWeight: 700,
               borderRadius: 4, cursor: isActive && !tierDisabled ? 'pointer' : 'not-allowed',
-              border: `1px solid ${ratio === key ? '#388bfd' : '#30363d'}`,
-              background: ratio === key ? '#1f3a5f' : '#161b22',
-              color: tierDisabled ? '#30363d' : ratio === key ? '#79c0ff' : '#8b949e',
+              border: `1px solid ${tierDisabled ? '#5a2a2a' : ratio === key ? '#388bfd' : '#30363d'}`,
+              background: tierDisabled ? '#2a1616' : ratio === key ? '#1f3a5f' : '#161b22',
+              color: tierDisabled ? '#a35a5a' : ratio === key ? '#79c0ff' : '#8b949e',
+              textDecoration: tierDisabled ? 'line-through' : 'none',
             }}
           >
             {lbl}
@@ -763,12 +779,13 @@ export default function OrderPanel({
                   {(['l', 'm', 'h'] as RatioKey[]).map(k => {
                     const tierDisabled = k === 'h' && highTierDisabled
                     return (
-                      <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratRatio(k)} style={{
+                      <button key={k} disabled={tierDisabled} title={tierDisabled ? 'High tier disabled by the GuardRails BAN P&L % threshold' : undefined} onClick={() => setStratRatio(k)} style={{
                         flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
-                        border: `1px solid ${stratRatio === k ? '#388bfd' : '#30363d'}`,
+                        border: `1px solid ${tierDisabled ? '#5a2a2a' : stratRatio === k ? '#388bfd' : '#30363d'}`,
                         borderRadius: 4, cursor: tierDisabled ? 'not-allowed' : 'pointer',
-                        background: stratRatio === k ? '#1f3a5f' : '#161b22',
-                        color: tierDisabled ? '#30363d' : stratRatio === k ? '#79c0ff' : '#8b949e',
+                        background: tierDisabled ? '#2a1616' : stratRatio === k ? '#1f3a5f' : '#161b22',
+                        color: tierDisabled ? '#a35a5a' : stratRatio === k ? '#79c0ff' : '#8b949e',
+                        textDecoration: tierDisabled ? 'line-through' : 'none',
                       }}>{k.toUpperCase()}<span style={{ fontSize: 9, display: 'block' }}>{fundsRatios[k]}%</span></button>
                     )
                   })}
@@ -778,12 +795,13 @@ export default function OrderPanel({
                   {(['l', 'm', 'h'] as RatioKey[]).map(k => {
                     const tierDisabled = k === 'h' && highTierDisabled
                     return (
-                      <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratRatio(k)} style={{
+                      <button key={k} disabled={tierDisabled} title={tierDisabled ? 'High tier disabled by the GuardRails BAN P&L % threshold' : undefined} onClick={() => setStratRatio(k)} style={{
                         flex: 1, padding: '3px 0', fontSize: 11, fontWeight: 700,
-                        border: `1px solid ${stratRatio === k ? '#f0883e' : '#30363d'}`,
+                        border: `1px solid ${tierDisabled ? '#5a2a2a' : stratRatio === k ? '#f0883e' : '#30363d'}`,
                         borderRadius: 4, cursor: tierDisabled ? 'not-allowed' : 'pointer',
-                        background: stratRatio === k ? '#3d2200' : '#161b22',
-                        color: tierDisabled ? '#30363d' : stratRatio === k ? '#f0883e' : '#8b949e',
+                        background: tierDisabled ? '#2a1616' : stratRatio === k ? '#3d2200' : '#161b22',
+                        color: tierDisabled ? '#a35a5a' : stratRatio === k ? '#f0883e' : '#8b949e',
+                        textDecoration: tierDisabled ? 'line-through' : 'none',
                       }}>RR {riskRatios[k]}%</button>
                     )
                   })}
@@ -794,11 +812,12 @@ export default function OrderPanel({
                     const q = quantityTiers[k]
                     const tierDisabled = k === 'h' && highTierDisabled
                     return (
-                      <button key={k} disabled={tierDisabled} title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined} onClick={() => setStratQty(q)} style={{
+                      <button key={k} disabled={tierDisabled} title={tierDisabled ? 'High tier disabled by the GuardRails BAN P&L % threshold' : undefined} onClick={() => setStratQty(q)} style={{
                         flex: 1, padding: '3px 0', fontSize: 11, borderRadius: 4,
-                        border: `1px solid ${stratQty === q ? '#388bfd' : '#30363d'}`,
-                        background: stratQty === q ? '#1f3a5f' : '#161b22',
-                        color: tierDisabled ? '#30363d' : stratQty === q ? '#79c0ff' : '#8b949e',
+                        border: `1px solid ${tierDisabled ? '#5a2a2a' : stratQty === q ? '#388bfd' : '#30363d'}`,
+                        background: tierDisabled ? '#2a1616' : stratQty === q ? '#1f3a5f' : '#161b22',
+                        color: tierDisabled ? '#a35a5a' : stratQty === q ? '#79c0ff' : '#8b949e',
+                        textDecoration: tierDisabled ? 'line-through' : 'none',
                         cursor: tierDisabled ? 'not-allowed' : 'pointer',
                       }}>{q}</button>
                     )
@@ -1433,13 +1452,14 @@ export default function OrderPanel({
                 <button
                   key={key}
                   disabled={!isActive || tierDisabled}
-                  title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined}
+                  title={tierDisabled ? 'High tier disabled by the GuardRails BAN P&L % threshold' : undefined}
                   onClick={() => setRatio(key)}
                   style={{
                     padding: '3px 8px', fontSize: 12, borderRadius: 4,
-                    border: `1px solid ${ratio === key ? '#f0883e' : '#30363d'}`,
-                    background: ratio === key ? '#3d2200' : '#161b22',
-                    color: tierDisabled ? '#30363d' : ratio === key ? '#f0883e' : '#8b949e',
+                    border: `1px solid ${tierDisabled ? '#5a2a2a' : ratio === key ? '#f0883e' : '#30363d'}`,
+                    background: tierDisabled ? '#2a1616' : ratio === key ? '#3d2200' : '#161b22',
+                    color: tierDisabled ? '#a35a5a' : ratio === key ? '#f0883e' : '#8b949e',
+                    textDecoration: tierDisabled ? 'line-through' : 'none',
                     cursor: isActive && !tierDisabled ? 'pointer' : 'not-allowed',
                   }}
                 >
@@ -1465,13 +1485,14 @@ export default function OrderPanel({
                 <button
                   key={key}
                   disabled={!isActive || tierDisabled}
-                  title={tierDisabled ? "High tier disabled until this session's closed trades are profitable" : undefined}
+                  title={tierDisabled ? 'High tier disabled by the GuardRails BAN P&L % threshold' : undefined}
                   onClick={() => setQuantity(q)}
                   style={{
                     padding: '3px 8px', fontSize: 12, borderRadius: 4,
-                    border: `1px solid ${quantity === q ? '#388bfd' : '#30363d'}`,
-                    background: quantity === q ? '#1f3a5f' : '#161b22',
-                    color: tierDisabled ? '#30363d' : quantity === q ? '#79c0ff' : '#8b949e',
+                    border: `1px solid ${tierDisabled ? '#5a2a2a' : quantity === q ? '#388bfd' : '#30363d'}`,
+                    background: tierDisabled ? '#2a1616' : quantity === q ? '#1f3a5f' : '#161b22',
+                    color: tierDisabled ? '#a35a5a' : quantity === q ? '#79c0ff' : '#8b949e',
+                    textDecoration: tierDisabled ? 'line-through' : 'none',
                     cursor: isActive && !tierDisabled ? 'pointer' : 'not-allowed',
                   }}
                 >
