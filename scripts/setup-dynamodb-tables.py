@@ -261,6 +261,19 @@ TABLES = [
         ],
         "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
     },
+    # Category / strategy name registry (Pattern Library + Label Trades dropdowns)
+    {
+        "TableName": "PatternNames",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "name_key", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "name_key", "AttributeType": "S"},
+        ],
+        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+    },
     # ── Phase XIII Chart Structures ──────────────────────────────────────────
     {
         "TableName": "ChartStructures",

@@ -47,6 +47,48 @@ def empty_share_table():
         yield
 
 
+class _FakeNamesTable:
+    """In-memory PatternNames table keyed by (user_id, name_key)."""
+
+    def __init__(self):
+        self.items: dict[tuple[str, str], dict] = {}
+
+    def put_item(self, Item):
+        self.items[(Item["user_id"], Item["name_key"])] = Item
+
+    def get_item(self, Key):
+        item = self.items.get((Key["user_id"], Key["name_key"]))
+        return {"Item": item} if item else {}
+
+    def query(self, KeyConditionExpression, ExclusiveStartKey=None):
+        owner_cond, prefix_cond = KeyConditionExpression._values
+        owner = owner_cond._values[1]
+        prefix = prefix_cond._values[1]
+        return {"Items": [i for (uid, key), i in self.items.items() if uid == owner and key.startswith(prefix)]}
+
+    def batch_writer(self):
+        table = self
+
+        class _Batch:
+            def __enter__(self_inner):
+                return table
+
+            def __exit__(self_inner, *exc):
+                return False
+
+        return _Batch()
+
+
+@pytest.fixture(autouse=True)
+def names_table():
+    table = _FakeNamesTable()
+    svc._backfilled_owners.clear()
+    with patch("app.services.pattern_logger_service._names_table", return_value=table), \
+         patch("app.services.pattern_logger_service._ensure_names_table", return_value=None):
+        yield table
+    svc._backfilled_owners.clear()
+
+
 def _mock_table(items: list[dict] | None = None):
     """Return a MagicMock that mimics a DynamoDB Table object."""
     table = MagicMock()
@@ -102,7 +144,7 @@ def _mock_table(items: list[dict] | None = None):
         if ":tp" in ExpressionAttributeValues:
             item["top_patterns"] = ExpressionAttributeValues[":tp"]
         _store[Key["chart_id"]] = item
-        return {"Attributes": item}
+        return {"Attributes": dict(item)}  # DynamoDB returns a copy; callers mutate it
 
     table.put_item = put_item
     table.get_item = get_item
@@ -374,6 +416,102 @@ class TestPatternLoggerAPI:
                     "instrument_type": "equity",
                 })
         assert resp.status_code == 404
+
+
+# ── Name registry ─────────────────────────────────────────────────────────────
+
+OTHER = "00000000-0000-0000-0000-000000000002"
+
+
+class TestPatternNameRegistry:
+    def test_add_name_trims_and_is_listed(self, mock_dynamo):
+        assert svc.add_name(USER, "category", "  Breakout  ") == "Breakout"
+        assert svc.list_category_names(USER) == ["Breakout"]
+        assert svc.list_strategy_names(USER) == []
+
+    def test_add_name_is_idempotent(self, mock_dynamo):
+        svc.add_name(USER, "strategy", "ORB")
+        svc.add_name(USER, "strategy", "ORB")
+        assert svc.list_strategy_names(USER) == ["ORB"]
+
+    @pytest.mark.parametrize("bad", ["", "   ", "x" * (svc.MAX_NAME_LENGTH + 1), "a::b"])
+    def test_add_name_rejects_invalid(self, mock_dynamo, bad):
+        with pytest.raises(ValueError):
+            svc.add_name(USER, "category", bad)
+
+    def test_add_name_rejects_unknown_kind(self, mock_dynamo):
+        with pytest.raises(ValueError):
+            svc.add_name(USER, "colour", "Red")
+
+    def test_register_annotation_names_registers_both_kinds(self, mock_dynamo):
+        svc.register_annotation_names(USER, [_sample_annotation("Alpha", category="Trend")])
+        assert svc.list_strategy_names(USER) == ["Alpha"]
+        assert svc.list_category_names(USER) == ["Trend"]
+
+    def test_name_survives_chart_deletion(self, mock_dynamo):
+        anns = [_sample_annotation("Alpha", category="Trend")]
+        svc.register_annotation_names(USER, anns)
+        chart = svc.create_chart(USER, "NIFTY", "2026-05-06", "equity", anns)
+        svc.delete_chart(chart["chart_id"])
+        assert svc.list_strategy_names(USER) == ["Alpha"]
+
+    def test_legacy_chart_names_backfilled_once(self, mock_dynamo, names_table):
+        svc.create_chart(USER, "NIFTY", "2026-05-06", "equity", [_sample_annotation("Legacy", category="Old")])
+        assert svc.list_strategy_names(USER) == ["Legacy"]
+        assert svc.list_category_names(USER) == ["Old"]
+        assert (USER, svc._BACKFILL_KEY) in names_table.items
+
+        # A chart saved behind the registry's back is not picked up again: the import runs once.
+        svc.create_chart(USER, "NIFTY", "2026-05-07", "equity", [_sample_annotation("Later")])
+        svc._backfilled_owners.clear()
+        assert svc.list_strategy_names(USER) == ["Legacy"]
+
+    def test_shared_user_sees_owner_names(self, mock_dynamo):
+        svc.add_name(OTHER, "category", "Owner Cat")
+        svc.add_name(USER, "category", "My Cat")
+        with patch("app.services.pattern_logger_service._load_shared_owner_ids", return_value=[USER, OTHER]):
+            assert svc.list_category_names(USER) == ["My Cat", "Owner Cat"]
+        assert svc.list_category_names(OTHER) == ["Owner Cat"]
+
+
+@pytest.mark.asyncio
+class TestPatternNameAPI:
+    async def test_post_category_returns_updated_list(self, mock_dynamo):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/pattern/categories", json={"name": " Reversal "})
+            assert resp.status_code == 200
+            assert resp.json() == {"categories": ["Reversal"]}
+            listed = await client.get("/api/pattern/categories")
+            assert listed.json() == {"categories": ["Reversal"]}
+
+    async def test_post_strategy_returns_updated_list(self, mock_dynamo):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/pattern/strategies", json={"name": "Gap Fill"})
+            assert resp.status_code == 200
+            assert resp.json() == {"strategies": ["Gap Fill"]}
+
+    @pytest.mark.parametrize("bad", ["", "  ", "a::b"])
+    async def test_post_invalid_name_is_400(self, mock_dynamo, bad):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/api/pattern/categories", json={"name": bad})
+            assert resp.status_code == 400
+
+    async def test_updating_chart_registers_new_names(self, mock_dynamo):
+        base = {"symbol": "NIFTY", "date": "2026-05-06", "instrument_type": "equity", "annotations": []}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            chart_id = (await client.post("/api/pattern/chart", json=base)).json()["chart_id"]
+            update = {"annotations": [_sample_annotation("Added Later", category="Added Cat")], "notes": ""}
+            assert (await client.put(f"/api/pattern/chart/{chart_id}", json=update)).status_code == 200
+            assert (await client.get("/api/pattern/strategies")).json() == {"strategies": ["Added Later"]}
+            assert (await client.get("/api/pattern/categories")).json() == {"categories": ["Added Cat"]}
+
+    async def test_saving_chart_registers_names(self, mock_dynamo):
+        body = {"symbol": "NIFTY", "date": "2026-05-06", "instrument_type": "equity",
+                "annotations": [_sample_annotation("Fresh Strat", category="Fresh Cat")]}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (await client.post("/api/pattern/chart", json=body)).status_code == 200
+            assert (await client.get("/api/pattern/strategies")).json() == {"strategies": ["Fresh Strat"]}
+            assert (await client.get("/api/pattern/categories")).json() == {"categories": ["Fresh Cat"]}
 
 
 @pytest.mark.asyncio

@@ -88,6 +88,25 @@ def test_trading_and_snapshot_creation_are_not_exposed(client):
     assert client.post('/api/desktop/v1/analysis/orders', json={}).status_code == 404
 
 
+@pytest.mark.parametrize('kind', ['categories', 'strategies'])
+def test_pattern_name_registration_is_exposed_for_desktop_user(client, kind):
+    with patch('app.services.pattern_logger_service.add_name', return_value='Breakout') as add, \
+         patch('app.services.pattern_logger_service._list_names', return_value=['Breakout']):
+        response = client.post(f'/api/desktop/v1/analysis/pattern/{kind}', json={'name': 'Breakout'})
+    assert response.status_code == 200
+    assert response.json() == {kind: ['Breakout']}
+    add.assert_called_once_with('alice', 'category' if kind == 'categories' else 'strategy', 'Breakout')
+
+
+def test_pattern_name_registration_requires_bearer_auth():
+    with TestClient(app) as anonymous:
+        assert anonymous.post('/api/desktop/v1/analysis/pattern/categories', json={'name': 'x'}, headers={'X-User-Id': 'alice'}).status_code == 401
+
+
+def test_pattern_chart_writes_are_not_exposed(client):
+    assert client.post('/api/desktop/v1/analysis/pattern/chart', json={}).status_code in (404, 405)
+
+
 def test_bearer_identity_replaces_legacy_header():
     with patch('app.services.desktop_auth_service.verify_access_token', return_value='alice') as verify, patch('app.services.analysis_service.get_sessions_for_user', return_value=[]) as load:
         with TestClient(app) as client:

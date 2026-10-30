@@ -1989,6 +1989,22 @@ const api = {
     return res.json()
   },
 
+  async patternAddStrategy(name: string): Promise<{ strategies: string[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/strategies`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() }, body: JSON.stringify({ name }),
+    })
+    if (!res.ok) throw new Error(`Add strategy failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternAddCategory(name: string): Promise<{ categories: string[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/categories`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() }, body: JSON.stringify({ name }),
+    })
+    if (!res.ok) throw new Error(`Add category failed: ${res.status}`)
+    return res.json()
+  },
+
   async patternListCharts(strategy?: string, category?: string, topOnly?: boolean): Promise<{ charts: PatternChartMeta[] }> {
     const params = new URLSearchParams()
     if (strategy) params.set('strategy', strategy)
