@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::{
     fs,
     path::PathBuf,
@@ -1097,7 +1097,7 @@ async fn desktop_settings_request(
 fn valid_analysis_path(path: &str, method: &str) -> bool {
     let route = path.split('?').next().unwrap_or("");
     if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
-    if method == "POST" { return route == "labels" || route == "performance/real-fees"; }
+    if method == "POST" { return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories"); }
     if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees"; }
     if method != "GET" { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
@@ -1168,8 +1168,26 @@ async fn desktop_drawing_request(
         path.trim_start_matches('/')
     );
     let client = if is_screen_request {
-        reqwest::Client::builder().timeout(Duration::from_secs(4)).build().map_err(|e| e.to_string())?
-    } else { reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())? };
+        static SCREEN_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+        SCREEN_CLIENT
+            .get_or_init(|| {
+                reqwest::Client::builder()
+                    .timeout(Duration::from_secs(4))
+                    .build()
+                    .expect("failed to build screen reqwest client")
+            })
+            .clone()
+    } else {
+        static TRADING_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+        TRADING_CLIENT
+            .get_or_init(|| {
+                reqwest::Client::builder()
+                    .timeout(Duration::from_secs(30))
+                    .build()
+                    .expect("failed to build trading reqwest client")
+            })
+            .clone()
+    };
     let request = match method.as_str() {
         "GET" => client.get(url),
         "POST" => client.post(url).json(&body),
@@ -2142,6 +2160,18 @@ mod tests {
         }
         for path in ["snapshots/event-id", "snapshots/../candle", "snapshots/event-id/candle/extra", "snapshots/%2e%2e/candle"] {
             assert!(!valid_analysis_path(path, "GET"));
+        }
+    }
+
+    #[test]
+    fn pattern_name_registration_is_the_only_pattern_write() {
+        for path in ["pattern/strategies", "pattern/categories"] {
+            assert!(valid_analysis_path(path, "GET"));
+            assert!(valid_analysis_path(path, "POST"));
+            assert!(!valid_analysis_path(path, "DELETE"));
+        }
+        for path in ["pattern/chart", "pattern/chart/by-date", "pattern/ohlc/equity", "pattern/strategies/extra"] {
+            assert!(!valid_analysis_path(path, "POST"));
         }
     }
 

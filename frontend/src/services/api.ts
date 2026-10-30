@@ -7,7 +7,7 @@ import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) { super(message); this.name = 'ApiError' }
+  constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); this.name = 'ApiError' }
 }
 
 export function _authHeaders(): Record<string, string> {
@@ -199,6 +199,10 @@ export interface UserSettingsResponse {
   risk_ratio_l_pct?: number
   risk_ratio_m_pct?: number
   risk_ratio_h_pct?: number
+  quantity_l?: number
+  quantity_m?: number
+  quantity_h?: number
+  merge_exit_orders_on_consolidate?: boolean
   default_sl_pct?: number
   context_menu_sl_mode?: string
 }
@@ -712,6 +716,8 @@ export interface GuardRailSettings {
   guardrail_ban_loss_trade_pct: number
   guardrail_ban_min_trades: number
   guardrail_ban_enabled: boolean
+  guardrail_ban_halfway_alert_enabled?: boolean
+  high_tier_pnl_threshold_pct?: number
   guardrail_cooldown_enabled: boolean
   guardrail_maxsize_enabled: boolean
   guardrail_maxsize_mode: "percentage" | "value"
@@ -1357,8 +1363,8 @@ const api = {
     return res.json()
   },
 
-  async cancelOrder(session_id: string, order_id: string): Promise<Order | null> {
-    const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}`, {
+  async cancelOrder(session_id: string, order_id: string, force = false): Promise<Order | null> {
+    const res = await fetch(`${BACKEND_URL}/api/orders/${order_id}?session_id=${session_id}${force ? '&force=true' : ''}`, {
       method: 'DELETE',
       headers: _authHeaders(),
     })
@@ -1366,7 +1372,10 @@ const api = {
     if (res.status === 404) return null
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
-      throw new Error(typeof error.detail === 'string' ? error.detail : `Cancel order failed: ${res.status}`)
+      const detail = error.detail
+      const message = typeof detail === 'string' ? detail : detail?.message ?? `Cancel order failed: ${res.status}`
+      const code = typeof detail === 'object' ? detail?.code : undefined
+      throw new ApiError(message, res.status, code)
     }
     return res.json()
   },
@@ -1649,11 +1658,11 @@ const api = {
     }
   },
 
-  async bulkUpdateSL(session_id: string, trigger_price: number, right: string | null): Promise<{ updated: number; orders: Order[] }> {
+  async bulkUpdateSL(session_id: string, trigger_price: number, right: string | null, merge = false): Promise<{ updated: number; orders: Order[]; merged_from?: number; merged_to?: number; cancelled_order_ids?: string[] }> {
     const res = await fetch(`${BACKEND_URL}/api/orders/bulk-update-sl`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ session_id, trigger_price, right }),
+      body: JSON.stringify({ session_id, trigger_price, right, merge }),
     })
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
@@ -1662,11 +1671,11 @@ const api = {
     return res.json()
   },
 
-  async bulkConvertOrders(session_id: string, new_order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number): Promise<{ converted: number; orders: Order[]; results?: ConversionResult[] }> {
+  async bulkConvertOrders(session_id: string, new_order_type: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number, merge = false): Promise<{ converted: number; orders: Order[]; results?: ConversionResult[]; merged_from?: number; merged_to?: number; cancelled_order_ids?: string[] }> {
     const res = await fetch(`${BACKEND_URL}/api/orders/bulk-convert`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ session_id, new_order_type, right, price: price ?? null }),
+      body: JSON.stringify({ session_id, new_order_type, right, price: price ?? null, merge }),
     })
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
@@ -1977,6 +1986,22 @@ const api = {
   async patternListCategories(): Promise<{ categories: string[] }> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/categories`, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`List categories failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternAddStrategy(name: string): Promise<{ strategies: string[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/strategies`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() }, body: JSON.stringify({ name }),
+    })
+    if (!res.ok) throw new Error(`Add strategy failed: ${res.status}`)
+    return res.json()
+  },
+
+  async patternAddCategory(name: string): Promise<{ categories: string[] }> {
+    const res = await fetch(`${BACKEND_URL}/api/pattern/categories`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() }, body: JSON.stringify({ name }),
+    })
+    if (!res.ok) throw new Error(`Add category failed: ${res.status}`)
     return res.json()
   },
 

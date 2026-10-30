@@ -268,6 +268,31 @@ def test_unknown_split_without_submitted_child_is_explicit_failure(setup):
     assert 'not submitted' in parent.split_operation['message']
 
 
+def test_unknown_split_with_registered_but_never_placed_child_drops_phantom(setup):
+    """The child was registered locally (order_service._orders has it) but
+    failed before ever receiving a broker_order_id -- e.g. the staging
+    transaction raised between registration and placement. It is not a
+    live order and must not persist forever as a phantom pending order,
+    nor leave the parent permanently locked."""
+    session,parent,writes=setup
+    parent.quantity=40
+    parent.kotak_order_id='parent-broker'
+    child=parent.model_copy(deep=True)
+    child.quantity=20
+    child.order_id='child-local'
+    child.kotak_order_id=None
+    job=dict(state='unknown',operation_id='recover',parent_id=parent.order_id,child_id=child.order_id,
+        retained_quantity=40,child_quantity=20,original_quantity=60)
+    parent.split_operation=child.split_operation=job
+    orders={parent.order_id:parent,child.order_id:child}
+    order_split.reconcile_projection(orders,[dict(kotak_order_id='parent-broker')])
+    assert parent.split_operation['state']=='failed'
+    assert 'never placed' in parent.split_operation['message']
+    assert child.order_id not in orders
+    from app.services.order_split import ACTIVE
+    assert parent.split_operation['state'] not in ACTIVE
+
+
 def test_refresh_adopts_unknown_child_by_tag_without_duplicate_local_order(monkeypatch,setup):
     from app.services import real_broker_state
     session,parent,writes=setup

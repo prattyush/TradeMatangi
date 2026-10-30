@@ -2,10 +2,13 @@
 from app.services import performance_diagnostics as diagnostics
 import asyncio
 import logging
+import uuid
 from app.models.schemas import Order, OrderType, TradeSide
 from app.services import order_service
 
 logger = logging.getLogger(__name__)
+
+CANCEL_CONFIRM_TIMEOUT = 30.0  # matches broker_conversion.CONFIRM_WAIT, the only existing precedent
 
 
 def require_entry_allowed(session, order):
@@ -14,6 +17,113 @@ def require_entry_allowed(session, order):
     else:
         from app.services.real_trading_day import require_entry_allowed as guard
     guard(session, order.side, max(0, order.quantity - order.broker_filled_quantity), order.right, order.strike, order.expiry)
+
+
+async def resolve_broker_order_status(broker, broker_order_id: str) -> str:
+    """Synchronous fallback for ANY "wait for a broker ack" primitive: query
+    the broker's current order book directly for one order's real status,
+    for use when a WS confirmation hasn't arrived within the wait window (a
+    dropped/missed event is always possible) but the broker itself may
+    already have resolved the order. Returns "cancelled" | "filled" |
+    "rejected" | "ambiguous" (not found in the book, still open/pending, or
+    the query itself failed -- genuinely unresolved either way).
+
+    Mirrors order_split.py's _confirmed() polling idiom (broker.get_order_
+    history(), off-loop), but as a single one-shot check rather than a
+    retry loop, since this only ever runs after a WS wait has already timed
+    out. Store/reuse this helper for any future "wait for broker ack, then
+    fall back to a direct query" code path rather than re-deriving it.
+    """
+    try:
+        rows = await asyncio.to_thread(broker.get_order_history)
+    except Exception:
+        return "ambiguous"
+    for row in rows:
+        if row.get("broker_order_id") != broker_order_id:
+            continue
+        status = row.get("status", "")
+        if status in ("cancelled", "canceled"):
+            return "cancelled"
+        if status in ("complete", "filled"):
+            return "filled"
+        if status == "rejected":
+            return "rejected"
+        return "ambiguous"  # found, but still genuinely open/pending at the broker
+    return "ambiguous"  # not present in the broker's current book
+
+
+async def cancel_and_confirm(session, order: Order, *, timeout: float = CANCEL_CONFIRM_TIMEOUT) -> str:
+    """Cancel a real-session broker order and wait for its confirmed terminal
+    state. Returns "cancelled" | "filled" | "rejected" | "ambiguous".
+
+    Uses register_order_observer -- the multi-subscriber, broadcast-safe
+    registry also used by broker_conversion.py -- never register_cancel_callback
+    / register_fill_callback / register_reject_callback. Those three are
+    single-slot, last-writer-wins maps; every order already has a production
+    registration there (register_callbacks, below) doing the real bookkeeping
+    (position updates, protection_recovery.note_cancel, SSE events, reservation
+    release). Clobbering those slots here would silently and permanently break
+    that bookkeeping for the rest of the session.
+
+    If no WS confirmation arrives within `timeout`, falls back to one direct
+    synchronous query of the broker's order book (resolve_broker_order_status)
+    before giving up and calling the outcome "ambiguous" -- a dropped/missed
+    WS message doesn't actually mean the broker hasn't already resolved it.
+    """
+    if session.session_type != "real" or not order.broker_order_id:
+        return "cancelled"
+    from app.services.execution_broker import get_service
+    from app.services.broker_reports import normalize_order, order_id as broker_report_id
+    broker = get_service(session)
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future = loop.create_future()
+    token = f"cancel-confirm:{order.order_id}:{uuid.uuid4()}"
+
+    def observe(raw):
+        if future.done():
+            return
+        try:
+            row = normalize_order(raw)
+        except Exception:
+            return
+        if broker_report_id(row) != order.broker_order_id:
+            return
+        status = row["status"]
+        if status in ("cancelled", "canceled"):
+            future.set_result("cancelled")
+        elif status in ("complete", "filled"):
+            future.set_result("filled")
+        elif status == "rejected":
+            future.set_result("rejected")
+        # open / trigger pending / modify pending / modified -- keep waiting
+
+    broker.register_order_observer(token, observe, loop)
+    try:
+        from app.routers.orders import _session_edit_lock
+        async with _session_edit_lock(session):
+            await asyncio.to_thread(
+                broker.cancel_order, order.broker_order_id,
+                initiator="user", purpose="merge_consolidation",
+                context={"session_id": session.session_id, "order_id": order.order_id, "user_id": session.user_id},
+            )
+    except Exception:
+        broker.deregister_order_observer(token)
+        raise
+    try:
+        outcome = await asyncio.wait_for(future, timeout=timeout)
+    except asyncio.TimeoutError:
+        # The WS event may simply have been missed -- ask the broker directly
+        # before giving up and calling this ambiguous.
+        outcome = await resolve_broker_order_status(broker, order.broker_order_id)
+    finally:
+        broker.deregister_order_observer(token)
+    # The production cancel/fill callback (register_callbacks, below) is
+    # scheduled from the same _dispatch_order_record pass via the same
+    # call_soon_threadsafe mechanism; yield twice so it has run before the
+    # caller re-reads order_service state.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    return outcome
 
 
 async def sync_order_edit_async(session, order: Order, new_order_type: OrderType, *, reprice: bool = False, split_operation_id: str | None = None) -> None:
@@ -25,7 +135,11 @@ async def sync_order_edit_async(session, order: Order, new_order_type: OrderType
     from app.services.execution_price_service import reprice_trigger
     from app.services.simulation import _is_position_exit
     if getattr(session, "broker_refresh_events", None) is not None:
-        raise KotakError("Broker refresh is in progress; retry the edit shortly")
+        from app.services.real_broker_state import await_refresh_barrier
+        # Editing an open SL/LIMIT exit must go through; editing a pending
+        # new-position order stays gate-able, same split as placement/cancel.
+        if not _is_position_exit(session, order) or not await await_refresh_barrier(session):
+            raise KotakError("Broker refresh is in progress; retry the edit shortly")
     require_entry_allowed(session, order)
     previous = order_service.get_order(session.session_id, order.order_id)
     from app.services.order_split import ACTIVE

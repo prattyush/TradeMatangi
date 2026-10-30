@@ -390,7 +390,6 @@ async def refresh(session, *, protection=False):
     async with session_lock(session), state._locks.setdefault(root, asyncio.Lock()):
         if getattr(session, "broker_refresh_events", None) is not None:
             raise HTTPException(409, "Broker refresh is already running")
-        session.broker_refresh_events = []
         try:
             bundle = await kotak_reports.fetch(broker, background=protection)
             scoped_orders, today_fills = state.book_reports(
@@ -491,7 +490,15 @@ async def refresh(session, *, protection=False):
                 ledger,
                 orders,
             )
+            # Only this brief commit window (a single DynamoDB write, no
+            # broker calls) holds the barrier -- matches the intraday
+            # refresh()'s scope so manual broker-bound actions are never
+            # blocked for the full, multi-second swing refresh duration.
+            session.broker_refresh_events = []
             await asyncio.to_thread(commit, session, manifest)
+            events, session.broker_refresh_events = session.broker_refresh_events, None
+            for callback, args in events or []:
+                callback(*args)
             trading._trades[session.session_id] = trades
             order_service._orders[session.session_id] = orders
             session.kotak_order_map = {

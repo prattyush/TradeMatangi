@@ -27,7 +27,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import SessionSwitcher from './components/SessionSwitcher'
 import GuardRailPopup from './components/GuardRailPopup'
-import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, loadSizingMode, loadRiskRatios, loadDefaultSlPct } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, QuantityTiers, GuardRailSettingsLocal, loadSizingMode, loadRiskRatios, loadQuantityTiers, loadDefaultSlPct } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, OpenOptionContract, BrokerOrder } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -262,6 +262,8 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [sizingMode, setSizingMode] = useState<SizingMode>(loadSizingMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
   const [riskRatios, setRiskRatios] = useState<RiskRatios>(loadRiskRatios)
+  const [quantityTiers, setQuantityTiers] = useState<QuantityTiers>(loadQuantityTiers)
+  const [guardRailSettings, setGuardRailSettings] = useState<GuardRailSettingsLocal | null>(null)
   const [defaultSlPct, setDefaultSlPct] = useState(loadDefaultSlPct)
   const [targetDeviationPct, setTargetDeviationPct] = useState(loadTargetDeviationPct)
   useEffect(() => {
@@ -308,6 +310,12 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
   const [stepwiseLabelingPopup, setStepwiseLabelingPopup] = useState(loadStepwiseLabelingPopupEnabled)
   const [roundTrips, setRoundTrips] = useState<import('./services/api').RoundTrip[]>([])
+  const closedTradePnl = roundTrips.reduce((sum, rt) => sum + rt.pnl, 0)
+  // Signed % of session capital from CLOSED trades only — never running/unrealized P&L.
+  const closedPnlPct = sim.sessionCapital > 0 ? (closedTradePnl / sim.sessionCapital) * 100 : 0
+  const closedLossPct = closedPnlPct < 0 ? Math.abs(closedPnlPct) : 0
+  const guardRailAlertActive = Boolean(guardRailSettings?.banHalfwayAlertEnabled) && closedLossPct >= 0.5 * (guardRailSettings?.banCapitalPct ?? Infinity)
+  const highTierDisabled = Boolean(guardRailSettings?.banEnabled) && closedPnlPct <= (guardRailSettings?.highTierPnlThresholdPct ?? -Infinity)
   const [tradeLabels, setTradeLabels] = useState<import('./services/api').TradeLabel[]>([])
 
   // ── Context menu state ─────────────────────────────────────────────────────
@@ -1498,18 +1506,28 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
 
   useMultiSSE(streamSessionIds, handleSSEMessage, handleSSEReconnect, handleSSEUnavailable, [...(sim.group?.members.filter(member => member.session_type === 'real').map(member => member.session_id) ?? []), ...(sim.sessionType === 'real' && sim.sessionId ? [sim.sessionId] : [])])
 
-  // Fetch round-trips and labels for trade history when session is active
+  // Fetch round-trips and labels for trade history when session is active.
+  // Real/swing round-trips are cycle-based and can transiently 500 if a
+  // write races the read right as a position goes flat -- retry a couple of
+  // times instead of silently leaving closedTradePnl (and the GuardRails
+  // High-tier gate) stuck on stale, pre-flattening data for the rest of the
+  // session.
   useEffect(() => {
     if (!sim.sessionId) { setRoundTrips([]); setTradeLabels([]); return }
     let cancelled = false
     const fetch = async () => {
-      try {
-        const [rts, lbs] = await Promise.all([
-          api.getRoundTrips(sim.sessionId!),
-          api.getLabels(sim.sessionId!),
-        ])
-        if (!cancelled) { setRoundTrips(rts); setTradeLabels(lbs) }
-      } catch { /* ignore */ }
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+        try {
+          const [rts, lbs] = await Promise.all([
+            api.getRoundTrips(sim.sessionId!),
+            api.getLabels(sim.sessionId!),
+          ])
+          if (!cancelled) { setRoundTrips(rts); setTradeLabels(lbs) }
+          return
+        } catch {
+          if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400))
+        }
+      }
     }
     fetch()
     return () => { cancelled = true }
@@ -1652,18 +1670,18 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
     ))
   }, [sim.sessionId])
 
-  const handleBulkUpdateSL = useCallback(async (triggerPrice: number, right: string | null) => {
+  const handleBulkUpdateSL = useCallback(async (triggerPrice: number, right: string | null, merge: boolean) => {
     if (!sim.sessionId) return { updated: 0, orders: [] }
-    const res = await api.bulkUpdateSL(sim.sessionId, triggerPrice, right)
+    const res = await api.bulkUpdateSL(sim.sessionId, triggerPrice, right, merge)
     if (res.orders.length > 0) {
       sim.bulkUpdateOrders(res.orders)
     }
     return res
   }, [sim.sessionId, sim.bulkUpdateOrders])
 
-  const handleBulkConvert = useCallback(async (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price?: number) => {
+  const handleBulkConvert = useCallback(async (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price: number | undefined, merge: boolean) => {
     if (!sim.sessionId) return { converted: 0, orders: [] }
-    const res = await api.bulkConvertOrders(sim.sessionId, newOrderType, right, price)
+    const res = await api.bulkConvertOrders(sim.sessionId, newOrderType, right, price, merge)
     if (res.orders.length > 0) {
       sim.bulkUpdateOrders(res.orders)
     }
@@ -2223,7 +2241,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       </div>}
       {/* Header */}
       <div style={{
-        padding: '10px 20px', background: '#161b22', borderBottom: '1px solid #30363d',
+        padding: '10px 20px', background: guardRailAlertActive ? '#7f1d1d' : '#161b22', borderBottom: '1px solid #30363d',
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>
@@ -2473,11 +2491,12 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           sessionActive={sim.sessionState === 'running' || sim.sessionState === 'paused'}
           onWalletReset={sim.incrementWalletRefreshKey}
           onAttachRealSession={async id => { await sim.attachToActiveSession(id, true) }}
-          onSizingModeChange={(mode, fr, rr, slPct) => {
+          onSizingModeChange={(mode, fr, rr, slPct, qt) => {
             setSizingMode(mode)
             setFundsRatios(fr)
             setRiskRatios(rr)
             setDefaultSlPct(slPct)
+            setQuantityTiers(qt)
           }}
           onTargetDeviationChange={setTargetDeviationPct}
           onBrokerageChange={setBrokeragePerOrder}
@@ -2491,7 +2510,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           }}
           onHistoricalDaysChange={setHistoricalDays}
           onPnlPctModeChange={setPnlPctMode}
-          onGuardRailSettingsChange={() => {}}
+          onGuardRailSettingsChange={setGuardRailSettings}
           onAutoStartSnapshotsChange={setAutoStartSnapshots}
           onStepwiseLabelingPopupChange={setStepwiseLabelingPopup}
           onLabelingModeChange={setLabelModeByType}
@@ -2833,6 +2852,8 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
               sizingMode={sizingMode}
               fundsRatios={fundsRatios}
               riskRatios={riskRatios}
+              quantityTiers={quantityTiers}
+              highTierDisabled={highTierDisabled}
               defaultSlPct={defaultSlPct}
               sessionCapital={sim.sessionCapital}
               sessionType={sim.sessionType}
@@ -2871,6 +2892,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
                 }
               }
               onCancelOrder={sim.cancelOrder}
+              onForceCancelOrder={orderId => sim.cancelOrder(orderId, true)}
               onSplitOrder={sim.splitOrder}
               onConvertOrder={async (orderId, newOrderType, price) => {
                 const updated = await api.convertOrder(sim.sessionId!, orderId, newOrderType, price)
@@ -2920,6 +2942,14 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
               } catch (error) {
                 if (simRef.current.sessionId === sessionId) setBrokerError(error instanceof Error ? error.message : String(error))
               }
+              // Also re-fetch round-trips/labels so the GuardRails High-tier
+              // gate re-evaluates immediately against fresh closed-trade P&L,
+              // independent of whether a new trade ever re-triggers the
+              // automatic fetch effect again.
+              try {
+                const [rts, lbs] = await Promise.all([api.getRoundTrips(sessionId), api.getLabels(sessionId)])
+                if (simRef.current.sessionId === sessionId) { setRoundTrips(rts); setTradeLabels(lbs) }
+              } catch { /* transient; the automatic fetch effect's own retry will catch up */ }
             } : undefined}
             roundTrips={roundTrips}
             labels={tradeLabels}
@@ -2949,7 +2979,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
         />
       )}
 
-      {contextMenuEntryTicket && <ChartEntryTicket ref={contextMenuEntryTicketRef} ticket={contextMenuEntryTicket} fundsRatios={fundsRatios} riskRatios={riskRatios} instrumentType={instrumentType} sessionType={sim.sessionType} onChange={setContextMenuEntryTicket} onSubmit={submitContextMenuEntry} onClose={() => setContextMenuEntryTicket(null)} />}
+      {contextMenuEntryTicket && <ChartEntryTicket ref={contextMenuEntryTicketRef} ticket={contextMenuEntryTicket} fundsRatios={fundsRatios} riskRatios={riskRatios} quantityTiers={quantityTiers} highTierDisabled={highTierDisabled} instrumentType={instrumentType} sessionType={sim.sessionType} onChange={setContextMenuEntryTicket} onSubmit={submitContextMenuEntry} onClose={() => setContextMenuEntryTicket(null)} />}
     </div>
   )
 }

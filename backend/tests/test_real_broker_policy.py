@@ -162,8 +162,8 @@ def test_disabled_reconciliation_flag_does_not_block_entries_but_unknown_wire_op
     session=simulation.SimulationSession('mine','NIFTY','2026-10-15','09:15:00',1,user_id='u',session_type='real')
     session.real_recovery_pending=True
     monkeypatch.setattr(real_trading_day,'state',lambda _: {'state':'active','date':'2026-10-15'})
-    monkeypatch.setattr(real_close,'unresolved',lambda _:False)
+    monkeypatch.setattr(real_close,'unresolved',lambda *_:False)
     real_trading_day.require_entry_allowed(session,TradeSide.BUY,1)
-    monkeypatch.setattr(real_close,'unresolved',lambda _:True)
+    monkeypatch.setattr(real_close,'unresolved',lambda *_:True)
     with pytest.raises(HTTPException,match='unconfirmed'):
         real_trading_day.require_entry_allowed(session,TradeSide.BUY,1)

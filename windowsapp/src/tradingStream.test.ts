@@ -110,7 +110,11 @@ describe('trading stream recovery', () => {
     await flush()
     expect(current.event_cursor).toBe(12)
     expect(current.current_price).toBe(105)
-    await vi.advanceTimersByTimeAsync(1000)
+    // The first fetch succeeded but was still stale (event_cursor 10 for a
+    // gap at 11/12), so the retry still needed backs off to 2000ms instead
+    // of resetting to 1000ms -- a successful-but-insufficient fetch is not
+    // quiescence.
+    await vi.advanceTimersByTimeAsync(2000)
     expect(fetchSnapshot).toHaveBeenCalledTimes(2)
     expect(current.open_orders).toEqual([])
     expect(current.event_cursor).toBe(12)

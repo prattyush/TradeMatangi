@@ -61,15 +61,17 @@ def adapt(route: APIRoute, path: str):
                          status_code=route.status_code, dependencies=route.dependencies, name=f"desktop_analysis_{route.name}")
 
 
-# Deliberately exclude arbitrary trades/user queries, trading writes, pattern writes
-# and snapshot creation. Labels, analytics-only fee corrections and confirmed snapshot deletion are the only writes.
+# Deliberately exclude arbitrary trades/user queries, trading writes, pattern chart writes
+# and snapshot creation. Labels, category/strategy name registration, analytics-only fee
+# corrections and confirmed snapshot deletion are the only writes.
 allowed = [
     (analysis.router, {"/api/analysis/sessions": {"GET"}}),
     (labels.router, {f"/api/analysis/{p}": {"GET", "POST"} if p == "labels" else {"GET"}
                     for p in ("round-trips", "labels", "entry-tags", "exit-tags")}),
     (performance.router, {**{f"/api/analysis/performance{p}": {"GET"} for p in ("", "/swing", "/cycles", "/cycles/{cycle_id}")}, "/api/analysis/performance/real-fees": {"GET", "POST", "DELETE"}}),
     (data.router, {f"/api/data/{p}": {"GET"} for p in ("historical", "pre-session", "options-historical", "expiry")}),
-    (pattern_logger.router, {f"/api/pattern/{p}": {"GET"} for p in ("strategies", "categories", "chart/by-date", "ohlc/equity", "ohlc/options")}),
+    (pattern_logger.router, {f"/api/pattern/{p}": {"GET", "POST"} if p in ("strategies", "categories") else {"GET"}
+                             for p in ("strategies", "categories", "chart/by-date", "ohlc/equity", "ohlc/options")}),
     (snapshots.router, {"/api/snapshots": {"GET", "DELETE"}, "/api/snapshots/{event_id}/candle": {"GET"}}),
 ]
 for source, paths in allowed:

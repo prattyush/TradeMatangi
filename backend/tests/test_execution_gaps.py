@@ -77,7 +77,7 @@ def test_target_ignores_stale_client_setting_and_forwarding_does_not_add_gap(rea
 
 
 async def _forward(session):
-    simulation._emit_tick_and_check_orders_real(session, {'time': int(session.current_time), 'close': 100}, None, asyncio.get_running_loop())
+    await simulation._emit_tick_and_check_orders_real(session, {'time': int(session.current_time), 'close': 100}, None, asyncio.get_running_loop())
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ def test_direct_market_path_uses_account_gap(real):
     session, broker, settings = real
     settings['target_deviation_pct'] = 0.025
     async def submit():
-        trade_routes._place_kotak_direct(session, TradeSide.SELL, 100, 1, None)
+        await trade_routes._place_kotak_direct(session, TradeSide.SELL, 100, 1, None)
     asyncio.run(submit())
     assert broker.place_limit_order.call_args.kwargs['price'] == 97.5
 

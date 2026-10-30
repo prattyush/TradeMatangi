@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -88,7 +89,14 @@ def read_projection(session_id):
     return sorted([{**row, "session_id": session_id} for row in rows], key=lambda row: (int(row["timestamp"]), row["trade_id"]))
 
 
-def aggregate(session, executions, account_id, master=None):
+def aggregate(session, executions, account_id, master=None, strict=True, unresolved=None):
+    """`strict=False` (used only by refresh()'s own resilient pass) skips a
+    single execution whose contract can't be resolved instead of raising --
+    every other caller (direct protection/recovery callers) keeps the
+    original raise-on-unknown-contract behavior they already handle
+    themselves. `unresolved`, if given, collects the skipped rows so the
+    caller can decide whether to fetch the instrument master and retry.
+    """
     from app.services.trading import compute_commission
     groups, seen = {}, set()
     for execution in executions:
@@ -100,7 +108,20 @@ def aggregate(session, executions, account_id, master=None):
         if identity in seen:
             continue
         seen.add(identity)
-        contract = reports.contract(session, execution, master)
+        try:
+            contract = reports.contract(session, execution, master)
+        except reports.UnknownContractError as exc:
+            if strict:
+                raise
+            # One execution whose contract can't be resolved must not drop
+            # every other trade in this refresh -- skip just this one; it
+            # can resolve on a later refresh (a fresh instrument master, a
+            # session.expiry that now matches).
+            logger.warning("real_broker_execution_unresolved_contract session=%s execution_id=%s symbol=%s: %s",
+                            session.session_id, execution.get("execution_id"), execution.get("symbol", ""), exc)
+            if unresolved is not None:
+                unresolved.append(execution)
+            continue
         key = (execution.get("exchange", ""), broker_report_id(execution))
         group = groups.setdefault(key, {"row": execution, "contract": contract, "quantity": 0, "value": 0., "first": execution["timestamp"], "ids": []})
         if group["contract"] != contract or group["row"]["side"] != execution["side"]:
@@ -149,13 +170,26 @@ def book_reports(session, raw_orders, executions):
     return [r for r in orders if current_order(r)], fills
 
 
-def normalize_positions(session, raw_positions, master=None):
+def normalize_positions(session, raw_positions, master=None, strict=True, unresolved=None):
+    """See aggregate() for the `strict`/`unresolved` contract."""
     positions = []
     for raw in raw_positions:
         row = reports.normalize_order(raw)
         if not reports.in_book(session, row):
             continue
-        contract = reports.contract(session, row, master)
+        try:
+            contract = reports.contract(session, row, master)
+        except reports.UnknownContractError as exc:
+            if strict:
+                raise
+            # Same principle as aggregate()/build_orders(): one position
+            # whose contract can't be resolved must not drop every other
+            # contract's position from this refresh.
+            logger.warning("real_broker_position_unresolved_contract session=%s symbol=%s: %s",
+                            session.session_id, row.get("symbol", ""), exc)
+            if unresolved is not None:
+                unresolved.append(raw)
+            continue
         buy = reports.number(raw.get("cfBuyQty")) + reports.number(raw.get("flBuyQty"))
         sell = reports.number(raw.get("cfSellQty")) + reports.number(raw.get("flSellQty"))
         net = int(reports.number(raw.get("netQty", raw.get("net_quantity", raw.get("quantity", buy - sell)))))
@@ -170,7 +204,17 @@ def normalize_positions(session, raw_positions, master=None):
     return positions
 
 
-def build_orders(session, broker_orders, master=None):
+def build_orders(session, broker_orders, master=None, strict=True, unresolved=None, absent=None):
+    """See aggregate() for the `strict`/`unresolved` contract.
+
+    `absent`, if given, collects the order_id of every locally-ambiguous
+    order (recovery_state 'submitting'/'unknown', no broker_order_id) this
+    call resolves to 'failed' because its submission tag is genuinely not in
+    this complete report -- proof the broker never accepted it. The caller
+    (`refresh()`) uses this to release the order's wallet reservation after
+    the resolution is actually committed, since this function only ever
+    mutates copies destined for `stage()`/`commit()`, never the live order.
+    """
     from app.services import order_service
     original = order_service.get_all_orders(session.session_id)
     tracked = {o.broker_order_id: o for o in original if o.broker_order_id}
@@ -187,9 +231,24 @@ def build_orders(session, broker_orders, master=None):
         kind = OrderType.STOPLOSS if row["order_type"] in ("SL", "SL-M", "STOPLOSS") else OrderType.LIMIT
         previous = tracked.get(broker_report_id(row))
         tagged = split_children.get(row.get('tag')) or uncertain.get(row.get('tag'))
-        if previous is None and tagged is not None and row['quantity'] == tagged.quantity and row['side'] == tagged.side.value and (kind == tagged.order_type or (tagged.order_type == OrderType.TARGET and kind == OrderType.LIMIT)):
-            contract = reports.contract(session, row, master)
-            if (contract.get('right'), contract.get('strike'), contract.get('expiry')) == (tagged.right, tagged.strike, tagged.expiry):
+        if previous is None:
+            # An unresolvable contract must only drop this one broker row,
+            # never abort the whole refresh -- every other order in this
+            # batch (and every other refresh caller: aggregate/
+            # normalize_positions) still needs to publish.
+            try:
+                contract = reports.contract(session, row, master)
+            except reports.UnknownContractError as exc:
+                if strict:
+                    raise
+                logger.warning("real_broker_order_unresolved_contract session=%s broker_order_id=%s symbol=%s: %s",
+                                session.session_id, broker_report_id(row), row.get("symbol", ""), exc)
+                if unresolved is not None:
+                    unresolved.append(row)
+                continue
+            if (tagged is not None and row['quantity'] == tagged.quantity and row['side'] == tagged.side.value
+                    and (kind == tagged.order_type or (tagged.order_type == OrderType.TARGET and kind == OrderType.LIMIT))
+                    and (contract.get('right'), contract.get('strike'), contract.get('expiry')) == (tagged.right, tagged.strike, tagged.expiry)):
                 previous = tagged
         if previous is None and row["order_type"] == "MARKET" and status in OPEN:
             continue
@@ -197,7 +256,7 @@ def build_orders(session, broker_orders, master=None):
             user_id=session.user_id, symbol=session.symbol, side=TradeSide(row["side"]), order_type=kind,
             quantity=row["quantity"], trigger_price=row["trigger_price"], limit_price=row["limit_price"],
             created_at=reports.wall_time(row["order_time"]) if row.get("order_time") else 0,
-            source="broker_external", broker_order_id=broker_report_id(row), execution_broker=getattr(session, "execution_broker", "KotakNeo"), **reports.contract(session, row, master))
+            source="broker_external", broker_order_id=broker_report_id(row), execution_broker=getattr(session, "execution_broker", "KotakNeo"), **contract)
         order.execution_broker = getattr(session, "execution_broker", "KotakNeo")
         order.broker_account_id = getattr(session, "broker_account_id", None)
         order.broker_order_id = broker_report_id(row)
@@ -237,6 +296,24 @@ def build_orders(session, broker_orders, master=None):
     from app.services.order_split import reconcile_projection
     reconcile_projection(result, broker_orders)
     # Broker-backed locals absent from a complete report are not live orders.
+    # Gated on `absent` being passed: resolving to CANCELLED here requires the
+    # caller to also release any wallet reservation once committed (only the
+    # intraday real refresh() does that today). swing_real.refresh() doesn't
+    # pass `absent`, so swing orders are left for their existing handling
+    # instead of risking an unreleased swing_cash reservation.
+    if absent is not None:
+        now_ms = int(time.time() * 1000)
+        for tag, stale in uncertain.items():
+            candidate = result.get(stale.order_id)
+            if candidate is None or candidate.broker_order_id or candidate.recovery_state not in ('submitting', 'unknown'):
+                continue  # already resolved above via a positive tag match
+            outcome, _ = _resolve_tag(candidate, broker_orders, now_ms=now_ms)
+            if outcome == 'absent':
+                candidate.recovery_state = 'failed'
+                candidate.status = OrderStatus.CANCELLED
+                absent.append(candidate.order_id)
+                logger.info("real_broker_order_tag_absent_resolved_as_failed session=%s order=%s tag=%s",
+                            session.session_id, stale.order_id, tag)
     return result
 
 
@@ -352,6 +429,103 @@ def fill_deferred(session, callback, *args):
     return False
 
 
+def _resolve_tag(order, rows, *, min_age_ms=3000, now_ms=None):
+    """Decide what a just-fetched, complete broker order report says about
+    one locally-ambiguous order's own submission tag: found at the broker
+    ('matched', with the row), proven never accepted ('absent' -- the report
+    is complete and the tag simply isn't in it at all), or too recent/too
+    ambiguous to trust either way ('too_soon' -- either guards a race where
+    the broker only just accepted it moments before this exact report
+    snapshot was taken, or the tag IS present but on a row whose quantity/
+    side/contract don't match -- never auto-cancel in that case, since that's
+    a genuinely confusing state to resolve by guessing, not proof of absence).
+    Shared by `resolve_pending_tag` (bounded, on-demand, single-order) and
+    `build_orders` (the regular whole-book refresh) so both agree on what
+    "resolved" means.
+    """
+    tag = (order.analytics or {}).get('broker_tag')
+    tag_rows = [row for row in rows if row.get('tag') == tag]
+    match = next((row for row in tag_rows
+                  if row.get('quantity') == order.quantity
+                  and row.get('side') == order.side.value
+                  and (row.get('right'), row.get('strike'), row.get('expiry')) == (order.right, order.strike, order.expiry)),
+                 None)
+    if match is not None:
+        return 'matched', match
+    if tag_rows:
+        return 'too_soon', None
+    now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
+    if now_ms - (order.broker_submission_at or now_ms) < min_age_ms:
+        return 'too_soon', None
+    return 'absent', None
+
+
+async def resolve_pending_tag(session, order, broker, *, timeout=3.0):
+    """Single-order, bounded, on-demand reconciliation for an order stuck in
+    'prepared'/'submitting'/'unknown' with no broker_order_id yet.
+
+    Deliberately lighter than `refresh()`: no session-wide lock or commit
+    barrier, no whole-book rebuild -- just one report fetch, used at the
+    moment a user is actively trying to act on this exact order (e.g.
+    cancel) and shouldn't have to wait for the next background cycle or for
+    a flaky broker connection to recover enough for a full refresh to
+    succeed. Returns True if the ambiguity was resolved (either way --
+    matched at the broker, or proven never placed), False if it's still
+    genuinely unresolved (the fetch itself failed/timed out, or the order is
+    too fresh to trust an absence yet).
+    """
+    from app.services import order_service, kotak_reports
+    tag = (order.analytics or {}).get('broker_tag')
+    if not tag:
+        return False
+    try:
+        bundle = await asyncio.wait_for(
+            kotak_reports.fetch(broker, background=False, force=True, user_id=session.user_id),
+            timeout=timeout,
+        )
+    except Exception:
+        return False
+    if bundle.orders is None:
+        return False
+    rows = [row for row in bundle.orders if reports.in_book(session, row)]
+    outcome, match = _resolve_tag(order, rows)
+    if outcome == 'too_soon':
+        return False
+    if outcome == 'matched':
+        order.broker_order_id = match['broker_order_id']
+        order.recovery_state = None
+        order.broker_filled_quantity = match.get('filled_quantity', 0)
+        await asyncio.to_thread(order_service._write_order_to_db, order, strict=True)
+        from app.services.broker_order_service import register_callbacks
+        register_callbacks(session, order, broker, asyncio.get_running_loop())
+        return True
+    # outcome == 'absent': a complete report proves this order was never
+    # accepted by the broker -- release it exactly like a local cancel
+    # (wallet credit-back included); no broker call is needed since nothing
+    # was ever placed there.
+    order.recovery_state = 'failed'
+    await asyncio.to_thread(order_service.cancel_order, session.session_id, order.order_id, session.date)
+    return True
+
+
+async def await_refresh_barrier(session, timeout=3.0, poll=0.05):
+    """Wait for an in-flight refresh's commit barrier to close.
+
+    The barrier is normally open only for a brief, local commit window
+    (a single DynamoDB write, no broker calls happen while it's open), so
+    a short bounded wait lets a manually-requested broker action through
+    once that window passes, instead of rejecting it outright for a race
+    it will usually win if given a moment. Returns False only if the
+    barrier is still open after `timeout` -- a genuinely abnormal condition.
+    """
+    deadline = time.monotonic() + timeout
+    while getattr(session, "broker_refresh_events", None) is not None:
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(poll)
+    return True
+
+
 @diagnostics.timed("broker_refresh")
 async def refresh(session, broker, *, protection=False, bundle=None):
     if getattr(session, "trading_style", "intraday") == "swing":
@@ -386,37 +560,34 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             raise ValueError('Order split is in progress; retry broker refresh shortly')
         if getattr(session, "broker_refresh_events", None) is not None:
             raise ValueError("A broker refresh is already running")
-        if not protection:
-            # Unlike the protection path below (which only opens this barrier
-            # right before commit), an explicit/manual refresh opens it here,
-            # before the broker fetch even starts, and holds it for the full
-            # fetch+build+verify+stage+commit+wallet duration — so a slow
-            # Kotak report fetch or FIFO-disagreement retry during a manual
-            # "Trade History refresh" blocks new order submissions for that
-            # entire time. Narrowing this to match the protection path's
-            # short window would require also adding its revision/staleness
-            # re-check (lines below, `if protection:`) to the manual path, to
-            # avoid silently committing a rebuild that's gone stale against a
-            # live fill/cancel that arrived during a shortened pre-commit
-            # window. Deliberately left as-is for now rather than risking a
-            # consistency bug in this path during an active investigation —
-            # tighten this as its own, separately tested change.
-            session.broker_refresh_events = []
         try:
             bundle = prefetched or await kotak_reports.fetch(broker, background=protection)
             raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
             scoped_orders, scoped_executions = book_reports(session, raw_orders, executions)
             master = None
-            try:
-                trades = aggregate(session, scoped_executions, account)
-                positions = normalize_positions(session, raw_positions)
-                orders = build_orders(session, scoped_orders)
-            except reports.UnknownContractError:
+            # strict=False: an unresolvable contract drops only that one
+            # row (logged) instead of aborting every other order/trade/
+            # position in this refresh -- see aggregate()'s docstring. If
+            # anything was dropped on the cheap (no-master) pass, fetch the
+            # instrument master once and retry the whole batch with it,
+            # same as the original try/retry shape; whatever is still
+            # unresolved after that genuinely can't be identified right now.
+            unresolved = []
+            absent_order_ids = []
+            trades = aggregate(session, scoped_executions, account, master, strict=False, unresolved=unresolved)
+            positions = normalize_positions(session, raw_positions, master, strict=False, unresolved=unresolved)
+            orders = build_orders(session, scoped_orders, master, strict=False, unresolved=unresolved, absent=absent_order_ids)
+            if unresolved:
                 from app.services.kotak_service import _get_kotak_instruments
                 master = await asyncio.to_thread(_get_kotak_instruments)
-                trades = aggregate(session, scoped_executions, account, master)
-                positions = normalize_positions(session, raw_positions, master)
-                orders = build_orders(session, scoped_orders, master)
+                unresolved = []
+                absent_order_ids = []
+                trades = aggregate(session, scoped_executions, account, master, strict=False, unresolved=unresolved)
+                positions = normalize_positions(session, raw_positions, master, strict=False, unresolved=unresolved)
+                orders = build_orders(session, scoped_orders, master, strict=False, unresolved=unresolved, absent=absent_order_ids)
+                if unresolved:
+                    logger.warning("real_broker_contracts_remain_unresolved session=%s count=%d",
+                                    session.session_id, len(unresolved))
             # Independent broker endpoints can straddle a fill. Retry once
             # before publishing a revision whose reported fills disagree.
             def quantities_agree():
@@ -432,7 +603,15 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                     row = reports.normalize_order(raw)
                     if not reports.in_book(session, row) or not all(k in raw for k in ("flBuyQty", "flSellQty")):
                         continue
-                    contract = reports.contract(session, row, master)
+                    try:
+                        contract = reports.contract(session, row, master)
+                    except reports.UnknownContractError:
+                        # Same principle as aggregate()/build_orders()/
+                        # normalize_positions(): leave this one contract out
+                        # of the agreement check rather than raising and
+                        # aborting the whole refresh. It's already logged by
+                        # normalize_positions()'s own pass over this row.
+                        continue
                     key = (contract["right"], contract["strike"], contract["expiry"])
                     checked.add(key)
                     actual[(*key, "BUY")] += int(reports.number(raw["flBuyQty"]))
@@ -457,9 +636,10 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 bundle = await kotak_reports.fetch(broker, background=True, force=True)
                 raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
                 scoped_orders, scoped_executions = book_reports(session, raw_orders, executions)
-                trades = aggregate(session, scoped_executions, account, master)
-                positions = normalize_positions(session, raw_positions, master)
-                orders = build_orders(session, scoped_orders, master)
+                trades = aggregate(session, scoped_executions, account, master, strict=False)
+                positions = normalize_positions(session, raw_positions, master, strict=False)
+                absent_order_ids = []
+                orders = build_orders(session, scoped_orders, master, strict=False, absent=absent_order_ids)
                 if not fifo_agrees():
                     raise ValueError("Kotak execution history/positions are incomplete or still updating; FIFO refresh was not applied")
             positions = verified_positions(session, scoped_executions, positions, master)
@@ -478,15 +658,24 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             # New live facts are handled after publication; they cannot append duplicates.
             try:
                 manifest, members = await asyncio.to_thread(stage, session, account, trades, scoped_orders, positions, scoped_executions, orders)
-                if protection:
-                    if (version != getattr(session, '_protection_revision', 0)
-                            or bundle.revision != kotak_reports.state(broker).revision
-                            or kotak_reports.state(broker).foreground):
-                        from app.services.protection_recovery import Deferred
-                        raise Deferred('Trading changed during background staging; the existing revision remains active')
-                    # Publish under a short callback barrier; slow report reads
-                    # and history staging never make manual order edits busy.
-                    session.broker_refresh_events = []
+                if protection and (version != getattr(session, '_protection_revision', 0)
+                        or bundle.revision != kotak_reports.state(broker).revision
+                        or kotak_reports.state(broker).foreground):
+                    from app.services.protection_recovery import Deferred
+                    raise Deferred('Trading changed during background staging; the existing revision remains active')
+                # Publish under a short callback barrier -- everything above
+                # (fetch, build, FIFO verify, including its possible forced
+                # re-fetch on disagreement) runs with no barrier at all, for
+                # both the manual and background refresh paths, so a slow
+                # Kotak report fetch never blocks new order submission/edit/
+                # cancel. Only this brief stage+commit window (a handful of
+                # sequential DynamoDB writes, no further broker calls) does.
+                # A fill/cancel/reject callback that fires before this point
+                # runs immediately against still-current state (nothing
+                # authoritative has been republished yet, so there's no
+                # race); one that fires during this window is deferred and
+                # replayed right after commit below.
+                session.broker_refresh_events = []
                 await asyncio.to_thread(commit, session, manifest, members)
             except Deferred:
                 raise
@@ -495,6 +684,22 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 raise SnapshotPersistenceError("Could not persist broker refresh; the previous revision remains active") from exc
             trading._trades[session.session_id] = trades
             order_service._orders[session.session_id] = orders
+            # build_orders() only ever resolved these on a copy destined for
+            # this commit; now that it's live, release any BUY reservation
+            # exactly like a local cancel would -- a confirmed-never-placed
+            # order holds no broker-side funds to begin with.
+            for order_id in absent_order_ids:
+                resolved_order = orders.get(order_id)
+                if resolved_order is None or resolved_order.reserved_amount <= 0 or resolved_order.is_stoploss:
+                    continue
+                resolved_order.reservation_revision += 1
+                try:
+                    await asyncio.to_thread(order_service._credit_reservation, resolved_order, resolved_order.reserved_amount, session.date,
+                        resolved_order.model_copy(update={"status": OrderStatus.CANCELLED, "reserved_amount": 0.0}))
+                except Exception:
+                    resolved_order.reservation_revision -= 1
+                    raise
+                resolved_order.reserved_amount = 0.0
             session.kotak_order_map = {o.order_id: o.broker_order_id for o in orders.values() if o.broker_order_id}
             session.broker_positions = positions
             from app.services.fifo_positions import unique_executions

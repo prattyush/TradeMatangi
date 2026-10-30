@@ -441,3 +441,123 @@ class TestBulkUpdateSLEndpoint:
         assert {o["order_type"] for o in data["orders"]} == {"LIMIT"}
         assert {o["limit_price"] for o in data["orders"]} == {108.0}
         assert entry_resp.json()["order_id"] not in {o["order_id"] for o in data["orders"]}
+
+    async def test_bulk_update_sl_merge_consolidates_orders(self):
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 3)), \
+             patch("app.services.order_service.get_max_contracts", return_value=2):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                for _ in range(3):
+                    await client.post("/api/orders", json={
+                        "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                        "trigger_price": 95.0, "quantity": 1, "is_stoploss": True,
+                    })
+
+                resp = await client.patch("/api/orders/bulk-update-sl", json={
+                    "session_id": SESSION, "trigger_price": 97.0, "merge": True,
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["merged_from"] == 3
+        assert data["merged_to"] == 2
+        assert len(data["cancelled_order_ids"]) == 1
+        survivors = [o for o in data["orders"] if o["status"] == "PENDING"]
+        assert len(survivors) == 2
+        assert sum(o["quantity"] for o in survivors) == 3
+        assert all(o["quantity"] <= 2 for o in survivors)
+        assert all(o["trigger_price"] == 97.0 for o in survivors)
+
+    async def test_bulk_update_sl_merge_noop_when_already_minimal(self):
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 2)), \
+             patch("app.services.order_service.get_max_contracts", return_value=1):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                for _ in range(2):
+                    await client.post("/api/orders", json={
+                        "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                        "trigger_price": 95.0, "quantity": 1, "is_stoploss": True,
+                    })
+
+                resp = await client.patch("/api/orders/bulk-update-sl", json={
+                    "session_id": SESSION, "trigger_price": 97.0, "merge": True,
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["updated"] == 2
+        assert "merged_from" not in data
+        assert len(data["orders"]) == 2
+
+    async def test_bulk_convert_merge_consolidates_orders(self):
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 3)), \
+             patch("app.services.order_service.get_max_contracts", return_value=2):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 95.0, "quantity": 1, "is_stoploss": True,
+                })
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "LIMIT",
+                    "limit_price": 110.0, "quantity": 1,
+                })
+                await client.post("/api/orders", json={
+                    "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                    "trigger_price": 96.0, "quantity": 1, "is_stoploss": True,
+                })
+
+                resp = await client.patch("/api/orders/bulk-convert", json={
+                    "session_id": SESSION, "new_order_type": "LIMIT", "price": 108.0, "merge": True,
+                })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["merged_from"] == 3
+        assert data["merged_to"] == 2
+        assert len(data["cancelled_order_ids"]) == 1
+        survivors = [o for o in data["orders"] if o["status"] == "PENDING"]
+        assert len(survivors) == 2
+        assert {o["order_type"] for o in survivors} == {"LIMIT"}
+        assert sum(o["quantity"] for o in survivors) == 3
+
+    async def test_bulk_update_sl_merge_one_cancel_failure_does_not_abort_request(self):
+        """Regression for the missing try/except around bulk-update-sl's merge
+        cancel loop (bug fix #1) -- mirrors production request_ids
+        12d16345d90542e7ba7643b155324669 etc., where a single stale sibling's
+        404 aborted the entire request."""
+        session = _make_session()
+        with patch("app.routers.orders.sim_svc.get_session", return_value=session), \
+             patch("app.routers.orders.trading_service.get_position", return_value=_make_position("LONG", 3)), \
+             patch("app.services.order_service.get_max_contracts", return_value=2):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                for _ in range(3):
+                    await client.post("/api/orders", json={
+                        "session_id": SESSION, "side": "SELL", "order_type": "STOPLOSS",
+                        "trigger_price": 95.0, "quantity": 1, "is_stoploss": True,
+                    })
+
+                real_cancel = orders.order_service.cancel_order
+                calls = {"n": 0}
+
+                def flaky_cancel_order(*args, **kwargs):
+                    calls["n"] += 1
+                    if calls["n"] == 1:
+                        from fastapi import HTTPException
+                        raise HTTPException(status_code=404, detail="Order not found or already closed")
+                    return real_cancel(*args, **kwargs)
+
+                with patch("app.services.order_service.cancel_order", side_effect=flaky_cancel_order):
+                    resp = await client.patch("/api/orders/bulk-update-sl", json={
+                        "session_id": SESSION, "trigger_price": 97.0, "merge": True,
+                    })
+
+        assert resp.status_code == 200
+        data = resp.json()
+        failed = [r for r in data["results"] if r["state"] == "failed"]
+        assert len(failed) == 1
+        # the request completed and reported the other orders despite the one failure
+        assert len(data["orders"]) >= 2

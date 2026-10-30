@@ -144,6 +144,46 @@ def test_real_half_does_not_change_local_protection_without_broker_acknowledgeme
     assert orders.get_open_orders(s.session_id) == [stop]
 
 
+def _real_half_setup():
+    from unittest.mock import MagicMock
+    s = session()
+    s.session_type = "real"
+    stop = orders.place_order(s.session_id, s.symbol, TradeSide.SELL, OrderType.STOPLOSS, 4, 1, s.date,
+        trigger_price=90, is_stoploss=True)
+    stop.broker_order_id = "broker-stop"
+    strategy = strategies.start_strategy(s, "TargetProfit", None, {"target_profit_size": "half"})
+    return s, stop, strategy, MagicMock()
+
+
+def test_real_half_places_action_only_after_broker_confirms_shrink():
+    s, stop, strategy, broker = _real_half_setup()
+    broker.get_order_history.return_value = [{"broker_order_id": "broker-stop", "quantity": 2, "status": "trigger pending"}]
+    events = []
+    with patch("app.services.execution_broker.get_service", return_value=broker), \
+         patch.object(strategies, "_sync_broker_quantity", side_effect=lambda *a: events.append(("shrink", a[2]))), \
+         patch("app.services.simulation._register_kotak_sl_for_order", side_effect=lambda *a: events.append(("place",))):
+        strategies._apply_half_exit(strategy, s, Position(symbol=s.symbol, side="LONG", quantity=4, avg_entry_price=100), 120, None, 10)
+    assert events == [("shrink", 2), ("place",)]
+    assert strategy.status == strategies.StrategyStatus.COMPLETED
+    assert stop.quantity == 2
+
+
+def test_real_half_aborts_and_restores_stop_when_broker_never_shows_shrink():
+    s, stop, strategy, broker = _real_half_setup()
+    broker.get_order_history.return_value = [{"broker_order_id": "broker-stop", "quantity": 4, "status": "trigger pending"}]
+    shrinks, placed = [], []
+    with patch("app.services.execution_broker.get_service", return_value=broker), \
+         patch.object(strategies, "_SHRINK_CONFIRM_DELAY", 0), \
+         patch.object(strategies, "_sync_broker_quantity", side_effect=lambda *a: shrinks.append(a[2])), \
+         patch("app.services.simulation._register_kotak_sl_for_order", side_effect=lambda *a: placed.append(a)):
+        strategies._apply_half_exit(strategy, s, Position(symbol=s.symbol, side="LONG", quantity=4, avg_entry_price=100), 120, None, 10)
+    assert shrinks == [2, 4]  # shrink attempted, then original quantity restored
+    assert not placed
+    assert stop.quantity == 4
+    assert orders.get_open_orders(s.session_id) == [stop]
+    assert strategy.status == strategies.StrategyStatus.RUNNING
+
+
 @pytest.mark.parametrize("stage", ["remainder", "action"])
 def test_split_persistence_failure_restores_protection_before_retry(stage):
     s = session()
