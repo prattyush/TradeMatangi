@@ -23,12 +23,18 @@ export function projectedPositionPnl(position: LevelPosition, price: number, bro
   return direction * position.quantity * (price - position.avg_entry_price) - position.entry_commission - exitCommission
 }
 
-export function projectedTotalPnlPctAtTarget(position: LevelPosition, currentPrice: number, targetPrice: number, totalPnl: number, sessionCapital: number, brokeragePerOrder: number): number | null {
+export function projectedTotalPnlAtTarget(position: LevelPosition, currentPrice: number, targetPrice: number, totalPnl: number, brokeragePerOrder: number): number | null {
   const direction = position.side === 'LONG' ? 1 : position.side === 'SHORT' ? -1 : 0
-  if (!direction || position.quantity <= 0 || !Number.isFinite(currentPrice) || currentPrice <= 0 || !Number.isFinite(targetPrice) || targetPrice <= 0 || !Number.isFinite(totalPnl) || !Number.isFinite(sessionCapital) || sessionCapital <= 0 || !Number.isFinite(brokeragePerOrder) || brokeragePerOrder < 0) return null
+  if (!direction || position.quantity <= 0 || !Number.isFinite(currentPrice) || currentPrice <= 0 || !Number.isFinite(targetPrice) || targetPrice <= 0 || !Number.isFinite(totalPnl) || !Number.isFinite(brokeragePerOrder) || brokeragePerOrder < 0) return null
   const exitRate = direction === 1 ? (0.15 + 1.18 * 0.03563) / 100 : (0.003 + 1.18 * 0.03563) / 100
   const exitCommission = Math.round((targetPrice * position.quantity * exitRate + 1.18 * brokeragePerOrder) * 10000) / 10000
-  return (totalPnl + direction * position.quantity * (targetPrice - currentPrice) - exitCommission) / sessionCapital * 100
+  return totalPnl + direction * position.quantity * (targetPrice - currentPrice) - exitCommission
+}
+
+export function projectedTotalPnlPctAtTarget(position: LevelPosition, currentPrice: number, targetPrice: number, totalPnl: number, sessionCapital: number, brokeragePerOrder: number): number | null {
+  if (!Number.isFinite(sessionCapital) || sessionCapital <= 0) return null
+  const value = projectedTotalPnlAtTarget(position, currentPrice, targetPrice, totalPnl, brokeragePerOrder)
+  return value === null ? null : value / sessionCapital * 100
 }
 
 export function positionPnlLevels(position: LevelPosition | null | undefined, sessionCapital: number, brokeragePerOrder: number): PositionPnlLevel[] {
