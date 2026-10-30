@@ -13,13 +13,14 @@ const identity = (tile: PreparationTile) => tile.kind === 'option' ? `${tile.sym
 const label = (tile: PreparationTile) => tile.kind === 'option' ? `${tile.right} ${tile.strike}` : tile.symbol
 const fullLabel = (tile: PreparationTile) => `${tile.symbol}${tile.kind === 'option' ? ` · ${tile.right} ${tile.strike} · ${tile.expiry}` : ''}`
 
-export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, priceForTile, onSubmit, onReconcile, onClose, onPickPrice, onCancelPick }: {
+export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, priceForTile, onSubmit, onReconcile, onClose, onPickPrice, onCancelPick, highTierDisabled = false }: {
   visible: boolean; tiles: PreparationTile[]; activeTileId: string; snapshot: DesktopTradingSnapshot
   priceForTile: (tile: PreparationTile) => number
   onSubmit: (tile: PreparationTile, draft: FloatingOrderDraft) => Promise<void>
   onReconcile: () => Promise<DesktopTradingSnapshot>; onClose: () => void
   onPickPrice?: (tile: PreparationTile, apply: (price: number) => void) => void
   onCancelPick?: () => void
+  highTierDisabled?: boolean
 }) {
   const contracts = useMemo(() => [...new Map(tiles.map(tile => [identity(tile), tile])).values()], [tiles])
   const [selected, setSelected] = useState(() => identity(tiles.find(tile => tile.id === activeTileId) ?? tiles[0]))
@@ -43,6 +44,7 @@ export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, pr
   probe.side = closingSide
   const maxSl = availableExitQuantity(probe, position, snapshot.open_orders)
   const clamp = (x: number, y: number) => ({ x: Math.max(8, Math.min(x, window.innerWidth - (box.current?.offsetWidth ?? 340) - 8)), y: Math.max(8, Math.min(y, window.innerHeight - Math.min(box.current?.offsetHeight ?? 300, window.innerHeight - 16) - 8)) })
+  useEffect(() => { if (ratio === 'h' && highTierDisabled) setRatio('l') }, [ratio, highTierDisabled])
   useEffect(() => {
     if (!tile) { setPrice(''); setStop(''); setSize(''); setNotice('Selected chart is no longer displayed. Choose a contract.') }
   }, [tile ? identity(tile) : null])
@@ -114,7 +116,7 @@ export function FloatingOrderWindow({ visible, tiles, activeTileId, snapshot, pr
     {type !== 'MARKET' && <label>{type === 'LIMIT' ? 'Limit price' : 'Trigger price'}<StepInput aria-label="New order price" onClick={() => tile && onPickPrice?.(tile, value => setPrice(value.toFixed(2)))} min={0.01} step={0.25} value={price} onValue={value => { onCancelPick?.(); setPrice(value) }} disabled={busy} /><button type="button" aria-label="Pick new order price on chart" title="Click a price on the selected contract's chart" disabled={busy || !tile || !onPickPrice} onClick={() => tile && onPickPrice?.(tile, value => setPrice(value.toFixed(2)))}>⊕</button></label>}
     {type === 'TARGET' && Number(price) > 0 && <small>Limit ₹{(Number(price) * (side === 'BUY' ? 1 + settings.target_deviation_pct : 1 - settings.target_deviation_pct)).toFixed(2)}</small>}
     {type !== 'STOPLOSS' && <label>Sizing<select aria-label="Order sizing" value={sizing} disabled={busy} onChange={event => { setSizing(event.target.value as typeof sizing); setSize('') }}><option value="quantity">Fixed quantity</option><option value="capital">Capital %</option><option value="risk">Risk %</option></select></label>}
-    {type === 'STOPLOSS' || sizing === 'quantity' ? <label>{type === 'STOPLOSS' ? 'SL units' : tile?.kind === 'option' ? 'Lots' : 'Shares'}<StepInput aria-label="New order quantity" value={size} onValue={setSize} min={type === 'STOPLOSS' ? lot : 1} step={type === 'STOPLOSS' ? lot : 1} max={type === 'STOPLOSS' ? maxSl : undefined} disabled={busy} /></label> : <div className="order-ratios">{(['l', 'm', 'h'] as const).map(value => <button key={value} disabled={busy} aria-pressed={ratio === value} onClick={() => setRatio(value)}>{value.toUpperCase()} {sizing === 'capital' ? (settings[`funds_ratio_${value}_pct`] * 100).toFixed(1) : settings[`risk_ratio_${value}_pct`]}%</button>)}</div>}
+    {type === 'STOPLOSS' || sizing === 'quantity' ? <label>{type === 'STOPLOSS' ? 'SL units' : tile?.kind === 'option' ? 'Lots' : 'Shares'}<StepInput aria-label="New order quantity" value={size} onValue={setSize} min={type === 'STOPLOSS' ? lot : 1} step={type === 'STOPLOSS' ? lot : 1} max={type === 'STOPLOSS' ? maxSl : undefined} disabled={busy} /></label> : <div className="order-ratios">{(['l', 'm', 'h'] as const).map(value => { const tierDisabled = value === 'h' && highTierDisabled; return <button key={value} className={tierDisabled ? 'tier-disabled' : undefined} disabled={busy || tierDisabled} title={tierDisabled ? "High tier disabled by the GuardRails BAN P&L % threshold" : undefined} aria-pressed={ratio === value} onClick={() => setRatio(value)}>{value.toUpperCase()} {sizing === 'capital' ? (settings[`funds_ratio_${value}_pct`] * 100).toFixed(1) : settings[`risk_ratio_${value}_pct`]}%</button> })}</div>}
     {type === 'STOPLOSS' ? <small>Lot {lot} · available {maxSl} units</small> : <><label className="attach-stop"><input type="checkbox" checked={attached} disabled={busy} onChange={event => setAttached(event.target.checked)} />Attach entry SL</label>{attached && <label>Entry stop<StepInput aria-label="Attached entry stop" min={0.01} step={0.25} value={stop} onValue={setStop} disabled={busy} /></label>}</>}
     {sizing === 'risk' && type !== 'STOPLOSS' && <small>Risk sizing uses the supplied stop or saved default. Minimum one lot/share may exceed the selected budget; backend funds and risk checks apply.</small>}
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}

@@ -64,7 +64,7 @@ async def test_new_long_entries_stay_local_until_trigger(env, kind):
     assert not o.kotak_order_id
     broker.place_limit_order.assert_not_called()
     broker.place_sl_order.assert_not_called()
-    simulation._emit_tick_and_check_orders_real(s, {"time": int(s.current_time), "close": 100}, None, asyncio.get_running_loop())
+    await simulation._emit_tick_and_check_orders_real(s, {"time": int(s.current_time), "close": 100}, None, asyncio.get_running_loop())
     broker.place_limit_order.assert_called_once()
     assert o.kotak_order_id == "broker-limit"
 
@@ -87,7 +87,7 @@ async def test_exit_conversion_reuses_broker_id_with_exact_limit(env):
         new_order_type=OrderType.LIMIT, price=120))
     broker.modify_sl_to_limit_order.assert_called_once_with("broker-sl", 120, 1)
     assert result.order_type == OrderType.LIMIT and result.kotak_order_id == "broker-sl"
-    simulation._emit_tick_and_check_orders_real(s, {"time": int(s.current_time), "close": 121}, None, asyncio.get_running_loop())
+    await simulation._emit_tick_and_check_orders_real(s, {"time": int(s.current_time), "close": 121}, None, asyncio.get_running_loop())
     broker.place_limit_order.assert_not_called()
     assert result.status.value == "PENDING"
 

@@ -732,6 +732,29 @@ def test_desktop_equity_buy_orders_reserve_intraday_margin_on_session_ledger(no_
     _clear()
 
 
+def test_desktop_cancel_order_forwards_force_param(no_db, monkeypatch):
+    """desktop_trading's cancel endpoint must thread force=true through to
+    the shared cancel path, matching the website's own endpoint."""
+    _clear()
+    session = _equity_session()
+    order = asyncio.run(desktop_trading.place_order(
+        session.session_id,
+        PlaceOrderRequest(session_id=session.session_id, side=TradeSide.BUY,
+            order_type=OrderType.LIMIT, limit_price=100, quantity=100),
+        user_id="desktop-user",
+    ))
+    from app.routers import orders
+    calls = []
+    original = orders.cancel_order
+    async def spy(order_id, session_id, force=False):
+        calls.append(force)
+        return await original(order_id, session_id=session_id, force=force)
+    monkeypatch.setattr(orders, "cancel_order", spy)
+    asyncio.run(desktop_trading.cancel_order(session.session_id, order.order_id, force=True, user_id="desktop-user"))
+    assert calls == [True]
+    _clear()
+
+
 def test_equity_anchored_desktop_session_can_place_same_underlying_option_order(no_db):
     _clear()
     session = _equity_session()
@@ -1619,8 +1642,9 @@ def test_missing_sl_large_real_options_split_in_whole_lots():
     from app.routers.orders import MissingStoplossRequest, fill_missing_stoploss
     session = _session()
     session.session_type = "real"
+    # NIFTY freeze limit is 3510 (65-lot multiple); 3900 needs two chunks: 3510 + 390.
     trading_service.record_trade(session.session_id, TradeSide.BUY, 100, 1778058900,
-        quantity=1950, symbol=session.symbol, right="CE", strike=session.strike_ce,
+        quantity=3900, symbol=session.symbol, right="CE", strike=session.strike_ce,
         expiry=session.expiry, instrument_type="options", user_id=session.user_id)
     broker = Mock()
     broker.place_options_sl_order.side_effect = ["chunk-1", "chunk-2"]
@@ -1629,10 +1653,10 @@ def test_missing_sl_large_real_options_split_in_whole_lots():
     try:
         with patch("app.services.kotak_service.get_service", return_value=broker):
             result = asyncio.run(fill_missing_stoploss(request, session.user_id))
-            assert result["quantity"] == 1950
+            assert result["quantity"] == 3900
             assert len(result["orders"]) == 2
-            assert all(o.quantity % 65 == 0 and o.quantity <= 1800 for o in result["orders"])
-            assert sum(call.kwargs["qty"] for call in broker.place_options_sl_order.call_args_list) == 1950
+            assert all(o.quantity % 65 == 0 and o.quantity <= 3510 for o in result["orders"])
+            assert sum(call.kwargs["qty"] for call in broker.place_options_sl_order.call_args_list) == 3900
             asyncio.run(fill_missing_stoploss(request, session.user_id))
             assert broker.place_options_sl_order.call_count == 2
     finally:

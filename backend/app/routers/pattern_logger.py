@@ -67,11 +67,15 @@ class BulkDeleteRequest(BaseModel):
     chart_ids: list[str]
 
 
+class NameRequest(BaseModel):
+    name: str
+
+
 # ── Strategy / Category names ──────────────────────────────────────────────────
 
 @router.get("/strategies")
 async def list_strategies(user_id: str = Depends(get_request_user_id)):
-    """Return all unique strategy names across user's saved charts."""
+    """Return all strategy names available to the user (own and shared)."""
     try:
         names = svc.list_strategy_names(user_id)
         return {"strategies": names}
@@ -80,15 +84,38 @@ async def list_strategies(user_id: str = Depends(get_request_user_id)):
         raise HTTPException(status_code=500, detail="Failed to list strategies")
 
 
+@router.post("/strategies")
+async def add_strategy(req: NameRequest, user_id: str = Depends(get_request_user_id)):
+    """Register a strategy name; returns the updated list."""
+    return {"strategies": _add_name(user_id, "strategy", req.name, svc.list_strategy_names)}
+
+
 @router.get("/categories")
 async def list_categories(user_id: str = Depends(get_request_user_id)):
-    """Return all unique category names across user's saved charts."""
+    """Return all category names available to the user (own and shared)."""
     try:
         names = svc.list_category_names(user_id)
         return {"categories": names}
     except Exception as exc:
         logger.error("list_categories error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to list categories")
+
+
+@router.post("/categories")
+async def add_category(req: NameRequest, user_id: str = Depends(get_request_user_id)):
+    """Register a category name; returns the updated list."""
+    return {"categories": _add_name(user_id, "category", req.name, svc.list_category_names)}
+
+
+def _add_name(user_id: str, kind: str, name: str, list_names) -> list[str]:
+    try:
+        svc.add_name(user_id, kind, name)
+        return list_names(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("add %s error: %s", kind, exc)
+        raise HTTPException(status_code=500, detail=f"Failed to add {kind}")
 
 
 # ── Chart CRUD ────────────────────────────────────────────────────────────────
@@ -151,12 +178,14 @@ async def create_chart(req: CreateChartRequest, user_id: str = Depends(get_reque
     """Save a new annotated chart."""
     try:
         top_patterns = req.top_patterns.model_dump(exclude_none=True) if req.top_patterns else None
+        annotations = [a.model_dump() for a in req.annotations]
+        svc.register_annotation_names(user_id, annotations)
         chart = svc.create_chart(
             user_id=user_id,
             symbol=req.symbol,
             date=req.date,
             instrument_type=req.instrument_type,
-            annotations=[a.model_dump() for a in req.annotations],
+            annotations=annotations,
             notes=req.notes,
             right=req.right,
             strike=req.strike,
@@ -180,9 +209,11 @@ async def update_chart(chart_id: str, req: UpdateChartRequest, user_id: str = De
         raise HTTPException(status_code=403, detail="Not your chart")
     try:
         top_patterns = req.top_patterns.model_dump(exclude_none=True) if req.top_patterns else None
+        annotations = [a.model_dump() for a in req.annotations]
+        svc.register_annotation_names(user_id, annotations)
         updated = svc.update_chart(
             chart_id,
-            [a.model_dump() for a in req.annotations],
+            annotations,
             req.notes,
             top_patterns=top_patterns,
             risk_reward_ratios=req.risk_reward_ratios,

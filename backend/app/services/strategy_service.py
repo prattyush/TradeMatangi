@@ -498,6 +498,7 @@ def _apply_half_exit(strategy, session, position, price, right, ts, underlying=F
                     if broker_id and is_real:
                         from app.services.execution_broker import get_service
                         _sync_broker_quantity(session, order, old_quantity - selected)
+                        _confirm_broker_quantity(session, order, old_quantity - selected)
                     orders.update_order(session.session_id, order.order_id, session.date, quantity=old_quantity - selected)
                     mark(order)
                     action = place(selected, action_id)
@@ -1533,6 +1534,45 @@ def _sync_broker_quantity(session, order, quantity):
     sync_order_edit(session, candidate, candidate.order_type)
     order.broker_order_id = candidate.broker_order_id
     order.execution_role = candidate.execution_role
+
+
+_SHRINK_CONFIRM_ATTEMPTS = 4
+_SHRINK_CONFIRM_DELAY = 0.25
+
+
+def _confirm_broker_quantity(session, order, expected: int) -> None:
+    """Verify the broker's order book shows `expected` quantity for `order`.
+
+    A Kotak modify can be ack'd over HTTP yet silently "not modified" over the
+    WS feed. Half take-profit frees the remainder's quantity before placing
+    the action order, so an unconfirmed shrink must abort the split rather
+    than let the two orders together exceed the position. Strategies run
+    synchronously on the event loop, so a WS-observer wait would deadlock;
+    this polls the order book (the same get_order_history idiom as
+    broker_order_service.resolve_broker_order_status) a few times instead.
+    Raises RuntimeError when the shrink cannot be confirmed; the caller's
+    existing rollback restores the original quantity.
+    """
+    import time
+    from app.services.execution_broker import get_service
+    broker = get_service(session)
+    seen = None
+    for attempt in range(_SHRINK_CONFIRM_ATTEMPTS):
+        if attempt:
+            time.sleep(_SHRINK_CONFIRM_DELAY)
+        try:
+            rows = broker.get_order_history()
+        except Exception:
+            continue
+        row = next((r for r in rows if r.get("broker_order_id") == order.broker_order_id), None)
+        if row is None:
+            continue
+        seen = row.get("quantity")
+        if seen == expected:
+            return
+    raise RuntimeError(
+        f"Broker did not confirm reduced quantity {expected} for exit order {order.broker_order_id} "
+        f"(last seen: {seen}); half take-profit split aborted and protection left intact")
 
 
 def _expand_underlying_exit(strategy, session, price, timestamp):

@@ -9,7 +9,17 @@ describe('desktop analysis transport', () => {
     for (const path of ['../orders', '/sessions', 'data/%2e%2e/orders', 'sessions#other', 'orders']) expect(validAnalysisPath(path, 'GET')).toBe(false)
     expect(validAnalysisPath('labels', 'POST')).toBe(true)
     expect(validAnalysisPath('sessions', 'POST')).toBe(false)
+    for (const path of ['pattern/strategies', 'pattern/categories?']) expect(validAnalysisPath(path, 'POST')).toBe(true)
+    for (const path of ['pattern/chart', 'pattern/ohlc/equity', 'pattern/strategies/extra']) expect(validAnalysisPath(path, 'POST')).toBe(false)
     expect(validAnalysisPath('snapshots?session_id=owned', 'DELETE')).toBe(true)
+  })
+  it('registers a new category or strategy through the allowlisted POST routes', async () => {
+    const request = vi.fn().mockResolvedValue({ categories: ['Trend'] }) as unknown as AnalysisRequest
+    const adapter = createAnalysisApi(request)
+    await expect(adapter.api.patternAddCategory('Trend')).resolves.toEqual({ categories: ['Trend'] })
+    await adapter.api.patternAddStrategy('ORB')
+    expect(request).toHaveBeenNthCalledWith(1, 'pattern/categories?', 'POST', { name: 'Trend' }, expect.anything())
+    expect(request).toHaveBeenNthCalledWith(2, 'pattern/strategies?', 'POST', { name: 'ORB' }, expect.anything())
   })
   it('fences a late native response after cancellation', async () => {
     let resolve!: (value: unknown) => void

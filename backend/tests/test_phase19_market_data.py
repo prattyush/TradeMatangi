@@ -132,7 +132,8 @@ async def test_reconnected_socket_without_night_quotes_does_not_fallback(monkeyp
     hub.shutdown()
 
 
-def test_real_ticks_stream_while_order_checks_wait_for_refresh():
+@pytest.mark.asyncio
+async def test_real_ticks_stream_while_order_checks_wait_for_refresh():
     """Chart ticks must reach the browser even while a broker refresh's
     barrier is open -- only order-triggering depends on the in-flight
     rebuild of trades/orders, never the chart feed itself."""
@@ -141,19 +142,20 @@ def test_real_ticks_stream_while_order_checks_wait_for_refresh():
     session = SimpleNamespace(session_id="s", queue=asyncio.Queue(), broker_refresh_events=[])
     tick = {"type": "tick", "time": 1000, "open": 100, "high": 100, "low": 100, "close": 100}
     with patch("app.services.order_service.check_orders") as check:
-        assert _emit_tick_and_check_orders_real(session, tick, None, None) == []
+        assert await _emit_tick_and_check_orders_real(session, tick, None, None) == []
     check.assert_not_called()
     streamed = json.loads(session.queue.get_nowait())
     assert streamed["time"] == 1000 and streamed["session_id"] == "s"
 
 
-def test_real_history_is_presentation_and_never_sends_broker_orders():
+@pytest.mark.asyncio
+async def test_real_history_is_presentation_and_never_sends_broker_orders():
     from unittest.mock import patch
     from app.services.simulation import _emit_tick_and_check_orders_real
     session = SimpleNamespace(session_id="history", queue=asyncio.Queue(), market_feed_group=FeedGroup("kite"))
     tick = {"type": "tick", "time": 1000, "open": 100, "high": 100, "low": 100, "close": 100}
     with patch("app.services.order_service.check_orders") as check, patch("app.services.kotak_service.get_service") as broker:
-        assert _emit_tick_and_check_orders_real(session, tick, None, None) == []
+        assert await _emit_tick_and_check_orders_real(session, tick, None, None) == []
     check.assert_not_called()
     broker.assert_not_called()
     assert session._history_watermarks[(None, None, None)] == 1000

@@ -138,6 +138,43 @@ def _require_confirmed_recovery(order):
         raise HTTPException(status_code=409, detail="Recovery submission is unconfirmed; refresh broker state before changing it")
 
 
+async def _require_cancelable(session, order, *, force=False):
+    """Cancelling an exit must never be hard-blocked forever by this exact
+    order's own submission ambiguity -- unlike edit/convert/split, cancel
+    carries no risk of inventing a duplicate submission: the user's intent
+    (get rid of this order) is unambiguous whether or not it ever reached
+    the broker. Split-active and conversion-busy stay hard blocks (racing
+    either really can act on a stale/duplicate identity); only the
+    recovery_state branch of `_require_confirmed_recovery` is replaced here.
+    """
+    from app.services.order_split import ACTIVE
+    if (order.split_operation or {}).get('state') in ACTIVE:
+        raise HTTPException(409, detail="Split is unconfirmed; refresh broker orders before changing this order")
+    from app.services.broker_conversion import busy
+    if busy(order):
+        raise HTTPException(status_code=409, detail="Conversion is unconfirmed; refresh broker state before changing this order")
+    if order.broker_order_id or order.recovery_state not in ("prepared", "submitting", "unknown"):
+        return  # a known broker order, or nothing ambiguous about this one
+    from app.services.execution_broker import get_service as get_kotak
+    from app.services.real_broker_state import resolve_pending_tag
+    try:
+        if await resolve_pending_tag(session, order, get_kotak(session), timeout=3.0):
+            return  # resolved either way: matched at the broker, or proven never placed
+    except Exception:
+        logger.warning("resolve_pending_tag_failed order=%s", order.order_id, exc_info=True)
+    if force:
+        order.analytics = {**(order.analytics or {}), 'cancel_forced_unconfirmed': True}
+        logger.warning("order_cancel_forced_unconfirmed order=%s session=%s", order.order_id, session.session_id)
+        from app.services import protection_recovery
+        protection_recovery.emit(session, order, order.recovery_operation_id or '', 'needs_attention',
+                                  "Cancelled while this order's broker acknowledgement was still unconfirmed; verify at the broker")
+        return
+    raise HTTPException(status_code=409, detail={
+        "code": "cancel_confirmation_ambiguous",
+        "message": "Couldn't confirm this order's status with the broker within a few seconds; retry, or cancel with force=true",
+    })
+
+
 async def _convert_with_broker_async(session, order, new_type, price=None):
     from app.services.broker_order_service import convert_order_async
     from app.services.kotak_service import KotakError
@@ -640,7 +677,7 @@ async def get_orders(session_id: str = Query(...), open_only: bool = Query(defau
 
 
 @router.delete("/{order_id}", response_model=Order)
-async def cancel_order(order_id: str, session_id: str = Query(...)):
+async def cancel_order(order_id: str, session_id: str = Query(...), force: bool = False):
     session = sim_svc.get_session(session_id)
     if session and session.session_type == "real" and getattr(session, "broker_refresh_events", None) is not None:
         from app.services.real_broker_state import await_refresh_barrier
@@ -652,16 +689,16 @@ async def cancel_order(order_id: str, session_id: str = Query(...)):
             raise HTTPException(status_code=409, detail="Broker refresh is in progress; retry shortly")
     if session:
         async with _session_edit_lock(session):
-            return await _cancel_order_locked(order_id, session_id, session)
-    return await _cancel_order_locked(order_id, session_id, session)
+            return await _cancel_order_locked(order_id, session_id, session, force=force)
+    return await _cancel_order_locked(order_id, session_id, session, force=force)
 
 
-async def _cancel_order_locked(order_id, session_id, session):
+async def _cancel_order_locked(order_id, session_id, session, *, force=False):
     trading_date = session.date if session else ""
     existing = order_service.get_order(session_id, order_id)
     if existing is None or existing.status != order_service.OrderStatus.PENDING:
         raise HTTPException(status_code=404, detail="Order not found or already closed")
-    _require_confirmed_recovery(existing)
+    await _require_cancelable(session, existing, force=force)
     if existing.broker_order_id:
         from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
         previous = await suppress(session, existing, max(0, existing.quantity - existing.broker_filled_quantity))
@@ -680,12 +717,302 @@ async def _cancel_order_locked(order_id, session_id, session):
     return order
 
 
+async def _bump_quantity_locked(session, order_id: str, new_quantity: int) -> Order | None:
+    """Change only the quantity of a pending exit order.
+
+    Bypasses the single-order availability check in `_update_order_locked`:
+    that check treats every other still-open order on the same contract as
+    "covering" it, which is exactly wrong mid-merge, since the redundant
+    orders being folded into this one are deliberately still open at this
+    point (see the bump-before-cancel ordering in `_apply_merge_plan`).
+    `plan_merge` is itself the source of truth for quantity conservation.
+    """
+    async with _session_edit_lock(session):
+        existing = order_service.get_order(session.session_id, order_id)
+        if existing is None or existing.status != order_service.OrderStatus.PENDING:
+            return existing
+        candidate = existing.model_copy(deep=True)
+        candidate.quantity = new_quantity
+        from app.services.broker_order_service import sync_order_edit_async, persist_order_async
+        from app.services.kotak_service import KotakError
+        try:
+            await sync_order_edit_async(session, candidate, candidate.order_type, reprice=False)
+        except KotakError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if existing.status != order_service.OrderStatus.PENDING:
+            await persist_order_async(existing)
+            return existing
+        order = order_service.update_order(
+            session_id=session.session_id, order_id=order_id, trading_date=session.date,
+            quantity=new_quantity, persist=False,
+        )
+        if order is None:
+            return existing
+        order.broker_order_id = candidate.broker_order_id
+        order.execution_role = candidate.execution_role
+        await persist_order_async(order)
+        return order
+
+
+def _merge_lot_size(session, closing_orders: list[Order]) -> int:
+    return LOT_SIZES.get(session.symbol, 1) if any(o.right for o in closing_orders) else 1
+
+
+async def _cancel_merge_redundant(session, order: Order) -> tuple[Order, int, dict]:
+    """Cancel one redundant merge order for a real session, waiting for a
+    genuine broker-confirmed terminal state before the caller treats its
+    quantity as freed. Never raises -- every outcome is captured in the
+    returned results entry. Returns (final snapshot, freed quantity, result).
+    """
+    existing = order_service.get_order(session.session_id, order.order_id)
+    if existing is None or existing.status != order_service.OrderStatus.PENDING:
+        return existing or order, 0, {'order_id': order.order_id, 'state': 'skipped', 'message': 'Already closed'}
+    try:
+        await _require_cancelable(session, existing, force=False)
+    except HTTPException as exc:
+        return existing, 0, {'order_id': order.order_id, 'state': 'cancel_failed', 'message': str(exc.detail)}
+    trading_date = session.date if session else ""
+    if not existing.broker_order_id:
+        remaining = max(0, existing.quantity - existing.broker_filled_quantity)
+        cancelled = order_service.cancel_order(session.session_id, order.order_id, trading_date)
+        return cancelled, remaining, {'order_id': order.order_id, 'state': 'cancelled', 'message': None}
+    from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
+    from app.services.broker_order_service import cancel_and_confirm
+    previous = await suppress(session, existing, max(0, existing.quantity - existing.broker_filled_quantity))
+    try:
+        outcome = await cancel_and_confirm(session, existing)
+    except Exception as exc:
+        if definitive_refusal(exc):
+            await rollback_suppression(existing, previous)
+        return existing, 0, {'order_id': order.order_id, 'state': 'cancel_failed', 'message': str(exc)}
+    current = order_service.get_order(session.session_id, order.order_id) or existing
+    if outcome == "cancelled":
+        freed = max(0, current.quantity - current.broker_filled_quantity)
+        return current, freed, {'order_id': order.order_id, 'state': 'cancelled', 'message': None}
+    if outcome == "filled":
+        return current, 0, {
+            'order_id': order.order_id, 'state': 'cancel_raced_fill',
+            'message': 'Order filled before the cancel reached the broker; quantity is a realized trade, not freed margin',
+        }
+    if outcome == "rejected":
+        await rollback_suppression(existing, previous)
+        return current, 0, {'order_id': order.order_id, 'state': 'cancel_rejected', 'message': 'Broker refused the cancellation; order remains open'}
+    # ambiguous: do not roll back suppression, the cancel may still land later.
+    from app.services import protection_recovery
+    protection_recovery.emit(
+        session, existing, existing.recovery_operation_id or '', 'needs_attention',
+        "Cancellation could not be confirmed with the broker within the timeout; verify at the broker before relying on consolidated coverage",
+    )
+    return current, 0, {
+        'order_id': order.order_id, 'state': 'cancel_ambiguous',
+        'message': "Couldn't confirm cancellation with the broker within a few seconds; verify at the broker",
+    }
+
+
+async def _run_merge_cancel_phase(session, plan: "order_service.MergePlan") -> tuple[int, list[dict], list[str], list[Order]]:
+    """Real-session merge Phase 1: cancel each redundant order sequentially,
+    each confirmed before moving to the next."""
+    total_freed = 0
+    results: list[dict] = []
+    cancelled_order_ids: list[str] = []
+    snapshots: list[Order] = []
+    for order in plan.cancel:
+        snapshot, freed, result = await _cancel_merge_redundant(session, order)
+        results.append(result)
+        snapshots.append(snapshot)
+        total_freed += freed
+        if result['state'] == 'cancelled':
+            cancelled_order_ids.append(order.order_id)
+    return total_freed, results, cancelled_order_ids, snapshots
+
+
+async def _run_merge_bump_phase(session, keep: list[tuple[Order, int]], total_freed: int, lot_size: int) -> tuple[list[Order], list[dict]]:
+    """Real-session merge Phase 2: recompute keeper targets from what was
+    actually freed (not the original static plan) and bump each, individually
+    isolated so one keeper's failure doesn't affect the others."""
+    max_qty = order_service.get_max_contracts(session.symbol)
+    cap = (max_qty // lot_size) * lot_size if lot_size > 1 else max_qty
+    bumps = order_service.distribute_freed_quantity(keep, total_freed, cap)
+    placed = sum(new_target - order.quantity for order, new_target in bumps)
+    bumped_ids = {order.order_id for order, _ in bumps}
+    snapshots: list[Order] = []
+    results: list[dict] = []
+    for order, new_target in bumps:
+        try:
+            updated = await _bump_quantity_locked(session, order.order_id, new_target)
+            snapshots.append(updated or order)
+            results.append({'order_id': order.order_id, 'state': 'bumped', 'message': None})
+        except HTTPException as exc:
+            snapshots.append(order)
+            results.append({'order_id': order.order_id, 'state': 'bump_failed', 'message': str(exc.detail)})
+    for order, _target in keep:
+        if order.order_id not in bumped_ids:
+            snapshots.append(order)
+    if placed < total_freed:
+        results.append({
+            'order_id': None, 'state': 'excess_freed_quantity',
+            'message': f'{total_freed - placed} units freed but could not be redistributed to any keeper within the per-order limit; review manually',
+        })
+    return snapshots, results
+
+
+async def _bulk_update_sl_merge_aware(session, closing_orders: list[Order], trigger_price: float, *, merge: bool) -> dict:
+    """Reprice all closing SL orders; when merge, also consolidate into the fewest orders."""
+    lot_size = _merge_lot_size(session, closing_orders)
+    plan = (
+        order_service.plan_merge(closing_orders, order_service.get_max_contracts(session.symbol), lot_size)
+        if merge else order_service.MergePlan(keep=[], cancel=[])
+    )
+
+    async def _reprice_one(order: Order):
+        update_kwargs = {"limit_price": trigger_price} if order.order_type == OrderType.LIMIT else {"trigger_price": trigger_price}
+        try:
+            updated = await update_order(order.order_id, UpdateOrderRequest(**update_kwargs), session_id=session.session_id)
+            return updated, {'order_id': order.order_id, 'state': 'confirmed', 'message': None}
+        except HTTPException as exc:
+            return None, {'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)}
+
+    if not plan.keep and not plan.cancel:
+        updated_orders, results = [], []
+        for order in closing_orders:
+            updated, result = await _reprice_one(order)
+            results.append(result)
+            if updated:
+                updated_orders.append(updated)
+        return {"updated": len(updated_orders), "orders": updated_orders, "results": results}
+
+    # Phase 0 (both session types): reprice every closing order, keepers and
+    # redundants alike -- repricing has no margin impact, and this leaves a
+    # redundant order that fails to cancel in Phase 1 at the correct price.
+    repriced: dict[str, Order] = {}
+    results: list[dict] = []
+    for order in closing_orders:
+        updated, result = await _reprice_one(order)
+        results.append(result)
+        repriced[order.order_id] = updated or order
+    confirmed_count = sum(1 for r in results if r['state'] == 'confirmed')
+
+    if session.session_type == "real":
+        fresh_keep = [(repriced[order.order_id], target) for order, target in plan.keep]
+        total_freed, cancel_results, cancelled_order_ids, cancel_snapshots = await _run_merge_cancel_phase(session, plan)
+        results.extend(cancel_results)
+        bumped_snapshots, bump_results = await _run_merge_bump_phase(session, fresh_keep, total_freed, lot_size)
+        results.extend(bump_results)
+        updated_orders = bumped_snapshots + cancel_snapshots
+    else:
+        # Non-real: no margin concept -- bump keepers first (coverage only
+        # rises), cancel redundant orders second, as originally designed.
+        updated_orders = []
+        for order, target_qty in plan.keep:
+            updated = repriced[order.order_id]
+            if updated and updated.status == order_service.OrderStatus.PENDING and updated.quantity != target_qty:
+                try:
+                    updated = await _bump_quantity_locked(session, updated.order_id, target_qty)
+                    results.append({'order_id': order.order_id, 'state': 'bumped', 'message': None})
+                except HTTPException as exc:
+                    results.append({'order_id': order.order_id, 'state': 'bump_failed', 'message': str(exc.detail)})
+            updated_orders.append(updated or order)
+
+        cancelled_order_ids = []
+        for order in plan.cancel:
+            try:
+                cancelled = await _cancel_order_locked(order.order_id, session.session_id, session)
+                updated_orders.append(cancelled)
+                cancelled_order_ids.append(order.order_id)
+            except HTTPException as exc:
+                results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)})
+
+    return {
+        "updated": confirmed_count,
+        "orders": updated_orders,
+        "merged_from": len(closing_orders),
+        "merged_to": len(closing_orders) - len(cancelled_order_ids),
+        "cancelled_order_ids": cancelled_order_ids,
+        "results": results,
+    }
+
+
+async def _bulk_convert_merge_aware(session, closing_orders: list[Order], new_order_type: OrderType, price: float | None, *, merge: bool) -> dict:
+    """Convert all closing orders to one type/price; when merge, also consolidate into the fewest orders."""
+    lot_size = _merge_lot_size(session, closing_orders)
+    plan = (
+        order_service.plan_merge(closing_orders, order_service.get_max_contracts(session.symbol), lot_size)
+        if merge else order_service.MergePlan(keep=[], cancel=[])
+    )
+
+    async def _convert_one(order: Order):
+        try:
+            updated = await _convert_with_broker_async(session, order, new_order_type, price)
+            state = (updated.broker_conversion or {}).get('state', 'confirmed')
+            return updated, {'order_id': order.order_id, 'state': state, 'message': (updated.broker_conversion or {}).get('message')}
+        except (HTTPException, ValueError) as exc:
+            return None, {'order_id': order.order_id, 'state': 'failed', 'message': str(getattr(exc, 'detail', exc))}
+
+    if not plan.keep and not plan.cancel:
+        converted_orders, results = [], []
+        for order in closing_orders:
+            updated, result = await _convert_one(order)
+            results.append(result)
+            if updated is not None:
+                converted_orders.append(updated)
+        return {"converted": sum(r['state'] == 'confirmed' for r in results), "orders": converted_orders, "results": results}
+
+    # Phase 0 (both session types): convert/reprice every closing order,
+    # keepers and redundants alike -- see _bulk_update_sl_merge_aware.
+    converted: dict[str, Order] = {}
+    results: list[dict] = []
+    for order in closing_orders:
+        updated, result = await _convert_one(order)
+        results.append(result)
+        converted[order.order_id] = updated if updated is not None else order
+    confirmed_count = sum(1 for r in results if r['state'] == 'confirmed')
+
+    if session.session_type == "real":
+        fresh_keep = [(converted[order.order_id], target) for order, target in plan.keep]
+        total_freed, cancel_results, cancelled_order_ids, cancel_snapshots = await _run_merge_cancel_phase(session, plan)
+        results.extend(cancel_results)
+        bumped_snapshots, bump_results = await _run_merge_bump_phase(session, fresh_keep, total_freed, lot_size)
+        results.extend(bump_results)
+        converted_orders = bumped_snapshots + cancel_snapshots
+    else:
+        converted_orders = []
+        for order, target_qty in plan.keep:
+            updated = converted[order.order_id]
+            if updated.status == order_service.OrderStatus.PENDING and updated.quantity != target_qty:
+                try:
+                    updated = await _bump_quantity_locked(session, updated.order_id, target_qty)
+                    results.append({'order_id': order.order_id, 'state': 'bumped', 'message': None})
+                except HTTPException as exc:
+                    results.append({'order_id': order.order_id, 'state': 'bump_failed', 'message': str(exc.detail)})
+            converted_orders.append(updated)
+
+        cancelled_order_ids = []
+        for order in plan.cancel:
+            try:
+                cancelled = await _cancel_order_locked(order.order_id, session.session_id, session)
+                converted_orders.append(cancelled)
+                cancelled_order_ids.append(order.order_id)
+            except HTTPException as exc:
+                results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(exc.detail)})
+
+    return {
+        "converted": confirmed_count,
+        "orders": converted_orders,
+        "results": results,
+        "merged_from": len(closing_orders),
+        "merged_to": len(closing_orders) - len(cancelled_order_ids),
+        "cancelled_order_ids": cancelled_order_ids,
+    }
+
+
 @router.patch("/bulk-update-sl")
 async def bulk_update_sl_route(req: BulkUpdateSLRequest):
     """
     Set all pending stoploss closing orders for a session's symbol/right to the same price.
     Pending LIMIT/TARGET exit orders are intentionally left unchanged.
-    Handles Kotak real-trading orders too.
+    Handles Kotak real-trading orders too. When req.merge is set, also
+    consolidates the closing orders into the fewest possible, bounded by the
+    exchange's per-order quantity limit.
     """
     session = sim_svc.get_session(req.session_id)
     if not session:
@@ -702,23 +1029,14 @@ async def bulk_update_sl_route(req: BulkUpdateSLRequest):
     if not closing_orders:
         return {"updated": 0, "orders": []}
 
-    updated_orders = []
-    for order in closing_orders:
-        update_kwargs = (
-            {"limit_price": req.trigger_price}
-            if order.order_type == OrderType.LIMIT
-            else {"trigger_price": req.trigger_price}
-        )
-        updated_order = await update_order(order.order_id, UpdateOrderRequest(**update_kwargs), session_id=req.session_id)
-        if updated_order:
-            updated_orders.append(updated_order)
-
-    return {"updated": len(updated_orders), "orders": updated_orders}
+    return await _bulk_update_sl_merge_aware(session, closing_orders, req.trigger_price, merge=req.merge)
 
 
 @router.patch("/bulk-convert")
 async def bulk_convert_route(req: BulkConvertRequest):
-    """Convert all pending closing orders for a session's right to a different type, keeping same price."""
+    """Convert all pending closing orders for a session's right to a different type, keeping same price.
+    When req.merge is set, also consolidates the closing orders into the fewest possible,
+    bounded by the exchange's per-order quantity limit."""
     session = sim_svc.get_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -729,16 +1047,7 @@ async def bulk_convert_route(req: BulkConvertRequest):
     if not target_orders:
         return {"converted": 0, "orders": []}
 
-    converted_orders, results = [], []
-    for order in target_orders:
-        try:
-            updated = await _convert_with_broker_async(session, order, req.new_order_type, req.price)
-            state = (updated.broker_conversion or {}).get('state', 'confirmed')
-            results.append({'order_id': order.order_id, 'state': state, 'message': (updated.broker_conversion or {}).get('message')})
-            converted_orders.append(updated)
-        except (HTTPException, ValueError) as exc:
-            results.append({'order_id': order.order_id, 'state': 'failed', 'message': str(getattr(exc, 'detail', exc))})
-    return {"converted": sum(r['state'] == 'confirmed' for r in results), "orders": converted_orders, "results": results}
+    return await _bulk_convert_merge_aware(session, target_orders, req.new_order_type, req.price, merge=req.merge)
 
 
 

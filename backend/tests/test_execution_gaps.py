@@ -77,7 +77,7 @@ def test_target_ignores_stale_client_setting_and_forwarding_does_not_add_gap(rea
 
 
 async def _forward(session):
-    simulation._emit_tick_and_check_orders_real(session, {'time': int(session.current_time), 'close': 100}, None, asyncio.get_running_loop())
+    await simulation._emit_tick_and_check_orders_real(session, {'time': int(session.current_time), 'close': 100}, None, asyncio.get_running_loop())
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ from __future__ import annotations
 from app.services import performance_diagnostics as diagnostics
 
 from app.services.instrument_identity import strike_number
+from dataclasses import dataclass
 import threading
 import logging
 import math
@@ -21,7 +22,7 @@ import uuid
 from decimal import Decimal
 
 from app.models.schemas import Order, OrderStatus, OrderType, TradeSide
-from app.config import FIXED_USER_ID, LOT_SIZES, MAX_CONTRACTS_PER_ORDER
+from app.config import EQUITY_MAX_QTY_PER_ORDER, FIXED_USER_ID, LOT_SIZES, MAX_CONTRACTS_PER_ORDER
 from app.services.wallet_service import InsufficientFundsError
 
 logger = logging.getLogger(__name__)
@@ -33,12 +34,12 @@ _TARGET_DEVIATION = 0.01  # 1% buffer for stop-limit orders
 
 
 def get_max_contracts(symbol: str) -> int:
-    """Return max contracts per order for the given symbol; unlimited for others."""
+    """Return max contracts per order for the given symbol; NSE cash-equity cap for others."""
     symbol = "SENSEX" if symbol.upper() == "BSESEN" else symbol
     for prefix, limit in MAX_CONTRACTS_PER_ORDER.items():
         if symbol.upper().startswith(prefix):
             return limit
-    return 10_000_000  # effectively unlimited
+    return EQUITY_MAX_QTY_PER_ORDER
 
 
 def split_quantity(symbol: str, qty: int) -> list[int]:
@@ -53,6 +54,70 @@ def split_quantity(symbol: str, qty: int) -> list[int]:
         chunks.append(chunk)
         remaining -= chunk
     return chunks
+
+
+@dataclass
+class MergePlan:
+    keep: list[tuple[Order, int]]  # (order, new_total_quantity)
+    cancel: list[Order]
+
+
+def plan_merge(closing_orders: list[Order], max_qty: int, lot_size: int = 1) -> "MergePlan":
+    """Plan consolidating closing_orders into the minimum order count, each <= max_qty.
+
+    Conserves total remaining (unfilled) quantity exactly. Returns an empty
+    plan when merging would not reduce the order count (nothing to do).
+    """
+    if max_qty <= 0 or not closing_orders:
+        return MergePlan(keep=[], cancel=[])
+    cap = (max_qty // lot_size) * lot_size if lot_size > 1 else max_qty
+    if cap <= 0:
+        return MergePlan(keep=[], cancel=[])
+    remaining = {order.order_id: max(0, order.quantity - order.broker_filled_quantity) for order in closing_orders}
+    total = sum(remaining.values())
+    if total <= 0:
+        return MergePlan(keep=[], cancel=[])
+    target_count = math.ceil(total / cap)
+    if target_count >= len(closing_orders):
+        return MergePlan(keep=[], cancel=[])
+    # Deterministic: prefer orders with a confirmed broker identity, then oldest first.
+    ordered = sorted(closing_orders, key=lambda o: (o.broker_order_id is None, o.created_at, o.order_id))
+    keepers = ordered[:target_count]
+    redundant = ordered[target_count:]
+    keep: list[tuple[Order, int]] = []
+    left = total
+    for i, order in enumerate(keepers):
+        qty = left if i == len(keepers) - 1 else min(cap, left)
+        keep.append((order, qty))
+        left -= qty
+    return MergePlan(keep=keep, cancel=redundant)
+
+
+def distribute_freed_quantity(keep: list[tuple[Order, int]], freed: int, cap: int) -> list[tuple[Order, int]]:
+    """Additive-only: given the original keeper list (plan_merge's own
+    deterministic order) and the quantity actually freed by a real-session
+    merge's cancel phase (which may be less than originally planned, since a
+    sibling may have filled or failed to cancel), return (order, new_absolute_
+    target) pairs. Never proposes a target below an order's current remaining
+    quantity; fills keepers in order up to `cap`; a keeper beyond the point the
+    freed pool runs out is simply omitted, never bumped to a smaller or zero
+    value.
+    """
+    left = freed
+    result: list[tuple[Order, int]] = []
+    for order, _original_target in keep:
+        if left <= 0:
+            break
+        current_remaining = max(0, order.quantity - order.broker_filled_quantity)
+        room = cap - current_remaining
+        if room <= 0:
+            continue
+        take = min(room, left)
+        result.append((order, order.quantity + take))
+        left -= take
+    if left > 0:
+        logger.warning("distribute_freed_quantity_excess freed=%d could not be redistributed to any keeper", left)
+    return result
 
 
 def _ensure_session(session_id: str) -> None:

@@ -211,6 +211,98 @@ async def test_full_40_plus_20_entries_each_receive_their_own_stop(env, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_entry_protection_child_keeps_broker_tag_and_analytics_snapshot(env, monkeypatch, isolated_protection_journal):
+    """Fix A: an automatically-submitted entry-protection child must carry
+    its own broker_tag (visible to real_broker_state's absent-tag
+    resolution) without losing the analytics snapshot execution_analytics
+    builds for new orders."""
+    s, broker, _ = env
+    s.state = SimulationState.RUNNING
+    entry(s, 'a', 20)
+    broker.get_trade_history.return_value = [execution(order='a')]
+    broker.get_positions.return_value = [reported_position()]
+    broker.get_order_history.return_value = [broker_order('a')]
+    monkeypatch.setattr(recovery, 'market_open', lambda s: True)
+    monkeypatch.setattr(recovery, 'fresh_quote', lambda *args: 40.)
+    monkeypatch.setattr('app.services.user_settings_service.get_settings', lambda uid: {})
+    def place(**kwargs):
+        row = broker_order('stop-0', 'trigger pending', 'SELL', kwargs['qty'], 0)
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], limit_price=kwargs['limit_price'], tag=kwargs['tag'])
+        broker.get_order_history.return_value.append(row)
+        return 'stop-0'
+    broker.place_options_sl_order.side_effect = place
+    with pytest.raises(recovery.Deferred):
+        await manager.audit(s, broker)
+    child = next(o for o in order_service.get_all_orders(s.session_id) if o.kotak_order_id == 'stop-0')
+    assert child.analytics['broker_tag'] == broker.place_options_sl_order.call_args.kwargs['tag']
+    assert child.analytics.get('capital') is not None
+    assert child.analytics.get('entry_method')
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_one_stuck_entry_does_not_starve_another_entrys_repair(env, monkeypatch, isolated_protection_journal):
+    """Fix B + Fix C together: one entry's permanently-ambiguous recovery
+    child -- on the SAME contract as another entry, exactly like the real
+    incident's three 65-lot NIFTY CE 22900 entries -- must not block repair
+    of a completely different entry's gap forever. Fix C stops the stuck
+    entry's Deferred from aborting the whole audit pass; Fix B is what
+    actually clears the stuck order (to CANCELLED, out of open-orders) once
+    it's old enough, which is what stops protection_recovery.coverage()'s
+    own same-contract uncertain-order check from also blocking entry b."""
+    s, broker, _ = env
+    s.state = SimulationState.RUNNING
+    entry_a = entry(s, 'a', 40, stop=30)
+    entry(s, 'b', 20, stop=32, created=2)
+    broker.get_trade_history.return_value = [execution(order='a', qty=40), execution('b', 'b', time='13:53:28')]
+    broker.get_positions.return_value = [reported_position(60)]
+    broker.get_order_history.return_value = [broker_order('a', qty=40, filled=40), broker_order('b')]
+    book = broker.get_order_history.return_value
+    broker.get_order_history.side_effect = lambda: copy.deepcopy(book)
+    monkeypatch.setattr(recovery, 'market_open', lambda s: True)
+    monkeypatch.setattr(recovery, 'fresh_quote', lambda *args: 40.)
+    monkeypatch.setattr('app.services.user_settings_service.get_settings', lambda uid: {})
+    def place(**kwargs):
+        if kwargs['qty'] == 40:
+            raise TimeoutError('entry a never acknowledged')
+        identifier = f"stop-{broker.place_options_sl_order.call_count}"
+        row = broker_order(identifier, 'trigger pending', 'SELL', kwargs['qty'], 0)
+        row.update(order_type='SL', trigger_price=kwargs['trigger_price'], limit_price=kwargs['limit_price'], tag=kwargs['tag'])
+        broker.get_order_history.return_value.append(row)
+        return identifier
+    broker.place_options_sl_order.side_effect = place
+    with pytest.raises(recovery.Deferred):
+        await manager.audit(s, broker)
+    # Age entry a's stuck child past min_age_ms, in the live order and in
+    # BOTH its persisted job records -- load_intent() reads the top-level
+    # `root` index only to find `incident`, then actually returns the
+    # separate `root:incident` record (written by _attempt's own save_job),
+    # which is what reconcile_children rebuilds the child from.
+    stuck_child = next(o for o in order_service.get_all_orders(s.session_id) if o.recovery_state == 'unknown')
+    stuck_child.broker_submission_at -= 10_000
+    root = manager.intent_key(s, entry_a)
+    index = isolated_protection_journal.get(root)
+    for key in (root, f"{root}:{index.get('incident', 0)}"):
+        job = isolated_protection_journal.get(key)
+        job['children'][0]['order']['broker_submission_at'] -= 10_000
+        # Pre-exhaust entry a's own retry budget too, so once Fix B unblocks
+        # reconcile_children's gate (letting _attempt reach its retry logic
+        # again), _attempt's attempts>=3 cap stops it from immediately
+        # re-submitting a fresh attempt (which would time out again and
+        # re-invalidate the broker-report revision, re-blocking entry b on
+        # this same pass for an unrelated reason). Isolates Fix C's actual
+        # claim: once entry a stops ACTIVELY interfering, entry b is not
+        # starved by entry a's past failure.
+        job['attempts'] = 3
+        isolated_protection_journal.put(key, job)
+    with pytest.raises(recovery.Deferred):
+        await manager.audit(s, broker)
+    assert stuck_child.status.value == 'CANCELLED' and stuck_child.recovery_state == 'failed'
+    assert any(c.kwargs['qty'] == 20 for c in broker.place_options_sl_order.call_args_list)
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_five_entries_submit_from_one_snapshot_and_share_one_verification(env, monkeypatch, isolated_protection_journal):
     s, broker, _ = env
     s.state = SimulationState.RUNNING

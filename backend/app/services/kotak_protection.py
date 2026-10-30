@@ -207,6 +207,15 @@ async def audit(session, broker):
     if bundle.revision != kotak_reports.state(broker).revision:
         raise recovery.Deferred('New broker events arrived during the audit; rechecking')
     intents = {}
+    # One entry's permanently-ambiguous recovery child must never block every
+    # OTHER entry's reconcile/gap-repair in this same pass (that starvation is
+    # exactly what let an unrelated Kotak-side SL cancellation go unrepaired
+    # for the rest of a session on 2026-10-27). Collect per-entry Deferred
+    # reasons instead of letting the first one abort the whole function; the
+    # in-memory `job` for a skipped root may be partially stale this pass
+    # (reconcile_children can mutate child_record entries before raising) --
+    # intentionally discarded, since the next load_intent() re-fetches clean.
+    stuck = []
     for entry in entries(session):
         root = intent_key(session, entry)
         if root in intents:
@@ -217,8 +226,12 @@ async def audit(session, broker):
             raise recovery.Deferred('Broker account changed; entry protection disabled')
         if job and job.get('children'):
             parent = type(entry).model_validate(job['parent'])
-            if await recovery.reconcile_children(session, parent, f"{root}:{job.get('incident', 0)}", job, bundle.orders, broker):
-                await asyncio.to_thread(journal.store.put, root, job)
+            try:
+                if await recovery.reconcile_children(session, parent, f"{root}:{job.get('incident', 0)}", job, bundle.orders, broker):
+                    await asyncio.to_thread(journal.store.put, root, job)
+            except recovery.Deferred as exc:
+                stuck.append(exc)
+                continue
     exclusions = await asyncio.to_thread(journal.store.get, f'entry-exclusions:{session.session_id}') or {}
     for order in order_service.get_all_orders(session.session_id):
         if (order.status != OrderStatus.CANCELLED or order.execution_role != 'exit'
@@ -248,67 +261,73 @@ async def audit(session, broker):
     for entry, required, covered, missing in gaps:
         if not enabled(session):
             return
-        if busy(session, key(entry)) or kotak_reports.state(broker).foreground:
-            raise recovery.Deferred('Foreground trading operation has priority')
-        root = intent_key(session, entry)
-        job = intents.get(root)
-        if job and job['account'] != broker.account_identity():
-            raise recovery.Deferred('Broker account changed; entry protection disabled')
-        if job and job.get('state') in ('restored', 'closed'):
-            # Keep prior claims immutable while allowing a new fill/cancel incident.
-            job = {'incident': job.get('incident', 0) + 1}
-        job = job or {}
-        incident = job.get('incident', 0)
-        operation = f'{root}:{incident}'
-        trigger = entry.entry_sl_price
-        if trigger is None:
-            if not entry.filled_price:
-                raise recovery.Deferred('AutoStop fill price is unavailable')
-            trigger = entry.filled_price * (.75 if entry.side == TradeSide.BUY else 1.25)
-        linked = [o for o in order_service.get_all_orders(session.session_id)
-                  if o.execution_role == 'exit' and group(o) == group(entry)
-                  and key(o) == key(entry) and o.order_type == OrderType.STOPLOSS]
-        if linked:
-            trigger = max(linked, key=lambda o: (o.created_at, o.order_id)).trigger_price
-        parent = entry.model_copy(deep=True)
-        parent.order_id = root
-        parent.kotak_order_id = root
-        parent.side = TradeSide.SELL if entry.side == TradeSide.BUY else TradeSide.BUY
-        parent.order_type = OrderType.STOPLOSS
-        parent.execution_role = 'exit'
-        parent.entry_sl_price = None
-        parent.is_autostop = False
-        parent.market_order = False
-        parent.analytics = None
-        parent.trigger_price = trigger
-        parent.protection_group = group(entry)
-        job.update(account=broker.account_identity(), session_id=session.session_id,
-                   root_order_id=entry.order_id, parent=parent.model_dump(mode='json'),
-                   entry_intent=True, missing_quantity=missing, incident=incident)
-        await asyncio.to_thread(journal.store.put, root, job)
-        logger.info('entry_protection_coverage session=%s entry=%s required=%d covered=%d missing=%d operation=%s',
-                    session.session_id, entry.order_id, required, covered, missing, operation)
-        recovery.emit(session, parent, operation, 'pending', f'Entry exit coverage: required {required}, covered {covered}, missing {missing}')
-        await recovery.obtain_quote(session, parent, operation)
-        async with kotak_reports.state(broker).submission, recovery.session_lock(session):
-            if (busy(session, key(entry)) or expected_account_revision != kotak_reports.state(broker).revision
-                    or session_revision != getattr(session, '_protection_revision', 0)):
-                raise recovery.Deferred('Foreground edit/fill invalidated the protection calculation')
-            async with recovery.allocation_reservation(session, parent):
-                session._protection_recovery_busy = True
-                try:
-                    before = len(job.get('children', []))
-                    await recovery._attempt(session, parent, operation, job, broker, bundle=bundle, reserved_ids=reserved_ids)
-                    submitted = job.get('children', [])[before:]
-                    expected_account_revision += len(submitted)
-                    reserved_ids.update(item['order']['order_id'] for item in submitted if item['state'] == 'acknowledged')
-                finally:
-                    session._protection_recovery_busy = False
-                    await asyncio.to_thread(journal.store.put, root, job)
+        try:
+            if busy(session, key(entry)) or kotak_reports.state(broker).foreground:
+                raise recovery.Deferred('Foreground trading operation has priority')
+            root = intent_key(session, entry)
+            job = intents.get(root)
+            if job and job['account'] != broker.account_identity():
+                raise recovery.Deferred('Broker account changed; entry protection disabled')
+            if job and job.get('state') in ('restored', 'closed'):
+                # Keep prior claims immutable while allowing a new fill/cancel incident.
+                job = {'incident': job.get('incident', 0) + 1}
+            job = job or {}
+            incident = job.get('incident', 0)
+            operation = f'{root}:{incident}'
+            trigger = entry.entry_sl_price
+            if trigger is None:
+                if not entry.filled_price:
+                    raise recovery.Deferred('AutoStop fill price is unavailable')
+                trigger = entry.filled_price * (.75 if entry.side == TradeSide.BUY else 1.25)
+            linked = [o for o in order_service.get_all_orders(session.session_id)
+                      if o.execution_role == 'exit' and group(o) == group(entry)
+                      and key(o) == key(entry) and o.order_type == OrderType.STOPLOSS]
+            if linked:
+                trigger = max(linked, key=lambda o: (o.created_at, o.order_id)).trigger_price
+            parent = entry.model_copy(deep=True)
+            parent.order_id = root
+            parent.kotak_order_id = root
+            parent.side = TradeSide.SELL if entry.side == TradeSide.BUY else TradeSide.BUY
+            parent.order_type = OrderType.STOPLOSS
+            parent.execution_role = 'exit'
+            parent.entry_sl_price = None
+            parent.is_autostop = False
+            parent.market_order = False
+            parent.analytics = None
+            parent.trigger_price = trigger
+            parent.protection_group = group(entry)
+            job.update(account=broker.account_identity(), session_id=session.session_id,
+                       root_order_id=entry.order_id, parent=parent.model_dump(mode='json'),
+                       entry_intent=True, missing_quantity=missing, incident=incident)
+            await asyncio.to_thread(journal.store.put, root, job)
+            logger.info('entry_protection_coverage session=%s entry=%s required=%d covered=%d missing=%d operation=%s',
+                        session.session_id, entry.order_id, required, covered, missing, operation)
+            recovery.emit(session, parent, operation, 'pending', f'Entry exit coverage: required {required}, covered {covered}, missing {missing}')
+            await recovery.obtain_quote(session, parent, operation)
+            async with kotak_reports.state(broker).submission, recovery.session_lock(session):
+                if (busy(session, key(entry)) or expected_account_revision != kotak_reports.state(broker).revision
+                        or session_revision != getattr(session, '_protection_revision', 0)):
+                    raise recovery.Deferred('Foreground edit/fill invalidated the protection calculation')
+                async with recovery.allocation_reservation(session, parent):
+                    session._protection_recovery_busy = True
+                    try:
+                        before = len(job.get('children', []))
+                        await recovery._attempt(session, parent, operation, job, broker, bundle=bundle, reserved_ids=reserved_ids)
+                        submitted = job.get('children', [])[before:]
+                        expected_account_revision += len(submitted)
+                        reserved_ids.update(item['order']['order_id'] for item in submitted if item['state'] == 'acknowledged')
+                    finally:
+                        session._protection_recovery_busy = False
+                        await asyncio.to_thread(journal.store.put, root, job)
+        except recovery.Deferred as exc:
+            stuck.append(exc)
+            continue
     if reserved_ids:
         # All independent groups in a burst use one fresh position snapshot;
         # acknowledged submissions reserve capacity until one shared verification.
         raise recovery.Deferred('Protection submitted; verifying entry groups together')
+    if stuck:
+        raise recovery.Deferred(f'{len(stuck)} entry audit(s) could not be reconciled this pass: {stuck[0]}')
 
 
 async def snapshot(session, broker):

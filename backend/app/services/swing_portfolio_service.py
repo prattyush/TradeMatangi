@@ -783,7 +783,7 @@ async def _on_tick_locked(current, session, event):
         from app.services.swing_real import renew_protection_on_quote
         await renew_protection_on_quote(session, event)
     try:
-        events = (simulation._emit_tick_and_check_orders_real(session, event, event.get("right"), asyncio.get_running_loop())
+        events = (await simulation._emit_tick_and_check_orders_real(session, event, event.get("right"), asyncio.get_running_loop())
                   if session.session_type == "real" and not session.real_recovery_pending
                   else [] if session.session_type == "real"
                   else simulation._emit_tick_and_check_orders(session, event, event.get("right")))

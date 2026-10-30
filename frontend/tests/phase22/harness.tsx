@@ -268,7 +268,7 @@ function Harness() {
     const environment={contextMenu:menu,sim:{sessionId:'session',symbol:'NIFTY',sessionType:'sim',sessionInstrumentType:'options',trades:[],openOrders:[],position:flat,positionCE:flat,positionPE:flat},simRef:{current:{sessionId:'session'}},panes:[pane],sizingMode:'quantity',cancelPricePick:()=>{},setMissingSlPick:()=>{},setContextMenuEntryTicket:setEntryTicket,setBrokerError:()=>{},strategySyncVersionRef:{current:0},setRunningStrategies:()=>{},setBrokerOrdersSnapshot:()=>{},targetDeviationPct:.01};
     return <>{React.cloneElement(chart,{onContextMenu:(price:number,x:number,y:number,ctx:any)=>setMenu({sessionId:'session',paneId:1,price,x,y,...ctx,strike:props.strike,expiry:props.expiry})})}
       {menu&&<ChartContextMenu x={menu.x} y={menu.y} price={menu.price} actions={buildDayChartContextMenu(environment as unknown as Parameters<typeof buildDayChartContextMenu>[0])} onClose={()=>setMenu(null)}/>}
-      {entryTicket&&<ChartEntryTicket ticket={entryTicket} fundsRatios={{l:3,m:6,h:12}} riskRatios={{l:1,m:2,h:4}} instrumentType="options" sessionType="sim" onChange={setEntryTicket} onSubmit={(ticket,quantity)=>{w.submittedTicket={ticket,quantity};setEntryTicket(null)}} onClose={()=>setEntryTicket(null)}/>}
+      {entryTicket&&<ChartEntryTicket ticket={entryTicket} fundsRatios={{l:3,m:6,h:12}} riskRatios={{l:1,m:2,h:4}} quantityTiers={{l:1,m:2,h:5}} instrumentType="options" sessionType="sim" onChange={setEntryTicket} onSubmit={(ticket,quantity)=>{w.submittedTicket={ticket,quantity};setEntryTicket(null)}} onClose={()=>setEntryTicket(null)}/>}
     </>;
   }
   if (props.threeCharts) {
