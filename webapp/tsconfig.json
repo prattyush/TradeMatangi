@@ -1,0 +1,17 @@
+{
+  "extends": "../frontend/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "react": ["node_modules/@types/react"],
+      "react/*": ["node_modules/@types/react/*"],
+      "react-dom": ["node_modules/@types/react-dom"],
+      "react-dom/*": ["node_modules/@types/react-dom/*"],
+      "klinecharts": ["node_modules/klinecharts"],
+      "lightweight-charts": ["node_modules/lightweight-charts"],
+      "react-klinecharts-ui/extensions": ["node_modules/react-klinecharts-ui/dist/extensions.d.ts"]
+    }
+  },
+  "include": ["src", "../frontend/src/vite-env.d.ts"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
+}

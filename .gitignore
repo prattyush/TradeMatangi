@@ -44,3 +44,9 @@ backend.log
 # Other Files
 *.exe
 *.zip
+
+# Browser regression artifacts
+/frontend/test-results/
+/frontend/playwright-report/
+/webapp/test-results/
+/webapp/playwright-report/

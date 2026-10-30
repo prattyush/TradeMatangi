@@ -38,7 +38,7 @@ interface Props {
   // Price-pick from chart
   onRequestPricePick: (orderId: string) => void
   injectedEditPrice: { orderId: string; price: number } | null
-  onRequestTpPick?: () => void
+  onRequestTpPick?: (right?: 'CE' | 'PE') => void
   injectedTpPrice?: number | null
   onRequestUtpPick?: () => void
   injectedUtpPrice?: number | null
@@ -77,7 +77,7 @@ interface Props {
   onUpdateStrategyPrice?: (strategyId: string, price: number) => Promise<void>
   onBulkUpdateSL?: (triggerPrice: number, right: string | null, merge: boolean) => Promise<{ updated: number; merged_from?: number; merged_to?: number; cancelled_order_ids?: string[] }>
   onBulkConvert?: (newOrderType: 'TARGET' | 'LIMIT' | 'STOPLOSS', right: string | null, price: number | undefined, merge: boolean) => Promise<{ converted: number; results?: { order_id: string; state: string; message?: string | null }[]; merged_from?: number; merged_to?: number; cancelled_order_ids?: string[] }>
-  onRequestLpPick?: () => void
+  onRequestLpPick?: (right?: 'CE' | 'PE') => void
   injectedLpPrice?: number | null
   onGuardRailBlocked?: (type: 'BLOCK' | 'COOLDOWN' | 'BAN', reason: string) => void
   onSnapshotEvent?: (event: { type: string; description: string; details: Record<string, unknown> }) => void
@@ -942,7 +942,7 @@ export default function OrderPanel({
                 />
                 {!tpIsPct && onRequestTpPick && (
                   <button
-                    onClick={onRequestTpPick}
+                    onClick={() => onRequestTpPick?.(instrumentType==='options'?stratRight:undefined)}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',
@@ -1112,7 +1112,7 @@ export default function OrderPanel({
                 />
                 {!lpIsPct && onRequestLpPick && (
                   <button
-                    onClick={onRequestLpPick}
+                    onClick={() => onRequestLpPick?.(instrumentType==='options'?stratRight:undefined)}
                     title="Pick price from chart"
                     style={{
                       padding: '4px 7px', background: '#21262d',

@@ -121,7 +121,7 @@ input { width: 160px; }
 .context-submenu { display: none; position: absolute; left: calc(100% + 7px); top: 0; min-width: 132px; padding: 5px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 14px 34px rgb(0 0 0 / .45); }
 .chart-context-menu.open-left .context-submenu { left: auto; right: calc(100% + 7px); }
 .context-menu-item:hover .context-submenu, .context-menu-item:focus-within .context-submenu { display: grid; gap: 3px; }
-.order-line-label { position: absolute; z-index: 3; transform: translate(-100%, -50%); padding: 1px 4px; background: rgb(15 23 42 / .9); border: 1px solid; border-radius: 4px; font-size: .58rem; font-weight: 800; pointer-events: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.order-line-label { position: absolute; z-index: 3; transform: translateY(-50%); padding: 1px 4px; background: rgb(15 23 42 / .9); border: 1px solid; border-radius: 4px; font-size: .58rem; font-weight: 800; pointer-events: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .position-pnl-label { position: absolute; z-index: 3; transform: translate(-50%, -50%); padding: 2px 5px; background: rgb(15 23 42 / .9); border: 1px solid; border-radius: 4px; font-size: .64rem; font-weight: 800; pointer-events: none; font-variant-numeric: tabular-nums; }
 .trade-ticket { position: fixed; z-index: 40; width: 260px; display: grid; gap: 10px; padding: 10px; background: #111827; border: 1px solid #475569; border-radius: 6px; box-shadow: 0 18px 48px rgb(0 0 0 / .45); }
 .trade-ticket header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0; background: transparent; border: 0; min-height: 0; }

@@ -687,11 +687,12 @@ export function useSimulation() {
   ) => {
     if (!state.sessionId) return
     const updated = await api.updateOrder(state.sessionId, orderId, triggerPrice, limitPrice, targetDeviationPct, quantity)
-    setState(s => ({
+    setState(s => s.sessionId === state.sessionId ? ({
       ...s,
       openOrders: s.openOrders.map(o => o.order_id === orderId ? updated : o),
       walletRefreshKey: s.walletRefreshKey + 1,
-    }))
+    }) : s)
+    return updated
   }, [state.sessionId])
 
   const splitOrder = useCallback(async (orderId: string, operationId: string) => {
@@ -714,7 +715,7 @@ export function useSimulation() {
         ...opts,
         ...(opts.target_deviation_pct != null ? { target_deviation_pct: opts.target_deviation_pct } : {}),
       })
-      setState(s => ({
+      setState(s => s.sessionId !== state.sessionId ? s : ({
         ...s,
         openOrders: s.openOrders.some(o => o.order_id === order.order_id)
           ? s.openOrders
@@ -724,7 +725,7 @@ export function useSimulation() {
       }))
     } catch (err) {
       if (err instanceof InsufficientFundsError) {
-        setState(s => ({ ...s, orderError: err.message }))
+        setState(s => s.sessionId !== state.sessionId ? s : ({ ...s, orderError: err.message }))
       }
       throw err
     }
@@ -739,7 +740,7 @@ export function useSimulation() {
   const cancelOrder = useCallback(async (orderId: string, force = false) => {
     if (!state.sessionId) return
     await api.cancelOrder(state.sessionId, orderId, force)
-    setState(s => ({
+    setState(s => s.sessionId !== state.sessionId ? s : ({
       ...s,
       openOrders: s.openOrders.filter(o => o.order_id !== orderId),
       walletRefreshKey: s.walletRefreshKey + 1,

@@ -1,3 +1,4 @@
+import { AppWindowControls } from "./AppWindowControls";
 import { snapSwingPrice, swingOrderTick } from './swingOrderPrice';
 import SwingOrderActions from './SwingOrderActions';
 import { SwingIconButton } from './SwingIcon';
@@ -1169,6 +1170,7 @@ export default function SwingPortfolioPanel({
           }
           await act(`${prefix}/orders/${order.order_id}`, {price}, "PATCH");
         }}
+        onCancelPick={() => { setOrderPick(null); setPicking(false); }}
         onPick={(value) => {
           if (orderPick) { orderPick.receive(value); setOrderPick(null); return; }
           if (Number.isFinite(value) && value > 0) setPrice(value.toFixed(2));
@@ -1205,7 +1207,7 @@ export default function SwingPortfolioPanel({
         color: "#e5e7eb",
         background: "#0d1117",
         minHeight: 360,
-        height: surface === "website" || navigationControls ? "100vh" : "calc(100vh - 48px)",
+        height: surface === "website" ? "var(--app-height, 100vh)" : navigationControls ? "100vh" : "calc(100vh - 48px)",
         overflowY: chartWorkspace ? "hidden" : "auto",
         boxSizing: "border-box",
       }}
@@ -1272,6 +1274,7 @@ export default function SwingPortfolioPanel({
         )}
         <header style={{ display: "flex", gap: 16, alignItems: "center" }}>
           <h2>{mode === "real" ? "Real" : "Paper"} Swing</h2>
+          {!chartWorkspace && <AppWindowControls />}
           <button
             title="Detach screen; keep portfolio running"
             onClick={onDetach}
