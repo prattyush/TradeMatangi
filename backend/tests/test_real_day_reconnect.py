@@ -205,6 +205,8 @@ async def test_failed_execution_recovers_immediately_without_waiting_for_heartbe
     simulation._sessions['day']=session
     handler=AsyncMock()
     monkeypatch.setattr(real_sessions,'_recover_failed_task',handler)
+    # An earlier app-lifespan test leaves the shutdown flag set, which marks every session non-current.
+    monkeypatch.setattr(real_sessions,'_shutting_down',False)
     real_sessions.watch_execution(session)
     session.task.set_result(None)
     await asyncio.sleep(0)
