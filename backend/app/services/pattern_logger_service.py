@@ -11,12 +11,22 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
 TABLE = "PatternAnnotations"
 SHARE_TABLE = "PatternShares"
+NAMES_TABLE = "PatternNames"
+
+NAME_KINDS = ("category", "strategy")
+MAX_NAME_LENGTH = 60
+_BACKFILL_KEY = "_meta#backfilled"
+
+# Process-local caches. Both operations they guard are idempotent, so a stale or
+# empty cache in another worker only costs one redundant check.
+_names_table_ready = False
+_backfilled_owners: set[str] = set()
 
 
 def _table():
@@ -166,6 +176,110 @@ def sync_pattern_shares(owner_user_id: str, share_emails_csv: str) -> list[dict]
         raise
 
     return targets
+
+
+# ── Category / strategy name registry ────────────────────────────────────────
+# PatternNames is the source of truth for the category and strategy dropdowns in
+# the Pattern Library and Label Trades. Item key: (user_id, "<kind>#<name>").
+
+def _names_table():
+    from app.services.db import get_dynamodb_resource
+    return get_dynamodb_resource().Table(NAMES_TABLE)
+
+
+def _ensure_names_table() -> None:
+    global _names_table_ready
+    if _names_table_ready:
+        return
+    try:
+        from app.services.db import get_dynamodb_resource, get_dynamodb_client
+        existing = set(get_dynamodb_resource().meta.client.list_tables()["TableNames"])
+        if NAMES_TABLE not in existing:
+            client = get_dynamodb_client()
+            client.create_table(
+                TableName=NAMES_TABLE,
+                KeySchema=[
+                    {"AttributeName": "user_id", "KeyType": "HASH"},
+                    {"AttributeName": "name_key", "KeyType": "RANGE"},
+                ],
+                AttributeDefinitions=[
+                    {"AttributeName": "user_id", "AttributeType": "S"},
+                    {"AttributeName": "name_key", "AttributeType": "S"},
+                ],
+                BillingMode="PAY_PER_REQUEST",
+            )
+            client.get_waiter("table_exists").wait(TableName=NAMES_TABLE)
+            logger.info("Created PatternNames table")
+        _names_table_ready = True
+    except Exception:
+        logger.exception("Failed to ensure PatternNames table")
+
+
+def _validate_name(name: str) -> str:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise ValueError("Name must not be empty")
+    if len(cleaned) > MAX_NAME_LENGTH:
+        raise ValueError(f"Name must be at most {MAX_NAME_LENGTH} characters")
+    if "::" in cleaned:
+        # "category::strategy" is the key format of a chart's risk_reward_ratios.
+        raise ValueError("Name must not contain '::'")
+    return cleaned
+
+
+def _put_names(owner_id: str, kind: str, names: Iterable[str]) -> None:
+    unique = {n for n in names if n}
+    if not unique:
+        return
+    _ensure_names_table()
+    with _names_table().batch_writer() as batch:
+        for name in sorted(unique):
+            batch.put_item(Item={"user_id": owner_id, "name_key": f"{kind}#{name}", "kind": kind, "name": name})
+
+
+def add_name(user_id: str, kind: str, name: str) -> str:
+    """Register a category or strategy name for the user. Idempotent; returns the stored name."""
+    if kind not in NAME_KINDS:
+        raise ValueError(f"Unknown name kind: {kind}")
+    cleaned = _validate_name(name)
+    _put_names(user_id, kind, [cleaned])
+    return cleaned
+
+
+def register_annotation_names(user_id: str, annotations: Iterable[dict]) -> None:
+    """Register every category / strategy used by a chart's annotations."""
+    annotations = list(annotations)
+    _put_names(user_id, "category", (str(a.get("category", "")).strip() for a in annotations))
+    _put_names(user_id, "strategy", (str(a.get("strategy_name", "")).strip() for a in annotations))
+
+
+def _query_names_for_owner(owner_id: str, kind: str) -> list[str]:
+    from boto3.dynamodb.conditions import Key
+    condition = Key("user_id").eq(owner_id) & Key("name_key").begins_with(f"{kind}#")
+    table = _names_table()
+    resp = table.query(KeyConditionExpression=condition)
+    items = list(resp.get("Items", []))
+    while resp.get("LastEvaluatedKey"):
+        resp = table.query(KeyConditionExpression=condition, ExclusiveStartKey=resp["LastEvaluatedKey"])
+        items.extend(resp.get("Items", []))
+    return [item["name"] for item in items]
+
+
+def _ensure_owner_backfilled(owner_id: str) -> None:
+    """One-time import of names that exist only inside an owner's saved charts."""
+    if owner_id in _backfilled_owners:
+        return
+    _ensure_names_table()
+    table = _names_table()
+    if not table.get_item(Key={"user_id": owner_id, "name_key": _BACKFILL_KEY}).get("Item"):
+        annotations = [
+            ann
+            for item in _query_charts_for_owner(owner_id)
+            for ann in json.loads(item.get("annotations", "[]"))
+        ]
+        register_annotation_names(owner_id, annotations)
+        table.put_item(Item={"user_id": owner_id, "name_key": _BACKFILL_KEY})
+    _backfilled_owners.add(owner_id)
 
 
 def _load_shared_owner_ids(user_id: str) -> list[str]:
@@ -426,25 +540,18 @@ def find_chart_by_date(
     return None
 
 
-def list_strategy_names(user_id: str) -> list[str]:
-    """Return all unique strategy names across all charts for a user."""
+def _list_names(user_id: str, kind: str) -> list[str]:
+    """Names the user can pick from: their own plus those of owners who shared patterns with them."""
     names: set[str] = set()
     for owner_id in _load_shared_owner_ids(user_id):
-        for item in _query_charts_for_owner(owner_id):
-            for ann in json.loads(item.get("annotations", "[]")):
-                s = ann.get("strategy_name", "")
-                if s:
-                    names.add(s)
+        _ensure_owner_backfilled(owner_id)
+        names.update(_query_names_for_owner(owner_id, kind))
     return sorted(names)
+
+
+def list_strategy_names(user_id: str) -> list[str]:
+    return _list_names(user_id, "strategy")
 
 
 def list_category_names(user_id: str) -> list[str]:
-    """Return all unique category names across all charts for a user."""
-    names: set[str] = set()
-    for owner_id in _load_shared_owner_ids(user_id):
-        for item in _query_charts_for_owner(owner_id):
-            for ann in json.loads(item.get("annotations", "[]")):
-                c = ann.get("category", "")
-                if c:
-                    names.add(c)
-    return sorted(names)
+    return _list_names(user_id, "category")

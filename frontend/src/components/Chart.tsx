@@ -23,6 +23,7 @@ import {
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
 import { PositionPnlPrimitive } from '../indicators/positionPnlPrimitive'
 import { positionPnlLevels, projectedTotalPnlPctAtTarget } from '../indicators/positionPnlLevels'
+import { exitOrderLineLabel } from '../orderLineLabel'
 import {
   computeOptionsRocComparison,
   IndicatorCandle,
@@ -255,12 +256,6 @@ function isExitOrderForPosition(order: Order, position?: Position): position is 
     position.side !== 'FLAT' &&
     ((position.side === 'LONG' && order.side === 'SELL') ||
       (position.side === 'SHORT' && order.side === 'BUY'))
-}
-
-function projectedOrderPnl(order: Order, position: Position): number {
-  const dir = position.side === 'LONG' ? 1 : -1
-  const projectedQty = Math.min(order.quantity, position.quantity)
-  return dir * (orderDisplayPrice(order) - position.avg_entry_price) * projectedQty
 }
 
 function formatProjectedPnl(pnl: number, pnlPctMode?: boolean, sessionCapital?: number): string {
@@ -1458,8 +1453,7 @@ export default function Chart({
       let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
 
       if (isExitOrderForPosition(order, position)) {
-        const pnlStr = formatProjectedPnl(projectedOrderPnl(edit?{...order,trigger_price:edit.oldPrice,limit_price:edit.oldPrice}:order, position), pnlPctMode, sessionCapital)
-        label = `${orderLineTypeLabel(order)} ${pnlStr}`
+        label = exitOrderLineLabel(orderLineTypeLabel(order), price, order.quantity, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder)
       }
 
       try {
@@ -1476,7 +1470,7 @@ export default function Chart({
         }
       } catch { /* disposed */ }
     }
-  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital, pendingRevision])
+  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital, pendingRevision, aggregatePnl, latestTick?.close, brokeragePerOrder])
 
   // Running profit strategies use their own lines, separate from pending orders.
   useEffect(() => {

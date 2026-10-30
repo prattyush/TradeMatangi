@@ -1,13 +1,12 @@
 """Owned, persistent Swing portfolio metadata in Sessions and WalletLedgers."""
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
 import time
 import uuid
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
 from app.services.swing_funding_store import encode, decode
 from app.services.swing_accounting import money
+from app.services import swing_market
 
 
 def _sessions():
@@ -80,7 +79,7 @@ def create(user, mode, capital, *, broker=None, account=None, loss_limit_pct=Non
         "mode": mode,
         "trading_style": "swing",
         "state": "running",
-        "date": datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat(),
+        "date": swing_market.today(),
         "session_capital": capital,
         "starting_capital": capital,
         "contexts": {},

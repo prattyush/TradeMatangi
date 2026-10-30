@@ -39,12 +39,11 @@ export function projectedPositionPnl(
   );
 }
 
-export function projectedTotalPnlPctAtTarget(
+export function projectedTotalPnlAtTarget(
   position: LevelPosition,
   currentPrice: number,
   targetPrice: number,
   totalPnl: number,
-  sessionCapital: number,
   brokeragePerOrder: number,
 ): number | null {
   const direction =
@@ -57,8 +56,6 @@ export function projectedTotalPnlPctAtTarget(
     !Number.isFinite(targetPrice) ||
     targetPrice <= 0 ||
     !Number.isFinite(totalPnl) ||
-    !Number.isFinite(sessionCapital) ||
-    sessionCapital <= 0 ||
     !Number.isFinite(brokeragePerOrder) ||
     brokeragePerOrder < 0
   )
@@ -74,12 +71,29 @@ export function projectedTotalPnlPctAtTarget(
         10000,
     ) / 10000;
   return (
-    ((totalPnl +
-      direction * position.quantity * (targetPrice - currentPrice) -
-      exitCommission) /
-      sessionCapital) *
-    100
+    totalPnl +
+    direction * position.quantity * (targetPrice - currentPrice) -
+    exitCommission
   );
+}
+
+export function projectedTotalPnlPctAtTarget(
+  position: LevelPosition,
+  currentPrice: number,
+  targetPrice: number,
+  totalPnl: number,
+  sessionCapital: number,
+  brokeragePerOrder: number,
+): number | null {
+  if (!Number.isFinite(sessionCapital) || sessionCapital <= 0) return null;
+  const value = projectedTotalPnlAtTarget(
+    position,
+    currentPrice,
+    targetPrice,
+    totalPnl,
+    brokeragePerOrder,
+  );
+  return value === null ? null : (value / sessionCapital) * 100;
 }
 
 export function positionPnlLevels(

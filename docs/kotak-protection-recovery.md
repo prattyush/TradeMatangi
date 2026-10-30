@@ -447,3 +447,186 @@ still queue briefly (one broker round trip, or a whole split's duration)
 behind another contract's in-flight broker call. It is never rejected or
 dropped, just delayed; narrowing it to per-contract is a nice-to-have, not
 urgent.
+
+## A genuine timeout froze the backend and left an order stuck forever — 2026-10-27
+
+Two live incidents in one real NIFTY options session, root-caused directly
+from production logs (`backend.log`, `desktoplog.json`) rather than from a
+reported symptom alone, surfaced the first *reachable* violation of "broker
+is the only source of truth" since the 2026-10-23/24 scope-discipline and
+barrier-wait work above: a genuine Kotak SDK timeout, not a code bug on its
+own, combined with two real gaps to produce a 30-second total freeze
+followed by over 90 minutes of a contract being untradeable and its own
+stuck order being uncancellable.
+
+**Incident 1 (~09:30–09:31 IST)**: an AutoStop-triggered BUY TARGET order's
+forward-to-broker call timed out after 30 seconds. During that entire
+window, the backend log shows *zero* lines of any kind — every session's
+ticks, every HTTP endpoint, completely frozen. The cause: the live
+tick-processing loop (`simulation.py`'s `_emit_tick_and_check_orders_real`)
+called `broker_order_service.submit_once()` — a synchronous Kotak
+SDK/httpx call — directly on the shared event loop. This is a *different*
+call site from the one already flagged and deliberately deferred in the
+2026-10-23 entry above (`sync_order_edit()`'s synchronous twin, reached only
+via `strategy_service.py`'s automated amendments); this one sits in the
+tick loop's own triggered-order forwarding path and had never been migrated
+to the `asyncio.to_thread` pattern already established in
+`broker_order_service.py` (`submit_immediate_async`).
+
+**The stuck-forever half**: the timeout left the order's `recovery_state`
+ambiguous (`'unknown'`, correctly — a timeout genuinely doesn't confirm or
+deny broker acceptance). But nothing in `real_broker_state.build_orders()`
+ever resolved that ambiguity unless a *matching* row showed up in a later
+broker report. The function's own comment ("Broker-backed locals absent
+from a complete report are not live orders") stated the intended opposite
+case — a complete report that simply never contains the tag is just as
+authoritative a signal as a match — but no code acted on it. Kotak's report
+API was independently flaky for over an hour in this incident
+(`httpcore.ReadTimeout`/502s, an external connectivity issue, logged as
+`kotak_reports_failed`), so the order never got a lucky match either. Net
+effect: new orders on that exact contract were instantly rejected every
+time (confirmed at 10:33:08, 10:33:15, 10:34:02 IST and again later), and
+cancelling the stuck order itself was rejected on 20+ attempts over more
+than an hour — including immediately after a session stop/restart
+(~09:44–09:45 IST), since orders persist per trading-day in the database,
+not per in-memory session, so the restart simply reloaded the same stuck
+row.
+
+**Incident 2 (~10:52–10:56 IST), the cancel gap**: a system-auto-placed
+protective exit order hit the identical ambiguous state on its own first
+placement attempt. Every modify, convert, and cancel the user tried against
+it failed with the same `_require_confirmed_recovery` 409. For edit/convert,
+that guard is correct — amending an order whose broker acknowledgement is
+unknown risks inventing a duplicate submission. For *cancel*, it is not: the
+user's intent (get rid of this order) is unambiguous regardless of whether
+it ever reached the broker, and this is exactly the class of manual,
+broker-bound action the 2026-10-24 entry above says must never be
+permanently blocked. `_require_confirmed_recovery` had never been split
+along that line — cancel got the same hard block as edit/convert/split.
+
+**Fix, three parts**:
+- `simulation.py`'s `_emit_tick_and_check_orders_real` is now `async def`;
+  its broker-forwarding calls (`require_entry_allowed`, `submit_once`, the
+  order-persistence writes) run via `asyncio.to_thread`. The one other
+  direct caller (`swing_portfolio_service.py`) now awaits it.
+- `real_broker_state.py` gained `_resolve_tag()` (pure: matched / absent /
+  too-soon-to-tell, guarded by a minimum age since submission to avoid
+  racing a report that predates the broker's own acknowledgement) and
+  `resolve_pending_tag()` (a bounded, single-order, on-demand fetch —
+  deliberately lighter than the full `refresh()`, for the moment a user is
+  actively trying to act on one specific order). `build_orders()` now uses
+  `_resolve_tag` to resolve a genuinely-absent order to `recovery_state=
+  'failed'` **and** `status=CANCELLED` together (required together: a
+  `PENDING` order with `recovery_state='failed'` would otherwise be
+  miscounted as live protective cover by `protection_recovery.coverage()`).
+  `refresh()` releases that order's wallet reservation immediately after
+  the resolution is committed, mirroring what a local cancel already does.
+- `orders.py`'s cancel path now skips the recovery-state check entirely
+  once an order's `broker_order_id` is known (identity is well-defined
+  regardless of what else is ambiguous about it), and otherwise calls
+  `resolve_pending_tag` for a bounded 3-second on-demand reconciliation
+  attempt before falling back to either an actionable 409 or, with
+  `force=true`, proceeding anyway and raising a persistent `needs_attention`
+  notice so the uncertainty is surfaced rather than silently dropped.
+  Edit/convert/split are untouched — they keep hard-blocking on an order's
+  own ambiguous state, since inventing a duplicate submission there is a
+  real risk cancel doesn't share.
+
+**Deliberately not fixed, flagged as a known follow-up**: the tick loop's
+*other* synchronous broker call, `_register_kotak_sl_for_order` (reached via
+the same loop's automated strategy evaluation for BreakEven/TargetProfit/
+trailing-stop amendments), has the identical event-loop-blocking shape and
+was intentionally left alone — same reasoning as the 2026-10-23 deferral of
+`sync_order_edit()`'s twin: it has roughly a dozen call sites across several
+files and needs its own dedicated async-ification pass, not a fold-in here.
+The Kotak report-API connectivity flakiness itself is an external/vendor
+issue; these fixes are about how the app behaves *given* that flakiness; not
+about preventing it.
+
+## A Kotak-side cancellation's auto-replacement was starved by an unrelated stuck order — 2026-10-27 (continued)
+
+A fourth incident on the same trading day, same session, surfaced a deeper
+version of the same defect family above — this time in the *background*
+auto-repair path rather than a user-facing endpoint. Three 65-lot entries on
+NIFTY CE 22900 each needed independent protective coverage. Kotak itself
+cancelled one of the three already-confirmed SLs on its own (`cancelled:
+--`, coincident with an unrelated fill on a different one of the three, no
+app-initiated cancel anywhere in the logs — a genuine broker-side/RMS
+event, not something this app controls or can prevent). This project's own
+documented policy says an unknown-origin cancellation with a correlated
+exit fill is eligible for automatic replacement. It never replaced it.
+
+**Root cause, traced directly in code**: `kotak_protection.py`'s `audit()`
+processes every entry needing protection in two loops (reconciling existing
+jobs, then detecting/repairing new gaps) with **no per-entry exception
+isolation** — a bare call into `protection_recovery.reconcile_children`/
+`_attempt`, no try/except, for each entry in turn. `reconcile_children`
+itself (checking whether a submitted child's tag appears in a fresh broker
+report) had **no give-up path at all**: if the tag never matches, it raises
+`Deferred` on every single call, forever — there was no equivalent of
+`build_orders()`'s absent-tag resolution from the entry above. In this
+incident, an *unrelated*, already-known-stuck order from an earlier timeout
+(the same kind of order described above) was sitting in exactly that
+state. Because `audit()` had no per-entry isolation, that one stuck order's
+endless `Deferred` aborted the *entire* audit pass — every single retry
+cycle — before the function ever reached the gap-detection/repair logic
+for the newly-cancelled SL's entry. The stuck order didn't just stay
+stuck; it silently prevented the audit from ever getting to anyone else's
+problem, for as long as it persisted.
+
+**A second, compounding gap**: `protection_recovery.py`'s own automatic
+submission path (`_attempt`) never wrote its tracking tag into
+`analytics['broker_tag']` on the orders it creates — only the manual/direct
+`submit_once` path (used by the earlier entry's fixes) did. Grep confirmed
+exactly one writer of `broker_tag` in the whole codebase before this fix.
+This meant every automatically-submitted protective order — the majority of
+protective-SL traffic, and precisely the kind most likely to hit a timeout
+under stress — was invisible to this PR's own absent-tag resolution and
+cancel-bypass machinery. Even the force-cancel UI added alongside this fix
+would not have been able to resolve this specific order type without this
+tag also being present.
+
+Separately, the user's manual retry (`fill-missing-stoploss`) was initially
+and correctly rejected as "already fully covered" — `_stoploss_available_quantity`
+counts any locally `PENDING` exit order as covering collateral regardless
+of broker confirmation, which is why the website briefly showed two
+~65-lot SL records (the stuck phantom plus a second, genuinely-confirmed
+replacement created once the user retried) while the broker never had more
+than one real resting order. That counting behavior is intentional (the
+alternative — not counting an unconfirmed order as covering anything —
+risks double-submitting cover for a quantity that might already be in
+flight) and was left as-is.
+
+**Fix**:
+- `protection_recovery.py`'s `_attempt`: writes `analytics['broker_tag']`
+  onto every order it submits, applied *after* `execution_analytics.
+  created()` builds the full snapshot (not via the `Order(...)` constructor
+  — verified that pre-populating `analytics` there would make `created()`
+  skip building the snapshot at all, silently losing capital/margin_rate/
+  entry_method and other fields entry-protection children need).
+- `protection_recovery.py`'s `reconcile_children`: gives up (resolves to
+  `recovery_state='failed'` + `status=CANCELLED`, via the existing
+  `abandon_prepared` helper) when a never-acknowledged child's tag is
+  genuinely absent from a complete report and old enough to trust that —
+  reusing `real_broker_state._resolve_tag` for the same age guard used
+  elsewhere in this PR. An already-acknowledged child (known broker order
+  ID) disappearing from a report is treated as more alarming and keeps
+  deferring; only the never-acknowledged case gives up.
+- `kotak_protection.py`'s `audit()`: both per-entry loops now catch
+  `Deferred` per entry and continue to the next one, collecting what's
+  still stuck rather than aborting. One contract's permanently-ambiguous
+  order no longer prevents every other entry's legitimate repair in the
+  same session from running.
+
+## Force cancel, for when even the bounded reconciliation above can't resolve it
+
+Added alongside the above: a `force=true` UI affordance on both the
+website (a second `⊗` icon beside the existing cancel button in
+`OrderPanel.tsx`, behind the existing `ConfirmModal`) and the desktop app
+(`ChartTile.tsx`'s chart line-actions popup and `App.tsx`'s
+`DesktopOpenOrders` list, both behind `window.confirm`), wired to the
+`force=true` cancel override already implemented for the first incident in
+this file. `desktop_trading.py`'s cancel endpoint now forwards `force` the
+same way the website's own endpoint already did. The ambiguous-cancel 409
+is now a structured `{code, message}` rather than a plain string so both
+frontends can detect it reliably.

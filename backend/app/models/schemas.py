@@ -449,6 +449,10 @@ class UserSettingsResponse(ContractModel):
     risk_ratio_l_pct: float = 1.0
     risk_ratio_m_pct: float = 2.0
     risk_ratio_h_pct: float = 4.0
+    quantity_l: int = 1
+    quantity_m: int = 2
+    quantity_h: int = 5
+    merge_exit_orders_on_consolidate: bool = False
     analysis_price_source: str = "options"
     experimental_patterns_enabled: bool = False
     pattern_share_emails: str = ""
@@ -491,6 +495,10 @@ class UserSettingsUpdateRequest(ContractModel):
     risk_ratio_l_pct: float | None = Field(default=None, gt=0.0, le=100.0)
     risk_ratio_m_pct: float | None = Field(default=None, gt=0.0, le=100.0)
     risk_ratio_h_pct: float | None = Field(default=None, gt=0.0, le=100.0)
+    quantity_l: int | None = Field(default=None, ge=1)
+    quantity_m: int | None = Field(default=None, ge=1)
+    quantity_h: int | None = Field(default=None, ge=1)
+    merge_exit_orders_on_consolidate: bool | None = None
     analysis_price_source: Literal["options", "underlying"] | None = None
     experimental_patterns_enabled: bool | None = None
     pattern_share_emails: str | None = None
@@ -508,6 +516,17 @@ class UserSettingsUpdateRequest(ContractModel):
     context_menu_sl_mode: Literal["longOnly", "both"] | None = None
     target_deviation_pct: float | None = Field(default=None, ge=0.0, le=0.10, allow_inf_nan=False)
     stoploss_limit_gap_pct: float | None = Field(default=None, ge=0.0, le=0.10, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def require_increasing_tiers(self):
+        for low, mid, high, label in (
+            (self.quantity_l, self.quantity_m, self.quantity_h, "Quantity"),
+            (self.funds_ratio_l_pct, self.funds_ratio_m_pct, self.funds_ratio_h_pct, "Capital %"),
+            (self.risk_ratio_l_pct, self.risk_ratio_m_pct, self.risk_ratio_h_pct, "Risk %"),
+        ):
+            if low is not None and mid is not None and high is not None and not (low < mid < high):
+                raise ValueError(f"{label} tiers must be strictly increasing: Low < Medium < High")
+        return self
 
 
 # ── Strategies ────────────────────────────────────────────────────────────────
@@ -578,6 +597,7 @@ class BulkUpdateSLRequest(ContractModel):
     session_id: str
     trigger_price: float
     right: str | None = None   # "CE" | "PE" | None (equity)
+    merge: bool = False
 
 
 class BulkConvertRequest(ContractModel):
@@ -585,6 +605,7 @@ class BulkConvertRequest(ContractModel):
     new_order_type: OrderType   # TARGET, LIMIT, or STOPLOSS
     right: str | None = None   # "CE" | "PE" | None (equity)
     price: float | None = None
+    merge: bool = False
 
 
 class StrategyResponse(ContractModel):
@@ -644,6 +665,8 @@ class GuardRailSettingsResponse(ContractModel):
     guardrail_ban_loss_trade_pct: float = 60.0
     guardrail_ban_min_trades: int = 5
     guardrail_ban_enabled: bool = False
+    guardrail_ban_halfway_alert_enabled: bool = False
+    high_tier_pnl_threshold_pct: float = 0.0
     guardrail_cooldown_enabled: bool = False
     guardrail_maxsize_enabled: bool = False
     guardrail_maxsize_mode: str = "percentage"
@@ -659,6 +682,8 @@ class GuardRailSettingsUpdateRequest(ContractModel):
     guardrail_ban_loss_trade_pct: float | None = Field(default=None, ge=1.0, le=100.0)
     guardrail_ban_min_trades: int | None = Field(default=None, ge=1, le=100)
     guardrail_ban_enabled: bool | None = None
+    guardrail_ban_halfway_alert_enabled: bool | None = None
+    high_tier_pnl_threshold_pct: float | None = Field(default=None, ge=-100.0, le=100.0)
     guardrail_cooldown_enabled: bool | None = None
     guardrail_maxsize_enabled: bool | None = None
     guardrail_maxsize_mode: str | None = None

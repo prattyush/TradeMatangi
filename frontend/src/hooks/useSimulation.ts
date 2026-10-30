@@ -737,9 +737,9 @@ export function useSimulation() {
     })
   }, [])
 
-  const cancelOrder = useCallback(async (orderId: string) => {
+  const cancelOrder = useCallback(async (orderId: string, force = false) => {
     if (!state.sessionId) return
-    await api.cancelOrder(state.sessionId, orderId)
+    await api.cancelOrder(state.sessionId, orderId, force)
     setState(s => s.sessionId !== state.sessionId ? s : ({
       ...s,
       openOrders: s.openOrders.filter(o => o.order_id !== orderId),

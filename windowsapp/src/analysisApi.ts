@@ -7,7 +7,7 @@ export type AnalysisRequest = <T>(path: string, method: 'GET' | 'POST' | 'DELETE
 export function validAnalysisPath(path: string, method: string): boolean {
   const route = path.split('?')[0]
   if (!route || route.startsWith('/') || route.includes('%') || route.includes('#') || route.includes('\\') || route.split('/').some(p => p === '.' || p === '..')) return false
-  if (method === 'POST') return route === 'labels' || route === 'performance/real-fees'
+  if (method === 'POST') return route === 'labels' || route === 'performance/real-fees' || route === 'pattern/strategies' || route === 'pattern/categories'
   if (method === 'DELETE') return route === 'snapshots' || route === 'performance/real-fees'
   return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/swing|\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options)))$/.test(route)
 }
@@ -95,6 +95,8 @@ export function createAnalysisApi(request: AnalysisRequest) {
     deleteSnapshots: async id => { await call('deleteSnapshots','snapshots',{session_id:id},'DELETE') },
     patternListStrategies: () => call('patternListStrategies','pattern/strategies'),
     patternListCategories: () => call('patternListCategories','pattern/categories'),
+    patternAddStrategy: name => call('patternAddStrategy','pattern/strategies',{},'POST',{name}),
+    patternAddCategory: name => call('patternAddCategory','pattern/categories',{},'POST',{name}),
     patternGetChartByDate: async (symbol,date,instrument) => { try { return await call('patternGetChartByDate','pattern/chart/by-date',{symbol,date,instrument_type:instrument}) } catch (error) { if (/\b404\b/.test(String(error))) return null; throw error } },
     patternOhlcEquity: (symbol,date,interval=3,days=2) => call('patternOhlcEquity','pattern/ohlc/equity',{symbol,date,interval_minutes:interval,days_back:days}),
     patternOhlcOptions: (symbol,date,strike,expiry,right,interval=3,days=2) => call('patternOhlcOptions','pattern/ohlc/options',{symbol,date,strike,expiry,right,interval_minutes:interval,days_back:days}),

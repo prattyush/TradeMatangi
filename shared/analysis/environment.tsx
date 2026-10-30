@@ -7,7 +7,7 @@ export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
   'getEntryTags' | 'getExitTags' | 'getHistorical' | 'getPreSession' | 'getOptionsHistorical' |
   'getExpiry' | 'getSnapshots' | 'deleteSnapshots' | 'patternListStrategies' |
-  'patternListCategories' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'> & {
+  'patternListCategories' | 'patternAddStrategy' | 'patternAddCategory' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'> & {
   getSnapshotCandle?: (sessionId: string, eventId: string, instrument: 'underlying' | 'CE' | 'PE', signal?: AbortSignal) => Promise<{candle: OHLCCandle | null}>
 }
 export interface AnalysisEnvironment {

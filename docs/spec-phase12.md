@@ -100,7 +100,7 @@ b) Option in stoploss to increase quantity. Open to discussion.
 - Click-to-annotate: click a candle to place the selected marker; click same spot again to remove
 - Multi-strategy per chart: each annotation carries its own `strategy_name`; active strategy's markers are full opacity, others dimmed
 - Options mode: stacked underlying pane (top) + options CE/PE pane (bottom); each pane only shows annotations for its instrument type
-- Save/update: saves to backend, refreshes strategy list
+- Save/update: saves to backend, registers the chart's category/strategy names in the `PatternNames` registry (see `docs/spec-phase13.md`, Advanced Analysis) and refreshes the lists
 - Gallery: scrollable grid of saved charts filtered by strategy/category dropdowns; cards show date, symbol, instrument badge, entry/exit counts, all strategy names on chart; responsive layout caps at 6 columns and wraps into additional rows instead of paginating
 - Load from gallery: loads full chart + annotations, pre-selects strategy
 - Delete from gallery: with one-click confirmation

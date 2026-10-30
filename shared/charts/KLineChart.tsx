@@ -36,6 +36,7 @@ import { formatCandleCloseCountdown } from "../../windowsapp/src/liveCountdown";
 import { buildTradeMarkers } from "./tradeMarkers";
 import { targetProfitLabel, targetProfitLinePrice } from "./targetProfitLabel";
 import { positionPnlLevels, type PositionPnlLevel } from "./positionPnlLevels";
+import { orderLineLabel, orderPrice } from "./orderLineLabel";
 import { TradingOverlayRegistry } from "./tradingOverlays";
 import { drawingTools, indicatorLabel } from "./catalogue";
 
@@ -209,6 +210,7 @@ type PricePickAction = {
   missingSl?: { quantity: number };
 };
 interface FloatingLabel {
+  anchorRight?: boolean;
   key: string;
   x: number;
   y: number;
@@ -275,41 +277,6 @@ const drawingPoints = (drawing: PersistedDrawing) =>
     timestamp: point.timestamp * 1000,
     value: point.price,
   }));
-const orderPrice = (order: DesktopOrder) =>
-  order.order_type === "LIMIT" ? order.limit_price : order.trigger_price;
-const orderLineLabel = (
-  order: DesktopOrder,
-  position?: DesktopPosition | null,
-  settings?: DesktopTradingSettings | null,
-  sessionCapital = 0,
-) => {
-  const qty = compactQty(order.quantity);
-  const isSl = order.order_type === "STOPLOSS" || order.is_stoploss;
-  if (
-    position &&
-    position.side !== "FLAT" &&
-    ((position.side === "LONG" && order.side === "SELL") ||
-      (position.side === "SHORT" && order.side === "BUY"))
-  ) {
-    const dir = position.side === "LONG" ? 1 : -1;
-    const pnl =
-      dir *
-      (orderPrice(order) - position.avg_entry_price) *
-      Math.min(order.quantity, position.quantity);
-    if (settings?.desktop_pnl_display_mode === "percent") {
-      const base = Math.max(1, sessionCapital);
-      return `${isSl ? "SL" : order.order_type === "LIMIT" ? "L" : "T"}${isSl ? ` ${qty}` : ""} ${pnl >= 0 ? "+" : ""}${((pnl / base) * 100).toFixed(1)}%`;
-    }
-    return `${isSl ? "SL" : order.order_type === "LIMIT" ? "L" : "T"}${isSl ? ` ${qty}` : ""} ${pnl >= 0 ? "+" : ""}${Math.round(pnl)}`;
-  }
-  return `${order.side === "BUY" ? "B" : "S"}${order.order_type === "LIMIT" ? "L" : order.order_type === "STOPLOSS" ? "SL" : "T"} ${qty}`;
-};
-const compactQty = (value: number) =>
-  value >= 100000
-    ? `${(value / 100000).toFixed(value % 100000 === 0 ? 0 : 1)}L`
-    : value >= 1000
-      ? `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}K`
-      : String(value);
 const orderColor = (order: DesktopOrder, selected: boolean) =>
   selected
     ? "#facc15"
@@ -501,7 +468,7 @@ export function KLineChart({
     percentage: number,
   ) => Promise<void>;
   onStrategyCancel?: (strategyId: string) => Promise<void>;
-  onOrderCancel?: (order: DesktopOrder) => void;
+  onOrderCancel?: (order: DesktopOrder, force?: boolean) => void;
   onOrderConvertRequest?: (
     order: DesktopOrder,
     target: ConversionTarget,
@@ -665,7 +632,8 @@ export function KLineChart({
         continue;
       next.push({
         key: source.key,
-        x: source.align === "right" ? Math.max(8, width - 122) : 8,
+        x: source.align === "right" ? Math.max(8, width - 64) : 8,
+        anchorRight: source.align === "right",
         y: pixel.y,
         text: source.text,
         color: source.color,
@@ -1926,6 +1894,9 @@ export function KLineChart({
         position,
         tradingSettings,
         sessionCapital,
+        positionMarkPrice ?? candles[candles.length - 1]?.close,
+        aggregatePnl,
+        brokeragePerOrder,
       );
       nextLabelSources.push({
         key: order.order_id,
@@ -2732,6 +2703,9 @@ export function KLineChart({
               top: label.y,
               borderColor: label.color,
               color: label.color,
+              ...(label.anchorRight
+                ? { transform: "translate(-100%, -50%)" }
+                : {}),
             }}
           >
             {label.text}
@@ -2871,6 +2845,10 @@ export function KLineChart({
                 position,
                 tradingSettings,
                 sessionCapital,
+                undefined,
+                undefined,
+                brokeragePerOrder,
+                true,
               )}
             </span>
             {selectedOrderIsSl && (
@@ -2953,6 +2931,20 @@ export function KLineChart({
               onClick={() => onOrderCancel?.(selectedOrder)}
             >
               ×
+            </button>
+            <button
+              title="Force cancel (bypass broker confirmation)"
+              aria-label="Force cancel order"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "This order's broker confirmation couldn't be resolved. Force-cancel it locally anyway? This will be flagged for review against the broker's own order book.",
+                  )
+                )
+                  onOrderCancel?.(selectedOrder, true);
+              }}
+            >
+              ⊗
             </button>
           </div>
         )}

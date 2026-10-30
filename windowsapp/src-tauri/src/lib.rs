@@ -1097,7 +1097,7 @@ async fn desktop_settings_request(
 fn valid_analysis_path(path: &str, method: &str) -> bool {
     let route = path.split('?').next().unwrap_or("");
     if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
-    if method == "POST" { return route == "labels" || route == "performance/real-fees"; }
+    if method == "POST" { return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories"); }
     if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees"; }
     if method != "GET" { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
@@ -2160,6 +2160,18 @@ mod tests {
         }
         for path in ["snapshots/event-id", "snapshots/../candle", "snapshots/event-id/candle/extra", "snapshots/%2e%2e/candle"] {
             assert!(!valid_analysis_path(path, "GET"));
+        }
+    }
+
+    #[test]
+    fn pattern_name_registration_is_the_only_pattern_write() {
+        for path in ["pattern/strategies", "pattern/categories"] {
+            assert!(valid_analysis_path(path, "GET"));
+            assert!(valid_analysis_path(path, "POST"));
+            assert!(!valid_analysis_path(path, "DELETE"));
+        }
+        for path in ["pattern/chart", "pattern/chart/by-date", "pattern/ohlc/equity", "pattern/strategies/extra"] {
+            assert!(!valid_analysis_path(path, "POST"));
         }
     }
 

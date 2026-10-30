@@ -2243,7 +2243,7 @@ async def _run_real_session(session: SimulationSession) -> None:
                     session.last_price = tick["close"]
                     session.current_time = str(tick["time"])
                     _last_historical_ts = tick["time"]
-                    fill_events = _emit_tick_and_check_orders_real(session, tick, None, loop)
+                    fill_events = await _emit_tick_and_check_orders_real(session, tick, None, loop)
                     for fe in fill_events:
                         try:
                             session.queue.put_nowait(json.dumps(fe))
@@ -2260,7 +2260,7 @@ async def _run_real_session(session: SimulationSession) -> None:
                         break
                     session.last_price = tick["close"]
                     session.current_time = str(tick["time"])
-                    for fe in _emit_tick_and_check_orders_real(session, tick, None, loop):
+                    for fe in await _emit_tick_and_check_orders_real(session, tick, None, loop):
                         try:
                             session.queue.put_nowait(json.dumps(fe))
                         except asyncio.QueueFull:
@@ -2346,7 +2346,7 @@ async def _run_real_session(session: SimulationSession) -> None:
                 session.last_price = payload["close"]
             session.current_time = str(payload["time"])
 
-            fill_events = _emit_tick_and_check_orders_real(session, payload, tick_right, loop)
+            fill_events = await _emit_tick_and_check_orders_real(session, payload, tick_right, loop)
             for fe in fill_events:
                 try:
                     session.queue.put_nowait(json.dumps(fe))
@@ -2445,7 +2445,7 @@ def _register_kotak_sl_for_order(session: SimulationSession, order: Any, loop: A
 
 
 @diagnostics.timed("real_tick_processing")
-def _emit_tick_and_check_orders_real(
+async def _emit_tick_and_check_orders_real(
     session: SimulationSession,
     tick: dict,
     tick_right: Optional[str],
@@ -2515,14 +2515,14 @@ def _emit_tick_and_check_orders_real(
             try:
                 if session.trading_style == "swing":
                     from app.services.swing_portfolio_service import require_entry_allowed as require_swing_entry
-                    require_swing_entry(session, order.side, order.quantity, order.right, order.strike, order.expiry)
+                    await asyncio.to_thread(require_swing_entry, session, order.side, order.quantity, order.right, order.strike, order.expiry)
                 else:
-                    require_entry_allowed(session, order.side, order.quantity, order.right, order.strike, order.expiry)
+                    await asyncio.to_thread(require_entry_allowed, session, order.side, order.quantity, order.right, order.strike, order.expiry)
             except HTTPException as exc:
                 raise KotakError(str(exc.detail)) from exc
             if order.right and session.instrument_type == "options":
                 from app.services.broker_order_service import submit_once
-                kotak_order_id = submit_once(session, order, kotak_svc.place_options_limit_order,
+                kotak_order_id = await asyncio.to_thread(submit_once, session, order, kotak_svc.place_options_limit_order,
                     symbol=session.symbol,
                     right=order.right,
                     strike=order.strike if order.strike is not None else session.strike,
@@ -2533,7 +2533,7 @@ def _emit_tick_and_check_orders_real(
                 )
             else:
                 from app.services.broker_order_service import submit_once
-                kotak_order_id = submit_once(session, order, kotak_svc.place_limit_order,
+                kotak_order_id = await asyncio.to_thread(submit_once, session, order, kotak_svc.place_limit_order,
                     symbol=session.symbol,
                     side=side_code,
                     qty=order.quantity,
@@ -2547,7 +2547,7 @@ def _emit_tick_and_check_orders_real(
             order.filled_at = None
             order.filled_price = None
             from app.services.order_service import _write_order_to_db
-            _write_order_to_db(order)
+            await asyncio.to_thread(_write_order_to_db, order)
             logger.info(
                 "Real session %s: forwarded triggered %s order %s to Kotak (kotak_id=%s price=%.2f)",
                 session.session_id, order.order_type.value, order.order_id, kotak_order_id, kotak_price,
@@ -2567,7 +2567,7 @@ def _emit_tick_and_check_orders_real(
                 from app.services.order_service import _write_order_to_db
                 order.status = OrderStatus.PENDING
                 order.filled_at = order.filled_price = None
-                _write_order_to_db(order, strict=True)
+                await asyncio.to_thread(_write_order_to_db, order, strict=True)
                 session.queue.put_nowait(json.dumps({'type': 'order_updated', **order.model_dump(mode='json')}))
                 session.queue.put_nowait(json.dumps({'type': 'broker_error', 'message': f'Broker submission unconfirmed; refresh before retrying: {exc}'}))
                 continue
@@ -2577,10 +2577,10 @@ def _emit_tick_and_check_orders_real(
             # Credit back reserved funds for BUY orders so wallet stays consistent.
             if order.side.value == "BUY" and order.reserved_amount > 0:
                 from app.services import order_service
-                order_service._credit_reservation(order, order.reserved_amount, session.date)
+                await asyncio.to_thread(order_service._credit_reservation, order, order.reserved_amount, session.date)
                 order.reserved_amount = 0.0
             from app.services.order_service import _write_order_to_db
-            _write_order_to_db(order)
+            await asyncio.to_thread(_write_order_to_db, order)
             # Notify frontend: remove from open orders, show error banner.
             cancel_event = {"type": "order_cancelled", "order_id": order.order_id}
             error_event = {"type": "broker_error", "message": f"Kotak order failed: {exc}"}

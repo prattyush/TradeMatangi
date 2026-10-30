@@ -363,6 +363,25 @@ async def reconcile_children(session, parent, operation, job, rows, broker):
             matches = [row for row in rows if row.get('tag') == child_record['tag'] or
                        (child.kotak_order_id and row['kotak_order_id'] == child.kotak_order_id)]
             if len(matches) != 1:
+                # A never-acknowledged child (no broker_order_id yet) whose tag
+                # is genuinely absent from this complete report -- not merely
+                # ambiguous (>1 match) -- was proven never accepted. Give up
+                # rather than deferring forever; an already-acknowledged child
+                # (known kotak_order_id) vanishing from a report is a more
+                # alarming situation and keeps deferring.
+                if (len(matches) == 0 and not child.kotak_order_id
+                        and child_record['state'] in ('submitting', 'unknown')):
+                    from app.services.real_broker_state import _resolve_tag
+                    outcome, _ = _resolve_tag(child, rows)
+                    if outcome == 'absent':
+                        # Mutate the live tracked order (as the matched branch
+                        # below does via `existing`/`alias`), not the copy just
+                        # reconstructed from the job's own serialized record --
+                        # get_open_orders()/the cancel endpoint/UI all read the
+                        # live object, not this function's local `child`.
+                        live = order_service.get_order(session.session_id, child.order_id) or child
+                        await abandon_prepared(session, live, child_record, operation, job,
+                            'Recovery order was never acknowledged by the broker; giving up on resubmission')
                 raise Deferred('Recovery acknowledgement uncertain; will reconcile without resubmitting')
             row = matches[0]
             child.kotak_order_id = row['kotak_order_id']
@@ -578,6 +597,12 @@ async def _attempt(session, parent, operation, job, broker, *, bundle=None, rese
         if entry_intent:
             from app.services.execution_analytics import created
             created(child, session)
+        # Written after created()'s snapshot (not via the constructor's
+        # analytics=) so entry-intent children still get their full analytics
+        # snapshot -- created() skips building it when analytics is already
+        # non-empty. Mirrors submit_once's broker_tag convention so this order
+        # becomes visible to real_broker_state's absent-tag resolution.
+        child.analytics = {**(child.analytics or {}), 'broker_tag': tag}
         child.broker_submission_at = int(time.time() * 1000)
         record = {'state': 'submitting', 'order': child.model_dump(mode='json'), 'tag': tag, 'cancelled_parent_id': parent.kotak_order_id}
         if not await asyncio.to_thread(journal.store.claim, key, record):
