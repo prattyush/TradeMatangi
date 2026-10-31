@@ -142,13 +142,48 @@ def test_replay_and_live_request_models_accept_five_but_not_six():
         StartLiveRequest(tiles=tiles + [tiles[0]])
 
 
-def test_legacy_provenance_and_stale_history_block_premium_selection():
-    result = history((71700,), ("09:15:00",))
-    result.frame.drop(columns="observed", inplace=True)
+def legacy_history(prices, start="09:15:00"):
+    """Gap-filled cache file written before the ``observed`` column existed."""
+    index = pd.date_range(f"{DATE} {start}", periods=len(prices), freq="1s", tz="UTC")
+    frame = pd.DataFrame({key: prices for key in ("open", "high", "low", "close")}, index=index)
+    return HistoricalResult(frame, Path("legacy.parquet"), "breeze", "breeze", 1)
+
+
+def test_legacy_file_without_provenance_can_select_a_strike():
+    result = legacy_history((71700, 71701))
     with patch.object(prep, "load_history", return_value=result):
-        output = prep.prepare("replay", DATE, "09:15:00", [{**PANE, "selection_mode": "max_price", "max_price": 100}])
-    assert output["panes"][0]["availability"] == "error"
-    assert "Observation provenance" in output["panes"][0]["reason"]
+        output = prep.prepare("replay", DATE, "09:15:01", [{**PANE, "selection_mode": "max_price", "max_price": 100000}])
+    assert output["panes"][0]["availability"] == "available"
+    assert output["panes"][0]["premium"] == 71701
+
+
+def test_legacy_back_filled_leading_gap_is_never_used_as_a_price():
+    # First real tick is at 09:15:04; earlier rows are the back-filled copy of it.
+    result = legacy_history((100, 100, 100, 100, 100, 90, 95))
+    assert prep.price_before(result, DATE, pd.Timestamp(f"{DATE} 09:15:03", tz="UTC"), require_observed=True) is None
+    assert prep.price_before(result, DATE, pd.Timestamp(f"{DATE} 09:15:04", tz="UTC"), require_observed=True) == 100
+    assert prep.price_before(result, DATE, pd.Timestamp(f"{DATE} 09:15:06", tz="UTC"), require_observed=True) == 95
+
+
+def test_legacy_contract_not_yet_traded_is_skipped_and_scan_continues():
+    flat = legacy_history((50,) * 600)  # untraded until the end of the file
+    live = legacy_history((300, 80, 70))
+    def load(symbol, date, strike=None, *args):
+        return legacy_history((71700, 71701)) if strike is None else (flat if strike == 71700 else live)
+    with patch.object(prep, "load_history", side_effect=load):
+        output = prep.prepare("replay", DATE, "09:15:02", [{**PANE, "selection_mode": "max_price", "max_price": 100}])
+    assert output["panes"][0]["pane"]["strike"] == "71800"
+    assert output["panes"][0]["premium"] == 70
+
+
+def test_frame_without_ohlc_still_reports_missing_provenance():
+    result = legacy_history((100, 101))
+    result.frame.drop(columns="close", inplace=True)
+    with pytest.raises(ValueError, match="Observation provenance"):
+        prep.price_before(result, DATE, pd.Timestamp(f"{DATE} 09:15:01", tz="UTC"), require_observed=True)
+
+
+def test_stale_history_blocks_premium_selection():
     from dataclasses import replace
     with patch.object(prep, "load_history", return_value=replace(history(), stale=True)):
         assert prep.prepare("paper", DATE, "09:15:00", [PANE])["panes"][0]["availability"] == "error"

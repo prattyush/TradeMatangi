@@ -47,7 +47,9 @@ export function InstallAppControl() {
   const state = useContext(InstallContext)
   if (!state || state.hidden) return null
   return <span className="pwa-install">
-    <button type="button" disabled={state.busy} onClick={() => void state.install()}>{state.busy ? 'Installing…' : 'Install app'}</button>
+    <button type="button" className="pwa-install-icon" aria-label="Install app" title={state.busy ? 'Installing…' : 'Install app'} disabled={state.busy} onClick={() => void state.install()}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11" /></svg>
+    </button>
     {state.help && <span role="dialog" aria-label="Install TradeMatangi" className="pwa-install-help">
       <strong>Install TradeMatangi</strong>
       <p>In Chrome or Edge, use the browser’s Install app menu. On iPad, open the webapp in Safari, then choose Share → Add to Home Screen → Open as Web App.</p>
