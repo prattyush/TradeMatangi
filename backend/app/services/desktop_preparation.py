@@ -8,6 +8,7 @@ from datetime import date as calendar_date
 from math import isfinite
 from dataclasses import replace
 
+import numpy as np
 import pandas as pd
 
 from app.config import SUPPORTED_SYMBOLS
@@ -25,10 +26,30 @@ def observed_frame(result, date):
     return frame
 
 
+def infer_observed(frame):
+    """Observation mask for cache files saved before provenance was recorded.
+
+    Gap filling forward-fills after the first provider row and back-fills the
+    leading gap with that row's (future) price, so the leading run of identical
+    OHLC rows is the only look-ahead.  Trust the run's last row onward.  This is
+    conservative: a genuinely flat opening only delays when a price is accepted.
+    """
+    values = frame[["open", "high", "low", "close"]].to_numpy()
+    if len(values) < 2:
+        return np.ones(len(values), dtype=bool)
+    changed = (values[1:] != values[:-1]).any(axis=1)
+    first_real = int(changed.argmax()) if changed.any() else len(values) - 1
+    mask = np.ones(len(values), dtype=bool)
+    mask[:first_real] = False
+    return mask
+
+
 def price_before(result, date, reference, *, require_observed=False):
-    if require_observed and "observed" not in result.frame:
-        raise ValueError("Observation provenance unavailable; choose a manual strike")
     frame = observed_frame(result, date)
+    if require_observed and "observed" not in result.frame:
+        if not {"open", "high", "low", "close"} <= set(frame.columns):
+            raise ValueError("Observation provenance unavailable; choose a manual strike")
+        frame = frame[infer_observed(frame)]
     # Native minute OHLC is only known after the minute finishes. Source seconds
     # are observed tick samples at their timestamp (project's IST-as-UTC encoding).
     delay = result.interval_seconds if result.interval_seconds > 1 else 0
