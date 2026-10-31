@@ -1,3 +1,5 @@
+import { rendererAccountKey, rendererPreferenceVersion, publishRenderer } from './websiteChartPreferences'
+import { pendingOrderEdits } from '../../../shared/charts/pendingOrderEdits'
 import { isBrokerSnapshot } from '../brokerSnapshot'
 import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
@@ -112,6 +114,8 @@ export interface SymbolInfo {
 
 export interface ConversionResult { order_id: string; state: string; message?: string | null }
 export interface Order {
+  broker_order_id?: string | null
+  kotak_order_id?: string | null
   split_operation?: { operation_id: string; state: string; message?: string } | null
   broker_conversion?: { operation_id?: string; updated_at?: number; state: string; requested_type?: string; message?: string | null } | null
   order_id: string
@@ -137,6 +141,7 @@ export interface Order {
 }
 
 export interface HistoricalDataResponse {
+  as_of_time?: string
   symbol: string
   dates: string[]
   candles: OHLCCandle[]
@@ -165,6 +170,7 @@ export interface SimulationStartRequest {
 }
 
 export interface UserSettingsResponse {
+  website_chart_renderer?: "lightweight" | "kline"
   real_execution_broker?: "kotak" | "kite"
   brokerage_per_order?: number
   strategy_interval_secs?: 120 | 180 | 300
@@ -210,6 +216,10 @@ export interface UserSettingsResponse {
 // ── Strategy types ──────────────────────────────────────────────────────────
 
 export interface StrategyResponse {
+  price?: number | null
+  strike?: number | null
+  expiry?: string | null
+  contract_key?: string | null
   strategy_id: string
   strategy_type: string
   symbol: string
@@ -222,6 +232,8 @@ export interface StrategyResponse {
 }
 
 export interface StartStrategyRequest {
+  strike?: number
+  expiry?: string
   session_id: string
   strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss'
   right?: 'CE' | 'PE' | null
@@ -938,6 +950,7 @@ const api = {
     historicalDays?: number,
     forceRefresh = false,
     historyMode: 'live' | 'replay' = 'replay',
+    asOfTime?: string,
   ): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/options-historical`
       + `?symbol=${encodeURIComponent(symbol)}`
@@ -948,10 +961,14 @@ const api = {
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
     if (historicalDays) url += `&historical_days=${historicalDays}`
     if (forceRefresh) url += '&force_refresh=true'
+    const normalizedCutoff=asOfTime?.length===5?`${asOfTime}:00`:asOfTime
+    if(normalizedCutoff)url+=`&as_of_time=${encodeURIComponent(normalizedCutoff)}`
     url += `&history_mode=${historyMode}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Options historical data fetch failed: ${res.status}`)
-    return res.json()
+    const data:HistoricalDataResponse=await res.json()
+    if(normalizedCutoff&&data.as_of_time!==normalizedCutoff)throw new Error('Backend cannot confirm replay-safe option history; update the backend or use Lightweight.')
+    return data
   },
 
   async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number, forceRefresh = false, historyMode: 'live' | 'replay' = 'replay'): Promise<OHLCCandle[]> {
@@ -1286,7 +1303,7 @@ const api = {
     })
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
-      throw new Error(typeof error.detail === 'string' ? error.detail : `Update order failed: ${res.status}`)
+      throw new ApiError(typeof error.detail === 'string' ? error.detail : `Update order failed: ${res.status}`, res.status)
     }
     return res.json()
     })
@@ -1687,6 +1704,8 @@ const api = {
   // ── User Settings ──────────────────────────────────────────────────────────
 
   async getUserSettings(importBrowserPreferences = false): Promise<UserSettingsResponse> {
+    const rendererOwner=rendererAccountKey()
+    const rendererVersion=rendererPreferenceVersion(rendererOwner)
     const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
       headers: _authHeaders(),
     })
@@ -1716,10 +1735,13 @@ const api = {
     // Cache only explicitly configured values; a default must not become a legacy override.
     if (settings.target_deviation_configured) localStorage.setItem('targetDeviationPct', String((settings.target_deviation_pct ?? 0.01) * 100))
     window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: settings }))
+    const renderer=publishRenderer(settings.website_chart_renderer,rendererOwner,rendererVersion)
+    if(renderer!==undefined&&renderer!==(settings.website_chart_renderer??'lightweight'))settings={...settings,website_chart_renderer:renderer}
     return settings
   },
 
   async updateUserSettings(settings: Partial<UserSettingsResponse>): Promise<UserSettingsResponse> {
+    const rendererOwner=rendererAccountKey()
     const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -1727,7 +1749,10 @@ const api = {
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) throw new Error(data?.detail || `Update user settings failed: ${res.status}`)
+    if(settings.website_chart_renderer!==undefined&&data?.website_chart_renderer!==settings.website_chart_renderer)throw new Error('Backend did not confirm the chart renderer setting; update the backend before selecting KLine.')
     cacheSharedSettings(data, localStorage)
+    publishRenderer(data.website_chart_renderer,rendererOwner)
+    window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: data }))
     return data
   },
 
@@ -1770,6 +1795,7 @@ const api = {
   },
 
   async reconcileKotakOrders(sessionId: string): Promise<BrokerSnapshot> {
+    const owner=rendererAccountKey()
     const res = await fetch(
       `${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/refresh`,
       { method: 'POST', signal: controlSignal(), headers: _authHeaders() }
@@ -1780,6 +1806,7 @@ const api = {
     }
     const snapshot = await res.json()
     if (!isBrokerSnapshot(snapshot)) throw new Error('Incomplete broker history response; existing trading state retained')
+    if(rendererAccountKey()===owner)pendingOrderEdits.reconcile(sessionId, snapshot.orders,snapshot)
     return snapshot
   },
 

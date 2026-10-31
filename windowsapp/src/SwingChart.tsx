@@ -1,6 +1,6 @@
 import { SwingIconButton } from "../../shared/SwingIcon";
 import { flashError } from "../../shared/notifications";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChartTile } from "./ChartTile";
 import type { SwingChartProps } from "../../shared/SwingWorkspace";
@@ -23,6 +23,9 @@ const settings = {
   drawingFillColor: "#60a5fa",
   drawingFillOpacity: 0.16,
 };
+// Stable sentinel: content never varies, so there's no need to reallocate
+// it (and force the KLineChart effects keyed on it) on every render.
+const PICKING_ACTION = { ticket: {} };
 type DrawingRequest = (
   path: string,
   method: "GET" | "POST" | "PUT" | "DELETE",
@@ -75,23 +78,26 @@ export default function SwingChart(
       .catch(() => undefined);
   }, [props.drawingRequest]);
   const pane = props.pane;
-  const instrument =
-    pane.instrument_type === "futures"
-      ? {kind: "future", underlying: pane.symbol, exchange: pane.symbol === "BSESEN" ? "BFO" : "NFO", expiry: pane.expiry}
-      : pane.instrument_type === "options"
-      ? {
-          kind: "option",
-          underlying: pane.symbol,
-          exchange: pane.symbol === "BSESEN" ? "BFO" : "NFO",
-          right: pane.right,
-          strike: pane.strike,
-          expiry: pane.expiry,
-        }
-      : {
-          kind: props.chartKind === "index" ? "index" : "equity",
-          symbol: pane.symbol,
-          exchange: pane.symbol === "BSESEN" ? "BSE" : "NSE",
-        };
+  const instrument = useMemo(
+    () =>
+      pane.instrument_type === "futures"
+        ? {kind: "future", underlying: pane.symbol, exchange: pane.symbol === "BSESEN" ? "BFO" : "NFO", expiry: pane.expiry}
+        : pane.instrument_type === "options"
+        ? {
+            kind: "option",
+            underlying: pane.symbol,
+            exchange: pane.symbol === "BSESEN" ? "BFO" : "NFO",
+            right: pane.right,
+            strike: pane.strike,
+            expiry: pane.expiry,
+          }
+        : {
+            kind: props.chartKind === "index" ? "index" : "equity",
+            symbol: pane.symbol,
+            exchange: pane.symbol === "BSESEN" ? "BSE" : "NSE",
+          },
+    [pane.instrument_type, pane.symbol, pane.expiry, pane.right, pane.strike, props.chartKind],
+  );
   const tools = (
 <div className="swing-pane-bar">
         <select
@@ -145,12 +151,14 @@ export default function SwingChart(
       {props.toolsContainer === undefined ? tools : props.active && props.toolsContainer && createPortal(tools, props.toolsContainer)}
       {drawingError && <p role="alert">{drawingError}</p>}
       <ChartTile
+        drawingRefreshKey={props.refreshKey}
         shareDayDrawings
         legacyDrawingScope={props.drawingScope}
         candleAnchorSeconds={pane.interval === "1D" ? 0 : 33300}
         showHistoricalMarkers={props.showHistoricalTrades}
         externalTradeMarkers={props.showHistoricalTrades === true}
-        hideWindowActions
+        hideInstrumentPicker
+        hideMaximizeButton
         readOnlyOrders
         symbol={pane.symbol}
         interval={
@@ -191,7 +199,8 @@ export default function SwingChart(
         onOrderDrag={props.onOrderDrag}
         onSwingChartContext={props.onChartContext}
         trades={props.trades}
-        pricePickAction={props.picking ? { ticket: {} } : null}
+        pricePickAction={props.picking ? PICKING_ACTION : null}
+        onPricePickCancel={props.onCancelPick}
         onPricePick={props.onPick}
       />
     </div>

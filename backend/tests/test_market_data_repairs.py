@@ -95,11 +95,11 @@ def today(monkeypatch):
 def test_tail_reuses_completed_chunks_and_provider_wins(today):
     cached = frame("2026-10-05 09:15", "2026-10-05 13:27")
     start, end = history_tail.fetch_window("2026-10-05", cached)
-    assert start == pd.Timestamp("2026-10-05 13:00")
+    assert start == pd.Timestamp("2026-10-05 13:06")
     assert end == pd.Timestamp("2026-10-05 13:36")
     merged = history_tail.merge_tail(cached, frame(str(start), str(end), 105))
-    assert merged.loc["2026-10-05 12:59:59", "close"] == 100
-    assert merged.loc["2026-10-05 13:00:00", "close"] == 105
+    assert merged.loc["2026-10-05 13:05:59", "close"] == 100
+    assert merged.loc["2026-10-05 13:06:00", "close"] == 105
     assert merged.index.is_unique and merged.index.max() == end
 
 

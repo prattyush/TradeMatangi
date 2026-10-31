@@ -1,0 +1,52 @@
+.settings-help {
+  display: inline-block;
+  position: relative;
+  font-size: 12px;
+  vertical-align: middle;
+}
+.settings-help > button {
+  cursor: help;
+  color: #8b949e;
+  border: 0;
+  background: transparent;
+  padding: 3px 6px;
+}
+.settings-help > [role="tooltip"] {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 100%;
+  width: min(320px, 60vw);
+  padding: 10px;
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #484f58;
+  border-radius: 5px;
+  z-index: 10;
+  font-weight: normal;
+}
+.settings-help:hover > [role="tooltip"],
+.settings-help:focus-within > [role="tooltip"],
+.settings-help.is-open > [role="tooltip"] {
+  display: block;
+}
+.chart-renderer-setting {
+  align-self: flex-end;
+  position: relative;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+.chart-renderer-setting summary {
+  cursor: pointer;
+  list-style: none;
+}
+.chart-renderer-setting label {
+  position: absolute;
+  right: 0;
+  z-index: 10;
+  min-width: 170px;
+  padding: 10px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 5px;
+}

@@ -1,3 +1,4 @@
+import { AppWindowControls } from "./AppWindowControls";
 import { snapSwingPrice } from './swingOrderPrice';
 import type { SwingSubscribe } from "./swingStream";
 import { SwingIconButton } from "./SwingIcon";
@@ -36,6 +37,7 @@ export interface SwingCandle {
   volume?: number;
 }
 export interface SwingChartProps {
+  refreshKey?: number
   pane: SwingPane;
   drawingScope: string;
   chartKind?: string;
@@ -50,6 +52,7 @@ export interface SwingChartProps {
   trades?: any[];
   showHistoricalTrades?: boolean;
   toolsContainer?: HTMLElement | null;
+  onCancelPick?: () => void;
   onPick: (price: number) => void;
   onActivate: () => void;
   onOrderDrag?: (order: any, price: number) => Promise<void>;
@@ -169,6 +172,7 @@ function PaneChart({
   markerBasis,
   surface,
   toolsContainer,
+  onCancelPick,
   onPick,
   onActivate,
   onOrderSelect, onOrderDrag, onChartContext,
@@ -189,6 +193,7 @@ function PaneChart({
   markerBasis: any[];
   surface: "website" | "desktop";
   toolsContainer?: HTMLElement | null;
+  onCancelPick?: () => void;
   onPick: (price: number) => void;
   onActivate: () => void;
   onOrderDrag?: (order: any, price: number) => Promise<void>;
@@ -285,6 +290,7 @@ function PaneChart({
   };
   return (
     <>
+      <SwingIconButton label="Refresh chart and drawings" icon="Refresh" onClick={() => setRetry(v=>v+1)} />
       {(surface !== "desktop" || error) && (
         <div className="swing-data-label">
           {surface !== "desktop" && (
@@ -307,6 +313,7 @@ function PaneChart({
       <Renderer
         key={`${paneKey(pane)}:${pane.interval}`}
         pane={pane}
+        refreshKey={retry}
         drawingScope={drawingScope}
         toolsContainer={toolsContainer}
         chartKind={chartKind}
@@ -338,6 +345,7 @@ function PaneChart({
           markerBasis,
         )}
         showHistoricalTrades
+        onCancelPick={onCancelPick}
         onPick={onPick}
         onActivate={onActivate}
         loadOlder={loadOlder}
@@ -361,6 +369,7 @@ export default function SwingWorkspace({
   onCreateLinked,
   onPopOut,
   onSelect,
+  onCancelPick,
   onPick,
   picking,
   ticket,
@@ -387,6 +396,7 @@ export default function SwingWorkspace({
   onCreateLinked?: (portfolioId: string) => void;
   onPopOut?: (portfolioId: string) => void;
   onSelect: (pane: SwingPane) => void;
+  onCancelPick?: () => void;
   onPick: (price: number) => void;
   picking: boolean;
   ticket: ReactNode;
@@ -678,6 +688,7 @@ export default function SwingWorkspace({
         </div>
       </div>}
       <div className="swing-workspace-bar">
+        <AppWindowControls />
         {navigationControls}
         {portfolioControls}
         <strong>
@@ -1030,6 +1041,7 @@ export default function SwingWorkspace({
                   }
                   active={active === index}
                   picking={picking && (pickOrder ? exact(pane, pickOrder) : active === index)}
+                  onCancelPick={onCancelPick}
                   onPick={onPick}
                   onActivate={() => setActive(index)}
                   position={snapshot.positions?.find((p: any) =>

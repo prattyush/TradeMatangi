@@ -55,3 +55,22 @@ describe("Day/Swing drawing namespaces", () => {
     ).toEqual(future);
   });
 });
+
+it("reads unscoped legacy Swing records from a canonical Day key without changing new writes", () => {
+  const day = {
+    kind: "option",
+    exchange: "NSE",
+    underlying: "NIFTY",
+    right: "CE",
+    strike: 24000,
+    expiry: "2026-10-20",
+  };
+  const result = drawingIdentity(day, undefined, undefined, true);
+  expect(result.writeInstrument).toEqual(day);
+  expect(result.readKeys).toContain(
+    canonicalDrawingKey({ ...day, exchange: "NFO" }),
+  );
+  expect(result.readKeys.every((key) => !key.includes("drawing_scope"))).toBe(
+    true,
+  );
+});

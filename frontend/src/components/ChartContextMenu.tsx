@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export interface ContextMenuAction {
   label: string
@@ -43,6 +43,8 @@ export default function ChartContextMenu({ x, y, price, actions, onClose }: Char
   return (
     <div
       ref={menuRef}
+      role="menu"
+      aria-label="Chart trading actions"
       style={{
         position: 'fixed',
         left: adjustedX,
@@ -69,23 +71,40 @@ export default function ChartContextMenu({ x, y, price, actions, onClose }: Char
 function ContextMenuItem({ action, onClose, depth }: { action: ContextMenuAction; onClose: () => void; depth: number }) {
   const itemRef = useRef<HTMLDivElement>(null)
   const submenuRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [openLeft, setOpenLeft] = useState(false)
   const hasSubmenu = action.submenu && action.submenu.length > 0
+
+  useEffect(() => {
+    if (expanded && itemRef.current) setOpenLeft(itemRef.current.getBoundingClientRect().right + 180 > window.innerWidth)
+  }, [expanded])
 
   return (
     <div
       ref={itemRef}
       style={{ position: 'relative' }}
       onMouseEnter={() => {
-        if (hasSubmenu && submenuRef.current) submenuRef.current.style.display = 'block'
+        if (hasSubmenu && !action.disabled) setExpanded(true)
       }}
       onMouseLeave={() => {
-        if (hasSubmenu && submenuRef.current) submenuRef.current.style.display = 'none'
+        setExpanded(false)
       }}
     >
       <div
+        role="menuitem"
+        tabIndex={action.disabled ? -1 : 0}
+        aria-disabled={action.disabled || undefined}
+        aria-haspopup={hasSubmenu ? 'menu' : undefined}
+        aria-expanded={hasSubmenu ? expanded : undefined}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            event.currentTarget.click()
+          }
+        }}
         onClick={() => {
           if (action.disabled) return
-          if (hasSubmenu) return
+          if (hasSubmenu) { setExpanded(true); return }
           action.onClick?.()
           onClose()
         }}
@@ -108,10 +127,13 @@ function ContextMenuItem({ action, onClose, depth }: { action: ContextMenuAction
       {hasSubmenu && (
         <div
           ref={submenuRef}
+          role="menu"
+          aria-label={action.label}
           style={{
-            display: 'none',
+            display: expanded ? 'block' : 'none',
             position: 'absolute',
-            left: '100%',
+            left: openLeft ? undefined : '100%',
+            right: openLeft ? '100%' : undefined,
             top: -4,
             zIndex: 10001,
             background: '#161b22',

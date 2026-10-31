@@ -149,9 +149,10 @@ async def get_me(user_id: str = Depends(get_request_user_id)):
     info = get_user_info(user_id)
     if not info:
         raise HTTPException(status_code=404, detail="User not found")
+    # Legacy partial user rows may lack email; clients retain their signed-in email.
     return AuthResponse(
         user_id=info["user_id"],
-        email=info["email"],
+        email=info.get("email") or "",
         is_admin=bool(info.get("is_admin", False)),
         account_name=info.get("account_name"),
     )
@@ -179,7 +180,10 @@ async def set_account_name_endpoint(
     """Set the account_name for the current user. Used for Google sign-in users who haven't set one yet."""
     if not req.account_name.strip():
         raise HTTPException(status_code=400, detail="account_name is required")
-    result = set_account_name(user_id, req.account_name.strip())
+    try:
+        result = set_account_name(user_id, req.account_name.strip())
+    except RuntimeError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
     if not result:
         raise HTTPException(status_code=404, detail="User not found")
     return AuthResponse(
