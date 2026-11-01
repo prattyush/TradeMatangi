@@ -49,14 +49,25 @@ test('menu gestures ignore pan, pinch, cancelled and editing gestures; detach cl
     if ((window as any).menus.length !== 1) throw Error('Double-tap did not open menu')
     target.dispatchEvent(new MouseEvent('dblclick', { clientX: 50, clientY: 50 }))
     if ((window as any).menus.length !== 1) throw Error('Synthetic mouse event duplicated menu')
+    // Right-click: a mouse opens the menu; a touch long-press (contextmenu after a touch pointer) does not.
+    const context = (type: string) => { target.dispatchEvent(new PointerEvent('pointerdown', { pointerType: type, pointerId: 9, clientX: 60, clientY: 60, bubbles: true })); target.dispatchEvent(new PointerEvent('pointerup', { pointerType: type, pointerId: 9, clientX: 60, clientY: 60, bubbles: true })); target.dispatchEvent(new MouseEvent('contextmenu', { clientX: 60, clientY: 60, bubbles: true, cancelable: true })) }
+    context('touch')
+    if ((window as any).menus.length !== 1) throw Error('Touch long-press opened the menu')
+    context('mouse')
+    if ((window as any).menus.length !== 2) throw Error('Right-click did not open the menu')
+    ;(window as any).blocked = true
+    context('mouse')
+    ;(window as any).blocked = false
+    if ((window as any).menus.length !== 2) throw Error('Right-click ignored the blocked state')
     ;(window as any).clean()
     tap(); tap()
-    if ((window as any).menus.length !== 1) throw Error('Listeners leaked after cleanup')
+    context('mouse')
+    if ((window as any).menus.length !== 2) throw Error('Listeners leaked after cleanup')
   })
 })
 
 for (const renderer of ['kline', 'lightweight']) {
-  test(`${renderer}: double-click opens contract menu; single and right clicks do not`, async ({ page }) => {
+  test(`${renderer}: double-click and right-click open the contract menu; a single click does not`, async ({ page }) => {
     await page.goto('/webapp/tests/charts.html?menuGesture=doubleclick')
     await page.waitForFunction(() => (window as any).ready)
     await page.evaluate(() => (window as any).setProps({ menuHarness: true, paneType: 'options', right: 'CE', strike: 24000, expiry: '2026-10-20', openOrders: [] }))
@@ -66,6 +77,8 @@ for (const renderer of ['kline', 'lightweight']) {
     await chart.click({ position: { x: 250, y: 150 } })
     await expect(page.getByText(/^Use as SL @/)).toHaveCount(0)
     await chart.click({ button: 'right', position: { x: 250, y: 150 } })
+    await expect(page.getByText(/^Use as SL @/)).toBeVisible()
+    await page.keyboard.press('Escape')
     await expect(page.getByText(/^Use as SL @/)).toHaveCount(0)
     await chart.dblclick({ position: { x: 250, y: 150 } })
     await expect(page.getByText(/^Use as SL @/)).toBeVisible()

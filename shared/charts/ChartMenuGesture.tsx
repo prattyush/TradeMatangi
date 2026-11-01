@@ -1,6 +1,10 @@
 import { createContext, useContext, type RefObject } from 'react'
 
-/** The website and desktop retain their existing context-menu gesture. */
+/**
+ * The website and desktop retain their existing context-menu gesture (right-click).
+ * In 'doubleclick' mode (installable webapp) double-click / double-tap opens the menu and,
+ * for a mouse or pen, right-click opens it too, so a desktop webapp matches the website.
+ */
 export const ChartMenuGesture = createContext<'contextmenu' | 'doubleclick'>('contextmenu')
 export const useChartMenuGesture = () => useContext(ChartMenuGesture)
 
@@ -18,7 +22,9 @@ export function bindChartMenu(
   const pointers = new Set<number>()
   let ignoreMouseUntil = 0
   let blockedUntil = 0
+  let lastPointerType = 'mouse'
   const down = (event: PointerEvent) => {
+    lastPointerType = event.pointerType
     pointers.add(event.pointerId)
     if (event.pointerType !== 'touch') {
       if (blocked()) blockedUntil = Date.now() + 500
@@ -60,6 +66,13 @@ export function bindChartMenu(
     event.preventDefault()
     open(event)
   }
+  // Right-click for a mouse or pen. A touch long-press also fires `contextmenu`; leave that to the
+  // browser so it can never pop the trading menu while panning or holding the chart.
+  const secondary = (event: MouseEvent) => {
+    if (lastPointerType === 'touch' || blocked()) return
+    event.preventDefault()
+    open(event)
+  }
   const request = () => {
     if (blocked()) return
     const rect = element.getBoundingClientRect()
@@ -73,6 +86,7 @@ export function bindChartMenu(
     element.addEventListener('pointerup', up, { passive: true })
     element.addEventListener('pointercancel', cancel, { passive: true })
     element.addEventListener('chart-menu-request', request)
+    element.addEventListener('contextmenu', secondary)
   }
   return () => {
     element.removeEventListener(mouseEvent, mouse)
@@ -81,13 +95,14 @@ export function bindChartMenu(
     element.removeEventListener('pointerup', up)
     element.removeEventListener('pointercancel', cancel)
     element.removeEventListener('chart-menu-request', request)
+    if (gesture === 'doubleclick') element.removeEventListener('contextmenu', secondary)
   }
 }
 
 export function ChartMenuButton({ chart, visible = true }: { chart: RefObject<HTMLElement>; visible?: boolean }) {
   const gesture = useChartMenuGesture()
   return gesture === 'doubleclick' && visible ? <button type="button" aria-label="Chart trading menu"
-    title="Chart menu · double-click or double-tap the chart at a price"
+    title="Chart menu · right-click or double-click (double-tap on touch) the chart at a price"
     onClick={event => { event.stopPropagation(); chart.current?.dispatchEvent(new Event('chart-menu-request')) }}>
     Chart menu
   </button> : null

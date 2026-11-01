@@ -28,7 +28,7 @@ Tests require Playwright Chromium or Google Chrome (`PLAYWRIGHT_CHROMIUM_EXECUTA
 
 ## Interaction
 
-- Double-click or double-tap a chart price to open its trading menu. Opening a menu never places an order. A **Chart menu** button opens at the latest candle/tick price and also works with a keyboard.
+- Double-click or double-tap a chart price to open its trading menu. With a mouse or pen, **right-click** opens it too, as on the website. Touch has no right-click: use double-tap or the Chart menu button (a long-press is left to the browser). Opening a menu never places an order. A **Chart menu** button opens at the latest candle/tick price and also works with a keyboard.
 - Touch and drag the chart background to pan. Pinch zoom continues to use the chart library. Drag an editable order/drawing line to move that line; updates retain existing release-only behavior. Drawing and price-pick modes take priority over menu recognition.
 - The webapp has no additional title/install/fullscreen row. Its first trading row is the existing TradeMatangi header and controls; the workspace uses the viewport height, respecting device safe areas.
 - Use the compact **Full screen** icon in the existing header (or login title) where supported. On desktop, move the pointer to the top eight pixels to reveal a floating **×** at the top center. It stays while hovered/focused and hides 1.5 seconds after leaving. Escape and browser exits also work. Touch devices keep a compact restore icon in their existing header while fullscreen.
