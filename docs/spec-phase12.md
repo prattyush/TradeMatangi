@@ -298,6 +298,22 @@ b) Option in stoploss to increase quantity. Open to discussion.
 
 **No backend changes. No new tests** (frontend-only changes).
 
+#### Sprint 7 follow-up — snapshot capture timing, ordering, legacy correction (fix/snapshot-capture-lag)
+
+**Bug:** a fill's snapshot showed the state from *before* the fill (position, Used, P&L, Sess, open orders), so each event's effect only appeared on the next event. Cause: `order_filled` captured immediately while `handleOrderFilled` was still refetching positions/trades, and `captureSnapshot` read `simRef`, which only refreshes after a React commit.
+
+**Fix (website):** `captureSnapshot(event, settle?)` fixes `timestamp`/`event_timestamp`/`seq` when the event arrives, then waits for `settle` (the fill's promise) and for the next React commit (`notifyCommit`, 400 ms fallback) before building. New snapshots carry `capture_v: 2` and a monotonic `seq`.
+
+**Ordering:** sort key is `(timestamp, event_timestamp, seq, type rank, event_id)` (backend `snapshot_legacy.sort_key`, viewer matches). Before, ties fell back to a random UUID and a fill could list before its own placement.
+
+**Old stored snapshots:** corrected on read, never rewritten (`services/snapshot_legacy.py`, used by `GET /api/snapshots[...]`). Only website `order_filled` snapshots without `capture_v` are touched. The fill's trade is taken from the first later snapshot that has it (real price/qty), falling back to the event details for the last event. It is applied to the snapshot's own pre-fill state with FIFO lot matching (same as `trading.get_position`), using the snapshot's own recorded prices; commission comes from the Trades table. Result sets `legacy_corrected: true`.
+
+**Desktop:** `POST /api/desktop/v1/trading/{id}/event-snapshots` now also sends `wallet_used_pct`, `combined_pnl(_pct)`, `active_positions`, `filled_trades`, with the same definitions as the website (`snapshot_legacy.summarize_positions`); `wallet_balance` = capital + open P&L (raw cash kept as `cash_balance`, so Real sessions no longer depend on the async broker-funds refresh). `timestamp` is pinned to the fill's `filled_at` (never later than the clock) and `seq` is the stream event id. Known limit: events received in one batch are built from the latest state.
+
+**Definitions shown in the viewer tooltips:** `P&L` = open positions only, gross of brokerage (0 when flat). `Sess` = realized + open, minus brokerage paid so far. Open item: `Wallet` = capital + open P&L, so it excludes realized profit.
+
+**Tests:** `backend/tests/test_snapshot_legacy.py` (corrector, ordering, desktop summary).
+
 ---
 
 ### Sprint 6 — Stoploss Bulk Update Fix & Real-time Chart P&L ✅ COMPLETE

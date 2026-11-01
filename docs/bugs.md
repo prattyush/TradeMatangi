@@ -36,6 +36,18 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 - **Tests**: `backend/tests/test_desktop_replay_events.py::test_stop_ends_attached_trading_session_and_reports_stopped`, `::test_stopped_run_is_not_resurrected_by_a_live_linked_session`. No website unit test: vitest is not installed in `frontend/`.
 - **Lesson**: any "derived state" sync (like `_sync_from_trading`) must respect terminal states, and a UI that offers both "Stop" and an implicit detach must not let Stop silently leave a session running. To diagnose, grep `backend.log` for `replay/<run_id>` and `trading/<session_id>/stop`.
 
+## Event Snapshot Bugs
+
+**[FIXED — PENDING MANUAL APPROVAL]** Event Snapshot viewer: the summary bar (Wallet, Used, P&L, Sess, positions, open orders) shows the state from *before* the clicked event; the event's effect only appears when the next event is clicked. Desktop top bar also showed wrong or empty Used/P&L (2026-11-01).
+- **Symptom**: Clicking `BUY FILLED @ 42.5 CE` showed CE flat with 0 trades; the next event showed `CE LONG 650`. Every fill was one event behind. Same-tick events could list a fill above its own placement.
+- **Root cause (website)**: the `order_filled` SSE handler called `sim.handleOrderFilled(...)` un-awaited and then `captureSnapshot(...)` immediately, while position/trades were still being refetched; `captureSnapshot` also read `simRef`, which only refreshes after a React commit. The viewer was not at fault (it renders the clicked event's own snapshot). Ordering used `(timestamp, random event_id)`.
+- **Root cause (desktop)**: the engine commits a fill before emitting it, so the state was not behind by construction, but the payload omitted `wallet_used_pct`, `combined_pnl`, `active_positions` and `filled_trades`; the viewer then showed an empty Used and computed P&L as `wallet_balance - capital` (cash, so a buy looked like a loss). The clock was the POST-time clock and Real wallet came from the async broker-funds refresh. No desktop lag was reproduced (no desktop snapshots in the local DB).
+- **Fix**: see `docs/spec-phase12.md` "Sprint 7 follow-up". Website captures after the fill settles and the next React commit, with a monotonic `seq` and `capture_v: 2`; ordering by `(timestamp, event_timestamp, seq, type rank)`; old stored website fill snapshots are re-derived on read in `backend/app/services/snapshot_legacy.py` (no DB writes); desktop sends the missing fields with the same definitions and pins time/seq to the event.
+- **Definitions**: `P&L` = open positions only, gross of brokerage (0 when flat). `Sess` = realized + open, minus brokerage paid so far.
+- **Open item**: `Wallet` = capital + open P&L, so it excludes realized profit (e.g. Wallet 150,000 beside Sess +3,594 after a win). Unchanged pending a decision.
+- **Tests**: `backend/tests/test_snapshot_legacy.py`. No website unit test: vitest is not installed in `frontend/`.
+- **Manual check needed**: sim session with snapshots on, place/edit/fill orders, confirm each event shows its own effect; open an old session and confirm its fills are corrected; run desktop replay/paper and confirm Used/P&L/Sess populate.
+
 ## Real Trading Bugs (Kotak)
 
 **[RESOLVED]** A ~30-second total backend freeze during real NIFTY options trading left one order permanently stuck, blocking all new orders on that contract and all attempts to cancel the stuck order itself for over 90 minutes, surviving a session stop/restart; separately, a system-placed protective exit landed in the same stuck state and could not be modified, converted, or cancelled for 5+ minutes (2026-10-27).

@@ -51,7 +51,7 @@ async def list_snapshots(session_id: str = Query(...), user_id: str = Depends(ge
     if not await asyncio.to_thread(analysis_sharing.can_read,session,user_id):
         raise HTTPException(404,"Session not found")
     try:
-        return await asyncio.to_thread(snapshot_service.get_snapshots,session_id)
+        return await asyncio.to_thread(snapshot_service.get_snapshots_corrected,session_id)
     except Exception as exc:
         raise HTTPException(503,"Recorded snapshots could not be read; retry later") from exc
 
@@ -62,7 +62,7 @@ async def get_snapshot(event_id: str, session_id: str = Query(...), user_id: str
     session = await asyncio.to_thread(_load_session,session_id)
     if not await asyncio.to_thread(analysis_sharing.can_read,session,user_id):
         raise HTTPException(404,"Session not found")
-    snap = await asyncio.to_thread(snapshot_service.get_snapshot, session_id, event_id)
+    snap = await asyncio.to_thread(snapshot_service.get_snapshot_corrected, session_id, event_id)
     if snap is None:
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return snap
