@@ -31,11 +31,11 @@ def _fill(side, price, qty, right="CE"):
     return {"side": side, "filled_price": price, "quantity": qty, "right": right}
 
 
-COMMISSIONS = {"b1": 2.0, "s1": 3.0, "b2": 1.0, "s2": 1.0}
+ROWS = [{"trade_id": k, "commission": v, "timestamp": 1} for k, v in {"b1": 2.0, "s1": 3.0, "b2": 1.0, "s2": 1.0}.items()]
 
 
 def correct(items):
-    return legacy.correct("s", items, commissions=lambda _sid: COMMISSIONS)
+    return legacy.correct("s", items, loader=lambda _sid: ROWS)
 
 
 def test_buy_fill_shows_its_own_position_funds_and_pnl():
@@ -91,8 +91,8 @@ def test_already_applied_fill_is_not_double_counted():
     assert correct(items) == items
 
 
-def test_new_captures_and_desktop_snapshots_are_untouched():
-    for extra in ({"capture_v": 2}, {"positions_by_contract": {}}):
+def test_new_captures_are_untouched():
+    for extra in ({"capture_v": 2}, {"capture_v": 2, "positions_by_contract": {}}):
         items = [_snap("buy filled", legacy.FILL_EVENT, [], details=_fill("BUY", 40.0, 100), extra=extra)]
         assert correct(items) == items
 
@@ -101,7 +101,7 @@ def test_failure_returns_stored_snapshots():
     items = [_snap("buy filled", legacy.FILL_EVENT, [], details=_fill("BUY", 40.0, 100))]
     def boom(_sid):
         raise RuntimeError("down")
-    assert legacy.correct("s", items, commissions=boom) == items
+    assert legacy.correct("s", items, loader=boom) == items
 
 
 def test_sort_puts_placement_before_its_fill_at_the_same_tick():
@@ -157,3 +157,41 @@ def test_desktop_event_wording_matches_the_website():
     assert d({"details": {"type": "order_placed", "side": "SELL", "order_type": "STOPLOSS", "trigger_price": 40, "limit_price": 39, "right": "PE"}}) == "SELL STOPLOSS @ 40.00 PE"
     assert d({"details": {"type": "order_converted", "new_order_type": "LIMIT", "is_stoploss": True, "limit_price": 47.61}}) == "STOPLOSS→LIMIT @ 47.61"
     assert d({"details": {"type": "order_cancelled"}}) is None  # unknown shapes keep the client's wording
+
+
+def _desktop_item(desc, etype, details, positions, quotes, *, ts=100, wallet=95000.0, extra=None):
+    snapshot = {
+        "current_price": 24000.0, "current_price_ce": 42.0, "current_price_pe": 40.0,
+        "position": _pos(), "position_ce": _pos(), "position_pe": _pos(),
+        "positions_by_contract": positions, "contract_quotes": quotes,
+        "session_capital": 100000, "wallet_balance": wallet, "session_pnl": 198.0, "session_pnl_pct": 0.2, "open_orders": [],
+    }
+    snapshot.update(extra or {})
+    return {"event_id": desc, "session_id": "s", "instrument_type": "options", "timestamp": ts,
+            "event": {"type": etype, "description": desc, "details": details}, "snapshot": snapshot}
+
+
+def test_old_desktop_snapshot_gets_the_fields_and_wording_a_new_capture_has():
+    rows = [{"trade_id": "b1", "side": "BUY", "price": 40.0, "quantity": 100, "commission": 2.0, "timestamp": 90, "right": "CE"},
+            {"trade_id": "later", "side": "SELL", "price": 45.0, "quantity": 100, "commission": 3.0, "timestamp": 500, "right": "CE"}]
+    item = _desktop_item("order filled", "order_filled",
+                         {"type": "order_filled", "side": "BUY", "filled_price": 40.0, "right": "CE"},
+                         {"k": _pos("LONG", 100, 40.0)}, {"k": {"price": 42.0}})
+    fixed = legacy.correct("s", [item], loader=lambda _sid: rows)[0]
+    snap = fixed["snapshot"]
+    assert fixed["event"]["description"] == "BUY FILLED @ 40 CE"
+    assert snap["combined_pnl"] == 200.0 and snap["wallet_used_pct"] == 4.0 and snap["active_positions"] == 1
+    assert snap["wallet_balance"] == 100200.0 and snap["cash_balance"] == 95000.0   # was cash, which read as a loss
+    assert [t["trade_id"] for t in snap["filled_trades"]] == ["b1"]                  # later trades excluded
+    assert snap["session_pnl"] == 198.0 and snap["legacy_corrected"] is True
+
+
+def test_old_desktop_unquoted_contract_stays_at_entry_and_custom_wording_is_kept():
+    item = _desktop_item("my note", "order_placed", {"type": "order_placed"}, {"k": _pos("LONG", 100, 40.0)}, {})
+    fixed = legacy.correct("s", [item], loader=lambda _sid: [])[0]
+    assert fixed["snapshot"]["combined_pnl"] == 0 and fixed["event"]["description"] == "my note"
+
+
+def test_new_desktop_captures_are_left_alone():
+    item = _desktop_item("BUY FILLED @ 40 CE", "order_filled", {}, {}, {}, extra={"capture_v": 2})
+    assert legacy.correct("s", [item], loader=lambda _sid: []) == [item]

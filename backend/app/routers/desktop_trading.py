@@ -2040,29 +2040,11 @@ def _snapshot_moment(req_event: dict, current_time: int) -> tuple[int, int]:
     return timestamp, int(cursor) if isinstance(cursor, (int, float)) else 0
 
 
-def _price_text(value) -> str:
-    """Render a price the way the website does in event text (42.5, 47, 24372.35)."""
-    return f"{float(value):.6f}".rstrip("0").rstrip(".")
-
-
 def _snapshot_description(event: dict) -> str | None:
     """Website-style wording for a raw stream event, so a snapshot reads the same from either app."""
+    from app.services.snapshot_legacy import describe_event
     details = event.get("details") if isinstance(event.get("details"), dict) else {}
-    kind, right = details.get("type") or event.get("type"), details.get("right")
-    tag = f" {right}" if right else ""
-    if kind == "order_filled" and details.get("side") and details.get("filled_price") is not None:
-        return f"{details['side']} FILLED @ {_price_text(details['filled_price'])}{tag}"
-    if kind == "order_placed" and details.get("side") and details.get("order_type"):
-        price = details.get("limit_price") if details["order_type"] == "LIMIT" else details.get("trigger_price") or details.get("limit_price")
-        if price is not None:
-            return f"{details['side']} {details['order_type']} @ {float(price):.2f}{tag}"
-    if kind == "order_converted" and details.get("new_order_type"):
-        new = details["new_order_type"]
-        old = "STOPLOSS" if details.get("is_stoploss") and new != "STOPLOSS" else "LIMIT" if new == "STOPLOSS" else "ORDER"
-        price = details.get("limit_price") if new == "LIMIT" else details.get("trigger_price") or details.get("limit_price")
-        if price is not None:
-            return f"{old}→{new} @ {_price_text(price)}{tag}"
-    return None
+    return describe_event({"type": event.get("type"), **details})
 
 
 @router.post('/{session_id}/event-snapshots')

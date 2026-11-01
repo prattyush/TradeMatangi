@@ -38,8 +38,39 @@ def is_legacy_website(item: dict) -> bool:
     return bool(snap) and "capture_v" not in snap and "positions_by_contract" not in snap
 
 
+def is_legacy_desktop(item: dict) -> bool:
+    snap = item.get("snapshot") or {}
+    return bool(snap) and "capture_v" not in snap and "positions_by_contract" in snap
+
+
 def needs_correction(item: dict) -> bool:
+    if is_legacy_desktop(item):
+        return True
     return is_legacy_website(item) and (item.get("event") or {}).get("type") == FILL_EVENT
+
+
+def _price_text(value: Any) -> str:
+    """Render a price the way the website does in event text (42.5, 47, 24372.35)."""
+    return f"{float(value):.6f}".rstrip("0").rstrip(".")
+
+
+def describe_event(details: dict) -> str | None:
+    """Website-style wording for a raw desktop stream event; None if not recognised."""
+    kind, right = details.get("type"), details.get("right")
+    tag = f" {right}" if right else ""
+    if kind == "order_filled" and details.get("side") and details.get("filled_price") is not None:
+        return f"{details['side']} FILLED @ {_price_text(details['filled_price'])}{tag}"
+    if kind == "order_placed" and details.get("side") and details.get("order_type"):
+        price = details.get("limit_price") if details["order_type"] == "LIMIT" else details.get("trigger_price") or details.get("limit_price")
+        if price is not None:
+            return f"{details['side']} {details['order_type']} @ {float(price):.2f}{tag}"
+    if kind == "order_converted" and details.get("new_order_type"):
+        new = details["new_order_type"]
+        old = "STOPLOSS" if details.get("is_stoploss") and new != "STOPLOSS" else "LIMIT" if new == "STOPLOSS" else "ORDER"
+        price = details.get("limit_price") if new == "LIMIT" else details.get("trigger_price") or details.get("limit_price")
+        if price is not None:
+            return f"{old}→{new} @ {_price_text(price)}{tag}"
+    return None
 
 
 def _fifo_position(trades: list[dict]) -> tuple[str, int, float]:
@@ -203,26 +234,82 @@ def _apply_fill(item: dict, trade: dict, commission: float) -> dict:
     return out
 
 
-def _load_commissions(session_id: str) -> dict[str, float]:
+def _load_trades(session_id: str) -> list[dict]:
     from app.services.db import get_dynamodb_resource
     from app.services.performance_service import query_all
     items = query_all(get_dynamodb_resource().Table("Trades"), KeyConditionExpression="session_id = :s",
                       ExpressionAttributeValues={":s": session_id}, ConsistentRead=True)
-    return {str(i["trade_id"]): float(i.get("commission") or 0) for i in items}
+    rows = []
+    for i in items:
+        row = {"trade_id": str(i["trade_id"]), "side": i.get("side"), "price": float(i.get("price") or 0),
+               "quantity": int(i.get("quantity") or 0), "commission": float(i.get("commission") or 0),
+               "timestamp": int(i.get("timestamp") or 0), "right": i.get("right") or None}
+        for key in ("strike", "underlying_price"):
+            if i.get(key) is not None:
+                row[key] = float(i[key])
+        if i.get("expiry") is not None:
+            row["expiry"] = i["expiry"]
+        rows.append(row)
+    return sorted(rows, key=lambda r: r["timestamp"])
 
 
-def correct(session_id: str, items: list[dict], commissions: Callable[[str], dict[str, float]] | None = None) -> list[dict]:
-    """Return ``items`` (already chronologically sorted) with legacy fill events corrected.
+def _normalize_desktop(item: dict, trades: list[dict]) -> dict:
+    """Give an old desktop snapshot the summary fields and wording a new capture has.
 
+    Old desktop payloads had no used %, combined P&L, active positions or trades, and their
+    wallet was cash, so the viewer fell back to ``wallet - capital`` (a buy looked like a loss).
+    """
+    out = copy.deepcopy(item)
+    snap, event = out["snapshot"], out.setdefault("event", {})
+    capital = float(snap.get("session_capital") or 0)
+    quotes = snap.get("contract_quotes") or {}
+    by_contract = snap.get("positions_by_contract") or {}
+    if by_contract:
+        held = [(pos, (quotes.get(key) or {}).get("price")) for key, pos in by_contract.items()]
+    else:
+        held = [(snap.get("position") or {}, snap.get("current_price")),
+                (snap.get("position_ce") or {}, snap.get("current_price_ce")),
+                (snap.get("position_pe") or {}, snap.get("current_price_pe"))]
+    legs = []
+    for pos, price in held:
+        if pos.get("side", "FLAT") == "FLAT":
+            continue
+        avg, qty = float(pos.get("avg_entry_price") or 0), int(pos.get("quantity") or 0)
+        mark = float(price) if price and float(price) > 0 else avg  # unquoted contract stays at entry
+        legs.append({"side": pos["side"], "quantity": qty, "avg_entry_price": avg,
+                     "pnl": (1 if pos["side"] == "LONG" else -1) * (mark - avg) * qty})
+    keys = ("trade_id", "expiry", "commission", "side", "price", "timestamp", "right", "strike", "underlying_price", "quantity")
+    cutoff = int(out.get("timestamp") or 0)
+    snap.update({
+        **summarize_positions(capital, legs),
+        "cash_balance": snap.get("wallet_balance"),
+        "filled_trades": [{k: t[k] for k in keys if k in t} for t in trades if t["timestamp"] <= cutoff],
+        "legacy_corrected": True,
+    })
+    details = event.get("details") if isinstance(event.get("details"), dict) else {}
+    generic = str(event.get("type", "")).replace("_", " ")
+    if event.get("description") in (None, "", generic):
+        event["description"] = describe_event(details) or event.get("description") or generic
+    return out
+
+
+def correct(session_id: str, items: list[dict], loader: Callable[[str], list[dict]] | None = None) -> list[dict]:
+    """Return ``items`` (already chronologically sorted) with legacy snapshots corrected.
+
+    ``loader(session_id)`` returns the session's trade rows (trade_id, commission, timestamp, ...).
     Never raises: on any failure the stored snapshots are returned unchanged.
     """
     if not any(needs_correction(i) for i in items):
         return items
     try:
-        comm = (commissions or _load_commissions)(session_id)
+        rows = (loader or _load_trades)(session_id)
+        comm = {str(r["trade_id"]): float(r.get("commission") or 0) for r in rows}
         used: set[str] = set()
         result: list[Any] = []
         for index, item in enumerate(items):
+            if is_legacy_desktop(item):
+                result.append(_normalize_desktop(item, rows))
+                continue
             if not needs_correction(item):
                 result.append(item)
                 continue
