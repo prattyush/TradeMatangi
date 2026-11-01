@@ -28,26 +28,49 @@ function toPositionSnapshot(pos: import('../services/api').Position, currentPric
   }
 }
 
+interface CaptureMoment {
+  timestamp: number
+  tickTime: number | null
+  eventTimestamp: number
+  seq: number
+}
+
 export interface SnapshotEventInput {
   type: string
   description: string
   details: Record<string, unknown>
 }
 
+// Monotonic per-page sequence so events sharing a tick time keep their true order.
+let snapshotSeqCounter = 0
+const nextSnapshotSeq = () => Date.now() * 1000 + (snapshotSeqCounter++ % 1000)
+
+// If React never commits after an event (nothing changed), don't hold the snapshot forever.
+const COMMIT_WAIT_FALLBACK_MS = 400
+
 export function useSnapshot(simRef: React.RefObject<SimulationState>) {
   const [snapshotActive, setSnapshotActive] = useState(false)
+  const commitWaiters = useRef<Array<() => void>>([])
+  // App calls this from the effect that refreshes simRef, i.e. once a React commit has landed.
+  const notifyCommit = useCallback(() => {
+    const waiting = commitWaiters.current.splice(0)
+    for (const resolve of waiting) resolve()
+  }, [])
+  const nextCommit = useCallback(() => new Promise<void>(resolve => {
+    const timer = setTimeout(done, COMMIT_WAIT_FALLBACK_MS)
+    function done() { clearTimeout(timer); resolve() }
+    commitWaiters.current.push(done)
+  }), [])
   const snapshotActiveRef = useRef(snapshotActive)
   useEffect(() => { snapshotActiveRef.current = snapshotActive }, [snapshotActive])
 
   const startSnapshots = useCallback(() => setSnapshotActive(true), [])
   const stopSnapshots = useCallback(() => setSnapshotActive(false), [])
 
-  const captureSnapshot = useCallback(
-    (event: SnapshotEventInput) => {
-      if (!snapshotActiveRef.current) return
-      const sim = simRef.current
-      if (!sim || !sim.sessionId) return
-
+  // Build the snapshot from the *current* sim state and save it. `at` was fixed when the event
+  // arrived so ordering is independent of how long we waited for the state to settle.
+  const buildAndSave = useCallback(
+    (event: SnapshotEventInput, at: CaptureMoment, sim: SimulationState) => {
       const eventId = crypto.randomUUID()
       const userId = (() => {
         try {
@@ -62,10 +85,7 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
       const cePrice = isOptions ? (sim.currentPriceCE || 0) : 0
       const pePrice = isOptions ? (sim.currentPricePE || 0) : 0
 
-      const barTime =
-        sim.latestEquityTick?.time
-          ? Math.floor(sim.latestEquityTick.time / 180) * 180
-          : 0
+      const barTime = at.tickTime ? Math.floor(at.tickTime / 180) * 180 : 0
 
       const barOhlc = sim.latestEquityTick
         ? {
@@ -165,13 +185,13 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
 
       const payload: SnapshotPayload = {
         event_id: eventId,
-        session_id: sim.sessionId,
+        session_id: sim.sessionId as string,
         user_id: userId,
         symbol: sim.symbol,
         date: sim.date,
         instrument_type: sim.sessionInstrumentType,
         session_type: sim.sessionType,
-        timestamp: sim.latestEquityTick?.time ?? Date.now() / 1000,
+        timestamp: at.timestamp,
         event: enrichedEvent,
         snapshot: {
           current_price: eqPrice,
@@ -197,7 +217,9 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
           strike_ce: sim.sessionStrikeCE,
           strike_pe: sim.sessionStrikePE,
           expiry: sim.sessionExpiry,
-          event_timestamp: Math.floor(Date.now() / 1000),
+          event_timestamp: at.eventTimestamp,
+          seq: at.seq,
+          capture_v: 2,
           quantity_mode: qtyMode,
           filled_trades: (sim.trades || []).map(t => ({
             trade_id: t.trade_id,
@@ -219,8 +241,38 @@ export function useSnapshot(simRef: React.RefObject<SimulationState>) {
         console.warn('Snapshot save failed:', err)
       })
     },
-    [simRef],
+    [],
   )
 
-  return { snapshotActive, startSnapshots, stopSnapshots, captureSnapshot }
+  /**
+   * Record an event snapshot. The snapshot is built only after React has committed the state
+   * the event produced, so it shows the event's own effect on positions, funds and P&L
+   * (previously it read the state from just before the event). Callers whose state update is
+   * asynchronous (e.g. a fill that refetches positions) pass `settle`, resolved once that
+   * update has been applied.
+   */
+  const captureSnapshot = useCallback(
+    (event: SnapshotEventInput, settle?: Promise<unknown>) => {
+      if (!snapshotActiveRef.current) return
+      const first = simRef.current
+      if (!first || !first.sessionId) return
+      const sessionId = first.sessionId
+      const at: CaptureMoment = {
+        timestamp: first.latestEquityTick?.time ?? Date.now() / 1000,
+        tickTime: first.latestEquityTick?.time ?? null,
+        eventTimestamp: Math.floor(Date.now() / 1000),
+        seq: nextSnapshotSeq(),
+      }
+      void (async () => {
+        if (settle) await settle.catch(() => undefined)
+        await nextCommit()
+        const sim = simRef.current
+        if (!sim || sim.sessionId !== sessionId) return
+        buildAndSave(event, at, sim)
+      })()
+    },
+    [simRef, nextCommit, buildAndSave],
+  )
+
+  return { snapshotActive, startSnapshots, stopSnapshots, captureSnapshot, notifyCommit }
 }

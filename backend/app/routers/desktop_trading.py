@@ -2007,14 +2007,45 @@ class DesktopEventSnapshot(ContractModel):
     event: dict
 
 
+def _snapshot_summary(session, state: DesktopTradingSnapshot) -> dict:
+    """Summary-bar fields the shared snapshot viewer reads, defined exactly as on the website."""
+    from app.services.snapshot_legacy import summarize_positions
+    legs = []
+    for item in _position_targets(session):
+        position = _position_for(session, item["right"], item["strike"], item["expiry"])
+        if position.side == "FLAT":
+            continue
+        price = _last_price_for_right(session, item["right"], item["strike"], item["expiry"])
+        mark = price if price > 0 else position.avg_entry_price  # unquoted contract stays at entry
+        direction = 1 if position.side == "LONG" else -1
+        legs.append({"side": position.side, "quantity": position.quantity, "avg_entry_price": position.avg_entry_price,
+                     "pnl": direction * (mark - position.avg_entry_price) * position.quantity})
+    capital = float(session.session_capital or 0)
+    summary = summarize_positions(capital, legs)
+    keys = ("trade_id", "expiry", "commission", "side", "price", "timestamp", "right", "strike", "underlying_price", "quantity")
+    session_trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
+    return {**summary, "cash_balance": state.wallet_balance,
+            "filled_trades": [{k: t.get(k) for k in keys if k in t} for t in session_trades]}
+
+
+def _snapshot_moment(req_event: dict, current_time: int) -> tuple[int, int]:
+    """(timestamp, seq): pin to the event's own fill time and stream cursor when it carries them."""
+    details = req_event.get("details") if isinstance(req_event.get("details"), dict) else {}
+    filled_at = details.get("filled_at")
+    timestamp = int(filled_at) if isinstance(filled_at, (int, float)) and 0 < filled_at <= current_time else current_time
+    cursor = details.get("event_id")
+    return timestamp, int(cursor) if isinstance(cursor, (int, float)) else 0
+
+
 @router.post('/{session_id}/event-snapshots')
 async def capture_event_snapshot(session_id: str, req: DesktopEventSnapshot, user_id: str = Depends(preparation_user_id)):
     from app.routers.snapshots import SnapshotPayload, store_snapshot
     session = _require_session(session_id, user_id)
     state = _snapshot(session, user_id)
-    timestamp = state.current_time
-    if timestamp <= 0:
+    if state.current_time <= 0:
         raise HTTPException(409, 'No observed trading clock is available for a snapshot')
+    timestamp, seq = _snapshot_moment(req.event, state.current_time)
+    summary = _snapshot_summary(session, state)
     return await store_snapshot(SnapshotPayload(event_id=req.event_id, session_id=session_id, user_id=user_id,
         symbol=session.symbol, date=session.date, instrument_type=session.instrument_type, session_type=session.session_type,
         timestamp=timestamp, event=req.event, snapshot={
@@ -2022,10 +2053,12 @@ async def capture_event_snapshot(session_id: str, req: DesktopEventSnapshot, use
             'bar_time': timestamp // 180 * 180, 'bar_ohlc': None,
             'position': state.positions['equity'], 'position_ce': state.positions['CE'], 'position_pe': state.positions['PE'],
             'positions_by_contract': state.positions_by_contract, 'contract_quotes': state.contract_quotes,
-            'session_capital': session.session_capital, 'wallet_balance': state.wallet_balance,
+            'session_capital': session.session_capital,
             'session_pnl': state.pnl['day'], 'session_pnl_pct': state.pnl['day_pct'],
             'open_orders': [o.model_dump(mode='json') for o in state.open_orders],
             'execution_broker': session.execution_broker if session.session_type == 'real' else None,
+            'seq': seq, 'capture_v': 2,
+            **summary,
         }), user_id=user_id)
 
 
