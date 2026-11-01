@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Literal
@@ -2039,6 +2040,31 @@ def _snapshot_moment(req_event: dict, current_time: int) -> tuple[int, int]:
     return timestamp, int(cursor) if isinstance(cursor, (int, float)) else 0
 
 
+def _price_text(value) -> str:
+    """Render a price the way the website does in event text (42.5, 47, 24372.35)."""
+    return f"{float(value):.6f}".rstrip("0").rstrip(".")
+
+
+def _snapshot_description(event: dict) -> str | None:
+    """Website-style wording for a raw stream event, so a snapshot reads the same from either app."""
+    details = event.get("details") if isinstance(event.get("details"), dict) else {}
+    kind, right = details.get("type") or event.get("type"), details.get("right")
+    tag = f" {right}" if right else ""
+    if kind == "order_filled" and details.get("side") and details.get("filled_price") is not None:
+        return f"{details['side']} FILLED @ {_price_text(details['filled_price'])}{tag}"
+    if kind == "order_placed" and details.get("side") and details.get("order_type"):
+        price = details.get("limit_price") if details["order_type"] == "LIMIT" else details.get("trigger_price") or details.get("limit_price")
+        if price is not None:
+            return f"{details['side']} {details['order_type']} @ {float(price):.2f}{tag}"
+    if kind == "order_converted" and details.get("new_order_type"):
+        new = details["new_order_type"]
+        old = "STOPLOSS" if details.get("is_stoploss") and new != "STOPLOSS" else "LIMIT" if new == "STOPLOSS" else "ORDER"
+        price = details.get("limit_price") if new == "LIMIT" else details.get("trigger_price") or details.get("limit_price")
+        if price is not None:
+            return f"{old}→{new} @ {_price_text(price)}{tag}"
+    return None
+
+
 @router.post('/{session_id}/event-snapshots')
 async def capture_event_snapshot(session_id: str, req: DesktopEventSnapshot, user_id: str = Depends(preparation_user_id)):
     from app.routers.snapshots import SnapshotPayload, store_snapshot
@@ -2048,9 +2074,10 @@ async def capture_event_snapshot(session_id: str, req: DesktopEventSnapshot, use
         raise HTTPException(409, 'No observed trading clock is available for a snapshot')
     timestamp, seq = _snapshot_moment(req.event, state.current_time)
     summary = _snapshot_summary(session, state)
+    event = {**req.event, "description": _snapshot_description(req.event) or req.event.get("description")}
     return await store_snapshot(SnapshotPayload(event_id=req.event_id, session_id=session_id, user_id=user_id,
         symbol=session.symbol, date=session.date, instrument_type=session.instrument_type, session_type=session.session_type,
-        timestamp=timestamp, event=req.event, snapshot={
+        timestamp=timestamp, event=event, snapshot={
             'current_price': state.current_price, 'current_price_ce': state.current_price_ce, 'current_price_pe': state.current_price_pe,
             'bar_time': timestamp // 180 * 180, 'bar_ohlc': None,
             'position': state.positions['equity'], 'position_ce': state.positions['CE'], 'position_pe': state.positions['PE'],
@@ -2059,6 +2086,9 @@ async def capture_event_snapshot(session_id: str, req: DesktopEventSnapshot, use
             'session_pnl': state.pnl['day'], 'session_pnl_pct': state.pnl['day_pct'],
             'open_orders': [o.model_dump(mode='json') for o in state.open_orders],
             'execution_broker': session.execution_broker if session.session_type == 'real' else None,
+            # Fields the shared viewer and candle reconstruction need to render CE/PE tabs and charts.
+            'strike_ce': session.strike_ce, 'strike_pe': session.strike_pe, 'expiry': session.expiry,
+            'quantity_mode': 'quantity', 'event_timestamp': int(time.time()),
             'seq': seq, 'capture_v': 2,
             **summary,
         }), user_id=user_id)

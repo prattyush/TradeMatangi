@@ -146,3 +146,14 @@ def test_desktop_summary_reports_used_pnl_and_trades(monkeypatch):
     assert out["combined_pnl"] == 200.0 and out["wallet_used_pct"] == 4.0 and out["wallet_balance"] == 100200.0
     assert out["cash_balance"] == 95000.0 and out["active_positions"] == 1
     assert out["filled_trades"] == [{"trade_id": "b1", "side": "BUY", "price": 40.0, "quantity": 100, "commission": 2.0}]
+
+
+def test_desktop_event_wording_matches_the_website():
+    from app.routers import desktop_trading as dt
+    d = dt._snapshot_description
+    assert d({"details": {"type": "order_filled", "side": "BUY", "filled_price": 42.5, "right": "CE"}}) == "BUY FILLED @ 42.5 CE"
+    assert d({"details": {"type": "order_filled", "side": "SELL", "filled_price": 47.0}}) == "SELL FILLED @ 47"
+    assert d({"details": {"type": "order_placed", "side": "BUY", "order_type": "LIMIT", "limit_price": 42.72, "right": "CE"}}) == "BUY LIMIT @ 42.72 CE"
+    assert d({"details": {"type": "order_placed", "side": "SELL", "order_type": "STOPLOSS", "trigger_price": 40, "limit_price": 39, "right": "PE"}}) == "SELL STOPLOSS @ 40.00 PE"
+    assert d({"details": {"type": "order_converted", "new_order_type": "LIMIT", "is_stoploss": True, "limit_price": 47.61}}) == "STOPLOSS→LIMIT @ 47.61"
+    assert d({"details": {"type": "order_cancelled"}}) is None  # unknown shapes keep the client's wording
