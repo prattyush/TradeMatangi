@@ -75,6 +75,7 @@
 ## Admin & Settings UI
 
 - **Settings modal tab structure**: admin users see `[General] [Admin]` tabs (state `activeTab`). Non-admin users see no tabs (same single-column layout). Admin tab content: BROKER TOKENS, LIVE STREAMING SOURCE toggle, REAL TRADING ACCESS whitelist, BROKER CONNECTION. General tab: all existing trading/wallet/strategy settings + BROKER section for real trading users. `api.getStreamSource()` / `api.setStreamSource()` → `GET/PUT /api/admin/stream-source`.
+- **Settings → Display tab (website, 2026-11-01)**: the chart-appearance settings were moved out of General into a dedicated `display` tab (state `activeTab` in `frontend/src/components/SettingsModal.tsx`, nav order `general, display, trading, ...`): the **Trading chart** renderer select (Lightweight / KLine), `WebsiteChartAppearanceSettings`, and **TRADING CHART INDICATORS** (ROC ratio mode). P&L Display Mode, Historical Days, Wallet etc. stay in General. Values and persistence are unchanged; only their location moved.
 
 - **Historical request mode**: paper/real chart, indicator and strike-selection requests pass `history_mode=live`; replay, stepwise, analysis and ordinary Browse use the default `replay`. Include mode in frontend chart/indicator cache keys so minute chart history cannot leak into replay after a mode switch.
 
