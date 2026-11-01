@@ -59,6 +59,11 @@ def prepare_tiles(tiles: list[dict], date: str, interval_seconds: int) -> dict[s
 def _sync_from_trading(run: ReplayRun) -> None:
     if not run.trading_session_id:
         return
+    # A stopped run must stay stopped even if the linked trading session is
+    # still alive; otherwise the stop response reports "running" and the UI
+    # keeps offering Stop/Next on a run the server has already forgotten.
+    if run.state == "stopped":
+        return
     try:
         from app.services import simulation as sim_svc
         session = sim_svc.get_session(run.trading_session_id)

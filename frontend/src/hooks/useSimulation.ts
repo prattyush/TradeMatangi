@@ -512,6 +512,18 @@ export function useSimulation() {
         return
       } finally { realStopPending.current = false }
     }
+    // Stop must really stop: only reset the UI once the server confirmed (or
+    // reports the session already gone).  A swallowed failure used to leave a
+    // live backend session behind an idle-looking UI and lock the wallet.
+    if (id) {
+      try { await api.stopSimulation(id) } catch (error) {
+        const alreadyGone = error instanceof ApiError && error.status === 404
+        if (!alreadyGone) {
+          setState(s => s.sessionId === id ? { ...s, orderError: String(error) } : s)
+          return
+        }
+      }
+    }
     setState(s => ({
       ...s,
       sessionId: null,
@@ -531,7 +543,6 @@ export function useSimulation() {
       positionPE: FLAT_POSITION(s.symbol),
       openOrders: [],
     }))
-    if (id) api.stopSimulation(id).catch(() => {})
   }, [state.sessionId, state.sessionType, handleSessionEnded])
 
   const pauseSession = useCallback(async () => {
