@@ -124,3 +124,44 @@ async def test_linked_replay_stream_publishes_candle_when_trading_clock_advances
     finally:
         run.task.cancel()
         replay.forget(run)
+
+
+@pytest.mark.asyncio
+async def test_stop_ends_attached_trading_session_and_reports_stopped(monkeypatch):
+    """Stop must end the linked session even when the run only attached to it
+    (owns_trading_session=False) and must report 'stopped', not 'running'."""
+    session = SimpleNamespace(
+        user_id="desktop-user", current_time=100, state=sim_svc.SimulationState.RUNNING,
+    )
+    stopped = []
+    monkeypatch.setattr(sim_svc, "get_session", lambda _session_id: session)
+    monkeypatch.setattr(sim_svc, "stop_session", lambda s: stopped.append(s))
+    from app.routers import desktop_trading
+    monkeypatch.setattr(desktop_trading, "_flatten_positions_for_stop", lambda *_: None)
+    monkeypatch.setattr(desktop_trading, "_mark_desktop_checkpoint", lambda *_: None)
+    run = replay.create(
+        "desktop-user", "stepwise", "2026-05-06", 100, 60, 1,
+        [{"tile_id": "tile-1", "instrument": {"kind": "index", "symbol": "NIFTY"}}],
+        {"tile-1": [{"time": 101, "open": 10, "high": 11, "low": 9, "close": 11}]},
+        trading_session_id="trading-1",
+        owns_trading_session=False,
+    )
+    snapshot = await desktop_replay.stop(run.run_id, user_id="desktop-user")
+    assert stopped == [session]
+    assert snapshot["state"] == "stopped"
+    assert replay.get("desktop-user", run.run_id) is None
+
+
+def test_stopped_run_is_not_resurrected_by_a_live_linked_session(monkeypatch):
+    session = SimpleNamespace(current_time=100, state=SimpleNamespace(value="running"))
+    monkeypatch.setattr(sim_svc, "get_session", lambda _session_id: session)
+    run = replay.create(
+        "desktop-user", "stepwise", "2026-05-06", 100, 60, 1,
+        [{"tile_id": "tile-1", "instrument": {"kind": "index", "symbol": "NIFTY"}}],
+        {"tile-1": []}, trading_session_id="trading-1",
+    )
+    run.state = "stopped"
+    try:
+        assert replay.snapshot(run)["state"] == "stopped"
+    finally:
+        replay.forget(run)
