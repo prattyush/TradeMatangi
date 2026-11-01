@@ -462,7 +462,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
 
   // Active tab
-  const [activeTab, setActiveTab] = useState<'general' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile' | 'sharing'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'display' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile' | 'sharing'>('general')
 
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
@@ -1096,8 +1096,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 borderRight: '1px solid #21262d', paddingRight: 8, overflowY: 'auto',
               }}>
                 {(isAdmin
-                  ? ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'admin', 'profile'] as const
-                  : ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'profile'] as const
+                  ? ['general', 'display', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'admin', 'profile'] as const
+                  : ['general', 'display', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'profile'] as const
                 ).map(tab => (
                   <button
                     key={tab}
@@ -1133,8 +1133,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {settingsLoadFailed && <button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>}
             <fieldset disabled={settingsLoading || settingsLoadFailed || preferenceSaving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
-            {/* ── General tab content ── */}
-            {activeTab === 'general' && <>
+            {/* ── Display tab content (chart appearance) ── */}
+            {activeTab === 'display' && <>
               <label style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
                 Trading chart
                 <select aria-label="Website trading chart renderer" value={renderer}
@@ -1147,6 +1147,42 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
             <WebsiteChartAppearanceSettings />
 
+            {/* Trading Chart Indicators */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                TRADING CHART INDICATORS
+              </div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
+                  {(['normalized', 'raw'] as RocRatioMode[]).map(mode => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        void savePreference({ trading_roc_ratio_mode: mode }, () => {
+                          setTradingRocRatioMode(mode)
+                          localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
+                          onTradingIndicatorSettingsChange?.(mode)
+                        })
+                      }}
+                      style={{
+                        padding: '5px 12px', fontSize: 12, fontWeight: 600,
+                        border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                        background: tradingRocRatioMode === mode ? '#1f3a5f' : '#161b22',
+                        color: tradingRocRatioMode === mode ? '#79c0ff' : '#484f58',
+                      }}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <SettingHelp text={"Selected ratio indicators share a compact band below each trading chart"} />
+            </div>
+
+            </> /* end Display tab */}
+
+            {/* ── General tab content ── */}
+            {activeTab === 'general' && <>
             {/* P&L Display Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>P&L DISPLAY MODE</div>
@@ -1209,38 +1245,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </button>
               </div>
               <SettingHelp text={"Prior trading days of chart context loaded at session start"} />
-            </div>
-
-            {/* Trading Chart Indicators */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                TRADING CHART INDICATORS
-              </div>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
-                  {(['normalized', 'raw'] as RocRatioMode[]).map(mode => (
-                    <button
-                      key={mode}
-                      onClick={() => {
-                        void savePreference({ trading_roc_ratio_mode: mode }, () => {
-                          setTradingRocRatioMode(mode)
-                          localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
-                          onTradingIndicatorSettingsChange?.(mode)
-                        })
-                      }}
-                      style={{
-                        padding: '5px 12px', fontSize: 12, fontWeight: 600,
-                        border: 'none', cursor: 'pointer', textTransform: 'capitalize',
-                        background: tradingRocRatioMode === mode ? '#1f3a5f' : '#161b22',
-                        color: tradingRocRatioMode === mode ? '#79c0ff' : '#484f58',
-                      }}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <SettingHelp text={"Selected ratio indicators share a compact band below each trading chart"} />
             </div>
 
             {/* Override Previous Sessions */}
