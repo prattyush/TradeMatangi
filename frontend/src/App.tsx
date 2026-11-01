@@ -231,9 +231,10 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   const workspaceReadySessionRef = useRef<string | null>(null)
   const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
   const simRef = useRef(sim)
-  // Keep simRef in sync with latest sim state for useSnapshot
-  useEffect(() => { simRef.current = sim }, [sim])
-  const { snapshotActive, startSnapshots, stopSnapshots, captureSnapshot } = useSnapshot(simRef)
+  const { snapshotActive, startSnapshots, stopSnapshots, captureSnapshot, notifyCommit } = useSnapshot(simRef)
+  // Keep simRef in sync with latest sim state for useSnapshot; tell it a commit has landed so
+  // pending event snapshots are built from the state the event produced, not the one before it.
+  useEffect(() => { simRef.current = sim; notifyCommit() }, [sim, notifyCommit])
   const [recDropdownOpen, setRecDropdownOpen] = useState(false)
   const [sizingMode, setSizingMode] = useState<SizingMode>(loadSizingMode)
   const [fundsRatios, setFundsRatios] = useState<FundsRatios>(loadFundsRatios)
@@ -1381,7 +1382,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       setGuardrailPopup({ type: grType, reason: grReason })
     } else if (event.type === 'order_filled') {
       if(sim.sessionId)pendingOrderEdits.terminal(sim.sessionId,event.order_id as string)
-      sim.handleOrderFilled(event.order_id as string, event.right as string | null | undefined)
+      const fillApplied = sim.handleOrderFilled(event.order_id as string, event.right as string | null | undefined)
+      // Snapshot waits for the fill's position/trade refetch so it shows the fill's own effect.
       captureSnapshot({
         type: 'order_filled',
         description: `${event.side} FILLED @ ${event.filled_price}${event.right ? ` ${event.right}` : ''}`,
@@ -1392,7 +1394,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           quantity: event.quantity,
           right: event.right,
         },
-      })
+      }, fillApplied)
     } else if (event.type === 'order_placed') {
       // Strategy-placed orders (e.g. AutoStop TARGET) surfaced so the UI shows them
       // in the open orders panel and the SL tab can be used after they fill.

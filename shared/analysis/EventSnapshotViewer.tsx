@@ -14,7 +14,11 @@ interface Props {
 
 export default function EventSnapshotViewer({ readOnly=false, session, snapshots, onClose, onDeleteAll }: Props) {
   // Sort by timestamp ascending for chronological event list
-  const sorted = snapshots.length > 0 ? [...snapshots].sort((a, b) => a.timestamp - b.timestamp) : snapshots
+  // Same tick -> wall-clock capture time -> capture sequence (matches the backend order).
+  const sorted = snapshots.length > 0 ? [...snapshots].sort((a, b) =>
+    a.timestamp - b.timestamp
+    || (a.snapshot.event_timestamp ?? 0) - (b.snapshot.event_timestamp ?? 0)
+    || (a.snapshot.seq ?? 0) - (b.snapshot.seq ?? 0)) : snapshots
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [deleting, setDeleting] = useState(false)
   const [deleteError,setDeleteError] = useState('')
@@ -195,12 +199,12 @@ function SnapshotDetail({ snapshot }: { snapshot: EventSnapshot }) {
         display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: '#8b949e', flexShrink: 0,
       }}>
         <span>💰 Wallet: <span style={{ color: '#e6edf3' }}>₹{snap.wallet_balance.toLocaleString('en-IN')}</span> / ₹{snap.session_capital.toLocaleString('en-IN')}</span>
-        <span>📊 Used: <span style={{ color: '#e6edf3' }}>{snap.wallet_used_pct}%</span></span>
-        <span>📈 P&L: <span style={{ color: pnlColor, fontWeight: 600 }}>
+        <span title="Share of session capital tied up in open positions">📊 Used: <span style={{ color: '#e6edf3' }}>{(snap.wallet_used_pct ?? 0)}%</span></span>
+        <span title="Open positions only, before brokerage. 0 when flat.">📈 P&L: <span style={{ color: pnlColor, fontWeight: 600 }}>
           {combinedPnl >= 0 ? '+' : ''}₹{Math.abs(combinedPnl).toFixed(2)} ({combinedPnlPct >= 0 ? '+' : ''}{combinedPnlPct.toFixed(2)}%)
         </span></span>
         {snap.session_pnl != null && (
-          <span>💼 Sess: <span style={{ color: snap.session_pnl >= 0 ? '#3fb950' : '#f85149', fontWeight: 600 }}>
+          <span title="Session P&L: closed + open trades, after brokerage paid so far">💼 Sess: <span style={{ color: snap.session_pnl >= 0 ? '#3fb950' : '#f85149', fontWeight: 600 }}>
             {snap.session_pnl >= 0 ? '+' : ''}₹{Math.abs(snap.session_pnl).toFixed(2)} ({(snap.session_pnl_pct ?? 0) >= 0 ? '+' : ''}{(snap.session_pnl_pct ?? 0).toFixed(2)}%)
           </span></span>
         )}
