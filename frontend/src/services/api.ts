@@ -1,5 +1,4 @@
 import { rendererAccountKey, rendererPreferenceVersion, publishRenderer } from './websiteChartPreferences'
-import { pendingOrderEdits } from '../../../shared/charts/pendingOrderEdits'
 import { isBrokerSnapshot } from '../brokerSnapshot'
 import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
@@ -1800,7 +1799,6 @@ const api = {
   },
 
   async reconcileKotakOrders(sessionId: string): Promise<BrokerSnapshot> {
-    const owner=rendererAccountKey()
     const res = await fetch(
       `${BACKEND_URL}/api/brokers/${encodeURIComponent(sessionId)}/refresh`,
       { method: 'POST', signal: controlSignal(), headers: _authHeaders() }
@@ -1811,7 +1809,6 @@ const api = {
     }
     const snapshot = await res.json()
     if (!isBrokerSnapshot(snapshot)) throw new Error('Incomplete broker history response; existing trading state retained')
-    if(rendererAccountKey()===owner)pendingOrderEdits.reconcile(sessionId, snapshot.orders,snapshot)
     return snapshot
   },
 

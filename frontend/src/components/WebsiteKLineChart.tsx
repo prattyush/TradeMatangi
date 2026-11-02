@@ -21,7 +21,6 @@ import { useKLineCandles } from "../hooks/useKLineCandles";
 import type { TradingChartProps } from "./TradingChartHost";
 import api, {
   _authHeaders,
-  ApiError,
   type OHLCCandle,
   type Order,
   type SymbolInfo,
@@ -30,7 +29,6 @@ import { rendererAccountKey } from "../services/websiteChartPreferences";
 import type { Time } from "lightweight-charts";
 import { BACKEND_URL } from "../config";
 import { flashError } from "../services/notifications";
-import { pendingOrderEdits } from "../../../shared/charts/pendingOrderEdits";
 import type {
   DesktopOrder,
   DesktopTrade,
@@ -243,12 +241,6 @@ export default function WebsiteKLineChart(
   );
   const dragOrder = useCallback(async (order: DesktopOrder, price: number) => {
     if (busy || !current.current.onOrderDrag) return;
-    if (pendingOrderEdits.get(order.session_id, order.order_id)) {
-      reportError(
-        new Error("Refresh Trade History before editing this order again"),
-      );
-      return;
-    }
     const brokerOwned =
       props.realTrading &&
       Boolean(order.broker_order_id ?? order.kotak_order_id);
@@ -256,35 +248,16 @@ export default function WebsiteKLineChart(
     setBusy(true);
     setError("");
     try {
-      if (brokerOwned) pendingOrderEdits.begin(order, price);
-      const updated = await current.current.onOrderDrag(
-        order as unknown as Order,
-        price,
-      );
+      await current.current.onOrderDrag(order as unknown as Order, price);
       if (brokerOwned) {
-        pendingOrderEdits.acknowledged(
-          order.session_id,
-          order.order_id,
-          updated || undefined,
-        );
         try {
           const result = await api.reconcileKotakOrders(order.session_id);
           current.current.onBrokerSnapshot?.(order.session_id, result);
-          pendingOrderEdits.reconcile(order.session_id, result.orders, result);
         } catch (e) {
           reportError(e);
         }
       }
     } catch (e) {
-      if (brokerOwned)
-        pendingOrderEdits.failed(
-          order.session_id,
-          order.order_id,
-          e instanceof ApiError &&
-            e.status >= 400 &&
-            e.status < 500 &&
-            ![408, 409, 429].includes(e.status),
-        );
       reportError(e);
     } finally {
       setBusy(false);
@@ -455,12 +428,6 @@ export default function WebsiteKLineChart(
       {message && rows.length > 0 && (
         <div role="status" className="website-kline-error">
           {message}
-        </div>
-      )}
-      {error && (
-        <div role="alert" className="website-kline-error">
-          {error}
-          <button onClick={() => setError("")}>×</button>
         </div>
       )}
       <div className="website-kline-body">

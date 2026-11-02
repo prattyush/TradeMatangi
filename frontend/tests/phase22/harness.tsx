@@ -10,12 +10,12 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import TradingChartHost from "../../src/components/TradingChartHost";
 import api from "../../src/services/api";
+import { getNotifications } from "../../src/services/notifications";
 import {
   publishRenderer,
   rendererAccountKey,
 } from "../../src/services/websiteChartPreferences";
 import { init } from "klinecharts";
-import { pendingOrderEdits } from "../../../shared/charts/pendingOrderEdits";
 const w = window as any;
 const base = Date.parse("2026-10-16T09:15:00Z") / 1000;
 const prior = base - 86400;
@@ -239,7 +239,7 @@ function Harness() {
   };
   w.directSwitch = (value: any) => publishRenderer(value, rendererAccountKey());
   w.refreshBroker = () => api.reconcileKotakOrders("session");
-  w.getPending = () => pendingOrderEdits.get("session", "o1");
+  w.notifications = () => getNotifications().records.map((r) => r.message);
   const chart = (
     <TradingChartHost
       {...props}

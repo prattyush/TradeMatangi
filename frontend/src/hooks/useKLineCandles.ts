@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { Props } from "../components/Chart";
 import api, { type OHLCCandle } from "../services/api";
+import { flashError } from "../services/notifications";
 import { rememberChartData } from "../services/chartDataCache";
 import { RecentLiveTicks } from "../services/tradingChartState";
 import { checkedChartCandles, mergeKLineHistory, mergeKLineTick, sameCandles } from "../services/klineCandles";
@@ -13,7 +14,6 @@ export function useKLineCandles(
     [...retained.current.values()].sort((a, b) => a.time - b.time),
   );
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
   const [rewind, setRewind] = useState(0);
   const cursorRef = useRef<number | null>(null);
   const refreshRef = useRef(props.reloadKey);
@@ -48,7 +48,6 @@ export function useKLineCandles(
     const p = latest.current;
     const mode = p.historyMode ?? "replay";
     setLoading(true);
-    setMessage("");
     void (async () => {
       try {
         const liveTs = p.currentSimTime ?? p.latestTick?.time;
@@ -159,7 +158,8 @@ export function useKLineCandles(
           next = mergeKLineTick(next, tick, interval);
         setRows((current) => (sameCandles(current, next) ? current : next));
       } catch (error) {
-        if (!disposed) setMessage(String(error));
+        // Same flow as the Lightweight chart: report through notifications, never on the chart.
+        if (!disposed) flashError(error, "Charts");
       } finally {
         if (!disposed) setLoading(false);
       }
@@ -226,6 +226,6 @@ export function useKLineCandles(
   return {
     rows: actual,
     loading: props.externalLoading ?? loading,
-    message: props.externalMessage ?? message,
+    message: props.externalMessage ?? "",
   };
 }

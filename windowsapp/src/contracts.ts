@@ -83,10 +83,18 @@ export interface DesktopTradingSettings {
   default_sl_pct: number
 }
 
+export interface DesktopBrokerLineReport {
+  kotak_order_id?: string
+  broker_order_id?: string
+  status: string
+  limit_price: number
+  trigger_price: number
+}
+
 export interface DesktopTradingSnapshot {
   broker_state_version?: number | null
   broker_state_generation?: string | null
-  broker_orders?: import('../../shared/charts/pendingOrderEdits').BrokerLineReport[] | null
+  broker_orders?: DesktopBrokerLineReport[] | null
   broker_snapshot_revision?: string | null
   broker_funds_updated_at?: number | null
   created_for_request?: boolean | null

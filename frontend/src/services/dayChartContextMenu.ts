@@ -3,8 +3,7 @@ import type { useSimulation } from '../hooks/useSimulation';
 import type { EntryTicket } from '../components/ChartEntryTicket';
 import type { ContextMenuAction } from '../components/ChartContextMenu';
 import type { SizingMode } from '../components/SettingsModal';
-import api, { ApiError, type BrokerSnapshot, type StrategyResponse } from './api';
-import { pendingOrderEdits } from '../../../shared/charts/pendingOrderEdits';
+import api, { type BrokerSnapshot, type StrategyResponse } from './api';
 import { matchesChartContract, runChartOrderBatch, underlyingOptionsChart } from './chartOrderContext';
 export interface DayChartMenuContext { sessionId: string; paneId: number; price: number; x: number; y: number; paneType: string; right?: 'CE' | 'PE'; strike?:number; expiry?:string }
 export interface DayChartMenuPane { id:number;type:string;right?:'CE'|'PE';strike?:number;expiry?:string }
@@ -77,16 +76,7 @@ export function buildDayChartContextMenu({contextMenu,sim,simRef,panes,sizingMod
         onClick: () => {
           void runChartOrderBatch(closingSLOrders, async order => {
             if (simRef.current.sessionId !== sim.sessionId) throw new Error('Session changed')
-            if (pendingOrderEdits.get(sim.sessionId!,order.order_id)) throw new Error('Refresh Trade History before modifying an unconfirmed order')
-            const brokerOwned = sim.sessionType === 'real' && Boolean(order.broker_order_id ?? order.kotak_order_id)
-            if (brokerOwned) pendingOrderEdits.begin(order,price)
-            try {
-              const updated = await sim.updateOrder(order.order_id, order.order_type === 'LIMIT' ? undefined : price, order.order_type === 'LIMIT' ? price : undefined, targetDeviationPct)
-              if (brokerOwned) pendingOrderEdits.acknowledged(sim.sessionId!,order.order_id,updated)
-            } catch(error) {
-              if(brokerOwned)pendingOrderEdits.failed(sim.sessionId!,order.order_id,error instanceof ApiError && error.status>=400 && error.status<500 && ![408,409,429].includes(error.status))
-              throw error
-            }
+            await sim.updateOrder(order.order_id, order.order_type === 'LIMIT' ? undefined : price, order.order_type === 'LIMIT' ? price : undefined, targetDeviationPct)
           }).then(refreshChartOrders).catch(error => setBrokerError(String(error)))
         }
       })
@@ -101,7 +91,6 @@ export function buildDayChartContextMenu({contextMenu,sim,simRef,panes,sizingMod
           void runChartOrderBatch(scopedOrders.filter(o => !o.is_stoploss), async order => {
             const sessionId = sim.sessionId!
             if (simRef.current.sessionId !== sessionId) throw new Error('Session changed')
-            if (pendingOrderEdits.get(sessionId,order.order_id)) throw new Error('Refresh Trade History before modifying an unconfirmed order')
             const updated = await api.convertOrder(sessionId, order.order_id, 'LIMIT', price)
             if (simRef.current.sessionId === sessionId) sim.bulkUpdateOrders([updated])
             if (updated.broker_conversion && updated.broker_conversion.state !== 'confirmed') throw new Error(updated.broker_conversion.message ?? 'Conversion is not confirmed; refresh Trade History')

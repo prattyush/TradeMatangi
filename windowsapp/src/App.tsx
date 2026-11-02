@@ -1,4 +1,3 @@
-import { pendingOrderEdits } from '../../shared/charts/pendingOrderEdits'
 import { allIndicators, drawingTools, indicatorLabel } from '../../shared/charts/catalogue'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import { nativeSwingSubscribe } from "./swingStream";
@@ -613,7 +612,7 @@ export default function App() {
     let disposed = false;
     setNotificationAccount(null);
     if (connection === 'connected') void swingRequest<{ user_id?: string }>('capabilities', 'GET').then(value => {
-      if (!disposed && value.user_id) {pendingOrderEdits.setScope(`${serverUrl}:${value.user_id}`);setNotificationAccount(value.user_id, `desktop:${serverUrl}:${assignedId ?? 'main'}`);}
+      if (!disposed && value.user_id) {setNotificationAccount(value.user_id, `desktop:${serverUrl}:${assignedId ?? 'main'}`);}
     }).catch(() => undefined);
     return () => { disposed = true; setNotificationAccount(null); };
   }, [connection, serverUrl, browserToken, assignedId, swingRequest]);
@@ -2317,27 +2316,21 @@ function ScreenController(props: ScreenControllerProps) {
     setTradeTicket(null)
     setPricePickAction(null)
   }
-  useEffect(()=>{if(trading)pendingOrderEdits.prune(trading.session.session_id,trading.open_orders)},[trading?.session.session_id,trading?.open_orders])
   const updateOrderLine = async (order: DesktopOrder, price: number) => {
     if (!trading) return
     const sessionId=trading.session.session_id
     const brokerOwned=mode==='Real' && Boolean(order.broker_order_id ?? order.kotak_order_id)
-    if(brokerOwned && pendingOrderEdits.get(sessionId,order.order_id)) {reportTradingError(new Error('Refresh Trade History before editing this order again'));return}
-    if(brokerOwned)pendingOrderEdits.begin(order,price)
     try {
       const body = order.order_type === 'LIMIT' ? { limit_price: price } : { trigger_price: price }
       const updated = await desktopTradingRequest<DesktopOrder>(`${sessionId}/orders/${order.order_id}`, 'PATCH', body)
       setTrading(snapshot => snapshot?.session.session_id===sessionId ? { ...snapshot, open_orders: snapshot.open_orders.map(item => item.order_id === updated.order_id ? updated : item) } : snapshot)
       if(brokerOwned){
-        pendingOrderEdits.acknowledged(sessionId,order.order_id,updated)
         try {
           const refreshed=await desktopTradingRequest<DesktopTradingSnapshot>(`${sessionId}/broker-refresh`,'POST')
-          if(refreshed.broker_orders)pendingOrderEdits.reconcile(sessionId,refreshed.broker_orders,{state_version:refreshed.broker_state_version,state_generation:refreshed.broker_state_generation})
           setTrading(current=>current?.session.session_id===sessionId?refreshed:current)
         }catch(error){reportTradingError(error)}
       }
     } catch(error) {
-      if(brokerOwned)pendingOrderEdits.failed(sessionId,order.order_id,false)
       reportTradingError(error)
     }
   }
@@ -2623,7 +2616,6 @@ function ScreenController(props: ScreenControllerProps) {
     setRealActionPending(true)
     try {
       const snapshot=await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/broker-refresh`, 'POST')
-      if(snapshot.broker_orders)pendingOrderEdits.reconcile(snapshot.session.session_id,snapshot.broker_orders,{state_version:snapshot.broker_state_version,state_generation:snapshot.broker_state_generation})
       setTrading(current=>current?.session.session_id===snapshot.session.session_id?snapshot:current)
     }
     catch (error) { reportTradingError(error) }

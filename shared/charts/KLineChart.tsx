@@ -1,6 +1,5 @@
 import { bindChartMenu, ChartMenuButton, useChartMenuGesture, type MenuPoint } from "./ChartMenuGesture";
 import { beginChartActivity } from "./chartActivity";
-import { usePendingOrderEdits } from "./pendingOrderEdits";
 import { snapSwingPrice, swingOrderTick } from "../swingOrderPrice";
 import {
   beginPerformanceSample,
@@ -497,8 +496,6 @@ export function KLineChart({
   );
   const announceDrawingChange = drawingEvents?.announce ?? localAnnounce;
   const watchDrawingChanges = drawingEvents?.watch ?? localWatch;
-  const pendingEdits = usePendingOrderEdits();
-  const pendingRevision = pendingEdits.snapshot();
   void baseUrl;
   const element = useRef<HTMLDivElement>(null);
   const [historicalMarkersVisible, setHistoricalMarkersVisible] = useState(
@@ -1881,16 +1878,9 @@ export function KLineChart({
     )) {
       const selectedLine = selectedOrderId === order.order_id;
       const color = orderColor(order, selectedLine);
-      const pendingEdit = pendingEdits.get(order.session_id, order.order_id);
-      const price = pendingEdit?.oldPrice ?? orderPrice(order);
+      const price = orderPrice(order);
       const label = orderLineLabel(
-        pendingEdit
-          ? {
-              ...order,
-              limit_price: pendingEdit.oldPrice,
-              trigger_price: pendingEdit.oldPrice,
-            }
-          : order,
+        order,
         position,
         tradingSettings,
         sessionCapital,
@@ -1906,32 +1896,6 @@ export function KLineChart({
         color,
         align: "right",
       });
-      if (pendingEdit) {
-        const proposedKey = `pending:${order.order_id}`;
-        retained.add(proposedKey);
-        tradingOverlaysRef.current.upsert(chart, proposedKey, {
-          name: "horizontalStraightLine",
-          paneId: "candle_pane",
-          lock: true,
-          points: [{ timestamp, value: pendingEdit.requestedPrice }],
-          styles: {
-            line: {
-              color: "#fbbf24",
-              size: 1,
-              style: "dashed",
-              dashedValue: [5, 4],
-            },
-          },
-        });
-        nextLabelSources.push({
-          key: proposedKey,
-          timestamp,
-          value: pendingEdit.requestedPrice,
-          text: `${pendingEdit.requestedPrice.toFixed(2)} · ${pendingEdit.message}`,
-          color: "#fbbf24",
-          align: "left",
-        });
-      }
       const overlayKey = `order:${order.order_id}`;
       retained.add(overlayKey);
       tradingOverlaysRef.current.upsert(chart, overlayKey, {
@@ -1942,7 +1906,7 @@ export function KLineChart({
           line: {
             color,
             size: selectedLine ? 3 : 2,
-            style: pendingEdit ? "solid" : "dashed",
+            style: "dashed",
             dashedValue: [6, 3],
           },
         },
@@ -2007,13 +1971,6 @@ export function KLineChart({
           );
           if (!latest || typeof value !== "number" || !Number.isFinite(value))
             return;
-          if (pendingEdits.get(latest.session_id, latest.order_id)) {
-            chart.overrideOverlay({
-              id: event.overlay.id,
-              points: [{ timestamp, value: price }],
-            });
-            return;
-          }
           if (!onOrderSelect) {
             const snapped = snapSwingPrice(value, swingOrderTick(latest));
             chart.overrideOverlay({
@@ -2215,7 +2172,6 @@ export function KLineChart({
     onOrderSelect,
     onOrderDrag,
     onStrategyDrag,
-    pendingRevision,
     pendingStrategyIds,
     pricePickAction,
     positionLabels,
@@ -2649,25 +2605,6 @@ export function KLineChart({
               {closeCountdown}
             </span>
           )}
-          {openOrders.map((order) => {
-            const pending = pendingEdits.get(order.session_id, order.order_id);
-            return pending?.reportedPrice !== undefined ? (
-              <button
-                key={`reconcile:${order.order_id}`}
-                className="icon-button"
-                title={`Use verified broker price ${pending.reportedPrice.toFixed(2)} and dismiss the unconfirmed proposal. This sends no order.`}
-                aria-label={`Use verified broker price for order ${order.order_id}`}
-                onClick={() =>
-                  pendingEdits.acceptBrokerPrice(
-                    order.session_id,
-                    order.order_id,
-                  )
-                }
-              >
-                ↶
-              </button>
-            ) : null;
-          })}
           {busy && <span role="status" className="candle-close">Updating…</span>}
         </span>
       </div>
