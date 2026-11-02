@@ -47,23 +47,10 @@ test("Day and Swing chart rendering, release-only Real edits, drawings and rende
   await page.waitForFunction(() =>
     (window as any).requests.some((r) => r.method === "PATCH"),
   );
-  await page.waitForFunction(
-    () => (window as any).getPending()?.phase === "unconfirmed",
-  );
   assert.equal(await patches(), 1);
-  const pending = await page.evaluate(() => (window as any).getPending());
-  assert.equal(pending.oldPrice, 105);
-  assert.notEqual(pending.requestedPrice, 105);
-  assert.equal(await page.locator(".order-line-label").count(), 2);
-  console.log(
-    "PASS physical drag sends one write only on release and shows old plus proposed prices",
-  );
-  await page.evaluate(() => {
-    (window as any).confirmBroker = true;
-    return (window as any).refreshBroker();
-  });
-  await page.waitForFunction(() => !(window as any).getPending());
-  console.log("PASS broker evidence resolves the pending line");
+  // No "awaiting broker confirmation" proposal line: only the order's own label remains.
+  assert.equal(await page.locator(".order-line-label").count(), 1);
+  console.log("PASS physical drag sends one write only on release");
   await page
     .getByRole("button", { name: "Toggle drawing and indicator tools" })
     .click();
@@ -238,9 +225,6 @@ test("renderer switching waits for an outstanding modification and keeps its rec
   await expect(page.locator(".website-kline")).toHaveCount(1);
   await page.evaluate(() => (window as any).releaseEdit());
   await expect(page.locator(".website-kline")).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).getPending()?.phase)).toBe(
-    "unconfirmed",
-  );
   expect(
     await page.evaluate(
       () =>
@@ -250,7 +234,7 @@ test("renderer switching waits for an outstanding modification and keeps its rec
   ).toBe(1);
 });
 
-test("a definite broker rejection restores the confirmed line and clears the proposal", async ({
+test("a definite broker rejection restores the confirmed line", async ({
   page,
 }) => {
   await page.goto("/tests/phase22/harness.html");
@@ -272,12 +256,9 @@ test("a definite broker rejection restores the confirmed line and clears the pro
   await page.mouse.down();
   await page.mouse.move(position.x, position.y - 30, { steps: 5 });
   await page.mouse.up();
-  await expect(page.locator(".website-kline-error")).toContainText(
-    "Rejected for test",
-  );
-  expect(
-    await page.evaluate(() => (window as any).getPending()),
-  ).toBeUndefined();
+  await expect.poll(() => page.evaluate(() => (window as any).notifications().join("\n"))).toContain("Rejected for test");
+  // Errors use the app notification flow (like preprod), never an in-chart banner.
+  await expect(page.locator(".website-kline-error")).toHaveCount(0);
   await expect(page.locator(".order-line-label")).toHaveCount(1);
 });
 
@@ -298,9 +279,9 @@ test("failed drawing creation stays visible and explicit refresh can reload save
     .click();
   const rect = await page.locator(".kline").boundingBox();
   await page.mouse.click(rect!.x + 400, rect!.y + 250);
-  await expect(page.locator(".website-kline-error")).toContainText(
-    "Drawing revision conflict",
-  );
+  await expect.poll(() => page.evaluate(() => (window as any).notifications().join("\n"))).toContain("Drawing revision conflict");
+  // Errors use the app notification flow (like preprod), never an in-chart banner.
+  await expect(page.locator(".website-kline-error")).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).drawings.length)).toBe(0);
   const localDrawingCount = () =>
     page.evaluate(
@@ -342,9 +323,9 @@ test("failed drawing deletion retains both the saved drawing and its visible sha
   await page.waitForFunction(() => (window as any).drawings.length === 1);
   await page.evaluate(() => ((window as any).failDrawingDelete = true));
   await page.getByTitle("delete selected drawing").click();
-  await expect(page.locator(".website-kline-error")).toContainText(
-    "Drawing revision conflict",
-  );
+  await expect.poll(() => page.evaluate(() => (window as any).notifications().join("\n"))).toContain("Drawing revision conflict");
+  // Errors use the app notification flow (like preprod), never an in-chart banner.
+  await expect(page.locator(".website-kline-error")).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).drawings.length)).toBe(1);
   expect(
     await page.evaluate(

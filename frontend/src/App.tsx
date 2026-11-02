@@ -6,7 +6,6 @@ import { buildDayChartContextMenu, type DayChartMenuContext } from "./services/d
 import { chartPaneHeight } from "./services/chartLayout";
 import { useWebsiteChartRenderer } from "./hooks/useWebsiteChartRenderer";
 import { chartEntryError, chartMarketPrice, matchesChartContract } from "./services/chartOrderContext";
-import { pendingOrderEdits } from '../../shared/charts/pendingOrderEdits'
 import TradingChartHost from './components/TradingChartHost'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import KotakTOTPModal from './components/KotakTOTPModal'
@@ -198,7 +197,6 @@ export default function App({ showInstall = false }: { showInstall?: boolean }) 
 function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showInstall: boolean; onOpenMessages:(id?:string)=>void; authUser: AccountProfile; onLogout: () => void }) {
   const sim = useSimulation()
   const websiteChartRenderer = useWebsiteChartRenderer()
-  useEffect(()=>{pendingOrderEdits.setScope(`${BACKEND_URL}:${authUser.userId}`)},[authUser.userId])
   const [showSwing, setShowSwing] = useState(false)
   const [showSwingKotakLogin,setShowSwingKotakLogin]=useState(false),[swingBrokerRevision,setSwingBrokerRevision]=useState(0)
   const swingRequest = useCallback<SwingRequest>(async <T,>(path: string, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', body?: Record<string, unknown>) => {
@@ -1381,7 +1379,6 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       const grReason = (event.reason as string) ?? 'Trading paused by guardrail'
       setGuardrailPopup({ type: grType, reason: grReason })
     } else if (event.type === 'order_filled') {
-      if(sim.sessionId)pendingOrderEdits.terminal(sim.sessionId,event.order_id as string)
       const fillApplied = sim.handleOrderFilled(event.order_id as string, event.right as string | null | undefined)
       // Snapshot waits for the fill's position/trade refetch so it shows the fill's own effect.
       captureSnapshot({
@@ -1400,7 +1397,6 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       // in the open orders panel and the SL tab can be used after they fill.
       sim.addOpenOrder(event as unknown as import('./services/api').Order)
     } else if (event.type === 'order_cancelled') {
-      if(sim.sessionId)pendingOrderEdits.terminal(sim.sessionId,event.order_id as string)
       // Kotak rejected a forwarded order — remove it from open orders and credit wallet back
       sim.handleOrderCancelled(event.order_id as string)
     } else if (event.type === 'order_converted') {
@@ -1421,7 +1417,6 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       const snapshotSessionId = brokerSnapshotSessionId(event, simRef.current.sessionId)
       if (snapshotSessionId) {
         const snapshot = event as unknown as import('./services/api').BrokerSnapshot
-        pendingOrderEdits.reconcile(snapshotSessionId,snapshot.orders,snapshot)
         sim.applyBrokerSnapshot(snapshotSessionId, snapshot)
         setProtectionRecovery(previous => pruneRecoveryNotices(previous, simRef.current.symbol, snapshot.positions))
         setBrokerOrdersSnapshot({ sessionId: snapshotSessionId, orders: snapshot.orders })

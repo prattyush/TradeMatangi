@@ -1,5 +1,4 @@
 import { bindChartMenu, ChartMenuButton, useChartMenuGesture, type MenuPoint } from '../../../shared/charts/ChartMenuGesture'
-import { usePendingOrderEdits } from '../../../shared/charts/pendingOrderEdits'
 import { snapSwingPrice, swingOrderTick } from '../../../shared/swingOrderPrice'
 import { flashError } from '../services/notifications'
 import { recordPerformance } from '../services/performanceDiagnostics'
@@ -49,8 +48,6 @@ export interface LightweightChartState {
 }
 export interface Props {
   lightweightState?: { current: LightweightChartState }
-  onCandleState?: (candles: OHLCCandle[], replace: boolean) => void
-  retainedCandles?: { current: Map<number, OHLCCandle> }
   candleAnchorSeconds?:number
   defaultShowAllMarkers?:boolean
   externalTradeMarkers?: boolean
@@ -342,22 +339,13 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
     })
     chartRef.current = chart
 
-    let resizeFrame: number | undefined
-    let lastWidth = Math.floor(el.clientWidth)
     const ro = new ResizeObserver(entries => {
-      const width = Math.floor(entries[0].contentRect.width)
-      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
-      resizeFrame = undefined
-      if (width <= 0 || width === lastWidth) return
-      resizeFrame = requestAnimationFrame(() => {
-        resizeFrame = undefined
-        if (width !== lastWidth) { lastWidth = width; chart.applyOptions({ width }) }
-      })
+      const w = entries[0].contentRect.width
+      if (w > 0) chart.applyOptions({ width: w })
     })
     ro.observe(el)
     return () => {
       ro.disconnect()
-      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
       chart.remove()
       chartRef.current = null
       seriesRefs.current.clear()
@@ -453,7 +441,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 }
 
 export default function Chart({
-  onCandleState, retainedCandles, lightweightState,
+  lightweightState,
   candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
@@ -540,8 +528,6 @@ export default function Chart({
   orderSelectionRef.current = {orders: openOrders, onSelect: onOrderSelect, onDrag:onSwingOrderDrag}
   const swingDragPending = useRef(new Set<string>())
   const swingClickUntil = useRef(0)
-  const pendingEdits=usePendingOrderEdits()
-  const pendingRevision=pendingEdits.snapshot()
   const orderPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const strategyPriceLinesRef = useRef<Map<string, IPriceLine>>(new Map())
   const onPriceSelectRef = useRef<((price: number) => void) | null>(null)
@@ -979,23 +965,16 @@ export default function Chart({
     }
     window.addEventListener('blur',abortDrag)
 
-    let resizeFrame: number | undefined
-    let lastWidth = Math.floor(container.clientWidth)
     const ro = new ResizeObserver(entries => {
-      const width = Math.floor(entries[0].contentRect.width)
-      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
-      resizeFrame = undefined
-      if (width <= 0 || width === lastWidth) return
-      resizeFrame = requestAnimationFrame(() => {
-        resizeFrame = undefined
-        if (width !== lastWidth) { lastWidth = width; chart.applyOptions({ width }) }
-      })
+      // Skip when the container is hidden (display:none during maximize of another pane)
+      // to avoid applyOptions({ width: 0 }) which can corrupt the Lightweight Charts canvas.
+      const w = entries[0].contentRect.width
+      if (w > 0) chart.applyOptions({ width: w })
     })
     ro.observe(containerRef.current)
 
     return () => {
       ro.disconnect()
-      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
       mounted=false
       container.removeEventListener(downEvent,dragStart,true)
       window.removeEventListener(moveEvent,dragMove,true)
@@ -1105,7 +1084,6 @@ export default function Chart({
         const allCandles = mergeRecentTicksIntoHistory([...histCandles, ...preCandles], recentLiveTicksRef.current.values(), intervalMinutes)
         if (allCandles.length === 0) return
 
-        onCandleState?.(allCandles, true)
         series.setData(allCandles.map(toCandle))
         chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, allCandles.length - 150), to: allCandles.length - 1 })
         restoreInitialVisibleRange()
@@ -1198,7 +1176,6 @@ export default function Chart({
             : startWindowTs
         const priorCandles = patchedCandles.filter(c => c.time < cutoffTs)
 
-        onCandleState?.(priorCandles, true)
         series.setData(priorCandles.map(toCandle))
         publishIndicatorCandles(priorCandles.map(toIndicatorCandle))
         candleTimesRef.current = priorCandles.map(c => c.time)
@@ -1275,7 +1252,6 @@ export default function Chart({
 
   useEffect(() => {
     recentLiveTicksRef.current.clear()
-    for (const c of retainedCandles?.current.values() ?? []) recentLiveTicksRef.current.append({ ...c, type: 'tick' })
   }, [symbol, tradingDate, paneType, strike, expiry, right])
 
   useEffect(() => {
@@ -1324,7 +1300,6 @@ export default function Chart({
       }
 
       const current = liveWindowRef.current!
-      onCandleState?.([{ time: current.start, open: current.open, high: current.high, low: current.low, close: current.close }], false)
       series.update({ time: current.start as Time, open: current.open, high: current.high, low: current.low, close: current.close })
     } catch (err) {
       // Chart may be disposed or have out-of-order timestamps; skip this tick
@@ -1351,7 +1326,6 @@ export default function Chart({
     try {
       const chartWindowStart = Math.floor(completedBar.time / intervalSecs) * intervalSecs
       if (chartWindowStart !== completedBar.time) return
-      onCandleState?.([completedBar], false)
 
       series.update({
         time: completedBar.time as Time,
@@ -1437,19 +1411,12 @@ export default function Chart({
       return paneType === 'futures' ? o.expiry === expiry && !o.right : paneType === 'equity' ? !o.right : o.right === right && (o.strike == null || o.strike === strike) && (!o.expiry || o.expiry === expiry)
     })
 
-    const wanted = new Set(pending.flatMap(order => pendingEdits.get(order.session_id,order.order_id)?[order.order_id,`pending:${order.order_id}`]:[order.order_id]))
+    const wanted = new Set(pending.map(order => order.order_id))
     for (const [id, line] of orderPriceLinesRef.current) {
       if (!wanted.has(id)) { series.removePriceLine(line); orderPriceLinesRef.current.delete(id) }
     }
     for (const order of pending) {
-      const edit=pendingEdits.get(order.session_id,order.order_id)
-      const price = edit?.oldPrice ?? orderDisplayPrice(order)
-      if(edit){
-        const id=`pending:${order.order_id}`
-        const options={price:edit.requestedPrice,color:'#fbbf24',lineWidth:1 as const,lineStyle:LineStyle.Dashed,axisLabelVisible:true,title:edit.message}
-        const proposal=orderPriceLinesRef.current.get(id)
-        if(proposal)proposal.applyOptions(options);else orderPriceLinesRef.current.set(id,series.createPriceLine(options))
-      }
+      const price = orderDisplayPrice(order)
       let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
 
       if (isExitOrderForPosition(order, position)) {
@@ -1457,10 +1424,10 @@ export default function Chart({
       }
 
       try {
-        const options = { price, color: '#AAAAAA', lineWidth: 1 as const, lineStyle: edit?LineStyle.Solid:LineStyle.Dashed, axisLabelVisible: true, title: label }
+        const options = { price, color: '#AAAAAA', lineWidth: 1 as const, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: label }
         const line = orderPriceLinesRef.current.get(order.order_id)
         if (line) {
-          if (line.options().price !== options.price || line.options().title !== options.title || line.options().lineStyle !== options.lineStyle) {
+          if (line.options().price !== options.price || line.options().title !== options.title) {
             line.applyOptions(options)
             recordPerformance('order-line-update')
           }
@@ -1470,7 +1437,7 @@ export default function Chart({
         }
       } catch { /* disposed */ }
     }
-  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital, pendingRevision, aggregatePnl, latestTick?.close, brokeragePerOrder])
+  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close, brokeragePerOrder])
 
   // Running profit strategies use their own lines, separate from pending orders.
   useEffect(() => {

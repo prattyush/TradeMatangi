@@ -3,7 +3,6 @@ import {
   Component,
   Suspense,
   lazy,
-  useCallback,
   useEffect,
   useRef,
   useMemo,
@@ -76,11 +75,6 @@ export default function TradingChartHost(props: TradingChartProps) {
     last.current = identity;
     retained.current = new Map();
   }
-  const capture = useCallback((candles: OHLCCandle[], replace: boolean) => {
-    if (replace) retained.current = new Map(candles.map((c) => [c.time, c]));
-    else
-      for (const candle of candles) retained.current.set(candle.time, candle);
-  }, []);
   return renderer === "kline" ? (
     <ChartBoundary key={`${identity}:${attempt}`} onRetry={() => setAttempt(v => v + 1)}>
       <Suspense
@@ -98,13 +92,6 @@ export default function TradingChartHost(props: TradingChartProps) {
       </Suspense>
     </ChartBoundary>
   ) : (
-    <>
-      <Chart
-        {...props}
-        lightweightState={lightweightState}
-        onCandleState={capture}
-        retainedCandles={retained}
-      />
-    </>
+    <Chart {...props} lightweightState={lightweightState} />
   );
 }
