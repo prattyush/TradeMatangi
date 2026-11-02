@@ -6,6 +6,7 @@ import type { SwingSubscribe } from "./swingStream";
 import { flashError } from "./notifications";
 import SwingStats from "./SwingStats";
 import SwingHistory from "./SwingHistory";
+import "./swingWorkspace.css";
 import {
   useCallback,
   useEffect,
@@ -117,7 +118,9 @@ export default function SwingPortfolioPanel({
   onDraftStateChange,
   onConnectBroker,
   brokerRevision = 0,
+  paneBarExtras,
 }: {
+  paneBarExtras?: ReactNode;
   request: SwingRequest;
   subscribe: SwingSubscribe;
   loadSymbols: () => Promise<SymbolChoice[]>;
@@ -1108,7 +1111,17 @@ export default function SwingPortfolioPanel({
       )}
       {!portfolioId && mode === "real" && (
         <span className="swing-broker-connection">
-          <span role="status">
+          <span
+            role="status"
+            className="swing-broker-status"
+            data-state={
+              brokerConnection?.broker === broker
+                ? brokerConnection.authenticated
+                  ? "ok"
+                  : "warn"
+                : "wait"
+            }
+          >
             {brokerConnection?.broker === broker
               ? `${broker === "kotak" ? "Kotak Neo" : "Kite"} · ${brokerConnection.authenticated ? "Connected" : "Authentication required"}`
               : connectionError || "Checking broker connection…"}
@@ -1148,6 +1161,7 @@ export default function SwingPortfolioPanel({
         symbols={symbols}
         Renderer={renderChart}
         surface={surface}
+        paneBarExtras={paneBarExtras}
         workspaceId={workspaceId}
         companion={companion}
         onSaveReady={registerWorkspaceSave}
@@ -1221,7 +1235,7 @@ export default function SwingPortfolioPanel({
         onCancel={() => act(`${prefix}/orders/${orderAction.order.order_id}/cancel`)}/>}
       {!chartWorkspace && navigationControls && <div className="swing-workspace-bar">{navigationControls}</div>}
       {chartWorkspace}
-      {!chartWorkspace && portfolioControls}
+      {!chartWorkspace && portfolio && portfolioControls}
       {analyticsOpen && portfolio && (
         <div className="swing-analytics-drawer">
           {analyticsOpen === "stats" ? (
@@ -1262,7 +1276,13 @@ export default function SwingPortfolioPanel({
         </div>
       )}
       <div
-        className={chartWorkspace ? "swing-management" : undefined}
+        className={
+          chartWorkspace
+            ? "swing-management"
+            : !portfolio
+              ? "swing-start-page"
+              : undefined
+        }
         style={{
           display: chartWorkspace && !managementOpen ? "none" : undefined,
         }}
@@ -1272,7 +1292,7 @@ export default function SwingPortfolioPanel({
             Close management
           </button>
         )}
-        <header style={{ display: "flex", gap: 16, alignItems: "center" }}>
+        <header className="swing-start-header">
           <h2>{mode === "real" ? "Real" : "Paper"} Swing</h2>
           {!chartWorkspace && <AppWindowControls />}
           <button
@@ -1290,52 +1310,60 @@ export default function SwingPortfolioPanel({
             <p>Linked portfolio is unavailable. Return to the main window.</p>
           ) : (
             <form
+              className="swing-start-card"
               onSubmit={(event) => {
                 event.preventDefault();
                 void startPortfolio();
               }}
             >
-              <p>Hold shares and long options across days in one portfolio.</p>
-              {mode === "real" && (
+              <div className="swing-start-intro">
+                <h3>Start a {mode === "real" ? "real" : "paper"} portfolio</h3>
+                <p>Hold shares and long options across days in one portfolio.</p>
+              </div>
+              <div className="swing-start-grid">
+                {portfolioControls}
+                {mode === "real" && (
+                  <label>
+                    Shared account allocation %
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="100"
+                      step="0.01"
+                      required
+                      value={allocation}
+                      onChange={(event) => setAllocation(event.target.value)}
+                    />
+                  </label>
+                )}
+                {mode === "paper" && (
+                  <label>
+                    Starting capital ₹
+                    <input
+                      type="number"
+                      min="1"
+                      step="0.01"
+                      required
+                      value={capital}
+                      onChange={(event) => setCapital(event.target.value)}
+                    />
+                  </label>
+                )}
                 <label>
-                  Shared account allocation %{" "}
+                  Portfolio loss limit %
                   <input
                     type="number"
                     min="0.01"
                     max="100"
                     step="0.01"
-                    required
-                    value={allocation}
-                    onChange={(event) => setAllocation(event.target.value)}
+                    value={loss}
+                    onChange={(event) => setLoss(event.target.value)}
+                    placeholder="Optional"
                   />
                 </label>
-              )}
-              {mode === "paper" && (
-                <label>
-                  Starting capital ₹{" "}
-                  <input
-                    type="number"
-                    min="1"
-                    step="0.01"
-                    required
-                    value={capital}
-                    onChange={(event) => setCapital(event.target.value)}
-                  />
-                </label>
-              )}{" "}
-              <label>
-                Portfolio loss limit %{" "}
-                <input
-                  type="number"
-                  min="0.01"
-                  max="100"
-                  step="0.01"
-                  value={loss}
-                  onChange={(event) => setLoss(event.target.value)}
-                  placeholder="Optional"
-                />
-              </label>{" "}
+              </div>
               <button
+                className="swing-start-submit"
                 disabled={
                   busy ||
                   (mode === "real" &&
