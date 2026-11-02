@@ -1,6 +1,21 @@
 # Trade Matangi Project
 
-All development should be done in dev branch and finally merging to main branch will be done manually. When raising a PR please create a new branch and when it is reviewed merge to dev.
+## Branch Strategy (since 2026-11-02)
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Real trading. Known-good; merged manually from `preprod` after local testing. |
+| `preprod` | Staging for `main`. Same code as `main` plus tested real-trading fixes. **Real-trading bugs are fixed here.** |
+| `dev` | New features (currently KLine chart + webapp), tested with simulated / replay / stepwise sessions only. Not yet trusted for real trading. |
+
+Rules:
+- Always raise a PR from a new feature branch. Bug fixes found in real trading target `preprod`; new features target `dev`.
+- Every fix that lands on `preprod` must be synced into `dev` right away (branch off `origin/dev`, `git merge origin/preprod`, PR into `dev`) so `dev` contains all bug fixes plus the new features.
+- **Merge PRs between these branches (preprod→dev, dev→preprod, preprod→main) with "Create a merge commit". Never squash or rebase them**, otherwise the histories diverge again and the same fixes conflict next time.
+- `bash scripts/check-preprod-synced.sh` fails if `preprod` has commits `dev` lacks, and warns if merging `dev` into `preprod` would conflict. Run it after every merge into `preprod` and before any dev→preprod merge.
+- Release flow: build on `dev` and test with simulated / replay / stepwise → merge `dev` into `preprod` and test with real trading → user merges `preprod` into `main`.
+- Until `dev` is trusted for real trading, do not blindly merge it into `preprod`/`main`; port specific reviewed commits (`git cherry-pick -x`), then sync back into `dev` as above. Once the KLine/webapp work is validated, a normal dev→preprod merge is expected to be conflict-free (verified 2026-11-02).
+- Why: in Oct 2026 `dev` (with KLine/webapp edits to the lightweight chart path: `Chart.tsx`, `App.tsx`, `shared/charts/pendingOrderEdits.ts`) showed a chart that stopped updating and "awaiting broker confirmation" notices during real trading; `main` was unaffected. Root cause on `dev` is still to be investigated.
 
 @docs/spec.md
 
