@@ -28,7 +28,8 @@ class SnapshotPersistenceError(RuntimeError):
     pass
 
 
-OPEN = {"open", "trigger pending", "amo", "pending", "validation pending", "put order req received", "modify pending", "partially filled", "partial fill"}
+OPEN = {"open", "trigger pending", "amo", "pending", "validation pending", "put order req received", "modify pending", "partially filled", "partial fill",
+        "open pending", "modify validation pending", "modified", "not modified", "after market order req received"}
 
 
 def encode(value):
@@ -202,6 +203,24 @@ def normalize_positions(session, raw_positions, master=None, strict=True, unreso
             avg = amount / quantity / factor if quantity else 0
         positions.append({**Position(symbol=session.symbol, side="LONG" if net > 0 else "SHORT" if net < 0 else "FLAT", quantity=abs(net), avg_entry_price=avg).model_dump(), **contract, "product": row["product"], "broker_exchange": row["exchange"]})
     return positions
+
+
+def carry_newer_local(orders, current, started):
+    """Keep local broker-backed orders whose place/modify/cancel was acknowledged
+    after the report started; the report cannot be trusted for them."""
+    from app.services import kotak_reports
+    touched = kotak_reports.touched_since(started)
+    if not touched:
+        return
+    by_broker = {o.broker_order_id: key for key, o in orders.items() if o.broker_order_id}
+    for key, local in current.items():
+        if not local.broker_order_id or local.broker_order_id not in touched:
+            continue
+        twin = by_broker.get(local.broker_order_id)
+        if twin is not None and twin != key:
+            orders.pop(twin, None)
+        orders[key] = local
+        logger.info("broker_refresh_kept_newer_local order=%s broker_order_id=%s", key, local.broker_order_id)
 
 
 def build_orders(session, broker_orders, master=None, strict=True, unresolved=None, absent=None):
@@ -562,6 +581,15 @@ async def refresh(session, broker, *, protection=False, bundle=None):
             raise ValueError("A broker refresh is already running")
         try:
             bundle = prefetched or await kotak_reports.fetch(broker, background=protection)
+            if prefetched is None and not protection:
+                # A place/modify/cancel acknowledged after this report began may
+                # be missing from it (or a joined in-flight fetch predates it).
+                # Refetch so Refresh History reflects the broker, not a snapshot
+                # from before the user's last action.
+                for _ in range(3):
+                    if not kotak_reports.touched_since(bundle.started):
+                        break
+                    bundle = await kotak_reports.fetch(broker, background=False, force=True)
             raw_orders, executions, raw_positions = bundle.orders, bundle.executions, bundle.positions
             scoped_orders, scoped_executions = book_reports(session, raw_orders, executions)
             master = None
@@ -683,6 +711,11 @@ async def refresh(session, broker, *, protection=False, bundle=None):
                 logger.warning("broker_snapshot_persistence_failed session=%s: %s", session.session_id, exc)
                 raise SnapshotPersistenceError("Could not persist broker refresh; the previous revision remains active") from exc
             trading._trades[session.session_id] = trades
+            # No await between this carry-over and the swap: orders the user
+            # placed/edited/cancelled after the report began stay as the local
+            # (newer) version instead of being dropped or re-imported as an
+            # `external_` twin; the next refresh reconciles them.
+            carry_newer_local(orders, order_service._orders.get(session.session_id, {}), bundle.started)
             order_service._orders[session.session_id] = orders
             # build_orders() only ever resolved these on a copy destined for
             # this commit; now that it's live, release any BUY reservation
