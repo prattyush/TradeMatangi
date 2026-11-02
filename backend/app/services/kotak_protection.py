@@ -72,7 +72,7 @@ def allocations(session, executions, rows, exclusions=None):
             if not queue[0]['quantity']:
                 queue.popleft()
         if quantity:
-            owner = owners.get(row['kotak_order_id'])
+            owner = owners.get(row.get('kotak_order_id') or row.get('broker_order_id'))
             queue.append({'sign': sign, 'quantity': quantity, 'owner': owner, 'time': row['timestamp']})
     required, representatives = {}, {}
     for scope, queue in lots.items():

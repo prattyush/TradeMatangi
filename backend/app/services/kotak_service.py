@@ -730,7 +730,10 @@ class KotakNeoService:
             )
             self._check_order_ack(resp)
             data = resp.get("data", resp) if isinstance(resp, dict) else {}
-            return str(data.get("nOrdNo") or data.get("order_id") or kotak_order_id) if isinstance(data, dict) else kotak_order_id
+            new_id = str(data.get("nOrdNo") or data.get("order_id") or kotak_order_id) if isinstance(data, dict) else kotak_order_id
+            from app.services import kotak_reports
+            kotak_reports.touch(kotak_order_id, new_id)
+            return new_id
         except KotakError:
             raise
         except Exception as exc:
@@ -760,7 +763,10 @@ class KotakNeoService:
             )
             self._check_order_ack(resp)
             data = resp.get("data", resp) if isinstance(resp, dict) else {}
-            return str(data.get("nOrdNo") or data.get("order_id") or kotak_order_id) if isinstance(data, dict) else kotak_order_id
+            new_id = str(data.get("nOrdNo") or data.get("order_id") or kotak_order_id) if isinstance(data, dict) else kotak_order_id
+            from app.services import kotak_reports
+            kotak_reports.touch(kotak_order_id, new_id)
+            return new_id
         except KotakError:
             raise
         except Exception as exc:
@@ -783,6 +789,8 @@ class KotakNeoService:
             logger.warning("broker_cancel_failed order=%s request=%s state=%s", kotak_order_id, intent["request_id"], state)
             raise KotakError(str(exc)) from exc
         journal.finish_cancel(key, intent, "acknowledged")
+        from app.services import kotak_reports
+        kotak_reports.touch(kotak_order_id)
         logger.info("broker_cancel_acknowledged order=%s request=%s", kotak_order_id, intent["request_id"])
 
     # ── Account data ─────────────────────────────────────────────────────────
@@ -1252,6 +1260,12 @@ class KotakNeoService:
 
     def _extract_order_id(self, resp: Any) -> str:
         """Parse Kotak place_order response to extract the order number."""
+        order_id = self._parse_order_id(resp)
+        from app.services import kotak_reports
+        kotak_reports.touch(order_id)
+        return order_id
+
+    def _parse_order_id(self, resp: Any) -> str:
         self._check_api_response(resp)
         if isinstance(resp, dict):
             for key in ("nOrdNo", "order_id"):
