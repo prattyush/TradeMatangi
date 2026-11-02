@@ -848,12 +848,54 @@ async def _run_merge_bump_phase(session, keep: list[tuple[Order, int]], total_fr
     for order, _target in keep:
         if order.order_id not in bumped_ids:
             snapshots.append(order)
+    await _verify_bumps_with_broker(session, bumps, snapshots, results)
     if placed < total_freed:
         results.append({
             'order_id': None, 'state': 'excess_freed_quantity',
             'message': f'{total_freed - placed} units freed but could not be redistributed to any keeper within the per-order limit; review manually',
         })
     return snapshots, results
+
+
+async def _verify_bumps_with_broker(session, bumps, snapshots: list, results: list) -> None:
+    """Kotak RMS can silently refuse a quantity increase ("not modified"). Read
+    the order book once after the bumps and, where the broker kept the old
+    quantity, revert the local quantity so the UI never shows more than Kotak."""
+    from app.services import kotak_reports
+    from app.services.execution_broker import get_service
+    bumped = [(o, t) for o, t in bumps if any(r['order_id'] == o.order_id and r['state'] == 'bumped' for r in results)]
+    if not bumped:
+        return
+    try:
+        broker = get_service(session)
+        await asyncio.sleep(0.5)
+        bundle = await kotak_reports.fetch(broker, force=True)
+        from app.services import broker_reports
+        rows = {broker_reports.order_id(raw): broker_reports.normalize_order(raw) for raw in bundle.orders or []}
+    except Exception as exc:
+        logger.warning("merge_bump_verification_unavailable session=%s: %s", session.session_id, exc)
+        return
+    reverted = False
+    for order, target in bumped:
+        local = order_service.get_order(session.session_id, order.order_id)
+        row = rows.get(local.broker_order_id) if local and local.broker_order_id else None
+        if row is None or local.status != order_service.OrderStatus.PENDING or not row['quantity'] or row['quantity'] == local.quantity:
+            continue
+        reason = row.get('reject_reason') if row.get('reject_reason') not in ('', '--') else 'broker kept the previous quantity'
+        logger.warning("merge_bump_not_applied order=%s local=%d broker=%d reason=%s", local.order_id, local.quantity, row['quantity'], reason)
+        fixed = order_service.update_order(session_id=session.session_id, order_id=local.order_id, trading_date=session.date,
+                                           quantity=row['quantity'], persist=False)
+        if fixed is not None:
+            from app.services.broker_order_service import persist_order_async
+            await persist_order_async(fixed)
+            snapshots[:] = [fixed if s.order_id == fixed.order_id else s for s in snapshots]
+        for r in results:
+            if r['order_id'] == order.order_id and r['state'] == 'bumped':
+                r['state'], r['message'] = 'bump_failed', f"Kotak did not apply the quantity increase ({reason})"
+        reverted = True
+    if reverted:
+        from app.services import kotak_protection
+        kotak_protection.request(session, reason='manual_completed')
 
 
 async def _bulk_update_sl_merge_aware(session, closing_orders: list[Order], trigger_price: float, *, merge: bool) -> dict:
@@ -1122,6 +1164,18 @@ async def _update_order_locked(session, order_id, req, session_id, *, swing_amen
         value = getattr(req, name)
         if value is not None:
             setattr(candidate, name, value)
+    if req.quantity is None and session.session_type == "real" and existing.broker_order_id:
+        # A price-only edit re-sends a quantity to Kotak. Never send a stale
+        # local one (e.g. after a merge bump): trust a fresh broker report.
+        from app.services import kotak_reports, real_broker_state
+        from app.services.execution_broker import get_service
+        try:
+            row = kotak_reports.broker_row(get_service(session), existing.broker_order_id)
+        except Exception:
+            row = None
+        if row and row["status"] in real_broker_state.OPEN and row["quantity"] and row["quantity"] != existing.quantity:
+            logger.warning("order_edit_quantity_resynced order=%s local=%d broker=%d", existing.order_id, existing.quantity, row["quantity"])
+            existing.quantity = candidate.quantity = row["quantity"]
     from app.services.broker_order_service import sync_order_edit_async, persist_order_async
     from app.services.kotak_service import KotakError
     from app.services.kotak_protection import suppress, rollback_suppression, definitive_refusal
