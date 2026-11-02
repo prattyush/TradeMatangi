@@ -16,6 +16,7 @@ export default function ChartRendererSetting() {
       >
         ⚙
       </summary>
+      <div className="chart-renderer-panel">
       <label>
         Chart renderer{" "}
         <select
@@ -39,6 +40,7 @@ export default function ChartRendererSetting() {
         </select>
       </label>
       <WebsiteChartAppearanceSettings />
+      </div>
     </details>
   );
 }

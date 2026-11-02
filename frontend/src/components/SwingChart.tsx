@@ -1,4 +1,3 @@
-import ChartRendererSetting from "./ChartRendererSetting";
 import { useRef, useEffect, useState } from "react";
 import TradingChartHost from "./TradingChartHost";
 import type { SwingChartProps } from "../../../shared/SwingWorkspace";
@@ -39,7 +38,6 @@ export default function SwingChart(props: SwingChartProps) {
         flex: 1,
       }}
     >
-      <ChartRendererSetting />
       <TradingChartHost
         drawingRefreshKey={props.refreshKey}
         liveChart={props.live && minutes !== 1440}

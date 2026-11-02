@@ -1135,22 +1135,24 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
             {/* ── Display tab content (chart appearance) ── */}
             {activeTab === 'display' && <>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-                Trading chart
-                <select aria-label="Website trading chart renderer" value={renderer}
-                  onChange={event => void savePreference({ website_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
-                  <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
-                </select>
-                <SettingHelp text={"Applies to website Day and Swing charts. Your session keeps running. Analysis and Patterns keep Lightweight. Choose Lightweight here if KLine fails."} />
-              </label>
-
+              <div>
+                <div className="settings-block-title">Chart renderer</div>
+                <label className="settings-field-row">
+                  <span>Trading chart</span>
+                  <select className="settings-control" aria-label="Website trading chart renderer" value={renderer}
+                    onChange={event => void savePreference({ website_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
+                    <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
+                  </select>
+                  <SettingHelp text={"Applies to website Day and Swing charts. Your session keeps running. Analysis and Patterns keep Lightweight. Choose Lightweight here if KLine fails."} />
+                </label>
+              </div>
 
             <WebsiteChartAppearanceSettings />
 
             {/* Trading Chart Indicators */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                TRADING CHART INDICATORS
+            <div className="settings-block">
+              <div className="settings-block-title">
+                Trading chart indicators
               </div>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
@@ -1342,8 +1344,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {(isRealTradingUser || isAdmin) && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
                 <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>BROKER</div>
-                <label>Real execution broker <select value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
-                {realActiveSession && <p style={{ fontSize: 12 }}>Changing the default broker affects new sessions. Existing sessions keep their broker.</p>}
+                <label className="settings-field-row"><span>Real execution broker</span><select className="settings-control" value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
+                {realActiveSession && <small className="settings-note">Changing the default broker affects new sessions. Existing sessions keep their broker.</small>}
                 <RealSessionList key={executionBroker} request={realBookRequest} onAttach={onAttachRealSession ? id => { void onAttachRealSession(id).catch(reason => window.alert(String(reason))) } : undefined} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontSize: 13, color: '#e6edf3' }}>Kotak Neo</span>

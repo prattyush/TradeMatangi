@@ -10,6 +10,7 @@ import TradingChartHost from './components/TradingChartHost'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import KotakTOTPModal from './components/KotakTOTPModal'
 import SwingChart from './components/SwingChart'
+import ChartRendererSetting from './components/ChartRendererSetting'
 import SwingPortfolioPanel, { type SwingRequest } from '../../shared/SwingPortfolioPanel'
 import { _authHeaders } from './services/api'
 import ChartEntryTicket, { type EntryTicket as ContextMenuEntryTicket } from './components/ChartEntryTicket'
@@ -2072,7 +2073,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
 
   const idle = sim.sessionState === 'idle' || sim.sessionState === 'ended'
 
-  if (showSwing) return <><SwingPortfolioPanel key={authUser.userId} request={swingRequest} subscribe={swingSubscribe} brokerRevision={swingBrokerRevision} onConnectBroker={broker=>{if(broker==='kotak')setShowSwingKotakLogin(true)}} loadSymbols={swingSymbols} renderChart={SwingChart} surface="website" onAnalyse={id=>{setSwingAnalysisPortfolio(id);setShowAnalysis(true)}} onDetach={() => {setShowSwing(false);setShowAnalysis(false)}} />{showSwingKotakLogin&&<KotakTOTPModal onCancel={()=>setShowSwingKotakLogin(false)} onSuccess={()=>{setShowSwingKotakLogin(false);setSwingBrokerRevision(n=>n+1)}}/>}{showAnalysis&&<TradeAnalysis key={swingAnalysisPortfolio} initialPortfolioId={swingAnalysisPortfolio} onClose={()=>setShowAnalysis(false)} historicalDays={historicalDays}/>}</>
+  if (showSwing) return <><SwingPortfolioPanel key={authUser.userId} request={swingRequest} subscribe={swingSubscribe} brokerRevision={swingBrokerRevision} onConnectBroker={broker=>{if(broker==='kotak')setShowSwingKotakLogin(true)}} loadSymbols={swingSymbols} renderChart={SwingChart} paneBarExtras={<ChartRendererSetting />} surface="website" onAnalyse={id=>{setSwingAnalysisPortfolio(id);setShowAnalysis(true)}} onDetach={() => {setShowSwing(false);setShowAnalysis(false)}} />{showSwingKotakLogin&&<KotakTOTPModal onCancel={()=>setShowSwingKotakLogin(false)} onSuccess={()=>{setShowSwingKotakLogin(false);setSwingBrokerRevision(n=>n+1)}}/>}{showAnalysis&&<TradeAnalysis key={swingAnalysisPortfolio} initialPortfolioId={swingAnalysisPortfolio} onClose={()=>setShowAnalysis(false)} historicalDays={historicalDays}/>}</>
 
   if (showPatternLibrary) {
     return (
@@ -2151,7 +2152,17 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             )}
           </div>
         )}
-        <button title="Open Swing portfolio" onClick={() => setShowSwing(true)}>Swing</button>
+        <button
+          onClick={() => setShowSwing(true)}
+          title="Swing portfolio — hold positions across days"
+          style={{
+            background: '#161b22', border: '1px solid #30363d',
+            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
+            fontSize: 12, cursor: 'pointer',
+          }}
+        >
+          <span aria-hidden="true">🗂</span> Swing
+        </button>
         {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
           <button
