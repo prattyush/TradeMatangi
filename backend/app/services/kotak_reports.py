@@ -34,6 +34,38 @@ class Account:
 
 
 _accounts = {}
+# Broker order ids whose place/modify/cancel was acknowledged, with the
+# monotonic time of that acknowledgement. A report fetched before that time
+# may not show the change, so refresh must not trust it for those orders.
+_touched = {}
+
+
+def touch(*order_ids):
+    now = time.monotonic()
+    for order_id in order_ids:
+        if order_id:
+            _touched[str(order_id)] = now
+
+
+def touched_at(order_id):
+    return _touched.get(str(order_id), 0)
+
+
+def broker_row(broker, order_id):
+    """Latest cached order-book row for `order_id`, only if the cached report
+    began after the last acknowledged place/modify/cancel of that order."""
+    from app.services import broker_reports
+    bundle = state(broker).bundle
+    if bundle is None or bundle.orders is None or bundle.started < touched_at(order_id):
+        return None
+    for raw in bundle.orders:
+        if broker_reports.order_id(raw) == str(order_id):
+            return broker_reports.normalize_order(raw)
+    return None
+
+
+def touched_since(started):
+    return {order_id for order_id, at in _touched.items() if at >= started}
 
 
 def retry_delay(error):
@@ -103,7 +135,8 @@ async def _fetch(broker, *, background=False, force=False, include_orders=True, 
         return result
     now = time.monotonic()
     cached = account.bundle
-    fresh = not force and cached and cached.revision == account.revision and now - cached.started < MIN_INTERVAL
+    fresh = (not force and cached and cached.revision == account.revision and now - cached.started < MIN_INTERVAL
+             and not touched_since(cached.started))
     if fresh and (not include_orders or cached.orders is not None):
         return cached
 

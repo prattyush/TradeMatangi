@@ -8,6 +8,7 @@ from app.services import order_service
 
 logger = logging.getLogger(__name__)
 
+CANCEL_POLL_INTERVAL = 3.0
 CANCEL_CONFIRM_TIMEOUT = 30.0  # matches broker_conversion.CONFIRM_WAIT, the only existing precedent
 
 
@@ -110,11 +111,20 @@ async def cancel_and_confirm(session, order: Order, *, timeout: float = CANCEL_C
         broker.deregister_order_observer(token)
         raise
     try:
-        outcome = await asyncio.wait_for(future, timeout=timeout)
-    except asyncio.TimeoutError:
-        # The WS event may simply have been missed -- ask the broker directly
-        # before giving up and calling this ambiguous.
-        outcome = await resolve_broker_order_status(broker, order.broker_order_id)
+        # The WS event may simply have been missed (e.g. an order-feed
+        # reconnect), so poll the broker's book every few seconds instead of
+        # waiting the whole timeout in silence.
+        deadline = loop.time() + timeout
+        outcome = "ambiguous"
+        while True:
+            remaining = deadline - loop.time()
+            try:
+                outcome = await asyncio.wait_for(asyncio.shield(future), timeout=max(0.0, min(CANCEL_POLL_INTERVAL, remaining)))
+                break
+            except asyncio.TimeoutError:
+                outcome = await resolve_broker_order_status(broker, order.broker_order_id)
+                if outcome != "ambiguous" or deadline - loop.time() <= 0:
+                    break
     finally:
         broker.deregister_order_observer(token)
     # The production cancel/fill callback (register_callbacks, below) is
