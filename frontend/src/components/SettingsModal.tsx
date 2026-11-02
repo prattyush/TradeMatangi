@@ -1183,6 +1183,42 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
             </> /* end Display tab */}
 
+            {activeTab === 'sharing' && <>
+            {[
+              { title: 'Pattern sharing', value: patternShareEmails, set: setPatternShareEmails, key: 'pattern_share_emails', done: 'Pattern sharing saved', fail: 'Failed to save pattern sharing', note: 'Shared users must already have a TradeMatangi account.' },
+              { title: 'Fine structure sharing', value: fineStructureShareEmails, set: setFineStructureShareEmails, key: 'fine_structure_share_emails', done: 'Fine structure sharing saved', fail: 'Failed to save fine structure sharing', note: 'Shared users can view and search your definitions and flows (read-only).' },
+            ].map(block => (
+              <div key={block.key} className="settings-block">
+                <div className="settings-block-title">{block.title}</div>
+                <textarea
+                  className="settings-control"
+                  aria-label={`${block.title} emails`}
+                  value={block.value}
+                  onChange={e => block.set(e.target.value)}
+                  placeholder="Comma-separated email addresses"
+                  rows={3}
+                  style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', minHeight: 72, padding: '8px 10px', fontSize: 13, lineHeight: 1.4 }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  <button
+                    className="settings-primary-btn"
+                    onClick={() => {
+                      api.updateUserSettings({ [block.key]: block.value }).then(() => {
+                        setStatus(block.done)
+                        setTimeout(() => setStatus(null), 2000)
+                      }).catch((e: unknown) => {
+                        setStatus(e instanceof Error ? e.message : block.fail)
+                        setTimeout(() => setStatus(null), 2500)
+                      })
+                    }}
+                  >Save</button>
+                  <span style={{ fontSize: 11, color: '#6e7681' }}>{block.note}</span>
+                </div>
+              </div>
+            ))}
+            </> /* end Sharing tab (preference-backed part) */}
+
+
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
             {/* P&L Display Mode */}
@@ -1343,32 +1379,32 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {/* Broker connection (for real trading users) */}
             {(isRealTradingUser || isAdmin) && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>BROKER</div>
+                <div className="settings-block-title">Broker</div>
                 <label className="settings-field-row"><span>Real execution broker</span><select className="settings-control" value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
                 {realActiveSession && <small className="settings-note">Changing the default broker affects new sessions. Existing sessions keep their broker.</small>}
                 <RealSessionList key={executionBroker} request={realBookRequest} onAttach={onAttachRealSession ? id => { void onAttachRealSession(id).catch(reason => window.alert(String(reason))) } : undefined} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 13, color: '#e6edf3' }}>Kotak Neo</span>
+                <div className="settings-field-row">
+                  <span>Kotak Neo</span>
                   {kotakAuthenticated === null ? (
                     <span style={{ fontSize: 12, color: '#484f58' }}>checking…</span>
                   ) : kotakAuthenticated ? (
                     <span style={{
                       fontSize: 12, color: '#3fb950',
                       background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.3)',
-                      borderRadius: 4, padding: '2px 8px',
+                      borderRadius: 12, padding: '3px 10px',
                     }}>Connected</span>
                   ) : (
                     <>
                       <span style={{
                         fontSize: 12, color: '#f85149',
                         background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
-                        borderRadius: 4, padding: '2px 8px',
+                        borderRadius: 12, padding: '3px 10px',
                       }}>Not connected</span>
                       <button
                         onClick={() => setShowKotakTOTP(true)}
                         style={{
-                          padding: '4px 12px', background: '#d4a017', border: 'none',
-                          borderRadius: 6, color: '#0d1117', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                          padding: '5px 14px', background: '#1f6feb', border: 'none',
+                          borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                         }}
                       >Connect</button>
                     </>
@@ -1900,94 +1936,6 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       <SettingHelp text={"Detects chart patterns and behavioral signals in real-time during sessions"} />
                     </div>
                   </label>
-                </div>
-
-                {/* Pattern Sharing */}
-                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                    PATTERN SHARING
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <textarea
-                      value={patternShareEmails}
-                      onChange={e => setPatternShareEmails(e.target.value)}
-                      placeholder="Comma-separated email addresses"
-                      rows={3}
-                      style={{
-                        width: '100%', resize: 'vertical', minHeight: 72,
-                        padding: '8px 10px', background: '#0d1117',
-                        border: '1px solid #30363d', borderRadius: 6,
-                        color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
-                      }}
-                    />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => {
-                          api.updateUserSettings({ pattern_share_emails: patternShareEmails }).then(() => {
-                            setStatus('Pattern sharing saved')
-                            setTimeout(() => setStatus(null), 2000)
-                          }).catch((e: unknown) => {
-                            setStatus(e instanceof Error ? e.message : 'Failed to save pattern sharing')
-                            setTimeout(() => setStatus(null), 2500)
-                          })
-                        }}
-                        style={{
-                          padding: '5px 14px', background: '#1f6feb',
-                          border: 'none', borderRadius: 6, color: '#fff',
-                          cursor: 'pointer', fontSize: 12,
-                        }}
-                      >
-                        Save
-                      </button>
-                      <span style={{ fontSize: 11, color: '#484f58' }}>
-                        Shared users must already have a TradeMatangi account.
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Fine Structure Sharing */}
-                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                    FINE STRUCTURE SHARING
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <textarea
-                      value={fineStructureShareEmails}
-                      onChange={e => setFineStructureShareEmails(e.target.value)}
-                      placeholder="Comma-separated email addresses"
-                      rows={3}
-                      style={{
-                        width: '100%', resize: 'vertical', minHeight: 72,
-                        padding: '8px 10px', background: '#0d1117',
-                        border: '1px solid #30363d', borderRadius: 6,
-                        color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
-                      }}
-                    />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => {
-                          api.updateUserSettings({ fine_structure_share_emails: fineStructureShareEmails }).then(() => {
-                            setStatus('Fine structure sharing saved')
-                            setTimeout(() => setStatus(null), 2000)
-                          }).catch((e: unknown) => {
-                            setStatus(e instanceof Error ? e.message : 'Failed to save fine structure sharing')
-                            setTimeout(() => setStatus(null), 2500)
-                          })
-                        }}
-                        style={{
-                          padding: '5px 14px', background: '#1f6feb',
-                          border: 'none', borderRadius: 6, color: '#fff',
-                          cursor: 'pointer', fontSize: 12,
-                        }}
-                      >
-                        Save
-                      </button>
-                      <span style={{ fontSize: 11, color: '#484f58' }}>
-                        Shared users can view and search your definitions and flows (read-only).
-                      </span>
-                    </div>
-                  </div>
                 </div>
 
                 {status && (
