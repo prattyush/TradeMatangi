@@ -294,6 +294,7 @@ def test_concurrent_breeze_history_initialization_authenticates_once(monkeypatch
     client.generate_session.side_effect = generate
     constructor = MagicMock(return_value=client)
     monkeypatch.setitem(sys.modules, "breeze_connect", SimpleNamespace(BreezeConnect=constructor))
+    monkeypatch.setattr("app.services.breeze_history.install_history_timeout", lambda: None)
     with ThreadPoolExecutor(max_workers=8) as executor:
         clients = list(executor.map(lambda _: broker_service._get_breeze(), range(8)))
     assert all(value is client for value in clients)

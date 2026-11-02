@@ -105,7 +105,8 @@ def get_snapshots(session_id: str) -> list[dict]:
     from app.services.performance_service import query_all
     try:
         items = query_all(_table(), KeyConditionExpression="session_id = :sid", ExpressionAttributeValues={":sid":session_id}, ScanIndexForward=True, ConsistentRead=True)
-        return sorted((_deserialize(item) for item in items),key=lambda s:(s['timestamp'],s['event_id']))
+        from app.services.snapshot_legacy import sort_key
+        return sorted((_deserialize(item) for item in items),key=sort_key)
     except Exception as exc:
         logger.exception("Failed to query snapshots for session %s",session_id)
         raise RuntimeError("Recorded snapshots could not be read; retry later") from exc
@@ -123,6 +124,24 @@ def get_snapshot(session_id: str, event_id: str) -> dict | None:
     if not item:
         return None
     return _deserialize(item)
+
+
+def get_snapshots_corrected(session_id: str) -> list[dict]:
+    """get_snapshots with legacy (pre capture_v 2) fill events re-derived on read."""
+    from app.services import snapshot_legacy
+    return snapshot_legacy.correct(session_id, get_snapshots(session_id))
+
+
+def get_snapshot_corrected(session_id: str, event_id: str) -> dict | None:
+    """get_snapshot with the same read-time correction; needs neighbours, so reloads the session."""
+    from app.services import snapshot_legacy
+    item = get_snapshot(session_id, event_id)
+    if item is None or not snapshot_legacy.needs_correction(item):
+        return item
+    for candidate in get_snapshots_corrected(session_id):
+        if candidate.get("event_id") == event_id:
+            return candidate
+    return item
 
 
 def delete_snapshots(session_id: str) -> int:
