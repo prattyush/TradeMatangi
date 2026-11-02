@@ -378,13 +378,12 @@ export function DesktopSettingsModal({
   )
   const tabs = [
     ...Object.keys(sharedSettingsSections),
-    'History sharing',
     'GuardRails',
     'Drawing & Display',
     ...(profile?.is_admin ? ['Admin'] : []),
     'Profile'
   ]
-  const preferenceTab = tab !== 'Admin' && tab !== 'Profile' && tab !== 'History sharing'
+  const preferenceTab = tab !== 'Admin' && tab !== 'Profile'
   return (
     <div className="modal-backdrop">
       <section
@@ -692,6 +691,12 @@ export function DesktopSettingsModal({
                       without a desktop interface currently apply there.
                     </p>
                   )}
+                  {tab === 'Sharing' && (
+                    <p>
+                      Share patterns and fine structures with registered accounts, and
+                      manage who can see your real-trading history below.
+                    </p>
+                  )}
                   {tab === 'Strategies' && (
                     <p>
                       Applies to new strategies. Strategy candles are
@@ -994,7 +999,7 @@ export function DesktopSettingsModal({
                   {profile.real_trading_enabled && brokerControls}
                 </section>
               )}
-              {tab === 'History sharing' && <HistorySharingSettings request={sharingRequest} />}
+              {tab === 'Sharing' && <div className="settings-section-pad"><HistorySharingSettings request={sharingRequest} /></div>}
               {tab === 'Profile' && (
                 <section className="settings-section">
                   <strong>{profile?.email}</strong>

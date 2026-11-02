@@ -1,3 +1,20 @@
-.history-sharing-settings { padding: 16px; max-width: 680px; color: #c9d1d9; font-size: 13px; }
-.history-sharing-settings label { display: grid; gap: 8px; }
-.history-sharing-settings textarea { width: 100%; color: inherit; background: #161b22; padding: 8px; margin-bottom: 10px; }
+/* Matches the Settings look (section titles, dark inputs, primary button) on website and desktop. */
+.history-sharing-settings { max-width: 680px; color: #c9d1d9; font-size: 12px; }
+.history-sharing-settings h3 { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: #8b949e; text-transform: uppercase; }
+.history-sharing-settings h4 { margin: 18px 0 8px; padding-top: 14px; border-top: 1px solid #21262d; font-size: 12px; font-weight: 600; color: #8b949e; text-transform: uppercase; }
+.history-sharing-settings p { margin: 0 0 8px; color: #8b949e; line-height: 1.45; }
+.history-sharing-settings p[role="alert"] { color: #f85149; }
+.history-sharing-settings label { display: grid; gap: 6px; margin-top: 12px; color: #8b949e; }
+.history-sharing-settings textarea {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 72px;
+  padding: 8px 10px; margin-bottom: 10px; background: #0d1117;
+  border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 13px; line-height: 1.4;
+}
+.history-sharing-settings button {
+  padding: 5px 14px; background: #1f6feb; border: none; border-radius: 6px;
+  color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.history-sharing-settings button:disabled { opacity: .5; cursor: default; }
+.history-sharing-settings p[role="alert"] button { margin-left: 8px; }
+.history-sharing-settings ul { margin: 0; padding-left: 18px; color: #c9d1d9; }
+.history-sharing-settings li { margin-bottom: 4px; }
