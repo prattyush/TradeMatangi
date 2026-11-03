@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import './realSessionList.css'
 
 export interface RealBook {
   session_id: string; broker: string; trading_style: 'intraday' | 'swing'; state: string
@@ -45,12 +46,12 @@ export default function RealSessionList({ request, onAttach }: { request: RealBo
       setStatus(await request<RealStatus>(`${book.session_id}/allocation`, 'POST', { fraction: Number(fractions[book.session_id] ?? String((book.allocation_pct ?? 1) * 100)) / 100, request_id: crypto.randomUUID() }))
     } catch (reason) { setError(String(reason)) } finally { setBusy(false) }
   }
-  return <section aria-label="Your Real sessions" style={{ margin: '12px 0' }}>
-    <strong>Your Real sessions</strong>{' '}<button type="button" title="Refresh session and recovery status" disabled={busy} onClick={() => void load().catch(reason => setError(String(reason)))}>Refresh</button>
+  return <section aria-label="Your Real sessions" className="real-sessions">
+    <div className="real-sessions-head"><strong>Your Real sessions</strong><button type="button" title="Refresh session and recovery status" disabled={busy} onClick={() => void load().catch(reason => setError(String(reason)))}>Refresh</button></div>
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {status?.recovery_ready === false && <p role="status">Server ownership recovery is pending. Existing books retain their slots.</p>}
-    {status?.active_sessions?.map(book => <div key={book.session_id} style={{ marginTop: 8 }}>
+    {status?.active_sessions?.map(book => <div key={book.session_id} className="real-book">
       <span>{book.broker === 'kite' ? 'Kite' : 'Kotak'} · {book.trading_style === 'intraday' ? 'Day' : 'Swing'} · {book.state.replace(/_/g, ' ')}</span>
       {book.trading_date && <small> · Session date {book.trading_date}</small>}
       {book.capital != null && <small> · Capital ₹{book.capital.toLocaleString('en-IN')}</small>}
@@ -69,7 +70,7 @@ export default function RealSessionList({ request, onAttach }: { request: RealBo
       {onAttach && book.trading_style === 'intraday' && <button type="button" onClick={() => onAttach(book.session_id)}>Open session</button>}
       {book.allocation_pct != null && book.trading_style === 'intraday' && book.state === 'running' && <label> Allocation % <input aria-label={`${book.broker} Day allocation percent`} type="number" min="0.01" max="100" step="0.01" style={{ width: 65 }} value={fractions[book.session_id] ?? String(Math.round(book.allocation_pct * 10000) / 100)} onChange={event => setFractions(previous => ({ ...previous, [book.session_id]: event.target.value }))} /><button type="button" disabled={busy} onClick={() => void save(book)}>Apply</button></label>}
     </div>)}
-    {status?.active_sessions?.length === 0 && <p>No outstanding Real sessions.</p>}
+    {status?.active_sessions?.length === 0 && <p className="real-sessions-empty">No outstanding Real sessions.</p>}
     {status?.availability?.map(slot => <small key={slot.trading_style} style={{ display: 'block' }}>Selected broker · {slot.trading_style === 'intraday' ? 'Day' : 'Swing'}: {slot.occupied ? slot.owned_by_you ? 'your session' : 'occupied by another user' : 'available'}</small>)}
   </section>
 }

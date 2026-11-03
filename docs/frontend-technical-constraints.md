@@ -75,6 +75,7 @@
 ## Admin & Settings UI
 
 - **Settings modal tab structure**: admin users see `[General] [Admin]` tabs (state `activeTab`). Non-admin users see no tabs (same single-column layout). Admin tab content: BROKER TOKENS, LIVE STREAMING SOURCE toggle, REAL TRADING ACCESS whitelist, BROKER CONNECTION. General tab: all existing trading/wallet/strategy settings + BROKER section for real trading users. `api.getStreamSource()` / `api.setStreamSource()` → `GET/PUT /api/admin/stream-source`.
+- **Settings → Display tab (website, 2026-11-01)**: the chart-appearance settings were moved out of General into a dedicated `display` tab (state `activeTab` in `frontend/src/components/SettingsModal.tsx`, nav order `general, display, trading, ...`): the **Trading chart** renderer select (Lightweight / KLine), `WebsiteChartAppearanceSettings`, and **TRADING CHART INDICATORS** (ROC ratio mode). P&L Display Mode, Historical Days, Wallet etc. stay in General. Values and persistence are unchanged; only their location moved.
 
 - **Historical request mode**: paper/real chart, indicator and strike-selection requests pass `history_mode=live`; replay, stepwise, analysis and ordinary Browse use the default `replay`. Include mode in frontend chart/indicator cache keys so minute chart history cannot leak into replay after a mode switch.
 
@@ -112,3 +113,20 @@
   `drawingFillOpacity` from `/api/desktop/v1/chart-settings` (shared with the desktop
   app) and re-publishes on the `website-chart-appearance` window event. Settings ->
   Display must save with read-modify-write so other chart-settings keys survive.
+
+## Analysis & Patterns charts
+
+- Analysis charts get their renderer from `AnalysisEnvironment.charts`. On the website
+  the map is chosen by the separate `website_analysis_chart_renderer` setting; never
+  reuse the trading `website_chart_renderer` for it.
+- KLine and Lightweight tool sets are intentionally different. KLine drawings persist
+  to the backend under the same instrument identity as the trading charts
+  (`analysisDrawingInstrument` + `drawingIdentity(..., shareDayDrawings=true)`); keep
+  those two in lockstep with `WebsiteKLineChart.tsx` and desktop `App.tsx`, or
+  Analysis drawings stop appearing on the trading chart. Lightweight Analysis drawings
+  are local only.
+- The Lightweight Analysis Rectangle uses the same `attachRectangle` primitive and `{type:'rect', p1, p2}` persisted shape as `Chart.tsx`; keep both in lockstep. Legacy `channel` entries are skipped on restore (an unhandled entry would abort the whole restore).
+- Lightweight Analysis charts are recreated when maximized (`[isMaximized]`); anything
+  drawn must be restorable from storage at chart creation.
+- Website KLine Analysis styles live in `klineAnalysisSite.css`, scoped by
+  `.kline-analysis-site`; do not import the desktop `desktopAnalysis.css` there.

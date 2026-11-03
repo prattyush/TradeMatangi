@@ -1,3 +1,4 @@
+import { AppWindowControls } from '../AppWindowControls'
 import DayJourneyChart from './DayJourneyChart'
 import { sessionJourney } from './dayJourney'
 import SwingHistory from '../SwingHistory'
@@ -511,6 +512,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
           borderBottom: '1px solid #30363d',
         }}>
           <span style={{ fontSize: 16, fontWeight: 700, color: '#58a6ff' }}>Trade Analysis</span>
+          <AppWindowControls />
           <div style={{ flex: 1 }} />
           <button
             onClick={()=>{if(canNavigate())onClose();}}

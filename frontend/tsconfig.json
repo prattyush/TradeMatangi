@@ -32,6 +32,12 @@
       ],
       "react-dom": [
         "node_modules/@types/react-dom"
+      ],
+      "klinecharts": [
+        "../frontend/node_modules/klinecharts"
+      ],
+      "react-klinecharts-ui/extensions": [
+        "node_modules/react-klinecharts-ui/dist/extensions.d.ts"
       ]
     }
   },

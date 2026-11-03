@@ -1,6 +1,7 @@
 import type { ButtonHTMLAttributes } from 'react'
 
 const paths = {
+  Refresh: 'M20 7a9 9 0 1 0 1 8 M20 3v5h-5',
   LeftHide: 'M3 4h18v16H3z M8 4v16 M15 9l-3 3 3 3',
   LeftShow: 'M3 4h18v16H3z M8 4v16 M12 9l3 3-3 3',
   RightHide: 'M3 4h18v16H3z M16 4v16 M9 9l3 3-3 3',

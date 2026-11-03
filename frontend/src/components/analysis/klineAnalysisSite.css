@@ -1,0 +1,50 @@
+/*
+ * Website/webapp copy of the chart-only rules in shared/analysis/kline/desktopAnalysis.css,
+ * scoped under .kline-analysis-site so they cannot leak into Lightweight mode or other pages.
+ * (The desktop file also styles the desktop shell, so it is not imported here.)
+ */
+.kline-analysis-site { display: contents; --analysis-maximize-top: 0px; }
+.kline-analysis-site .desktop-analysis-chart { display: flex; flex-direction: column; height: 100%; min-height: 250px; position: relative; background: #0d1117; color: #c9d1d9; }
+.kline-analysis-site .desktop-analysis-chart header { min-height: 36px; flex-shrink: 0; font-size: 12px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: #0d1117; border-bottom: 1px solid #30363d; box-sizing: border-box; }
+.kline-analysis-site .desktop-analysis-chart header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kline-analysis-site .desktop-analysis-chart header > button,
+.kline-analysis-site .desktop-analysis-chart header > select,
+.kline-analysis-site .desktop-analysis-chart header > .kline-indicator-menu > button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; height: 24px; padding: 0 8px; font-size: 12px; color: #c9d1d9; background: #161b22; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; }
+.kline-analysis-site .desktop-analysis-chart header > button:hover,
+.kline-analysis-site .desktop-analysis-chart header > .kline-indicator-menu > button:hover { border-color: #58a6ff; }
+.kline-analysis-site .desktop-analysis-chart header .kline-tools-toggle[aria-pressed="true"] { color: #79c0ff; border-color: #1f3a5f; }
+.kline-analysis-site .analysis-kline { position: absolute; inset: 36px 0 0; min-height: 210px; }
+.kline-analysis-site .desktop-analysis-chart.has-tools-rail .analysis-kline { inset: 36px 0 0 38px; }
+.kline-analysis-site .desktop-analysis-chart > small { position: absolute; bottom: 2px; left: 6px; background: #10131a; pointer-events: none; }
+.kline-analysis-site .desktop-analysis-chart > [role="alert"],
+.kline-analysis-site .desktop-analysis-chart > [role="status"] { position: absolute; top: 42px; left: 46px; padding: 6px; background: #182233; z-index: 3; font-size: 12px; }
+.kline-analysis-site .analysis-marker-chooser { position: absolute; inset: 42px 12px auto; max-height: 250px; overflow: auto; background: #182233; border: 1px solid #64748b; z-index: 4; padding: 12px; display: grid; gap: 8px; }
+.kline-analysis-site .analysis-comparison-chart { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.kline-analysis-site .analysis-comparison-chart > .desktop-analysis-chart { flex: 1; }
+.kline-analysis-site .analysis-comparison-chart > nav { display: flex; gap: 4px; flex-wrap: wrap; padding: 4px 0; }
+.kline-analysis-site .analysis-comparison-chart.comparison-chart-maximized { position: fixed; inset: var(--analysis-maximize-top) 0 0; background: #10131a; z-index: 2200; }
+.kline-analysis-site .analysis-panels { height: 450px; min-height: 300px; display: grid; grid-template-columns: minmax(0, 1fr); position: relative; }
+.kline-analysis-site .analysis-panels.has-options { grid-template-columns: minmax(0, var(--analysis-chart-split)) 6px minmax(0, 1fr); }
+.kline-analysis-site .analysis-panels [hidden] { display: none !important; }
+.kline-analysis-site .analysis-underlying-pane,
+.kline-analysis-site .analysis-option-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.kline-analysis-site .analysis-option-pane > nav { display: flex; gap: 4px; max-height: 70px; overflow: auto; flex-shrink: 0; padding: 0 0 4px; }
+.kline-analysis-site .analysis-option-pane > nav button,
+.kline-analysis-site .analysis-pane-navigation button,
+.kline-analysis-site .analysis-comparison-chart > nav button { padding: 3px 10px; font-size: 11px; font-weight: 600; color: #8b949e; background: #161b22; border: 1px solid #30363d; border-radius: 4px; cursor: pointer; }
+.kline-analysis-site .analysis-option-pane > nav button[aria-pressed="true"],
+.kline-analysis-site .analysis-pane-navigation button[aria-pressed="true"] { color: #58a6ff; border-color: #58a6ff; background: #1f3a5f; }
+.kline-analysis-site .analysis-option-pane > .desktop-analysis-chart { flex: 1; min-height: 0; }
+.kline-analysis-site .analysis-pane-navigation { display: none; }
+.kline-analysis-site .analysis-chart-separator { background: #29364c; cursor: col-resize; touch-action: none; }
+.kline-analysis-site .analysis-panels.chart-maximized { position: fixed; inset: var(--analysis-maximize-top) 0 0; height: auto; background: #10131a; z-index: 2200; grid-template-columns: minmax(0, 1fr); }
+.kline-analysis-site .chart-maximized .analysis-chart-separator { display: none; }
+@media (max-width: 1099px) {
+  .kline-analysis-site .analysis-panels.has-options { grid-template-columns: minmax(0, 1fr); grid-template-rows: 34px minmax(0, 1fr); }
+  .kline-analysis-site .analysis-pane-navigation { display: flex; gap: 6px; }
+  .kline-analysis-site .analysis-chart-separator { display: none; }
+  .kline-analysis-site .analysis-panels[data-pane="underlying"]:not(.chart-maximized) .analysis-option-pane,
+  .kline-analysis-site .analysis-panels[data-pane="option"]:not(.chart-maximized) .analysis-underlying-pane { display: none; }
+  .kline-analysis-site .chart-maximized .analysis-pane-navigation { display: none; }
+  .kline-analysis-site .analysis-panels.chart-maximized { grid-template-rows: minmax(0, 1fr); }
+}
