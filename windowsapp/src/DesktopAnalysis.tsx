@@ -12,7 +12,7 @@ import type { PerformanceCycle } from '../../shared/analysis/performance'
 import DesktopAnalysisChart, { clearAnalysisViewports, ComparisonChart } from './AnalysisChart'
 import { analysisRequest, createAnalysisApi, type AnalysisRequest } from './analysisApi'
 import ExecutionInspector from './ExecutionInspector'
-import '../../shared/analysis/kline/desktopAnalysis.css'
+import './desktopAnalysis.css'
 
 export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, onClose, onUnauthorized, historicalDays=2,initialPortfolioId,onNavigationReady }:  { onNavigationReady?:(guard:(()=>boolean)|null)=>void;initialPortfolioId?:string; viewSelector?: ReactNode; historicalDays?:number; onUnauthorized?:()=>void; baseUrl: string; token: string; active: boolean; onClose: () => void }) {
   const adapter = useMemo(() => {
@@ -21,14 +21,6 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return createAnalysisApi(analysisRequest(baseUrl, token, native,onUnauthorized))
   }, [baseUrl, token,onUnauthorized])
   const drawingRequest=useCallback(async<T,>(path:string,method:'GET'|'POST'|'PUT'|'PATCH'|'DELETE',body:Record<string,unknown>={})=>{if('__TAURI_INTERNALS__' in window)return invoke<T>('desktop_drawing_request',{baseUrl,path,method,body});const response=await fetch(`${baseUrl.replace(/\/$/,'')}/api/desktop/v1/${path}`,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:method==='GET'?undefined:JSON.stringify(body)});if(!response.ok)throw new Error('Swing analytics could not read this portfolio');return response.json() as Promise<T>},[baseUrl,token])
-  // Same catalogue kind/exchange the Day tiles use, so Analysis drawings share their instrument key.
-  const catalogue=useRef<Promise<Array<{symbol:string;exchange:string;chart_type?:string}>>|null>(null)
-  useEffect(()=>{catalogue.current=null},[drawingRequest])
-  const resolveSymbolInstrument=useCallback(async(symbol:string)=>{
-    const request=catalogue.current??(catalogue.current=drawingRequest<{instruments:Array<{symbol:string;exchange:string;chart_type?:string}>}>('catalogue','GET').then(value=>value.instruments).catch(error=>{catalogue.current=null;throw error}))
-    const item=(await request).find(entry=>entry.symbol===symbol)
-    return item?{kind:item.chart_type??'equity',exchange:item.exchange}:undefined
-  },[drawingRequest])
   const swingRequest=useCallback<SwingRequest>((path,method,body)=>drawingRequest(`swing/portfolios/${path}`,method,body),[drawingRequest])
   const swingRenderer=useCallback((props:SwingChartProps)=><SwingChart {...props} drawingRequest={drawingRequest}/>,[drawingRequest])
   const [statsVisited, setStatsVisited] = useState(false)
@@ -67,7 +59,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return () => window.removeEventListener('keydown', escape, true)
   }, [active, trade])
   const environment: AnalysisEnvironment = useMemo(() => ({
-    swingRequest, drawingRequest, resolveSymbolInstrument, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays,
+    swingRequest, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays,
     onDataChanged: () => setDataRevision(n => n + 1),
     onLabelSavingChange: saving => { labelSaving.current = saving; if(!saving)setNavigationMessage('') },
     charts: { SwingChart:swingRenderer,AnalysisChartPanel: AnalysisPanels, LabelCharts: AnalysisPanels, AnalysisChart: DesktopAnalysisChart, OptionsChart: DesktopAnalysisChart, SnapshotChart: DesktopAnalysisChart, SnapshotOptionsChart: DesktopAnalysisChart, TradesChart: ComparisonChart, PatternChart: ComparisonChart },
@@ -75,7 +67,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     onDirtyChange: value => { dirty.current = value },
     confirmDiscard: () => { if(labelSaving.current){setNavigationMessage('Labels are saving. Wait for the result before changing sessions.');return false}; if (!dirty.current || window.confirm('Discard unsaved labels?')) { dirty.current = false; return true }; return false },
     onSelectionContextChange: () => setTrade(null),
-  }), [adapter, active, dataRevision,historicalDays,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
+  }), [adapter, active, dataRevision,historicalDays,swingRequest,swingRenderer])
   const navigationReady = useRef(onNavigationReady);
   navigationReady.current = onNavigationReady;
   const guard = useRef(environment.confirmDiscard);

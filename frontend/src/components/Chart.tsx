@@ -1,4 +1,3 @@
-import { bindChartMenu, ChartMenuButton, useChartMenuGesture, type MenuPoint } from '../../../shared/charts/ChartMenuGesture'
 import { snapSwingPrice, swingOrderTick } from '../../../shared/swingOrderPrice'
 import { flashError } from '../services/notifications'
 import { recordPerformance } from '../services/performanceDiagnostics'
@@ -16,9 +15,6 @@ import {
   MouseEventParams,
   IPriceLine,
   LineStyle,
-  type SeriesMarker,
-  type LineSeriesPartialOptions,
-  type PriceLineOptions,
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
 import { PositionPnlPrimitive } from '../indicators/positionPnlPrimitive'
@@ -40,15 +36,7 @@ export interface ChartVisibleRange {
   to: Time
 }
 
-export interface LightweightChartState {
-  drawings?: SavedDrawing[]
-  showEma?: boolean
-  showPositionLevels?: boolean
-  activeRatioIndicators?: RocComparisonKey[]
-  expandedRatioIndicator?: RocComparisonKey | null
-}
-export interface Props {
-  lightweightState?: { current: LightweightChartState }
+interface Props {
   candleAnchorSeconds?:number
   defaultShowAllMarkers?:boolean
   externalTradeMarkers?: boolean
@@ -89,10 +77,9 @@ export interface Props {
   strategyPositionPE?: Position
   strategyPaneActive?: boolean
   // Price-pick mode: when non-null, a chart click calls this instead of draw mode
-  onCancelPricePick?: () => void
   onPriceSelect?: ((price: number) => void) | null
   pricePickLabel?: string
-  // The PWA uses double-click/tap; other surfaces retain right-click.
+  // Right-click context menu
   onContextMenu?: (price: number, screenX: number, screenY: number, ctx: {
     paneType: string; right?: 'CE' | 'PE'; hasPosition: boolean; hasOpenOrders: boolean; hasSLOrders: boolean
   }) => void
@@ -143,20 +130,6 @@ type Drawing =
   | { type: 'trendline' | 'fibretracement' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
   | { type: 'rect'; ref: RectanglePrimitive }
   | { type: 'buymarker' | 'sellmarker'; ref: ISeriesApi<'Line'> }
-
-type SavedLine = { data: LineData<Time>[]; options?: LineSeriesPartialOptions; markers?: SeriesMarker<Time>[] }
-type SavedDrawing =
-  | { type: 'hline'; price: number; options?: Partial<PriceLineOptions> }
-  | { type: 'rect'; p1: { time: number; price: number }; p2: { time: number; price: number } }
-  | { type: Exclude<DrawMode, 'none' | 'hline' | 'rect'>; lines: LineData<Time>[][]; series?: SavedLine[] }
-const saveLine = (ref: ISeriesApi<'Line'>): SavedLine => {
-  const o = ref.options()
-  return { data: ref.data() as LineData<Time>[], markers: ref.markers(), options: {
-    color: o.color, lineWidth: o.lineWidth, lineStyle: o.lineStyle,
-    lineVisible: o.lineVisible, crosshairMarkerVisible: o.crosshairMarkerVisible,
-    priceLineVisible: o.priceLineVisible, lastValueVisible: o.lastValueVisible,
-  } }
-}
 
 const FIB_LEVELS = [
   { ratio: 0,    color: '#e6edf3', label: '0' },
@@ -447,7 +420,6 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 }
 
 export default function Chart({
-  lightweightState,
   candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
@@ -464,7 +436,6 @@ export default function Chart({
   strategyPositionCE,
   strategyPositionPE,
   strategyPaneActive = false,
-  onCancelPricePick,
   onPriceSelect = null,
   pricePickLabel,
   onContextMenu,
@@ -491,7 +462,6 @@ export default function Chart({
   initialVisibleRange,
   onVisibleRangeChange,
 }: Props) {
-  const menuGesture = useChartMenuGesture()
   recordPerformance('chart-render')
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -510,22 +480,14 @@ export default function Chart({
   const drawPtsRef = useRef<{ time: number; price: number }[]>([])
   const drawingsRef = useRef<Drawing[]>([])
   useEffect(() => {
-    if (!drawingStorageKey && !lightweightState) return
+    if (!drawingStorageKey) return
     const save = () => {
-      const drawings: SavedDrawing[] = drawingsRef.current.map(d => {
-        if (d.type === 'hline') return { type: d.type, price: d.ref.options().price, options: d.ref.options() }
-        if (d.type === 'rect') return { type: 'rect', ...d.ref.toJSON() }
-        const series = ('refs' in d ? d.refs : [d.ref]).map(saveLine)
-        return { type: d.type, lines: series.map(s => s.data), series }
-      })
-      if(lightweightState)lightweightState.current.drawings=drawings
-      if(drawingStorageKey)try { localStorage.setItem(drawingStorageKey,JSON.stringify(drawings)) } catch { /* Storage can be disabled. */ }
+      const drawings = drawingsRef.current.map(d => d.type==='hline'?{type:d.type,price:d.ref.options().price}:d.type==='rect'?{type:d.type,...d.ref.toJSON()}:{type:d.type,lines:('refs' in d?d.refs:[d.ref]).map(ref=>ref.data())})
+      try { localStorage.setItem(drawingStorageKey,JSON.stringify(drawings)) } catch { /* Storage can be disabled. */ }
     }
-    // Day only needs an in-memory handoff on unmount. Preserve Swing's existing local-save behavior.
-    if(!drawingStorageKey)return save
     const timer=setInterval(save,1000)
     return ()=>{clearInterval(timer);save()}
-  },[drawingStorageKey,lightweightState])
+  },[drawingStorageKey])
   const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef(new Map<string, { object: ISeriesApi<'Line'>; signature: string }>())
   const [showAllMarkers, setShowAllMarkers] = useState(defaultShowAllMarkers)
@@ -550,15 +512,12 @@ export default function Chart({
   onVisibleRangeChangeRef.current = onVisibleRangeChange
 
   const readSwingIndicators = () => {try{return drawingStorageKey?JSON.parse(localStorage.getItem(`${drawingStorageKey}:indicators`)??'{}'):{}}catch{return {}}}
-  const [showEma, setShowEma] = useState<boolean>(()=>lightweightState?.current.showEma??readSwingIndicators().showEma??true)
-  const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>(()=>lightweightState?.current.activeRatioIndicators??[])
-  const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(()=>lightweightState?.current.expandedRatioIndicator??null)
+  const [showEma, setShowEma] = useState<boolean>(()=>readSwingIndicators().showEma??true)
+  const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>([])
+  const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(null)
   const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
-  const [showPositionLevels, setShowPositionLevels] = useState<boolean>(()=>lightweightState?.current.showPositionLevels??readSwingIndicators().showPositionLevels??false)
+  const [showPositionLevels, setShowPositionLevels] = useState<boolean>(()=>readSwingIndicators().showPositionLevels??false)
   useEffect(()=>{if(drawingStorageKey)try{localStorage.setItem(`${drawingStorageKey}:indicators`,JSON.stringify({showEma,showPositionLevels}))}catch{/* Storage can be disabled. */}},[drawingStorageKey,showEma,showPositionLevels])
-  useEffect(()=>{
-    if(lightweightState)Object.assign(lightweightState.current,{showEma,showPositionLevels,activeRatioIndicators,expandedRatioIndicator})
-  },[lightweightState,showEma,showPositionLevels,activeRatioIndicators,expandedRatioIndicator])
   const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
@@ -625,12 +584,6 @@ export default function Chart({
   onCandlesChangeRef.current = onCandlesChange
   useEffect(() => { drawModeRef.current = drawMode }, [drawMode])
   useEffect(() => { onPriceSelectRef.current = onPriceSelect ?? null }, [onPriceSelect])
-  useEffect(() => {
-    if (!isActive || !onPriceSelect || !onCancelPricePick) return
-    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancelPricePick() }
-    window.addEventListener('keydown',cancel)
-    return () => window.removeEventListener('keydown',cancel)
-  }, [isActive,onPriceSelect,onCancelPricePick])
   useEffect(() => { onContextMenuRef.current = onContextMenu }, [onContextMenu])
   useEffect(() => {
     if (!drawDropdownOpen) return
@@ -680,8 +633,6 @@ export default function Chart({
   // ── Chart initialisation — runs once on mount only ───────────────────────
   useEffect(() => {
     if (!containerRef.current) return
-    // A recreated canvas owns new series; discard disposed references before restoring drawings.
-    drawingsRef.current = []
     const chart = createChart(containerRef.current, {
       width: containerRef.current.clientWidth,
       height: chartHeight,
@@ -723,7 +674,7 @@ export default function Chart({
           .filter(item => item.y !== null && Math.abs(item.y - param.point!.y) <= 7)
           .sort((a, b) => Math.abs(a.y! - param.point!.y) - Math.abs(b.y! - param.point!.y))[0]
         const order = hit && orderSelectionRef.current.orders?.find(item => item.order_id === hit.id)
-        if (order) { if (menuGesture === 'doubleclick') swingClickUntil.current = Date.now() + 400; orderSelectionRef.current.onSelect(order); return }
+        if (order) { orderSelectionRef.current.onSelect(order); return }
       }
 
       if (!param.time) return  // drawing modes need a time reference
@@ -858,16 +809,15 @@ export default function Chart({
       }
     })
 
-    // The PWA uses double-click/tap; other surfaces retain right-click.
+    // Right-click context menu
     const container = containerRef.current
-    const handleContextMenu = (e: MenuPoint) => {
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
       if (!seriesRef.current || !chartRef.current) return
       const chartRect = container!.getBoundingClientRect()
       const y = e.clientY - chartRect.top
-      const bars = seriesRef.current.data()
-      const last = bars[bars.length - 1]
-      const price = e.currentPrice ? latestTickRef.current?.close ?? (last && 'close' in last ? last.close : null) : seriesRef.current.coordinateToPrice(y)
-      if (price == null || !Number.isFinite(price)) return
+      const price = seriesRef.current.coordinateToPrice(y)
+      if (price === null) return
 
       onContextMenuRef.current?.(price, e.clientX, e.clientY, {
         paneType: paneType || 'equity',
@@ -877,7 +827,7 @@ export default function Chart({
         hasSLOrders: false,
       })
     }
-    const removeMenu = bindChartMenu(container!, menuGesture, handleContextMenu, () => menuGesture === 'doubleclick' && (drawModeRef.current !== 'none' || Boolean(onPriceSelectRef.current) || Date.now() < swingClickUntil.current))
+    container!.addEventListener('contextmenu', handleContextMenu)
     // Capture only a pending Swing order line; ordinary chart panning stays untouched.
     let drag: {id: string; startY: number; moved: boolean; price: number} | null = null
     let mounted = true
@@ -926,23 +876,9 @@ export default function Chart({
       })
     }
     const abortDrag = () => { if (drag) {restore(drag.id);drag=null} }
-    // Pointer input adds touch line editing in the PWA; background events go to the chart.
-    const downEvent = menuGesture === 'doubleclick' ? 'pointerdown' : 'mousedown'
-    const moveEvent = menuGesture === 'doubleclick' ? 'pointermove' : 'mousemove'
-    const upEvent = menuGesture === 'doubleclick' ? 'pointerup' : 'mouseup'
-    const lineTouch = (event: TouchEvent) => {
-      if (!drag) return
-      if (event.touches.length > 1) { abortDrag(); return }
-      event.preventDefault(); event.stopImmediatePropagation()
-    }
-    container.addEventListener(downEvent,dragStart,true)
-    window.addEventListener(moveEvent,dragMove,true)
-    window.addEventListener(upEvent,dragEnd,true)
-    if (menuGesture === 'doubleclick') {
-      container.addEventListener('touchstart',lineTouch,{capture:true,passive:false})
-      container.addEventListener('touchmove',lineTouch,{capture:true,passive:false})
-      window.addEventListener('pointercancel',abortDrag)
-    }
+    container.addEventListener('mousedown',dragStart,true)
+    window.addEventListener('mousemove',dragMove,true)
+    window.addEventListener('mouseup',dragEnd,true)
     window.addEventListener('blur',abortDrag)
 
     const ro = new ResizeObserver(entries => {
@@ -956,14 +892,11 @@ export default function Chart({
     return () => {
       ro.disconnect()
       mounted=false
-      container.removeEventListener(downEvent,dragStart,true)
-      window.removeEventListener(moveEvent,dragMove,true)
-      window.removeEventListener(upEvent,dragEnd,true)
-      container.removeEventListener('touchstart',lineTouch,true)
-      container.removeEventListener('touchmove',lineTouch,true)
-      window.removeEventListener('pointercancel',abortDrag)
+      container.removeEventListener('mousedown',dragStart,true)
+      window.removeEventListener('mousemove',dragMove,true)
+      window.removeEventListener('mouseup',dragEnd,true)
       window.removeEventListener('blur',abortDrag)
-      removeMenu()
+      container.removeEventListener('contextmenu', handleContextMenu)
       tradeMarkerPool.current.clear()
       orderPriceLinesRef.current.clear()
       strategyPriceLinesRef.current.clear()
@@ -984,34 +917,9 @@ export default function Chart({
 
   // ── Historical + pre-session — equity only ───────────────────────────────────
   useEffect(() => {
-    if ((!drawingStorageKey && !lightweightState?.current.drawings) || !chartRef.current || !seriesRef.current) return
-    try {
-      const saved: SavedDrawing[] = lightweightState?.current.drawings ?? JSON.parse(drawingStorageKey ? localStorage.getItem(drawingStorageKey) ?? '[]' : '[]')
-      for (const d of saved) {
-        if (d.type === 'hline') {
-          const ref = seriesRef.current.createPriceLine({ color: '#e6edf3', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '', ...d.options, price: d.price })
-          drawingsRef.current.push({ type: 'hline', ref })
-        } else if (d.type === 'rect') {
-          if (d.p1 && d.p2) drawingsRef.current.push({ type: 'rect', ref: attachRectangle(seriesRef.current, d.p1, d.p2) })
-        } else if ((d.type as string) === 'channel') {
-          // The parallel channel was replaced by the rectangle tool; drop legacy entries.
-        } else {
-          const marker = d.type === 'buymarker' || d.type === 'sellmarker'
-          const refs = (d.series ?? d.lines.map(data => ({ data } as SavedLine))).map((saved, index) => {
-            const ref = chartRef.current!.addLineSeries({ color: d.type === 'fibretracement' ? FIB_LEVELS[index]?.color ?? '#ffa657' : '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, lineVisible: !marker, ...saved.options })
-            ref.setData(saved.data)
-            const buy = d.type === 'buymarker'
-            const inferred: SeriesMarker<Time>[] = marker && saved.data[0] ? [{ time: saved.data[0].time, position: buy ? 'belowBar' : 'aboveBar', color: buy ? '#3b82f6' : '#f97316', shape: buy ? 'arrowUp' : 'arrowDown', text: buy ? 'Buy UL' : 'Sell UL', size: 2 }] : []
-            ref.setMarkers(saved.markers ?? inferred)
-            return ref
-          })
-          if (marker) { if (refs[0]) drawingsRef.current.push({ type: d.type as 'buymarker' | 'sellmarker', ref: refs[0] }) }
-          else drawingsRef.current.push({ type: d.type as 'trendline' | 'fibretracement' | 'rrindicator', refs })
-        }
-      }
-      setDrawingCount(drawingsRef.current.length)
-    } catch { /* Ignore invalid old local drawings. */ }
-  },[drawingStorageKey,lightweightState])
+    if (!drawingStorageKey || !chartRef.current || !seriesRef.current) return
+    try { const saved=JSON.parse(localStorage.getItem(drawingStorageKey)??'[]');for(const d of saved){if(d.type==='hline'){const ref=seriesRef.current.createPriceLine({price:d.price,color:'#e6edf3',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:''});drawingsRef.current.push({type:'hline',ref})}else if(d.type==='rect'){if(d.p1&&d.p2){const ref=attachRectangle(seriesRef.current,d.p1,d.p2);drawingsRef.current.push({type:'rect',ref})}}else if(d.type==='channel'){/* parallel channel was replaced by the rectangle tool */}else{const refs=d.lines.map((data:LineData<Time>[])=>{const ref=chartRef.current!.addLineSeries({color:'#ffa657',lineWidth:1,priceLineVisible:false,lastValueVisible:false});ref.setData(data);return ref});drawingsRef.current.push({type:d.type,refs} as Drawing)}}setDrawingCount(drawingsRef.current.length)} catch { /* Ignore invalid old local drawings. */ }
+  },[drawingStorageKey])
 
   // Both fetches run in parallel and are combined into a single series.setData()
   // call. This eliminates the race where a live tick's series.update(09:18) arrives
@@ -1404,7 +1312,7 @@ export default function Chart({
       let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
 
       if (isExitOrderForPosition(order, position)) {
-        label = exitOrderLineLabel(orderLineTypeLabel(order), price, order.quantity, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder)
+        label = exitOrderLineLabel(orderLineTypeLabel(order), orderDisplayPrice(order), order.quantity, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder)
       }
 
       try {
@@ -1676,7 +1584,6 @@ export default function Chart({
         paddingRight: 36,
         background: '#161b22', borderBottom: '1px solid #21262d', flexWrap: 'wrap',
       }}>
-        <ChartMenuButton chart={containerRef} visible={Boolean(onContextMenu)} />
         <span style={{ fontSize: 11, color: isActive ? '#58a6ff' : '#79c0ff', marginRight: 4 }}>
           {paneLabel}
         </span>

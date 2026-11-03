@@ -11,9 +11,6 @@ import {
 } from 'lightweight-charts'
 import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import type { AnalysisTrade, OHLCCandle } from '../../../../shared/analysis/api'
-import { rendererAccountKey } from '../../services/websiteChartPreferences'
-import { LightweightChartTools, useLightweightTools, type LightweightTools } from './LightweightChartTools'
-import { lightweightDrawingKey } from './lightweightDrawings'
 function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
   if (!trade.right) return trade.side
   if (trade.right === 'CE') return trade.side === 'BUY' ? 'BUY' : 'SELL'
@@ -50,11 +47,10 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
 
 // ── Chart toolbar ─────────────────────────────────────────────────────────────
 
-function ChartToolbar({ title, isMaximized = false, onMaximize, tools }: {
+function ChartToolbar({ title, isMaximized = false, onMaximize }: {
   title: string
   isMaximized?: boolean
   onMaximize?: () => void
-  tools?: LightweightTools
 }) {
   return (
     <div style={{
@@ -63,7 +59,6 @@ function ChartToolbar({ title, isMaximized = false, onMaximize, tools }: {
       borderBottom: '1px solid #21262d',
     }}>
       <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 600 }}>{title}</span>
-      {tools && <LightweightChartTools tools={tools} />}
       <CandleInterval />
       {onMaximize && (
         <button
@@ -109,7 +104,6 @@ export function WebsiteAnalysisChart({
   const tradeMarkerPoolRef = useRef<ISeriesApi<'Line'>[]>([])
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const tools = useLightweightTools(lightweightDrawingKey(rendererAccountKey(), symbol))
   const [candles, setCandles] = useState<CandlestickData[]>([])
   const [markerFilter, setMarkerFilter] = useState<'all' | 'CE' | 'PE'>('all')
 
@@ -150,7 +144,6 @@ export function WebsiteAnalysisChart({
     ema9Ref.current = ema9
     ema21Ref.current = ema21
     tradeMarkerPoolRef.current = [markerSeries]
-    const detachTools = tools.attach(chart, series)
 
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect
@@ -167,16 +160,9 @@ export function WebsiteAnalysisChart({
       tradeMarkerPoolRef.current = []
       ema9Ref.current = null
       ema21Ref.current = null
-      detachTools()
       chart.remove()
     }
   }, [isMaximized])
-
-  // EMA 9/21 is now toggleable (still on by default). The chart is recreated on maximize, hence isMaximized.
-  useEffect(() => {
-    ema9Ref.current?.applyOptions({ visible: tools.showEma })
-    ema21Ref.current?.applyOptions({ visible: tools.showEma })
-  }, [tools.showEma, isMaximized])
 
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date) return
@@ -302,7 +288,7 @@ export function WebsiteAnalysisChart({
       overflow: 'hidden'
     }}>
       <ChartHistoryStatus state={historyState==='ready'&&loadedInterval!==intervalMinutes?'loading':historyState} interval={intervalMinutes} retry={()=>setHistoryRetry(n=>n+1)}/>
-      <ChartToolbar title={title} isMaximized={isMaximized} onMaximize={onMaximize} tools={tools} />
+      <ChartToolbar title={title} isMaximized={isMaximized} onMaximize={onMaximize} />
       {hasOptions && (
         <div style={{ display: 'flex', gap: 4, padding: '4px 8px', background: '#161b22', flexShrink: 0 }}>
           {(['all', 'CE', 'PE'] as const).map(f => (
@@ -358,7 +344,6 @@ export function WebsiteOptionsChart({
   const tradeMarkerPoolRef = useRef<ISeriesApi<'Line'>[]>([])
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const tools = useLightweightTools(lightweightDrawingKey(rendererAccountKey(), symbol, right, strike, expiry))
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -397,7 +382,6 @@ export function WebsiteOptionsChart({
     ema9Ref.current = ema9
     ema21Ref.current = ema21
     tradeMarkerPoolRef.current = [markerSeries]
-    const detachTools = tools.attach(chart, series)
 
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect
@@ -414,16 +398,9 @@ export function WebsiteOptionsChart({
       tradeMarkerPoolRef.current = []
       ema9Ref.current = null
       ema21Ref.current = null
-      detachTools()
       chart.remove()
     }
   }, [isMaximized])
-
-  // EMA 9/21 is now toggleable (still on by default). The chart is recreated on maximize, hence isMaximized.
-  useEffect(() => {
-    ema9Ref.current?.applyOptions({ visible: tools.showEma })
-    ema21Ref.current?.applyOptions({ visible: tools.showEma })
-  }, [tools.showEma, isMaximized])
 
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
@@ -521,7 +498,6 @@ export function WebsiteOptionsChart({
         title={`${right} ${strike}`}
         isMaximized={isMaximized}
         onMaximize={onMaximize}
-        tools={tools}
       />
       <div ref={containerRef} style={{ width: '100%', flex: 1 }} />
     </div>

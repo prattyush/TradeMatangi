@@ -6,9 +6,6 @@ import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analy
 import type { AnalysisTrade, OHLCCandle, PatternAnnotation, TopPatterns } from '../../../../shared/analysis/api'
 import type { StrikeTab, InstFilter } from '../../../../shared/analysis/chartProps'
 import { buildMarkers } from '../../services/patternMarkers'
-import { rendererAccountKey } from '../../services/websiteChartPreferences'
-import { LightweightChartTools, useLightweightTools } from './LightweightChartTools'
-import { lightweightDrawingKey } from './lightweightDrawings'
 function nextEMA(p: number, c: number, k: number) { return c * k + p * (1 - k) }
 function computeEMA(cl: number[], n: number): (number | null)[] {
   const r: (number | null)[] = []; const k = 2 / (n + 1); let e: number | null = null; let w = 0, s = 0
@@ -36,15 +33,14 @@ export function WebsiteTradesChart({symbol,date,trades,getMarkerText,strikeTabs,
   const [cc,sc] = useState<CandlestickData[]>([]); const [mf,smf] = useState<'all'|'CE'|'PE'>('all'); const [activeStrike, setActiveStrike] = useState<string>('')
 
   const activeTab = !activeStrike ? null : strikeTabs.find(s => s.key === activeStrike) ?? null
-  const tools = useLightweightTools(activeTab ? lightweightDrawingKey(rendererAccountKey(), symbol, activeTab.right, activeTab.strike, activeTab.expiry) : lightweightDrawingKey(rendererAccountKey(), symbol))
 
-  useEffect(()=>{const el=cr.current;if(!el)return;const c=createChart(el,{width:el.clientWidth||500,height:(el.parentElement?.clientHeight||400)-50,layout:{background:{color:'#0d1117'},textColor:'#e6edf3'},grid:{vertLines:{color:'#1e2732'},horzLines:{color:'#1e2732'}},timeScale:{timeVisible:true,secondsVisible:false,borderColor:'#30363d'},crosshair:{mode:0}});ch.current=c;const cs=c.addCandlestickSeries({upColor:'#26a641',downColor:'#f85149',borderVisible:false,wickUpColor:'#26a641',wickDownColor:'#f85149'});sr.current=cs;const detach=tools.attach(c,cs);e9r.current=c.addLineSeries({color:'#f0883e',lineWidth:1,lastValueVisible:false,priceLineVisible:false});e21r.current=c.addLineSeries({color:'#79c0ff',lineWidth:1,lastValueVisible:false,priceLineVisible:false});const ro=new ResizeObserver(e=>{c.applyOptions({width:e[0].contentRect.width})});ro.observe(el);return()=>{ro.disconnect();detach();c.remove()}},[])
+  useEffect(()=>{const el=cr.current;if(!el)return;const c=createChart(el,{width:el.clientWidth||500,height:(el.parentElement?.clientHeight||400)-50,layout:{background:{color:'#0d1117'},textColor:'#e6edf3'},grid:{vertLines:{color:'#1e2732'},horzLines:{color:'#1e2732'}},timeScale:{timeVisible:true,secondsVisible:false,borderColor:'#30363d'},crosshair:{mode:0}});ch.current=c;sr.current=c.addCandlestickSeries({upColor:'#26a641',downColor:'#f85149',borderVisible:false,wickUpColor:'#26a641',wickDownColor:'#f85149'});e9r.current=c.addLineSeries({color:'#f0883e',lineWidth:1,lastValueVisible:false,priceLineVisible:false});e21r.current=c.addLineSeries({color:'#79c0ff',lineWidth:1,lastValueVisible:false,priceLineVisible:false});const ro=new ResizeObserver(e=>{c.applyOptions({width:e[0].contentRect.width})});ro.observe(el);return()=>{ro.disconnect();c.remove()}},[])
 
   // Load OHLC: underlying vs option
   useEffect(()=>{const s=sr.current;if(!s||!symbol||!date)return;let canc=false;setHistoryState('loading');setLoadedInterval(null);s.setData([]);s.setMarkers([]);sc([]);e9r.current?.setData([]);e21r.current?.setData([]);(async()=>{try{const tc=(c:OHLCCandle):CandlestickData=>({time:c.time as Time,open:c.open,high:c.high,low:c.low,close:c.close});let sd:CandlestickData[]
     if(activeTab){const r=await api.patternOhlcOptions(symbol,date,activeTab.strike,activeTab.expiry,activeTab.right,intervalMinutes,2);if(canc||!sr.current)return;sd=r.candles.map(tc)}else{const[h,td]=await Promise.all([api.getHistorical(symbol,date,intervalMinutes,2),api.getPreSession(symbol,date,'15:30:00',intervalMinutes)]);if(canc||!sr.current)return;const a=[...h.candles.map(tc),...td.map(tc)];const bt=new Map<number,CandlestickData>();a.forEach(c=>bt.set(c.time as number,c));sd=[...bt.values()].sort((a,b)=>(a.time as number)-(b.time as number))}
     setLoadedInterval(intervalMinutes);setHistoryState(sd.length?'ready':'empty');s.setData(sd);sc(sd);const cl=sd.map(c=>c.close);const e9=computeEMA(cl,9);const e21=computeEMA(cl,21);e9r.current?.setData(sd.map((c,i)=>({time:c.time,value:e9[i]!})).filter(d=>d.value!==null));e21r.current?.setData(sd.map((c,i)=>({time:c.time,value:e21[i]!})).filter(d=>d.value!==null));ch.current?.timeScale().fitContent()}catch{if(!canc)setHistoryState('error')}})();return()=>{canc=true}},[api,symbol,date,activeStrike,intervalMinutes,historyRetry])
-  useEffect(()=>{e9r.current?.applyOptions({visible:tools.showEma});e21r.current?.applyOptions({visible:tools.showEma})},[tools.showEma])
+  useEffect(()=>{e9r.current?.applyOptions({visible:true});e21r.current?.applyOptions({visible:true})},[])
 
   const displayTrades = activeTab ? activeTab.trades : (mf==='all'?trades:trades.filter(t=>!t.right||t.right===mf))
   const iv=intervalMinutes*60
@@ -56,7 +52,7 @@ export function WebsiteTradesChart({symbol,date,trades,getMarkerText,strikeTabs,
       <StrikeBtn active={!activeStrike} onClick={()=>setActiveStrike('')}>Underlying</StrikeBtn>
       {strikeTabs.map(s=><StrikeBtn key={s.key} active={activeStrike===s.key} onClick={()=>setActiveStrike(s.key)} right={s.right}>{s.label}</StrikeBtn>)}
     </div>
-    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>{isOpt&&!activeTab&&['all','CE','PE'].map(f=><Btn key={f} s onClick={()=>smf(f as any)} active={mf===f}>{f==='all'?'All':f}</Btn>)}<LightweightChartTools tools={tools}/><CandleInterval /><div style={{flex:1}}/>{onMax&&<Btn s onClick={onMax} title="Maximize">⤢</Btn>}</div>
+    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>{isOpt&&!activeTab&&['all','CE','PE'].map(f=><Btn key={f} s onClick={()=>smf(f as any)} active={mf===f}>{f==='all'?'All':f}</Btn>)}<CandleInterval /><div style={{flex:1}}/>{onMax&&<Btn s onClick={onMax} title="Maximize">⤢</Btn>}</div>
     <div ref={cr} style={{flex:1}}/>
   </div>
 }
@@ -81,7 +77,6 @@ export function WebsitePatternChart({symbol,date,annotations,topPatterns,activeS
   },[patternStrike,annotations])
 
   const activeTab = activeStrike === 'CE' || activeStrike === 'PE' ? patternTabs.find(t=>t.right===activeStrike)??null : null
-  const tools = useLightweightTools(activeTab ? lightweightDrawingKey(rendererAccountKey(), symbol, activeTab.right, activeTab.strike, activeTab.expiry) : lightweightDrawingKey(rendererAccountKey(), symbol))
 
   const ftr=useMemo(()=>{
     if(activeTab) return annotations.filter(a=>a.instrument===activeTab.right)
@@ -89,12 +84,12 @@ export function WebsitePatternChart({symbol,date,annotations,topPatterns,activeS
     return annotations.filter(a=>a.instrument===instFilter)
   },[annotations,instFilter,activeTab,isOpt])
 
-  useEffect(()=>{const el=cr.current;if(!el)return;const c=createChart(el,{width:el.clientWidth||500,height:(el.parentElement?.clientHeight||400)-50,layout:{background:{color:'#0d1117'},textColor:'#8b949e'},grid:{vertLines:{color:'#21262d'},horzLines:{color:'#21262d'}},timeScale:{timeVisible:true,secondsVisible:false},crosshair:{mode:0},handleScroll:{vertTouchDrag:false}});ch.current=c;const cs=c.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});sr.current=cs;const detach=tools.attach(c,cs);e9r.current=c.addLineSeries({color:'#f0883e',lineWidth:1,priceLineVisible:false,lastValueVisible:false});e21r.current=c.addLineSeries({color:'#79c0ff',lineWidth:1,priceLineVisible:false,lastValueVisible:false});const ro=new ResizeObserver(e=>{c.applyOptions({width:e[0].contentRect.width})});ro.observe(el);return()=>{ro.disconnect();detach();c.remove()}},[])
+  useEffect(()=>{const el=cr.current;if(!el)return;const c=createChart(el,{width:el.clientWidth||500,height:(el.parentElement?.clientHeight||400)-50,layout:{background:{color:'#0d1117'},textColor:'#8b949e'},grid:{vertLines:{color:'#21262d'},horzLines:{color:'#21262d'}},timeScale:{timeVisible:true,secondsVisible:false},crosshair:{mode:0},handleScroll:{vertTouchDrag:false}});ch.current=c;sr.current=c.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444'});e9r.current=c.addLineSeries({color:'#f0883e',lineWidth:1,priceLineVisible:false,lastValueVisible:false});e21r.current=c.addLineSeries({color:'#79c0ff',lineWidth:1,priceLineVisible:false,lastValueVisible:false});const ro=new ResizeObserver(e=>{c.applyOptions({width:e[0].contentRect.width})});ro.observe(el);return()=>{ro.disconnect();c.remove()}},[])
 
   useEffect(()=>{const s=sr.current;if(!s)return;let canc=false;setHistoryState('loading');setLoadedInterval(null);s.setData([]);s.setMarkers([]);sc([]);e9r.current?.setData([]);e21r.current?.setData([]);(async()=>{try{let d:CandlestickData[]
     if(activeTab){const r=await api.patternOhlcOptions(symbol,date,activeTab.strike,activeTab.expiry,activeTab.right,intervalMinutes,2);if(canc||!sr.current)return;d=r.candles.map(c=>({time:c.time as Time,open:c.open,high:c.high,low:c.low,close:c.close}))}else{const r=await api.patternOhlcEquity(symbol,date,intervalMinutes,2);if(canc||!sr.current)return;d=r.candles.map(c=>({time:c.time as Time,open:c.open,high:c.high,low:c.low,close:c.close}))}
     setLoadedInterval(intervalMinutes);setHistoryState(d.length?'ready':'empty');s.setData(d);sc(d);const cl=d.map(c=>c.close);const e9=computeEMA(cl,9);const e21=computeEMA(cl,21);e9r.current?.setData(d.map((c,i)=>({time:c.time,value:e9[i]!})).filter(dd=>dd.value!==null));e21r.current?.setData(d.map((c,i)=>({time:c.time,value:e21[i]!})).filter(dd=>dd.value!==null));ch.current?.timeScale().fitContent()}catch{if(!canc)setHistoryState('error')}})();return()=>{canc=true}},[api,symbol,date,activeStrike,intervalMinutes,historyRetry])
-  useEffect(()=>{e9r.current?.applyOptions({visible:tools.showEma});e21r.current?.applyOptions({visible:tools.showEma})},[tools.showEma])
+  useEffect(()=>{e9r.current?.applyOptions({visible:true});e21r.current?.applyOptions({visible:true})},[])
   useEffect(()=>{const s=sr.current;if(!s||cc.length===0||historyState!=='ready'||loadedInterval!==intervalMinutes)return;s.setMarkers(buildMarkers(ftr,activeStrategy,activeCategory,topPatterns).map(marker=>({...marker,time:(Math.floor(Number(marker.time)/(intervalMinutes*60))*(intervalMinutes*60)) as Time})))},[cc,ftr,activeStrategy,activeCategory,topPatterns,intervalMinutes,historyState,loadedInterval])
 
   return <div style={{position:'relative',display:'flex',flexDirection:'column',flex:1,minHeight:0}}>
@@ -105,7 +100,7 @@ export function WebsitePatternChart({symbol,date,annotations,topPatterns,activeS
       <StrikeBtn active={!activeStrike} onClick={()=>setActiveStrike('')}>Underlying</StrikeBtn>
       {patternTabs.map(s=><StrikeBtn key={s.key} active={activeStrike===s.right} onClick={()=>setActiveStrike(s.right)} right={s.right}>{s.label}</StrikeBtn>)}
     </div>
-    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><LightweightChartTools tools={tools}/><CandleInterval /><div style={{flex:1}}/>{onMax&&<Btn s onClick={onMax} title="Maximize">⤢</Btn>}</div>
+    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}><CandleInterval /><div style={{flex:1}}/>{onMax&&<Btn s onClick={onMax} title="Maximize">⤢</Btn>}</div>
     <div ref={cr} style={{flex:1}}/>
   </div>
 }
