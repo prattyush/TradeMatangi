@@ -92,7 +92,6 @@
   grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 .swing-chart-pane {
-  container-type: inline-size;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -120,8 +119,8 @@
   gap: 5px;
   align-items: center;
   padding: 5px;
-  flex-wrap: wrap;
-  row-gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
   font-size: 11px;
   background: #161e2a;
   flex-shrink: 0;
@@ -129,31 +128,14 @@
 .swing-pane-bar input {
   width: 115px;
 }
-.swing-workspace .swing-chart-pane > .swing-pane-bar .swing-icon-button {
-  width: 28px;
-  height: 28px;
-  flex-basis: 28px;
-}
 .swing-pane-bar strong {
   margin-right: auto;
   white-space: nowrap;
 }
 .swing-data-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
   font-size: 10px;
-  white-space: nowrap;
   color: #94a3b8;
   padding: 3px 8px;
-  border: 1px solid #263244;
-  border-radius: 10px;
-  background: #0d1117;
-}
-.swing-data-label button {
-  padding: 1px 6px;
-  font-size: 10px;
 }
 .swing-trade-ticket {
   flex: 0 0 270px;
@@ -277,101 +259,3 @@
 .swing-order-dialog button { padding: 6px 10px; margin: 4px; cursor: pointer; }
 .swing-order-row { display: flex; align-items: center; gap: 4px; }
 .swing-order-row > .swing-position-row { flex: 1; min-width: 0; }
-
-/* ── Pre-start screen: centered setup card ── */
-.swing-start-page {
-  max-width: 560px;
-  margin: 0 auto;
-  font-size: 13px;
-}
-.swing-start-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #263244;
-}
-.swing-start-header h2 {
-  margin: 0 auto 0 0;
-  font-size: 18px;
-}
-.swing-start-page button,
-.swing-start-page select,
-.swing-start-page input {
-  font: inherit;
-  color: inherit;
-  background: #1b2635;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  padding: 7px 10px;
-}
-.swing-start-page button { cursor: pointer; }
-.swing-start-page button:hover:not(:disabled) { background: #334155; }
-.swing-start-page button:disabled { opacity: .5; cursor: default; }
-.swing-start-page input,
-.swing-start-page select { width: 100%; box-sizing: border-box; background: #0d1117; }
-.swing-start-page [role="alert"] {
-  padding: 8px 12px;
-  color: #fecaca;
-  background: #3b1d24;
-  border: 1px solid #7f1d1d;
-  border-radius: 6px;
-}
-.swing-start-card {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 24px;
-  background: #161e2a;
-  border: 1px solid #334155;
-  border-radius: 10px;
-}
-.swing-start-intro h3 { margin: 0 0 4px; font-size: 16px; }
-.swing-start-intro p { margin: 0; color: #94a3b8; }
-.swing-start-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-.swing-start-grid > label {
-  display: grid;
-  gap: 5px;
-  color: #aeb8ca;
-  font-size: 12px;
-}
-.swing-start-grid > .swing-broker-connection {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.swing-broker-status {
-  padding: 4px 10px;
-  font-size: 12px;
-  border-radius: 12px;
-  border: 1px solid #334155;
-  color: #94a3b8;
-}
-.swing-broker-status[data-state="ok"] { color: #34d399; border-color: #14532d; background: #0f2a1f; }
-.swing-broker-status[data-state="warn"] { color: #fbbf24; border-color: #78350f; background: #2a2010; }
-.swing-broker-connection small { color: #94a3b8; flex-basis: 100%; }
-.swing-start-page .swing-start-submit {
-  width: 100%;
-  padding: 10px 14px;
-  font-weight: 600;
-  color: #fff;
-  background: #1f6feb;
-  border-color: #1f6feb;
-}
-.swing-start-page .swing-start-submit:hover:not(:disabled) { background: #388bfd; }
-@media (max-width: 560px) {
-  .swing-start-grid { grid-template-columns: minmax(0, 1fr); }
-  .swing-start-card { padding: 16px; }
-}
-
-/* Narrow panes: keep the header on one row; status stays visible in wider panes and on error. */
-@container (max-width: 560px) {
-  .swing-data-label:not(.swing-data-error) { display: none; }
-}

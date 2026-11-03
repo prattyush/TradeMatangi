@@ -79,10 +79,6 @@ _saved_snapshot_cache: dict[str, tuple[tuple, "DesktopTradingSnapshot"]] = {}
 
 
 class DesktopTradingSnapshot(ContractModel):
-    broker_state_version: int | None = None
-    broker_state_generation: str | None = None
-    broker_orders: list[dict] | None = None
-    broker_snapshot_revision: str | None = None
     version: int = 1
     created_for_request: bool | None = None
     event_cursor: int = 0
@@ -631,8 +627,19 @@ def _seed_underlying_options_request_impl(req: SimulationStartRequest) -> None:
 
 def _strategy_response(instance) -> StrategyResponse:
     metadata = instance.metadata
-    from app.services.strategy_presentation import strategy_line_price
-    price = strategy_line_price(instance)
+    price = None
+    if instance.strategy_type in ("TargetProfit", "UnderlyingTargetProfit"):
+        value = metadata.get("target_profit_value")
+        if value is not None and not metadata.get("target_profit_is_pct", False):
+            price = float(value)
+    elif instance.strategy_type == "LockProfit":
+        value = metadata.get("lock_profit_price", metadata.get("lock_profit_value"))
+        if value is not None and not metadata.get("lock_profit_is_pct", False):
+            price = float(value)
+    elif instance.strategy_type == "UnderlyingStoploss":
+        value = metadata.get("underlying_sl_price")
+        if value is not None:
+            price = float(value)
     return StrategyResponse(
         strategy_id=instance.strategy_id,
         strategy_type=instance.strategy_type,
@@ -1972,13 +1979,8 @@ async def refresh_real(session_id: str, user_id: str = Depends(preparation_user_
     session = _require_session(session_id, user_id)
     if session.session_type != 'real':
         raise HTTPException(400, 'Real session required')
-    evidence = await real_broker_state.refresh(session, execution_broker.get_service(session))
-    snapshot = _snapshot(session, user_id)
-    snapshot.broker_state_version = evidence.get("state_version")
-    snapshot.broker_state_generation = evidence.get("state_generation")
-    snapshot.broker_orders = evidence["orders"]
-    snapshot.broker_snapshot_revision = evidence["snapshot_revision"]
-    return snapshot
+    await real_broker_state.refresh(session, execution_broker.get_service(session))
+    return _snapshot(session, user_id)
 
 @router.get("/{session_id}/close-summary")
 async def real_summary(session_id: str, user_id: str = Depends(preparation_user_id)):
