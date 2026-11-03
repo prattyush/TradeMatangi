@@ -97,3 +97,11 @@
   timestamps: format notification milliseconds in Asia/Kolkata. Persist at most
   100 records per account/backend, expire after seven days, and never replay old
   flashes on reload. No backend audit or cross-device sync is implied.
+
+- Per-pane "Re-select strike" (CE/PE charts): the start-time rule (`strikeRule.ts`,
+  carried on `OptionsReadyConfig.strikeRule`) is re-applied server-side by
+  `POST /api/simulation/{id}/reselect-strike` at the session clock (replay/stepwise) or
+  wall clock (paper/real). The server refuses (409) while that side has an open
+  position, order or strategy, because the old contract stops receiving ticks. The
+  App's workspace-reset effect is skipped for the resulting strike change
+  (`skipWorkspaceResetKeyRef`) so the user's pane layout is not rebuilt.
