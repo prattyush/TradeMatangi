@@ -7,7 +7,7 @@
 6. Show the same indicator and drawings are present in Day & Swing Trading in website, No need to add the current light weight charts indicators in KLine, use the same indicators and drawings as present in desktop.
 7. The indicator and drawing should be collapsable whereever you want to place, for day trading at least you can place in the left side with minimal place, or where ever you think is best.
 8. The orders modificcation or Strategy modifications through lines in KLine should also work for real trading.
-9. In website, the Analysis and pattern and other can still use lightweight.
+9. In website, the Analysis and pattern and other can still use lightweight. *(Superseded by the Analysis & Patterns follow-up below: Analysis and Patterns now have their own renderer setting; Lightweight remains the default.)*
 10. Drawings and lines drawn in desktop should be visible in website for KLine and vice versa.
 11. Check in desktop and website a line drawn should be visible in all places where Kline is used for that particular syymbol.
 12. Website KLine drawings and indicators use one collapsible left panel for all charts in the workspace, operating on the active chart rather than repeating controls per chart.
@@ -17,7 +17,7 @@
 
 See [Phase 22 implementation plan](spec-phase22-implementation-plan.md) for sprints, decisions, design, exclusions, verification commands and current status.
 
-PR #675 was merged into **preprod**. The current follow-up is on `fix/website-chart-tools-and-resize`, with PR #676 targeting **preprod**. Website Settings → General → Trading chart selects **Lightweight** (default) or **KLine** for Day and Swing. Swing also has a chart display settings gear. Switching does not restart the session or backend. Analysis/Patterns stay Lightweight.
+PR #675 was merged into **preprod**. The current follow-up is on `fix/website-chart-tools-and-resize`, with PR #676 targeting **preprod**. Website Settings → General → Trading chart selects **Lightweight** (default) or **KLine** for Day and Swing. Swing also has a chart display settings gear. Switching does not restart the session or backend. Analysis/Patterns default to Lightweight and now have their own renderer setting (see "Analysis & Patterns drawing tools and indicators" below).
 
 Day KLine covers Replay, Stepwise, Paper and Real, using existing website trading APIs. Existing Swing actions remain available. Shared KLine drawings load when opening/reopening or explicitly refreshing charts; no new continuous synchronization is added.
 
@@ -49,6 +49,39 @@ Each intraday website KLine chart shows its bar-close countdown on the right. Li
 Website KLine indicator controls (including Clear indicators) use wrapping tiles in a responsive grid: two columns in the narrow tools rail and three on wider displays. The expanded rail grows from 178px to at most 248px; the collapsed rail remains 34px. Indicator selection and desktop controls are unchanged.
 
 
+## Analysis & Patterns: drawing tools and indicators
+
+### Feature request
+1. In desktop **Analysis**, a (maximized) chart should offer the drawing tools and indicators normally present while trading, in a left side panel, so the user can analyse entries and exits, design strategies and find faults in how they entered or exited.
+2. Drawings must persist, as already done for KLine charts.
+3. A cleaner UI for the tools and indicators is welcome, in Analysis generally or only when maximized; hideable/floating panel is the implementer's choice.
+4. The website should likewise offer the normal drawings and indicators on its Lightweight charts, and the KLine equivalents for KLine; the webapp follows.
+5. All KLine charts, in website or desktop, save their drawings.
+
+Decisions confirmed with the user:
+- **Do not mix tool sets.** KLine charts show the KLine set (the desktop's 14 drawing tools and indicators). Lightweight charts show exactly what the Lightweight trading chart has.
+- Add **KLine to website/webapp Analysis and Patterns** behind a **separate setting**, so a user can trade on Lightweight and analyse on KLine.
+- Tools are visible on Analysis and Patterns charts **at all times**, not only when maximized. KLine uses a hideable left panel; Lightweight uses the on-chart Draw/Indicators dropdowns like the trading chart.
+- **KLine drawings are saved to the backend and shared** with the trading charts for the same instrument. **Lightweight drawings stay in localStorage** (as the Lightweight trading chart does today).
+
+### Implementation
+- **KLine (desktop always; website/webapp when selected).** Each Analysis KLine chart has a slim left tool rail: the 14 drawing tools, Once/Repeat, and lock/hide/delete for the selected drawing. The header has a **✎** toggle to hide or show the rail (remembered, applies to every Analysis chart) and an **ƒx** popover with 13 indicators (`PositionPnL` is trading-only; EMA 9/21 is on by default, as before). Indicator choice is stored locally per account and pane type (underlying vs option). Escape, Delete/Backspace and Ctrl/Cmd+Z act on the chart under the pointer. The same chart type is used by Underlying/Option panes, Trade labelling, snapshots and the Trade-vs-Pattern comparison, and the maximize layout is unchanged (the rail simply stays beside the larger chart).
+- **Persistence and sharing.** Drawings use `/api/desktop/v1/drawings` and the existing `{tool, points:[{timestamp,price}], style}` record, so no backend change was needed. The instrument key is built by `analysisDrawingInstrument` + `drawingIdentity(..., shareDayDrawings=true)` and matches the Day/Swing KLine charts (index/equity: catalogue kind + symbol + exchange; option: underlying, expiry, strike, right). A level drawn on the exact option contract in Analysis therefore also appears on that contract's trading chart and vice versa. If the instrument catalogue cannot be loaded the tools are disabled rather than saving under a guessed key. A click that does not move a drawing does not save it. klinecharts needs three clicks for two-point tools (start, second point, confirm).
+- **Lightweight (website/webapp).** Underlying, Option, Trades and Pattern charts get the same **Indicators ▾** (EMA 9/21 toggle, on by default) and **Draw ▾** dropdowns as `Chart.tsx`: horizontal line, trend line, Fib retracement, parallel channel, buy/sell marker, Risk:Reward, plus **Clear** (removes the last drawing). Drawings are stored in `analysis-lw-drawings:<account>:<symbol>:<right>:<strike>:<expiry>` and are restored whenever the chart is recreated (maximize, reload, switching contract tab). `Chart.tsx` is not modified; the tools are re-implemented in `lightweightDrawings.ts`. Snapshot charts keep their previous behavior.
+- **Renderer setting.** New per-user `website_analysis_chart_renderer` (`lightweight` default | `kline`) in `UserSettingsResponse`/`UserSettingsUpdateRequest`; shown in **Settings → Display → Analysis & Patterns chart**, independent of the trading chart setting. The frontend caches it per account and the server value wins; a backend that does not confirm the field is reported instead of silently ignored. KLine Analysis code is lazy-loaded so Lightweight-only users never download it.
+- **Shared code.** The desktop Analysis KLine chart moved to `shared/analysis/kline/` (old `windowsapp/src/*` paths re-export it). The drawing layer is `shared/charts/{useKLineDrawings,useKLineIndicators,KLineToolsPanel,klineDrawingModel}`. `KLineChart.tsx` (the trading chart) was deliberately not refactored, to keep the real-trading path untouched. `AnalysisEnvironment` gained `drawingRequest`, `resolveSymbolInstrument` and `accountKey`; the website supplies them in `frontend/src/services/analysisEnvironment.tsx`, the desktop in `DesktopAnalysis.tsx`. Website KLine Analysis styles are scoped in `klineAnalysisSite.css`.
+- **Fix found while testing.** On the website a maximized KLine Analysis chart could not be restored with Escape (the website environment has no `active` flag); `AnalysisPanels` now ignores Escape only when the environment is explicitly inactive.
+- **Webapp.** No separate code: it mounts the website, so it inherits the setting and both tool sets.
+
+### Out of scope
+`Chart.tsx`/trading charts, Swing charts, the Pattern Library / Fine Structures / Chart Structures pages (their own Lightweight drawing code is unchanged), syncing Lightweight drawings to the backend, and merging the KLine and Lightweight tool sets.
+
+### Verification
+- Browser: `frontend/tests/phase22/analysis-tools.spec.ts` (4 scenarios: KLine draw/save/restore/delete under the shared instrument key, indicators and rail visibility, option-contract key with maximize and Escape, Lightweight tools/local persistence/maximize/EMA toggle). The existing `frontend` (43) and `webapp` (21) Playwright suites still pass.
+- Unit: `windowsapp/src/analysisDrawing.test.ts` (instrument key parity with the Day tiles, overlay point round trip); desktop vitest 294 pass. `tsc --noEmit` clean for `frontend`, `webapp` and `windowsapp`; website, webapp and desktop builds pass.
+- Backend: `backend/tests/test_user_settings.py` covers the new setting (default, update, invalid values). Full backend suite with DynamoDB Local: 2,777 pass, 1 fails. The failure, `test_swing_paper_recovery.py::test_amendment_keeps_old_day_window_instructions_for_recovery`, is unrelated and also fails on unchanged `dev`: `amend_attempt` uses the real wall clock (`current_market_timestamp()`) while the test hard-codes 2026-11-02, so it only passes when run during weekday market hours (09:15-15:30 IST) or before that date. Fix by freezing the clock in the test or using the session clock in production code.
+- Manual acceptance still required: the real Tauri desktop Analysis tab (draw on an underlying and an option chart, maximize/restore, restart, confirm the drawing also shows on the Day chart) and the website/webapp Patterns view with KLine selected. The `scripts/desktop-analysis-workflows.mjs` check could not be used: it fails to resolve `klinecharts` on unchanged `dev` too.
+- Design notes for later work are in [Frontend technical constraints](frontend-technical-constraints.md#analysis--patterns-charts).
 
 
 ## Web App For TradeMatangi.
