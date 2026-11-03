@@ -1,7 +1,3 @@
-import WebsiteChartAppearanceSettings from './WebsiteChartAppearanceSettings'
-import SettingHelp from './SettingHelp'
-import { useWebsiteChartRenderer } from '../hooks/useWebsiteChartRenderer'
-import { useAnalysisChartRenderer } from '../hooks/useAnalysisChartRenderer'
 import DisplaySettings from './DisplaySettings'
 import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionSetting'
 import FuturesRiskSettings from "./FuturesRiskSettings"
@@ -363,8 +359,6 @@ interface Props {
 }
 
 export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
-  const renderer = useWebsiteChartRenderer()
-  const analysisRenderer = useAnalysisChartRenderer()
   const [open, setOpen] = useState(false)
   const sharingRequest = useCallback(async (method: 'GET'|'PUT', emails?: string[]): Promise<HistorySharingState> => {
     const response = await fetch(`${BACKEND_URL}/api/users/real-history-sharing`, {method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='PUT'?JSON.stringify({emails}):undefined})
@@ -1079,7 +1073,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         >
           <div role="dialog" aria-modal="true" aria-label="Settings" style={{
             background: '#161b22', border: '1px solid #30363d', borderRadius: 10,
-            padding: 24, width: 'min(960px, calc(100vw - 32px))', display: 'flex', flexDirection: 'column', gap: 16,
+            padding: 24, width: 'min(760px, 94vw)', display: 'flex', flexDirection: 'column', gap: 16,
             height: 'min(720px, 90vh)', boxSizing: 'border-box',
           }}>
             {/* Header */}
@@ -1136,105 +1130,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {settingsLoadFailed && <button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>}
             <fieldset disabled={settingsLoading || settingsLoadFailed || preferenceSaving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
-            {/* ── Display tab content (chart appearance) ── */}
-            {activeTab === 'display' && <>
-              <div>
-                <div className="settings-block-title">Chart renderer</div>
-                <label className="settings-field-row">
-                  <span>Trading chart</span>
-                  <select className="settings-control" aria-label="Website trading chart renderer" value={renderer}
-                    onChange={event => void savePreference({ website_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
-                    <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
-                  </select>
-                  <SettingHelp text={"Applies to website Day and Swing charts. Your session keeps running. Choose Lightweight here if KLine fails."} />
-                </label>
-                <label className="settings-field-row">
-                  <span>Analysis &amp; Patterns chart</span>
-                  <select className="settings-control" aria-label="Website analysis chart renderer" value={analysisRenderer}
-                    onChange={event => void savePreference({ website_analysis_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
-                    <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
-                  </select>
-                  <SettingHelp text={"Chart used in Trade Analysis and the Trade-vs-Pattern view. KLine adds more drawing tools and indicators, and its drawings are saved to your account and shared with the KLine trading chart. Lightweight uses the same tools as the Lightweight trading chart. Independent of the trading chart setting."} />
-                </label>
-              </div>
-
-            <WebsiteChartAppearanceSettings />
-
-            {/* Rectangle drawing fill (shared drawingFillColor/Opacity) */}
-            <DisplaySettings />
-
-            {/* Trading Chart Indicators */}
-            <div className="settings-block">
-              <div className="settings-block-title">
-                Trading chart indicators
-              </div>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
-                  {(['normalized', 'raw'] as RocRatioMode[]).map(mode => (
-                    <button
-                      key={mode}
-                      onClick={() => {
-                        void savePreference({ trading_roc_ratio_mode: mode }, () => {
-                          setTradingRocRatioMode(mode)
-                          localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
-                          onTradingIndicatorSettingsChange?.(mode)
-                        })
-                      }}
-                      style={{
-                        padding: '5px 12px', fontSize: 12, fontWeight: 600,
-                        border: 'none', cursor: 'pointer', textTransform: 'capitalize',
-                        background: tradingRocRatioMode === mode ? '#1f3a5f' : '#161b22',
-                        color: tradingRocRatioMode === mode ? '#79c0ff' : '#484f58',
-                      }}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <SettingHelp text={"Selected ratio indicators share a compact band below each trading chart"} />
-            </div>
-
-            </> /* end Display tab */}
-
-            {activeTab === 'sharing' && <>
-            {[
-              { title: 'Pattern sharing', value: patternShareEmails, set: setPatternShareEmails, key: 'pattern_share_emails', done: 'Pattern sharing saved', fail: 'Failed to save pattern sharing', note: 'Shared users must already have a TradeMatangi account.' },
-              { title: 'Fine structure sharing', value: fineStructureShareEmails, set: setFineStructureShareEmails, key: 'fine_structure_share_emails', done: 'Fine structure sharing saved', fail: 'Failed to save fine structure sharing', note: 'Shared users can view and search your definitions and flows (read-only).' },
-            ].map(block => (
-              <div key={block.key} className="settings-block">
-                <div className="settings-block-title">{block.title}</div>
-                <textarea
-                  className="settings-control"
-                  aria-label={`${block.title} emails`}
-                  value={block.value}
-                  onChange={e => block.set(e.target.value)}
-                  placeholder="Comma-separated email addresses"
-                  rows={3}
-                  style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', minHeight: 72, padding: '8px 10px', fontSize: 13, lineHeight: 1.4 }}
-                />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                  <button
-                    className="settings-primary-btn"
-                    onClick={() => {
-                      api.updateUserSettings({ [block.key]: block.value }).then(() => {
-                        setStatus(block.done)
-                        setTimeout(() => setStatus(null), 2000)
-                      }).catch((e: unknown) => {
-                        setStatus(e instanceof Error ? e.message : block.fail)
-                        setTimeout(() => setStatus(null), 2500)
-                      })
-                    }}
-                  >Save</button>
-                  <span style={{ fontSize: 11, color: '#6e7681' }}>{block.note}</span>
-                </div>
-              </div>
-            ))}
-            </> /* end Sharing tab (preference-backed part) */}
-
+            {/* ── Display tab content ── */}
+            {activeTab === 'display' && <DisplaySettings />}
 
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
+
             {/* P&L Display Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>P&L DISPLAY MODE</div>
@@ -1254,7 +1155,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </button>
                 ))}
               </div>
-              <SettingHelp text={"Pos P&L and Session P&L show % of session capital when enabled"} />
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Pos P&L and Session P&L show % of session capital when enabled
+              </div>
             </div>
 
             {/* Historical Days */}
@@ -1296,7 +1199,43 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   Save
                 </button>
               </div>
-              <SettingHelp text={"Prior trading days of chart context loaded at session start"} />
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Prior trading days of chart context loaded at session start
+              </div>
+            </div>
+
+            {/* Trading Chart Indicators */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                TRADING CHART INDICATORS
+              </div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
+                  {(['normalized', 'raw'] as RocRatioMode[]).map(mode => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        void savePreference({ trading_roc_ratio_mode: mode }, () => {
+                          setTradingRocRatioMode(mode)
+                          localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
+                          onTradingIndicatorSettingsChange?.(mode)
+                        })
+                      }}
+                      style={{
+                        padding: '5px 12px', fontSize: 12, fontWeight: 600,
+                        border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                        background: tradingRocRatioMode === mode ? '#1f3a5f' : '#161b22',
+                        color: tradingRocRatioMode === mode ? '#79c0ff' : '#484f58',
+                      }}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                Selected ratio indicators share a compact band below each trading chart
+              </div>
             </div>
 
             {/* Override Previous Sessions */}
@@ -1329,7 +1268,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: '#e6edf3' }}>Prompt to override on duplicate session</div>
-                  <SettingHelp text={"When starting a session, checks for previous data with the same symbol, date, session, and instrument type"} />
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
+                    When starting a session, checks for previous data with the same symbol, date, session, and instrument type
+                  </div>
                 </div>
               </label>
             </div>
@@ -1393,32 +1334,32 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {/* Broker connection (for real trading users) */}
             {(isRealTradingUser || isAdmin) && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                <div className="settings-block-title">Broker</div>
-                <label className="settings-field-row"><span>Real execution broker</span><select className="settings-control" value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
-                {realActiveSession && <small className="settings-note">Changing the default broker affects new sessions. Existing sessions keep their broker.</small>}
+                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>BROKER</div>
+                <label>Real execution broker <select value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
+                {realActiveSession && <p style={{ fontSize: 12 }}>Changing the default broker affects new sessions. Existing sessions keep their broker.</p>}
                 <RealSessionList key={executionBroker} request={realBookRequest} onAttach={onAttachRealSession ? id => { void onAttachRealSession(id).catch(reason => window.alert(String(reason))) } : undefined} />
-                <div className="settings-field-row">
-                  <span>Kotak Neo</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 13, color: '#e6edf3' }}>Kotak Neo</span>
                   {kotakAuthenticated === null ? (
                     <span style={{ fontSize: 12, color: '#484f58' }}>checking…</span>
                   ) : kotakAuthenticated ? (
                     <span style={{
                       fontSize: 12, color: '#3fb950',
                       background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.3)',
-                      borderRadius: 12, padding: '3px 10px',
+                      borderRadius: 4, padding: '2px 8px',
                     }}>Connected</span>
                   ) : (
                     <>
                       <span style={{
                         fontSize: 12, color: '#f85149',
                         background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
-                        borderRadius: 12, padding: '3px 10px',
+                        borderRadius: 4, padding: '2px 8px',
                       }}>Not connected</span>
                       <button
                         onClick={() => setShowKotakTOTP(true)}
                         style={{
-                          padding: '5px 14px', background: '#1f6feb', border: 'none',
-                          borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                          padding: '4px 12px', background: '#d4a017', border: 'none',
+                          borderRadius: 6, color: '#0d1117', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                         }}
                       >Connect</button>
                     </>
@@ -1837,7 +1778,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     Auto-start event capture on session start
                   </label>
-                  <SettingHelp text={"When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)"} />
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)
+                  </div>
                 </div>
 
                 {/* Trade Labeling Mode (per session type) */}
@@ -1947,9 +1890,99 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     </div>
                     <div>
                       <div style={{ fontSize: 12, color: '#e6edf3' }}>Live pattern detection</div>
-                      <SettingHelp text={"Detects chart patterns and behavioral signals in real-time during sessions"} />
+                      <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
+                        Detects chart patterns and behavioral signals in real-time during sessions
+                      </div>
                     </div>
                   </label>
+                </div>
+
+                {/* Pattern Sharing */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                    PATTERN SHARING
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <textarea
+                      value={patternShareEmails}
+                      onChange={e => setPatternShareEmails(e.target.value)}
+                      placeholder="Comma-separated email addresses"
+                      rows={3}
+                      style={{
+                        width: '100%', resize: 'vertical', minHeight: 72,
+                        padding: '8px 10px', background: '#0d1117',
+                        border: '1px solid #30363d', borderRadius: 6,
+                        color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
+                      }}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => {
+                          api.updateUserSettings({ pattern_share_emails: patternShareEmails }).then(() => {
+                            setStatus('Pattern sharing saved')
+                            setTimeout(() => setStatus(null), 2000)
+                          }).catch((e: unknown) => {
+                            setStatus(e instanceof Error ? e.message : 'Failed to save pattern sharing')
+                            setTimeout(() => setStatus(null), 2500)
+                          })
+                        }}
+                        style={{
+                          padding: '5px 14px', background: '#1f6feb',
+                          border: 'none', borderRadius: 6, color: '#fff',
+                          cursor: 'pointer', fontSize: 12,
+                        }}
+                      >
+                        Save
+                      </button>
+                      <span style={{ fontSize: 11, color: '#484f58' }}>
+                        Shared users must already have a TradeMatangi account.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fine Structure Sharing */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
+                    FINE STRUCTURE SHARING
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <textarea
+                      value={fineStructureShareEmails}
+                      onChange={e => setFineStructureShareEmails(e.target.value)}
+                      placeholder="Comma-separated email addresses"
+                      rows={3}
+                      style={{
+                        width: '100%', resize: 'vertical', minHeight: 72,
+                        padding: '8px 10px', background: '#0d1117',
+                        border: '1px solid #30363d', borderRadius: 6,
+                        color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
+                      }}
+                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => {
+                          api.updateUserSettings({ fine_structure_share_emails: fineStructureShareEmails }).then(() => {
+                            setStatus('Fine structure sharing saved')
+                            setTimeout(() => setStatus(null), 2000)
+                          }).catch((e: unknown) => {
+                            setStatus(e instanceof Error ? e.message : 'Failed to save fine structure sharing')
+                            setTimeout(() => setStatus(null), 2500)
+                          })
+                        }}
+                        style={{
+                          padding: '5px 14px', background: '#1f6feb',
+                          border: 'none', borderRadius: 6, color: '#fff',
+                          cursor: 'pointer', fontSize: 12,
+                        }}
+                      >
+                        Save
+                      </button>
+                      <span style={{ fontSize: 11, color: '#484f58' }}>
+                        Shared users can view and search your definitions and flows (read-only).
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 {status && (
@@ -2076,7 +2109,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     <span style={{ fontSize: 12, color: '#8b949e' }}>ticks (1–5)</span>
                   </div>
-                  <SettingHelp text={"Extra ticks past target price before limit order triggers (each tick = \u20b90.05)"} />
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    Extra ticks past target price before limit order triggers (each tick = ₹0.05)
+                  </div>
                 </div>
 
                 {/* Aggressive SL: only in profit */}
@@ -2091,7 +2126,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     <span style={{ fontSize: 12, color: '#e6edf3' }}>Only update SL when in profit</span>
                   </label>
-                  <SettingHelp text={"Skip SL shift when bar closes below avg entry price"} />
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    Skip SL shift when bar closes below avg entry price
+                  </div>
                 </div>
 
                 {/* Save button for all strategy settings */}
@@ -2448,7 +2485,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                         onChange={e => void saveHistoricalSource(historicalSource, e.target.checked)} />
                       Allow historical provider fallback
                     </label>
-                    <SettingHelp text={"Paper/real history uses this provider independently of live streaming. Previous days reuse complete Breeze caches first. Today keeps providers separate. Replay and stepwise always use Breeze."} />
+                    <span
+                      title="Paper/real history uses this provider independently of live streaming. Previous days reuse complete Breeze caches first. Today keeps providers separate. Replay and stepwise always use Breeze."
+                      style={{ color: '#8b949e', cursor: 'help', fontSize: 12 }}
+                    >ⓘ</span>
                   </div>
                 </div>
 
@@ -2486,7 +2526,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       </button>
                     ))}
                   </div>
-                  <SettingHelp text={"Applies to all new paper and real sessions. Fyers supports NSE/BSE equities, indices, and F&O. Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token. Falls back to the next available source if the selected one is unavailable."} />
+                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
+                    Applies to all new paper and real sessions.
+                    Fyers supports NSE/BSE equities, indices, and F&O. Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token.
+                    Falls back to the next available source if the selected one is unavailable.
+                  </div>
 
                   {/* Show Kotak connection status inline when Kotak is selected */}
                   {streamSource === 'kotak' && (

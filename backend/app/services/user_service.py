@@ -311,31 +311,24 @@ def google_auth(id_token: str, account_name: str | None = None) -> dict | None:
 
 
 def set_account_name(user_id: str, account_name: str) -> dict | None:
-    """Return the atomic write result; never read an eventually consistent old name."""
-    from botocore.exceptions import ClientError
+    """Set the account_name for an existing user. Returns updated user info or None."""
     try:
         from app.services.db import get_dynamodb_resource
         table = get_dynamodb_resource().Table("Users")
-        response = table.update_item(
+        table.update_item(
             Key={"user_id": user_id},
             UpdateExpression="SET account_name = :an",
             ExpressionAttributeValues={":an": account_name},
-            ConditionExpression="attribute_exists(user_id)",
-            ReturnValues="ALL_NEW",
         )
-    except ClientError as error:
-        if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
-            return None
+    except Exception:
         logger.exception("Failed to set account_name for %s", user_id)
-        raise RuntimeError("Could not save account name. Please retry.") from error
-    except Exception as error:
-        logger.exception("Failed to set account_name for %s", user_id)
-        raise RuntimeError("Could not save account name. Please retry.") from error
-    info = response["Attributes"]
-    # A legacy row without email must not turn a successful name write into a 500.
+        return None
+    info = get_user_info(user_id)
+    if not info:
+        return None
     return {
         "user_id": info["user_id"],
-        "email": info.get("email") or "",
+        "email": info["email"],
         "is_admin": bool(info.get("is_admin", False)),
         "account_name": info.get("account_name"),
     }

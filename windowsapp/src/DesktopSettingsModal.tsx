@@ -342,19 +342,10 @@ export function DesktopSettingsModal({
   const brokerControls = (
     <section className="settings-section">
       <strong>Broker connection</strong>
-      <div className="settings-section-body">
       <p>Execution: {String(userDraft.real_execution_broker ?? 'kotak') === 'kite' ? `Kite · ${brokerStatus.kite === undefined ? 'Checking…' : brokerStatus.kite ? 'Connected' : 'Not connected; check the Kite token in Admin'}` : 'Kotak Neo'}</p>
-      </div>
-      <div className="picker-fields">
       <label>Real execution broker<select value={String(userDraft.real_execution_broker ?? 'kotak')} disabled={loading || loadFailed || saving} onChange={event => { const broker = event.target.value; void onSaveTradingSettings({ real_execution_broker: broker }).then(value => setUserDraft(current => ({ ...current, ...value }))).catch(error => setBrokerError(String(error))) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
-      </div>
-      <div className="settings-section-body">
       {realActiveSession && <small>Changing the default broker affects new sessions. Existing sessions keep their broker.</small>}
-      </div>
-      <div className="settings-section-pad">
-        <RealSessionList key={String(userDraft.real_execution_broker)} request={realBookRequest} />
-      </div>
-      <div className="settings-section-body">
+      <RealSessionList key={String(userDraft.real_execution_broker)} request={realBookRequest} />
       <p>
         Kotak Neo:{' '}
         {brokerStatus.kotak === undefined
@@ -372,18 +363,18 @@ export function DesktopSettingsModal({
       </p>
       {brokerError && <p role="alert">{brokerError}</p>}
       <button type="button" disabled={loading || loadFailed || saving} onClick={()=>setShowKotakLogin(true)}>Connect Kotak Neo</button>
-      </div>
       {showKotakLogin && <KotakLoginDialog request={accountRequest} onCancel={()=>setShowKotakLogin(false)} onConnected={()=>{setShowKotakLogin(false);setBrokerStatus(current=>({...current,kotak:true}));setBrokerError('');setStatus('Kotak connected')}}/>}
     </section>
   )
   const tabs = [
     ...Object.keys(sharedSettingsSections),
+    'History sharing',
     'GuardRails',
     'Drawing & Display',
     ...(profile?.is_admin ? ['Admin'] : []),
     'Profile'
   ]
-  const preferenceTab = tab !== 'Admin' && tab !== 'Profile'
+  const preferenceTab = tab !== 'Admin' && tab !== 'Profile' && tab !== 'History sharing'
   return (
     <div className="modal-backdrop">
       <section
@@ -691,12 +682,6 @@ export function DesktopSettingsModal({
                       without a desktop interface currently apply there.
                     </p>
                   )}
-                  {tab === 'Sharing' && (
-                    <p>
-                      Share patterns and fine structures with registered accounts, and
-                      manage who can see your real-trading history below.
-                    </p>
-                  )}
                   {tab === 'Strategies' && (
                     <p>
                       Applies to new strategies. Strategy candles are
@@ -999,7 +984,7 @@ export function DesktopSettingsModal({
                   {profile.real_trading_enabled && brokerControls}
                 </section>
               )}
-              {tab === 'Sharing' && <div className="settings-section-pad"><HistorySharingSettings request={sharingRequest} /></div>}
+              {tab === 'History sharing' && <HistorySharingSettings request={sharingRequest} />}
               {tab === 'Profile' && (
                 <section className="settings-section">
                   <strong>{profile?.email}</strong>
