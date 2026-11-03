@@ -122,6 +122,7 @@ const fallbackCatalogue: Instrument[] = [{ symbol: 'NIFTY', display_name: 'NIFTY
 const defaultChartSettings: ChartSettings = { background: '#151a23', textColor: '#aeb8ca', gridColor: '#ffffff', gridOpacity: 0.12, gridStyle: 'solid', gridSize: 1, movingAverageType: 'MA', movingAveragePeriods: '5,10,20', showChartInfo: true, liveProvider: 'breeze', horizontalLineColor: '#facc15', horizontalLineWidth: 2, trendLineColor: '#60a5fa', trendLineWidth: 2, drawingLineColor: '#60a5fa', drawingLineWidth: 2, drawingFillColor: '#60a5fa', drawingFillOpacity: 0.16 }
 const PAPER_STREAM_POLL_MS = 500
 const isMissingSession = (error: unknown) => /\(404(?:\s|\))/.test(String(error)) && /Session not found|Trading request failed/i.test(String(error))
+const isMissingReplayRun = (error: unknown) => /\(404(?:\s|\))/.test(String(error)) && /Replay run was not found|Replay display not found/i.test(String(error))
 const isMissingLiveStream = (error: unknown) => /\(404(?:\s|\))/.test(String(error)) && /Live|desktop request/i.test(String(error))
 const noIndicators: string[] = []
 const reportOptionEntryDiagnostic = (payload: Record<string, unknown>) => {
@@ -1836,9 +1837,8 @@ function ScreenController(props: ScreenControllerProps) {
     if (!replay) return
     try {
       const tradingSessionId = trading?.session.session_id
-      if (action === 'stop' && tradingSessionId && ((mode === 'Stepwise' && !sharedTradingSession) || Boolean(activeScreen.saved?.linked_group_id && primaryLinkedScreen(activeScreen, screens) === activeScreenId))) {
-        await desktopTradingRequest(`${tradingSessionId}/stop`, 'POST')
-      }
+      // Stop ends the replay run and its linked trading session in one server
+      // call, whether this screen created the session or attached to it.
       if (action === 'next-bar' && mode === 'Stepwise' && tradingSessionId) {
         const combined = await replayRequest<{ replay: ReplaySnapshot; trading: DesktopTradingSnapshot }>(`${replay.run_id}/next-bar`, 'POST', { trading_session_id: tradingSessionId })
         setReplay(combined.replay)
@@ -1846,7 +1846,12 @@ function ScreenController(props: ScreenControllerProps) {
         setTrading(combined.trading)
         return
       }
-      const next = await replayRequest(`${replay.run_id}/${action}`, 'POST')
+      let next: ReplaySnapshot
+      try { next = await replayRequest(`${replay.run_id}/${action}`, 'POST') } catch (error) {
+        if (action !== 'stop' || !isMissingReplayRun(error)) throw error
+        // The run is already gone on the server; finish the local stop.
+        next = { ...replay, state: 'stopped' }
+      }
       if (action === 'stop') { stopNativeStream(`replay:${activeScreenId}:${replay.run_id}`); setTrading(null); setSharedTradingSession(false); setTradeTicket(null); setPricePickAction(null); clearTradingError() }
       setReplay(next)
     } catch (error) { setReplayError(String(error)); if (isHistoricalTradingMode(mode)) reportTradingError(error); if (throwOnError) throw error }
@@ -1923,7 +1928,7 @@ function ScreenController(props: ScreenControllerProps) {
   useEffect(() => {
     if (!replay || replay.state === 'stopped') return
     let cancelled = false
-    void replayRequest(`${replay.run_id}/tiles`, 'PUT', { tiles: activeScreen.tiles.map(replayTile) }).then(next => { if (!cancelled) setReplay(next) }).catch(error => { if (!cancelled) setReplayError(String(error)) })
+    void replayRequest(`${replay.run_id}/tiles`, 'PUT', { tiles: activeScreen.tiles.map(replayTile) }).then(next => { if (!cancelled) setReplay(next) }).catch(error => { if (cancelled) return; if (isMissingReplayRun(error)) { setReplay(current => current?.run_id === replay.run_id ? { ...current, state: 'stopped' } : current); return } setReplayError(String(error)) })
     return () => { cancelled = true }
   }, [replay?.run_id, replay?.state, activeScreen.id, activeScreen.tiles, catalogue])
   useEffect(() => {

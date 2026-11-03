@@ -239,9 +239,11 @@ async def stop(run_id: str, user_id: str = Depends(get_desktop_user_id)):
     run = replay.get(user_id, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Replay run was not found")
-    if run.trading_session_id and run.owns_trading_session:
+    # Stop always ends the linked trading session, whether this run created it
+    # or merely attached to it.  Other screens following the session see it end.
+    if run.trading_session_id:
         session = sim_svc.get_session(run.trading_session_id)
-        if session and session.user_id == user_id:
+        if session and session.user_id == user_id and session.state != sim_svc.SimulationState.ENDED:
             from app.routers.desktop_trading import _flatten_positions_for_stop, _mark_desktop_checkpoint
             _flatten_positions_for_stop(session, user_id)
             _mark_desktop_checkpoint(session)

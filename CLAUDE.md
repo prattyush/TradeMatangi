@@ -1,6 +1,18 @@
 # Trade Matangi Project
 
-All development should be done in dev branch and finally merging to main branch will be done manually. When raising a PR please create a new branch and when it is reviewed merge to dev.
+## Branch Strategy (since 2026-11-02)
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Real trading. Known-good; merged manually from `preprod` after local testing. |
+| `preprod` | Staging for `main`. Same code as `main` plus tested real-trading fixes. **Real-trading bugs are fixed here.** |
+| `dev` | New features (currently KLine chart + webapp), tested with simulated / replay / stepwise sessions only. Not yet trusted for real trading. |
+
+Rules:
+- Always raise a PR from a new feature branch. Bug fixes found in real trading target `preprod`; new features target `dev`.
+- Every fix that lands on `preprod` must be synced into `dev` (merge `preprod` into `dev`, via a PR) so `dev` contains all bug fixes plus the new features.
+- Do not merge `dev` wholesale into `preprod`/`main`. Port only specific, reviewed commits (`git cherry-pick -x`) until `dev` is trusted for real trading.
+- Why: in Oct 2026 `dev` (with KLine/webapp edits to the lightweight chart path: `Chart.tsx`, `App.tsx`, `shared/charts/pendingOrderEdits.ts`) showed a chart that stopped updating and "awaiting broker confirmation" notices during real trading; `main` was unaffected. Root cause on `dev` is still to be investigated.
 
 @docs/spec.md
 

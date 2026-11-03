@@ -1,7 +1,7 @@
 """Synthetic broker boundary: identities, non-retrying writes and single-engine claims."""
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 import boto3
 import pytest
 from moto import mock_aws
@@ -114,7 +114,9 @@ def claim_table(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_real_starts_share_one_execution_engine(claim_table):
+async def test_concurrent_real_starts_share_one_execution_engine(claim_table, monkeypatch):
+    from app.services import real_accounting
+    monkeypatch.setattr(real_accounting, 'refresh', AsyncMock(return_value={'session_capital': 20000}))
     calls = []
     request = SimulationStartRequest(symbol='RELIND', date='2026-10-09', session_type='real')
     async def create():

@@ -620,6 +620,11 @@ export interface SnapshotData {
   quantity_mode: string
   // Filled trades up to this event time (for chart markers)
   filled_trades: SnapshotFilledTrade[]
+  // Capture metadata: seq orders events sharing a tick; capture_v 2 = state taken after the event applied
+  seq?: number
+  capture_v?: number
+  // Set by the backend when an old (pre capture_v 2) fill snapshot was re-derived on read
+  legacy_corrected?: boolean
 }
 
 export interface EventSnapshot {
