@@ -97,3 +97,11 @@
   timestamps: format notification milliseconds in Asia/Kolkata. Persist at most
   100 records per account/backend, expire after seven days, and never replay old
   flashes on reload. No backend audit or cross-device sync is implied.
+
+- Rectangle drawing (`indicators/rectanglePrimitive.ts`) is an `ISeriesPrimitive` that
+  resolves pixel coordinates inside `draw()`; a corner time absent from the loaded
+  candles (e.g. past the last bar) is extrapolated from bar spacing, never dropped.
+  Its fill follows `indicators/rectangleStyle.ts`, which reads `drawingFillColor` /
+  `drawingFillOpacity` from `/api/desktop/v1/chart-settings` (shared with the desktop
+  app) and re-publishes on the `website-chart-appearance` window event. Settings ->
+  Display must save with read-modify-write so other chart-settings keys survive.

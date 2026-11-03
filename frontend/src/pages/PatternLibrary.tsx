@@ -8,6 +8,7 @@ import { flashError } from '../services/notifications'
  * click-to-expand read-only chart view.
  */
 import { useState, useEffect, useRef, useCallback, useMemo, CSSProperties } from 'react'
+import { attachRectangle, type RectanglePrimitive } from '../indicators/rectanglePrimitive'
 import {
   createChart, IChartApi, ISeriesApi, CandlestickData, LineData, Time,
   IPriceLine, LineStyle,
@@ -48,11 +49,12 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
 
 // ── Drawing types ─────────────────────────────────────────────────────────────
 
-type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'buymarker' | 'sellmarker' | 'rrindicator'
+type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'rect' | 'buymarker' | 'sellmarker' | 'rrindicator'
 
 type Drawing =
   | { type: 'hline'; ref: IPriceLine }
-  | { type: 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'trendline' | 'fibretracement' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'rect'; ref: RectanglePrimitive }
   | { type: 'buymarker' | 'sellmarker'; ref: ISeriesApi<'Line'> }
 
 const FIB_LEVELS = [
@@ -64,7 +66,7 @@ const FIB_LEVELS = [
 ]
 
 const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
-  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', channel: 'Channel',
+  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', rect: 'Rectangle',
   buymarker: 'Buy Mark', sellmarker: 'Sell Mark', rrindicator: 'R:R',
 }
 
@@ -318,27 +320,13 @@ function ChartPane({
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
         }
-      } else if (!readonly && mode === 'channel') {
+      } else if (!readonly && mode === 'rect') {
         const pts = drawPtsRef.current
         if (pts.length === 0) {
           drawPtsRef.current = [{ time, price }]; setDrawStep(1)
-        } else if (pts.length === 1) {
-          drawPtsRef.current = [...pts, { time, price }]; setDrawStep(2)
         } else {
-          const [p1, p2] = pts
-          const tStart = Math.min(p1.time, p2.time) as Time
-          const tEnd = Math.max(p1.time, p2.time) as Time
-          const baseStartPrice = p1.time <= p2.time ? p1.price : p2.price
-          const baseEndPrice = p1.time <= p2.time ? p2.price : p1.price
-          const timeDiff = (tEnd as number) - (tStart as number)
-          const slope = timeDiff !== 0 ? (baseEndPrice - baseStartPrice) / timeDiff : 0
-          const lineAt = (t: number) => baseStartPrice + slope * (t - (tStart as number))
-          const offset = price - lineAt(time)
-          const baseline = chartRef.current!.addLineSeries({ color: '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-          baseline.setData([{ time: tStart, value: baseStartPrice }, { time: tEnd, value: baseEndPrice }])
-          const parallel = chartRef.current!.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-          parallel.setData([{ time: tStart, value: baseStartPrice + offset }, { time: tEnd, value: baseEndPrice + offset }])
-          drawingsRef.current.push({ type: 'channel', refs: [baseline, parallel] })
+          const ref = attachRectangle(seriesRef.current!, pts[0], { time, price })
+          drawingsRef.current.push({ type: 'rect', ref })
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
         }
@@ -450,6 +438,9 @@ function ChartPane({
       case 'sellmarker':
         try { chartRef.current?.removeSeries(drawing.ref) } catch { /* disposed */ }
         break
+      case 'rect':
+        try { seriesRef.current?.detachPrimitive(drawing.ref) } catch { /* disposed */ }
+        break
       default:
         for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
     }
@@ -522,7 +513,7 @@ function ChartPane({
                     { mode: 'hline' as DrawMode,          label: '─ Horizontal Line' },
                     { mode: 'trendline' as DrawMode,      label: '↗ Trend Line' },
                     { mode: 'fibretracement' as DrawMode, label: '◫ Fib Retracement' },
-                    { mode: 'channel' as DrawMode,        label: '⊟ Parallel Channel' },
+                    { mode: 'rect' as DrawMode,           label: '▭ Rectangle' },
                     { mode: 'buymarker' as DrawMode,      label: '▲ Buy Marker' },
                     { mode: 'sellmarker' as DrawMode,     label: '▼ Sell Marker' },
                     { mode: 'rrindicator' as DrawMode,    label: '⚡ Risk:Reward' },
@@ -549,7 +540,7 @@ function ChartPane({
                 {drawMode === 'hline' && 'Click to place'}
                 {drawMode === 'trendline' && (drawStep === 0 ? 'Click pt 1' : 'Click pt 2')}
                 {drawMode === 'fibretracement' && (drawStep === 0 ? 'Click start' : 'Click end')}
-                {drawMode === 'channel' && (drawStep === 0 ? 'Click start' : drawStep === 1 ? 'Click end' : 'Click offset')}
+                {drawMode === 'rect' && (drawStep === 0 ? 'Click first corner' : 'Click opposite corner')}
                 {drawMode === 'rrindicator' && (drawStep === 0 ? 'Click risk price' : 'Click entry price')}
                 {(drawMode === 'buymarker' || drawMode === 'sellmarker') && 'Click chart to place'}
               </span>

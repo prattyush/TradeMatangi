@@ -4,6 +4,7 @@ import { recordPerformance } from '../services/performanceDiagnostics'
 import { openPositionTrades, RecentLiveTicks, reconcileChartObjects } from '../services/tradingChartState'
 import { rememberChartData } from '../services/chartDataCache'
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { attachRectangle, type RectanglePrimitive } from '../indicators/rectanglePrimitive'
 import {
   createChart,
   IChartApi,
@@ -119,11 +120,12 @@ interface Props {
   onVisibleRangeChange?: (range: ChartVisibleRange) => void
 }
 
-type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'buymarker' | 'sellmarker' | 'rrindicator'
+type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'rect' | 'buymarker' | 'sellmarker' | 'rrindicator'
 
 type Drawing =
   | { type: 'hline'; ref: IPriceLine }
-  | { type: 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'trendline' | 'fibretracement' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'rect'; ref: RectanglePrimitive }
   | { type: 'buymarker' | 'sellmarker'; ref: ISeriesApi<'Line'> }
 
 const FIB_LEVELS = [
@@ -136,7 +138,7 @@ const FIB_LEVELS = [
 
 const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
   hline: 'H-Line', trendline: 'Trend',
-  fibretracement: 'Fib', channel: 'Channel',
+  fibretracement: 'Fib', rect: 'Rectangle',
   buymarker: 'Buy Mark', sellmarker: 'Sell Mark',
   rrindicator: 'R:R',
 }
@@ -477,7 +479,7 @@ export default function Chart({
   useEffect(() => {
     if (!drawingStorageKey) return
     const save = () => {
-      const drawings = drawingsRef.current.map(d => d.type==='hline'?{type:d.type,price:d.ref.options().price}:{type:d.type,lines:('refs' in d?d.refs:[d.ref]).map(ref=>ref.data())})
+      const drawings = drawingsRef.current.map(d => d.type==='hline'?{type:d.type,price:d.ref.options().price}:d.type==='rect'?{type:d.type,...d.ref.toJSON()}:{type:d.type,lines:('refs' in d?d.refs:[d.ref]).map(ref=>ref.data())})
       try { localStorage.setItem(drawingStorageKey,JSON.stringify(drawings)) } catch { /* Storage can be disabled. */ }
     }
     const timer=setInterval(save,1000)
@@ -737,41 +739,14 @@ export default function Chart({
           setDrawStep(0)
           setDrawMode('none')
         }
-      } else if (mode === 'channel') {
+      } else if (mode === 'rect') {
         const pts = drawPtsRef.current
         if (pts.length === 0) {
           drawPtsRef.current = [{ time, price }]
           setDrawStep(1)
-        } else if (pts.length === 1) {
-          drawPtsRef.current = [...pts, { time, price }]
-          setDrawStep(2)
         } else {
-          const [p1, p2] = pts
-          const tStart = Math.min(p1.time, p2.time) as Time
-          const tEnd = Math.max(p1.time, p2.time) as Time
-          const baseStartPrice = p1.time <= p2.time ? p1.price : p2.price
-          const baseEndPrice = p1.time <= p2.time ? p2.price : p1.price
-          const timeDiff = (tEnd as number) - (tStart as number)
-          const slope = timeDiff !== 0 ? (baseEndPrice - baseStartPrice) / timeDiff : 0
-          const lineAt = (t: number) => baseStartPrice + slope * (t - (tStart as number))
-          const offset = price - lineAt(time)
-          const baseline = chartRef.current!.addLineSeries({
-            color: '#ffa657', lineWidth: 1,
-            priceLineVisible: false, lastValueVisible: false,
-          })
-          baseline.setData([
-            { time: tStart, value: baseStartPrice },
-            { time: tEnd, value: baseEndPrice },
-          ])
-          const parallel = chartRef.current!.addLineSeries({
-            color: '#79c0ff', lineWidth: 1,
-            priceLineVisible: false, lastValueVisible: false,
-          })
-          parallel.setData([
-            { time: tStart, value: baseStartPrice + offset },
-            { time: tEnd, value: baseEndPrice + offset },
-          ])
-          drawingsRef.current.push({ type: 'channel', refs: [baseline, parallel] })
+          const ref = attachRectangle(seriesRef.current!, pts[0], { time, price })
+          drawingsRef.current.push({ type: 'rect', ref })
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []
           setDrawStep(0)
@@ -940,7 +915,7 @@ export default function Chart({
   // ── Historical + pre-session — equity only ───────────────────────────────────
   useEffect(() => {
     if (!drawingStorageKey || !chartRef.current || !seriesRef.current) return
-    try { const saved=JSON.parse(localStorage.getItem(drawingStorageKey)??'[]');for(const d of saved){if(d.type==='hline'){const ref=seriesRef.current.createPriceLine({price:d.price,color:'#e6edf3',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:''});drawingsRef.current.push({type:'hline',ref})}else{const refs=d.lines.map((data:LineData<Time>[])=>{const ref=chartRef.current!.addLineSeries({color:'#ffa657',lineWidth:1,priceLineVisible:false,lastValueVisible:false});ref.setData(data);return ref});drawingsRef.current.push({type:d.type,refs} as Drawing)}}setDrawingCount(saved.length)} catch { /* Ignore invalid old local drawings. */ }
+    try { const saved=JSON.parse(localStorage.getItem(drawingStorageKey)??'[]');for(const d of saved){if(d.type==='hline'){const ref=seriesRef.current.createPriceLine({price:d.price,color:'#e6edf3',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:''});drawingsRef.current.push({type:'hline',ref})}else if(d.type==='rect'){if(d.p1&&d.p2){const ref=attachRectangle(seriesRef.current,d.p1,d.p2);drawingsRef.current.push({type:'rect',ref})}}else if(d.type==='channel'){/* parallel channel was replaced by the rectangle tool */}else{const refs=d.lines.map((data:LineData<Time>[])=>{const ref=chartRef.current!.addLineSeries({color:'#ffa657',lineWidth:1,priceLineVisible:false,lastValueVisible:false});ref.setData(data);return ref});drawingsRef.current.push({type:d.type,refs} as Drawing)}}setDrawingCount(drawingsRef.current.length)} catch { /* Ignore invalid old local drawings. */ }
   },[drawingStorageKey])
 
   // Both fetches run in parallel and are combined into a single series.setData()
@@ -1424,6 +1399,9 @@ export default function Chart({
       case 'sellmarker':
         try { chartRef.current?.removeSeries(drawing.ref) } catch { /* already removed */ }
         break
+      case 'rect':
+        try { seriesRef.current?.detachPrimitive(drawing.ref) } catch { /* already removed */ }
+        break
       default:
         for (const s of drawing.refs) {
           try { chartRef.current?.removeSeries(s) } catch { /* already removed */ }
@@ -1673,7 +1651,7 @@ export default function Chart({
                 { mode: 'hline',          label: '─ Horizontal Line' },
                 { mode: 'trendline',      label: '↗ Trend Line' },
                 { mode: 'fibretracement', label: '◫ Fib Retracement' },
-                { mode: 'channel',        label: '⊟ Parallel Channel' },
+                { mode: 'rect',           label: '▭ Rectangle' },
                 { mode: 'buymarker',      label: '▲ Buy Marker' },
                 { mode: 'sellmarker',     label: '▼ Sell Marker' },
                 { mode: 'rrindicator',    label: '⚡ Risk:Reward' },
@@ -1786,7 +1764,7 @@ export default function Chart({
             {drawMode === 'hline' && 'Click chart to place'}
             {drawMode === 'trendline' && (drawStep === 0 ? 'Click first point' : 'Click second point')}
             {drawMode === 'fibretracement' && (drawStep === 0 ? 'Click start point' : 'Click end point')}
-            {drawMode === 'channel' && (drawStep === 0 ? 'Click baseline start' : drawStep === 1 ? 'Click baseline end' : 'Click channel offset point')}
+            {drawMode === 'rect' && (drawStep === 0 ? 'Click first corner' : 'Click opposite corner')}
             {drawMode === 'rrindicator' && (drawStep === 0 ? 'Click risk price' : 'Click entry price')}
             {(drawMode === 'buymarker' || drawMode === 'sellmarker') && 'Click chart to place'}
           </span>

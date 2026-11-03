@@ -1,3 +1,4 @@
+import DisplaySettings from './DisplaySettings'
 import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionSetting'
 import FuturesRiskSettings from "./FuturesRiskSettings"
 import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
@@ -458,7 +459,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
 
   // Active tab
-  const [activeTab, setActiveTab] = useState<'general' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile' | 'sharing'>('general')
+  const [activeTab, setActiveTab] = useState<'general' | 'display' | 'trading' | 'analytics' | 'strategies' | 'guardrails' | 'admin' | 'profile' | 'sharing'>('general')
 
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
@@ -1092,8 +1093,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 borderRight: '1px solid #21262d', paddingRight: 8, overflowY: 'auto',
               }}>
                 {(isAdmin
-                  ? ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'admin', 'profile'] as const
-                  : ['general', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'profile'] as const
+                  ? ['general', 'display', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'admin', 'profile'] as const
+                  : ['general', 'display', 'trading', 'analytics', 'strategies', 'guardrails', 'sharing', 'profile'] as const
                 ).map(tab => (
                   <button
                     key={tab}
@@ -1128,6 +1129,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {status && <p role="status">{status}</p>}
             {settingsLoadFailed && <button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>}
             <fieldset disabled={settingsLoading || settingsLoadFailed || preferenceSaving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+
+            {/* ── Display tab content ── */}
+            {activeTab === 'display' && <DisplaySettings />}
 
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
