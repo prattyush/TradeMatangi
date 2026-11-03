@@ -41,6 +41,8 @@ import { useSnapshot } from './hooks/useSnapshot'
 import api, { ApiError, OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/optionsRoc'
 import { selectPaperResumePanes } from './paperResume'
+import { buildReselectBody, type StrikeRule } from './strikeRule'
+import ConfirmModal from './components/ConfirmModal'
 import { isBrokerSnapshot, brokerSnapshotSessionId } from './brokerSnapshot'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
@@ -582,6 +584,10 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   const [addPaneType, setAddPaneType] = useState<'equity' | 'CE' | 'PE'>('equity')
   const [addInterval, setAddInterval] = useState(15)
   const [addOffset, setAddOffset] = useState(0)
+  // Per-pane "Re-select strike": start-time rule + guards (see reselectPaneStrike)
+  const strikeRuleRef = useRef<StrikeRule | null>(null)
+  const skipWorkspaceResetKeyRef = useRef<string | null>(null)
+  const [reselectConfirm, setReselectConfirm] = useState<{ message: string; resolve: (ok: boolean) => void } | null>(null)
 
   const resetWorkspaceToIdle = useCallback(() => {
     setShowPatternLibrary(false)
@@ -818,6 +824,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   // ── Options ready: switch to 3-pane options default ─────────────────────────
   const handleOptionsReady = useCallback((cfg: OptionsReadyConfig | null) => {
     setOptionsReady(cfg)
+    strikeRuleRef.current = cfg?.strikeRule ?? null
     if (cfg) {
       setInstrumentType('options')
       setLayoutPreset(3)
@@ -871,6 +878,11 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   useEffect(() => {
     if (!sim.sessionId || addingSession) return
     if (sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options') return
+    // A per-pane Re-select already updated just that pane; don't rebuild the whole layout.
+    if (skipWorkspaceResetKeyRef.current === `${sim.sessionStrikeCE}:${sim.sessionStrikePE}`) {
+      skipWorkspaceResetKeyRef.current = null
+      return
+    }
     applyWorkspaceForSessionConfig({
       instrument_type: sim.sessionInstrumentType,
       strike: sim.sessionStrike,
@@ -1009,6 +1021,44 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
   }, [instrumentType, addPaneType, addInterval, addOffset, optionsReady, sim.symbol,
       sim.currentPrice, sim.latestEquityTick, sim.sessionId, sim.sessionState,
       sim.sessionInstrumentType, sim.sessionExpiry, sim.updateSessionStrike, panes, activePaneId])
+
+  const reselectPaneStrike = useCallback(async (paneId: number): Promise<string | void> => {
+    const pane = panes.find(p => p.id === paneId)
+    const sessionId = sim.sessionId
+    if (!pane || pane.type !== 'options' || !pane.right || !sessionId) return
+    if (sim.sessionState !== 'running' && sim.sessionState !== 'paused') throw new Error('Session is not running')
+    const right = pane.right as 'CE' | 'PE'
+    if (sim.sessionType === 'real') {
+      const ok = await new Promise<boolean>(resolve => setReselectConfirm({
+        message: `Switch the ${right} chart to a newly selected strike? Live ${right} prices will follow the new strike.`,
+        resolve,
+      }))
+      if (!ok) return
+    }
+    const parse = (v: string | null) => { const n = v == null ? NaN : parseFloat(v); return Number.isFinite(n) ? n : null }
+    const body = buildReselectBody(right, strikeRuleRef.current, {
+      storedMode: localStorage.getItem('maxPriceMode'),
+      storedThresholdCE: parse(localStorage.getItem('maxPriceThresholdCE')),
+      storedThresholdPE: parse(localStorage.getItem('maxPriceThresholdPE')),
+      offset: addOffset,
+      isIndex: sim.symbol === 'NIFTY' || sim.symbol === 'BSESEN',
+    })
+    const res = await api.reselectStrike(sessionId, body)
+    if (!res.changed) return `Strike ${res.strike} is still the best match`
+    const newCE = right === 'CE' ? res.strike : sim.sessionStrikeCE
+    const newPE = right === 'PE' ? res.strike : sim.sessionStrikePE
+    if (!(sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options')) {
+      skipWorkspaceResetKeyRef.current = `${newCE}:${newPE}`
+    }
+    sim.updateSessionStrike(right, res.strike)
+    const liveFromTs = sim.latestEquityTick?.time ?? undefined
+    // The Chart is keyed by strike, so it remounts and loads the new contract's history.
+    setPanes(prev => prev.map(p => p.id === paneId
+      ? { ...p, strike: res.strike, liveFromTs, reloadKey: (p.reloadKey ?? 0) + 1 }
+      : p))
+    setOptionsReady(o => o ? { ...o, ceStrike: newCE ?? o.ceStrike, peStrike: newPE ?? o.peStrike } : o)
+  }, [panes, sim.sessionId, sim.sessionState, sim.sessionType, sim.sessionInstrumentType, sim.symbol,
+      sim.sessionStrikeCE, sim.sessionStrikePE, sim.latestEquityTick, sim.updateSessionStrike, addOffset])
 
   const removePane = useCallback((id: number) => {
     setPanes(p => {
@@ -1980,6 +2030,9 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           right={pane.right as 'CE' | 'PE' | undefined}
           liveFromTs={pane.liveFromTs}
           reloadKey={pane.reloadKey ?? 0}
+          onReselectStrike={!draft && pane.type === 'options' && sim.sessionInstrumentType === 'options'
+            && (sim.sessionState === 'running' || sim.sessionState === 'paused')
+            ? () => reselectPaneStrike(pane.id) : undefined}
           onManualRefresh={!draft && sim.sessionType === 'real' && sim.sessionId ? () => {
             const sessionId = sim.sessionId!
             void api.refreshRealWallet(sessionId)
@@ -2978,6 +3031,14 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
           price={contextMenu.price}
           actions={contextMenuActions}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {reselectConfirm && (
+        <ConfirmModal
+          message={reselectConfirm.message}
+          onYes={() => { reselectConfirm.resolve(true); setReselectConfirm(null) }}
+          onNo={() => { reselectConfirm.resolve(false); setReselectConfirm(null) }}
         />
       )}
 
