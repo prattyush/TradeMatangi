@@ -1,0 +1,92 @@
+/* Left drawing rail + indicator popover for Analysis KLine charts. */
+.kline-tools-rail {
+  flex: 0 0 38px;
+  width: 38px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 3px;
+  background: #0d1117;
+  border-right: 1px solid #30363d;
+  min-height: 0;
+  box-sizing: border-box;
+}
+.kline-tools-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: #30363d transparent;
+}
+.kline-tools-scroll::-webkit-scrollbar { width: 4px; }
+.kline-tools-scroll::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+.kline-tools-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 4px;
+  border-top: 1px solid #30363d;
+}
+.kline-tool {
+  position: relative;
+  width: 30px;
+  height: 28px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: #c9d1d9;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.kline-tool:hover:not(:disabled) { border-color: #58a6ff; }
+.kline-tool[aria-pressed="true"] { background: #1f3a5f; border-color: #58a6ff; color: #79c0ff; }
+.kline-tool:disabled { opacity: 0.4; cursor: default; }
+.kline-tools-notice { position: absolute; left: 44px; bottom: 6px; width: max-content; max-width: 220px; z-index: 5; padding: 3px 7px; font-size: 11px; color: #e6edf3; background: #182233; border: 1px solid #30363d; border-radius: 4px; }
+
+.kline-indicator-menu { position: relative; display: inline-flex; }
+.kline-indicator-menu > button sup { margin-left: 2px; font-size: 9px; color: #79c0ff; }
+.kline-indicator-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 60;
+  width: 236px;
+  padding: 8px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.kline-indicator-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.kline-indicator-grid button,
+.kline-indicator-clear {
+  height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: #c9d1d9;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kline-indicator-grid button[aria-pressed="true"] { background: #1f3a5f; border-color: #58a6ff; color: #79c0ff; }
+.kline-indicator-clear { width: 100%; margin-top: 6px; }
+.kline-indicator-clear:disabled { opacity: 0.4; cursor: default; }
+
+/* Placement inside the absolutely-positioned Analysis chart. */
+.desktop-analysis-chart .kline-tools-rail { position: absolute; top: 36px; bottom: 0; left: 0; z-index: 2; }
+.desktop-analysis-chart.has-tools-rail .analysis-kline { inset: 36px 0 0 38px; }
+.desktop-analysis-chart header .kline-tools-toggle[aria-pressed="true"] { color: #79c0ff; }

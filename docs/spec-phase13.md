@@ -654,3 +654,39 @@ revises further.
 **Files:** `backend/app/config.py`, `backend/app/services/data_loader.py`,
 `backend/app/services/broker_service.py`, `backend/app/services/options_service.py`,
 `backend/app/services/kite_service.py`, `backend/app/services/simulation.py`
+
+##### Analysis & Patterns drawing tools and indicators ✅ Complete
+
+Trade Analysis and the Trade-vs-Pattern view now offer drawing tools and indicators
+on every chart (not only when maximized), for desktop, website and webapp.
+
+- **KLine charts** (desktop always; website/webapp when selected) show a hideable
+  left tool rail (14 drawing tools, Once/Repeat, lock/hide/delete) and an `ƒx`
+  indicator popover (13 indicators; `PositionPnL` is trading-only). EMA 9/21 stays on
+  by default. Drawings are saved through `/api/desktop/v1/drawings`, keyed by user +
+  instrument exactly like the Day/Swing KLine charts, so a level drawn while reviewing
+  a trade also appears on the trading chart (and vice versa). Indicator choice is a
+  local preference per pane type; rail visibility is shared by all Analysis charts.
+- **Lightweight charts** (website/webapp) show the same `Draw ▾` / `Indicators ▾`
+  dropdowns as the Lightweight trading chart (H-line, trend, Fib, channel, buy/sell
+  marker, R:R; EMA 9/21 toggle). Drawings stay in localStorage
+  (`analysis-lw-drawings:<account>:<symbol>:<right>:<strike>:<expiry>`) and survive
+  maximize (which recreates the chart). The two tool sets are deliberately not mixed.
+- **New setting** `website_analysis_chart_renderer` (`lightweight` default | `kline`),
+  Settings → Display → "Analysis & Patterns chart". Independent of the trading chart
+  renderer. KLine is lazy-loaded.
+
+**Code layout:** the desktop Analysis KLine chart moved to `shared/analysis/kline/`
+(old `windowsapp/src/*` paths re-export it) so the website can reuse it;
+`shared/charts/{useKLineDrawings,useKLineIndicators,KLineToolsPanel,klineDrawingModel}`
+hold the drawing layer. `KLineChart.tsx` (trading) was intentionally not refactored.
+Website lightweight tools: `frontend/src/components/analysis/{lightweightDrawings.ts,LightweightChartTools.tsx}`;
+KLine styles for the website: `klineAnalysisSite.css` (scoped; the desktop stylesheet
+also styles the desktop shell and is not imported). The Analysis environment gained
+`drawingRequest`, `resolveSymbolInstrument` and `accountKey`.
+
+**Notes:** klinecharts needs three clicks for two-point tools (start, second point,
+confirm). A click that does not move a drawing does not save it. `AnalysisPanels`
+handles Escape unless the environment is explicitly inactive (the website has no
+`active` flag). Tests: `frontend/tests/phase22/analysis-tools.spec.ts`,
+`windowsapp/src/analysisDrawing.test.ts`, `backend/tests/test_user_settings.py`.

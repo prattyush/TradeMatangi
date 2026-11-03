@@ -1,4 +1,5 @@
 import { rendererAccountKey, rendererPreferenceVersion, publishRenderer } from './websiteChartPreferences'
+import { publishAnalysisRenderer } from './analysisRendererPreference'
 import { isBrokerSnapshot } from '../brokerSnapshot'
 import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
@@ -170,6 +171,7 @@ export interface SimulationStartRequest {
 
 export interface UserSettingsResponse {
   website_chart_renderer?: "lightweight" | "kline"
+  website_analysis_chart_renderer?: "lightweight" | "kline"
   real_execution_broker?: "kotak" | "kite"
   brokerage_per_order?: number
   strategy_interval_secs?: 120 | 180 | 300
@@ -1741,6 +1743,7 @@ const api = {
     window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: settings }))
     const renderer=publishRenderer(settings.website_chart_renderer,rendererOwner,rendererVersion)
     if(renderer!==undefined&&renderer!==(settings.website_chart_renderer??'lightweight'))settings={...settings,website_chart_renderer:renderer}
+    publishAnalysisRenderer(settings.website_analysis_chart_renderer,rendererOwner)
     return settings
   },
 
@@ -1754,8 +1757,10 @@ const api = {
     const data = await res.json().catch(() => null)
     if (!res.ok) throw new Error(data?.detail || `Update user settings failed: ${res.status}`)
     if(settings.website_chart_renderer!==undefined&&data?.website_chart_renderer!==settings.website_chart_renderer)throw new Error('Backend did not confirm the chart renderer setting; update the backend before selecting KLine.')
+    if(settings.website_analysis_chart_renderer!==undefined&&data?.website_analysis_chart_renderer!==settings.website_analysis_chart_renderer)throw new Error('Backend did not confirm the Analysis chart renderer setting; update the backend before selecting KLine.')
     cacheSharedSettings(data, localStorage)
     publishRenderer(data.website_chart_renderer,rendererOwner)
+    publishAnalysisRenderer(data.website_analysis_chart_renderer,rendererOwner)
     window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: data }))
     return data
   },

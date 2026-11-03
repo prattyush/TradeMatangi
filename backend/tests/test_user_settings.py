@@ -303,3 +303,27 @@ class TestWebsiteChartRenderer:
         with patch("app.services.user_settings_service.update_settings") as update:
             assert client.put("/api/users/settings", json={"website_chart_renderer": renderer}).status_code == 422
         update.assert_not_called()
+
+
+class TestWebsiteAnalysisChartRenderer:
+    """Analysis & Patterns renderer is independent of the trading chart renderer."""
+
+    def test_old_settings_default_to_lightweight(self):
+        mock_resource, _ = _mock_db({"user_id": "user-123", "website_chart_renderer": "kline"})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            settings = svc.get_settings("user-123")
+        assert settings["website_analysis_chart_renderer"] == "lightweight"
+        assert settings["website_chart_renderer"] == "kline"
+
+    def test_update_only_changes_analysis_renderer(self):
+        with patch("app.services.user_settings_service.update_settings", return_value={"website_analysis_chart_renderer": "kline"}) as update:
+            response = client.put("/api/users/settings", json={"website_analysis_chart_renderer": "kline"})
+        assert response.status_code == 200
+        assert response.json()["website_analysis_chart_renderer"] == "kline"
+        update.assert_called_once_with(FIXED_USER_ID, {"website_analysis_chart_renderer": "kline"})
+
+    @pytest.mark.parametrize("renderer", ["unknown", "KLine", "", 123])
+    def test_invalid_renderer_rejected(self, renderer):
+        with patch("app.services.user_settings_service.update_settings") as update:
+            assert client.put("/api/users/settings", json={"website_analysis_chart_renderer": renderer}).status_code == 422
+        update.assert_not_called()

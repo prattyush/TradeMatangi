@@ -1,6 +1,7 @@
 import WebsiteChartAppearanceSettings from './WebsiteChartAppearanceSettings'
 import SettingHelp from './SettingHelp'
 import { useWebsiteChartRenderer } from '../hooks/useWebsiteChartRenderer'
+import { useAnalysisChartRenderer } from '../hooks/useAnalysisChartRenderer'
 import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionSetting'
 import FuturesRiskSettings from "./FuturesRiskSettings"
 import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
@@ -362,6 +363,7 @@ interface Props {
 
 export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
   const renderer = useWebsiteChartRenderer()
+  const analysisRenderer = useAnalysisChartRenderer()
   const [open, setOpen] = useState(false)
   const sharingRequest = useCallback(async (method: 'GET'|'PUT', emails?: string[]): Promise<HistorySharingState> => {
     const response = await fetch(`${BACKEND_URL}/api/users/real-history-sharing`, {method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='PUT'?JSON.stringify({emails}):undefined})
@@ -1143,7 +1145,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     onChange={event => void savePreference({ website_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
                     <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
                   </select>
-                  <SettingHelp text={"Applies to website Day and Swing charts. Your session keeps running. Analysis and Patterns keep Lightweight. Choose Lightweight here if KLine fails."} />
+                  <SettingHelp text={"Applies to website Day and Swing charts. Your session keeps running. Choose Lightweight here if KLine fails."} />
+                </label>
+                <label className="settings-field-row">
+                  <span>Analysis &amp; Patterns chart</span>
+                  <select className="settings-control" aria-label="Website analysis chart renderer" value={analysisRenderer}
+                    onChange={event => void savePreference({ website_analysis_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
+                    <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
+                  </select>
+                  <SettingHelp text={"Chart used in Trade Analysis and the Trade-vs-Pattern view. KLine adds more drawing tools and indicators, and its drawings are saved to your account and shared with the KLine trading chart. Lightweight uses the same tools as the Lightweight trading chart. Independent of the trading chart setting."} />
                 </label>
               </div>
 
