@@ -2,6 +2,7 @@ import { premiumPresetsFor as thresholdValuesFor, withSavedPremium } from '../..
 import { flashError } from '../services/notifications'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, IChartApi, ISeriesApi, Time, LineStyle } from 'lightweight-charts'
+import { attachRectangle, type RectanglePrimitive } from '../indicators/rectanglePrimitive'
 import api, { FineDefinition, FlowStep, FineSearchResult, OHLCCandle } from '../services/api'
 import { loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE, loadHistoricalDays } from '../components/SettingsModal'
 
@@ -36,11 +37,12 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
   return result
 }
 
-type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'
+type DrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'rect' | 'rrindicator'
 
 type Drawing =
   | { type: 'hline'; ref: import('lightweight-charts').IPriceLine }
-  | { type: 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'trendline' | 'fibretracement' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'rect'; ref: RectanglePrimitive }
 
 const FIB_LEVELS = [
   { ratio: 0, color: '#e6edf3' },
@@ -51,14 +53,14 @@ const FIB_LEVELS = [
 ]
 
 const DRAW_LABEL: Partial<Record<DrawMode, string>> = {
-  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', channel: 'Channel', rrindicator: 'R:R',
+  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', rect: 'Rectangle', rrindicator: 'R:R',
 }
 
 const DRAW_ITEMS: { mode: DrawMode; label: string }[] = [
   { mode: 'hline', label: '─ Horizontal Line' },
   { mode: 'trendline', label: '↗ Trend Line' },
   { mode: 'fibretracement', label: '◫ Fib Retracement' },
-  { mode: 'channel', label: '⊟ Parallel Channel' },
+  { mode: 'rect', label: '▭ Rectangle' },
   { mode: 'rrindicator', label: '⚡ Risk:Reward' },
 ]
 
@@ -368,27 +370,13 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
         }
-      } else if (mode === 'channel') {
+      } else if (mode === 'rect') {
         const pts = drawPtsRef.current
         if (pts.length === 0) {
           drawPtsRef.current = [{ time, price }]; setDrawStep(1)
-        } else if (pts.length === 1) {
-          drawPtsRef.current = [...pts, { time, price }]; setDrawStep(2)
         } else {
-          const [p1, p2] = pts
-          const tStart = Math.min(p1.time, p2.time) as Time
-          const tEnd = Math.max(p1.time, p2.time) as Time
-          const baseStartPrice = p1.time <= p2.time ? p1.price : p2.price
-          const baseEndPrice = p1.time <= p2.time ? p2.price : p1.price
-          const timeDiff = (tEnd as number) - (tStart as number)
-          const slope = timeDiff !== 0 ? (baseEndPrice - baseStartPrice) / timeDiff : 0
-          const lineAt = (t: number) => baseStartPrice + slope * (t - (tStart as number))
-          const offset = price - lineAt(time)
-          const baseline = chartRef.current!.addLineSeries({ color: '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-          baseline.setData([{ time: tStart, value: baseStartPrice }, { time: tEnd, value: baseEndPrice }])
-          const parallel = chartRef.current!.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-          parallel.setData([{ time: tStart, value: baseStartPrice + offset }, { time: tEnd, value: baseEndPrice + offset }])
-          drawingsRef.current.push({ type: 'channel', refs: [baseline, parallel] })
+          const ref = attachRectangle(seriesRef.current!, pts[0], { time, price })
+          drawingsRef.current.push({ type: 'rect', ref })
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
         }
@@ -456,6 +444,9 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
       switch (drawing.type) {
         case 'hline':
           try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* disposed */ }
+          break
+        case 'rect':
+          try { seriesRef.current?.detachPrimitive(drawing.ref) } catch { /* disposed */ }
           break
         default:
           for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
@@ -628,7 +619,7 @@ function BuilderView({ definitions }: { definitions: FineDefinition[] }) {
                 {drawMode === 'hline' && 'Click to place'}
                 {drawMode === 'trendline' && (drawStep === 0 ? 'Click pt 1' : 'Click pt 2')}
                 {drawMode === 'fibretracement' && (drawStep === 0 ? 'Click start' : 'Click end')}
-                {drawMode === 'channel' && (drawStep === 0 ? 'Click start' : drawStep === 1 ? 'Click end' : 'Click offset')}
+                {drawMode === 'rect' && (drawStep === 0 ? 'Click first corner' : 'Click opposite corner')}
                 {drawMode === 'rrindicator' && (drawStep === 0 ? 'Click risk price' : 'Click entry price')}
               </span>
             )}
@@ -1301,27 +1292,13 @@ function OptionsChart({
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
         }
-      } else if (mode === 'channel') {
+      } else if (mode === 'rect') {
         const pts = drawPtsRef.current
         if (pts.length === 0) {
           drawPtsRef.current = [{ time, price }]; setDrawStep(1)
-        } else if (pts.length === 1) {
-          drawPtsRef.current = [...pts, { time, price }]; setDrawStep(2)
         } else {
-          const [p1, p2] = pts
-          const tStart = Math.min(p1.time, p2.time) as Time
-          const tEnd = Math.max(p1.time, p2.time) as Time
-          const baseStartPrice = p1.time <= p2.time ? p1.price : p2.price
-          const baseEndPrice = p1.time <= p2.time ? p2.price : p1.price
-          const timeDiff = (tEnd as number) - (tStart as number)
-          const slope = timeDiff !== 0 ? (baseEndPrice - baseStartPrice) / timeDiff : 0
-          const lineAt = (t: number) => baseStartPrice + slope * (t - (tStart as number))
-          const offset = price - lineAt(time)
-          const baseline = chartRef.current!.addLineSeries({ color: '#ffa657', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-          baseline.setData([{ time: tStart, value: baseStartPrice }, { time: tEnd, value: baseEndPrice }])
-          const parallel = chartRef.current!.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-          parallel.setData([{ time: tStart, value: baseStartPrice + offset }, { time: tEnd, value: baseEndPrice + offset }])
-          drawingsRef.current.push({ type: 'channel', refs: [baseline, parallel] })
+          const ref = attachRectangle(seriesRef.current!, pts[0], { time, price })
+          drawingsRef.current.push({ type: 'rect', ref })
           setDrawingCount(c => c + 1)
           drawPtsRef.current = []; setDrawStep(0); setDrawMode('none')
         }
@@ -1413,6 +1390,9 @@ function OptionsChart({
         case 'hline':
           try { seriesRef.current?.removePriceLine(drawing.ref) } catch { /* disposed */ }
           break
+        case 'rect':
+          try { seriesRef.current?.detachPrimitive(drawing.ref) } catch { /* disposed */ }
+          break
         default:
           for (const s of drawing.refs) try { chartRef.current?.removeSeries(s) } catch { /* disposed */ }
       }
@@ -1464,7 +1444,7 @@ function OptionsChart({
             {drawMode === 'hline' && 'Click to place'}
             {drawMode === 'trendline' && (drawStep === 0 ? 'Pt 1' : 'Pt 2')}
             {drawMode === 'fibretracement' && (drawStep === 0 ? 'Start' : 'End')}
-            {drawMode === 'channel' && (drawStep === 0 ? 'Start' : drawStep === 1 ? 'End' : 'Offset')}
+            {drawMode === 'rect' && (drawStep === 0 ? 'First corner' : 'Opposite corner')}
             {drawMode === 'rrindicator' && (drawStep === 0 ? 'Risk' : 'Entry')}
           </span>
         )}
