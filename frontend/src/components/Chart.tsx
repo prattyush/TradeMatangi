@@ -91,6 +91,9 @@ interface Props {
   liveFromTs?: number
   // Increment to trigger a manual data reload (fixes phantom candle after strike change)
   onManualRefresh?: () => void
+  /** CE/PE panes only: re-pick this pane's strike with the start-time rule.
+   *  Resolves to an optional notice (e.g. "already at best strike"); rejects with a message. */
+  onReselectStrike?: () => Promise<string | void>
   reloadKey?: number
   // Interval change callback — parent updates pane intervalMinutes
   onIntervalChange?: (minutes: number) => void
@@ -418,7 +421,7 @@ export default function Chart({
   candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
-  paneType = 'equity', strike, expiry, right,
+  paneType = 'equity', strike, expiry, right, onReselectStrike,
   isActive = false, onActivate,
   trades = [],
   markerSessionKey,
@@ -1443,6 +1446,30 @@ export default function Chart({
     cursor: 'pointer',
   })
 
+  // ── Re-select strike (CE/PE panes) ─────────────────────────────────────────
+  const [reselecting, setReselecting] = useState(false)
+  const [reselectNote, setReselectNote] = useState<{ text: string; error: boolean } | null>(null)
+  const reselectNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (reselectNoteTimer.current) clearTimeout(reselectNoteTimer.current) }, [])
+  const handleReselectStrike = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!onReselectStrike || reselecting) return
+    setReselecting(true)
+    const show = (text: string, error: boolean) => {
+      setReselectNote({ text, error })
+      if (reselectNoteTimer.current) clearTimeout(reselectNoteTimer.current)
+      reselectNoteTimer.current = setTimeout(() => setReselectNote(null), error ? 6000 : 3000)
+    }
+    try {
+      const notice = await onReselectStrike()
+      if (notice) show(notice, false)
+    } catch (err) {
+      show(err instanceof Error ? err.message : String(err), true)
+    } finally {
+      setReselecting(false)
+    }
+  }, [onReselectStrike, reselecting])
+
   // ── Reload handler — re-fetches historical data for the current pane ────────
   const handleReload = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -1739,6 +1766,26 @@ export default function Chart({
           <button onClick={e => { e.stopPropagation(); clearLastDrawing() }} style={toolbarBtnStyle(false)}>
             Clear
           </button>
+        )}
+        {onReselectStrike && paneType === 'options' && (
+          <>
+            <button
+              onClick={handleReselectStrike}
+              disabled={reselecting}
+              title="Pick a new strike for this chart using the Max Price / OTM rule chosen at session start"
+              style={{ ...toolbarBtnStyle(false), opacity: reselecting ? 0.6 : 1, cursor: reselecting ? 'wait' : 'pointer' }}
+            >
+              {reselecting ? 'Selecting…' : '⟳ Strike'}
+            </button>
+            {reselectNote && (
+              <span
+                role={reselectNote.error ? 'alert' : 'status'}
+                style={{ fontSize: 11, color: reselectNote.error ? '#f85149' : '#8b949e', maxWidth: 260, whiteSpace: 'normal', lineHeight: 1.2 }}
+              >
+                {reselectNote.text}
+              </span>
+            )}
+          </>
         )}
         <button
           onClick={handleReload}
