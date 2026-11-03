@@ -70,7 +70,7 @@ App
     │       ├── EMA line overlays (20/50/200)
     │       ├── Trade markers (one invisible Line series per trade)
     │       ├── Open order price lines (dashed horizontal)
-    │       └── Drawing tools (H-Line, Trendline, Fibonacci, Channel)
+    │       └── Drawing tools (H-Line, Trendline, Fibonacci, Rectangle)
     ├── Right sidebar
     │   ├── TradePanel           (current price, position, P&L, Buy/Sell buttons)
     │   ├── Combined P&L widget  (options sessions — CE + PE total)
@@ -187,7 +187,7 @@ Computed client-side from the loaded historical candles array. Three EMAs (20/50
 
 ### Drawing tools
 
-User-drawn overlays stored in component state: H-Line, Trendline, Fibonacci retracement, Channel. Each is rendered as additional `LineSeries` or `PriceLine` elements.
+User-drawn overlays stored in component state: H-Line, Trendline, Fibonacci retracement, Rectangle. All but Rectangle are rendered as additional `LineSeries` or `PriceLine` elements; Rectangle is a series primitive (`indicators/rectanglePrimitive.ts`) whose fill colour/opacity come from Settings -> Display (`drawingFillColor` / `drawingFillOpacity` in the per-user chart-settings record). The former Parallel Channel tool was removed; stored `channel` drawings are ignored on restore.
 
 ---
 

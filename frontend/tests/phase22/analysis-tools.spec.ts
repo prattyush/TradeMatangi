@@ -74,7 +74,7 @@ test("Lightweight Analysis: Chart.tsx tools, local persistence, maximize keeps d
 
   await page.getByRole("button", { name: "Draw ▾" }).click();
   await expect(page.getByRole("menuitem")).toHaveText([
-    "─ Horizontal Line", "↗ Trend Line", "◫ Fib Retracement", "⊟ Parallel Channel", "▲ Buy Marker", "▼ Sell Marker", "⚡ Risk:Reward",
+    "─ Horizontal Line", "↗ Trend Line", "◫ Fib Retracement", "▭ Rectangle", "▲ Buy Marker", "▼ Sell Marker", "⚡ Risk:Reward",
   ]);
   await page.getByRole("menuitem", { name: "─ Horizontal Line" }).click();
   await page.waitForTimeout(200); // the click that picked the tool must not draw
@@ -96,6 +96,38 @@ test("Lightweight Analysis: Chart.tsx tools, local persistence, maximize keeps d
   await page.getByRole("button", { name: "Indicators ▾" }).click();
   await page.getByLabel("EMA 9/21").uncheck();
   expect(await page.evaluate(() => localStorage.getItem("analysis-lw-ema::owner"))).toBe("0");
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
+  expect(JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key))).toHaveLength(0);
+  expect(errors).toEqual([]);
+});
+
+test("Lightweight Analysis: Rectangle draws in two clicks, persists locally and survives reload and Clear", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page, "lightweight");
+  await page.waitForSelector("canvas");
+  await page.getByRole("button", { name: "Draw ▾" }).click();
+  await page.getByRole("menuitem", { name: "▭ Rectangle" }).click();
+  await page.waitForTimeout(250); // the click that picked the tool must not draw
+  await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
+  const a = await chartPoint(page, "canvas", -80, -30);
+  const b = await chartPoint(page, "canvas", 60, 50);
+  await page.mouse.click(a.x, a.y);
+  await page.waitForTimeout(550); // keep the two corners from reading as a double-click
+  await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
+  await page.mouse.click(b.x, b.y);
+  await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
+  const key = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("analysis-lw-drawings:")));
+  const saved = JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key));
+  expect(saved).toHaveLength(1);
+  expect(saved[0].type).toBe("rect");
+  expect(saved[0].p1.time).toBeLessThan(saved[0].p2.time);
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("canvas");
+  await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
 
   await page.getByRole("button", { name: "Clear" }).click();
   await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);

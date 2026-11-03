@@ -1412,6 +1412,22 @@ const api = {
     if (!res.ok) throw new Error(`Update pane strike failed: ${res.status}`)
   },
 
+  async reselectStrike(
+    sessionId: string,
+    body: { right: 'CE' | 'PE'; mode: 'otm' | 'max_price'; otm_offset?: number; max_price?: number },
+  ): Promise<{ right: 'CE' | 'PE'; strike: number; expiry: string; changed: boolean }> {
+    const res = await fetch(`${BACKEND_URL}/api/simulation/${sessionId}/reselect-strike`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const detail = await res.json().then(j => j?.detail).catch(() => null)
+      throw new Error(typeof detail === 'string' ? detail : `Re-select strike failed: ${res.status}`)
+    }
+    return res.json()
+  },
+
   getSSEUrl(session_id: string, lastEventId?: string | null): string {
     const base = `${BACKEND_URL}/api/stream/${session_id}`
     const params = new URLSearchParams()

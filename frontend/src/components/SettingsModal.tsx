@@ -2,6 +2,7 @@ import WebsiteChartAppearanceSettings from './WebsiteChartAppearanceSettings'
 import SettingHelp from './SettingHelp'
 import { useWebsiteChartRenderer } from '../hooks/useWebsiteChartRenderer'
 import { useAnalysisChartRenderer } from '../hooks/useAnalysisChartRenderer'
+import DisplaySettings from './DisplaySettings'
 import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionSetting'
 import FuturesRiskSettings from "./FuturesRiskSettings"
 import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
@@ -1158,6 +1159,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
               </div>
 
             <WebsiteChartAppearanceSettings />
+
+            {/* Rectangle drawing fill (shared drawingFillColor/Opacity) */}
+            <DisplaySettings />
 
             {/* Trading Chart Indicators */}
             <div className="settings-block">

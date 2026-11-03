@@ -380,6 +380,14 @@ class UpdatePaneStrikeRequest(ContractModel):
     strike: int | float
 
 
+class ReselectStrikeRequest(ContractModel):
+    """Re-pick one side's strike using the rule chosen at session start."""
+    right: Literal["CE", "PE"]
+    mode: Literal["otm", "max_price"]
+    otm_offset: int = Field(default=0, ge=-50, le=50)  # strikes from ATM; negative = ITM (otm mode)
+    max_price: float | None = Field(default=None, gt=0)  # premium cap (max_price mode)
+
+
 class OrderFilledEvent(ContractModel):
     type: Literal["order_filled"] = "order_filled"
     order_id: str
