@@ -566,7 +566,7 @@ for(const drawing of [
   {label:'─ Horizontal Line',clicks:1},
   {label:'↗ Trend Line',clicks:2},
   {label:'◫ Fib Retracement',clicks:2},
-  {label:'⊟ Parallel Channel',clicks:3},
+  {label:'▭ Rectangle',clicks:2},
   {label:'⚡ Risk:Reward',clicks:2},
 ])test(`Lightweight ${drawing.label} survives switching and Clear`,async({page})=>{
   await page.goto('/tests/phase22/harness.html');

@@ -78,8 +78,8 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
     return () => document.removeEventListener('mousedown', close)
   }, [open])
   const { mode, step, count } = tools.state
-  const hint = mode === 'none' ? '' : mode === 'channel' ? (step === 0 ? 'click 1st point' : step === 1 ? 'click 2nd point' : 'click to set width')
-    : mode === 'hline' || mode === 'buymarker' || mode === 'sellmarker' ? 'click chart' : step === 0 ? 'click 1st point' : 'click 2nd point'
+  const hint = mode === 'none' ? '' : mode === 'hline' || mode === 'buymarker' || mode === 'sellmarker' ? 'click chart'
+    : step === 0 ? 'click 1st point' : 'click 2nd point'
   return (
     <span ref={root} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       <span style={{ position: 'relative' }}>

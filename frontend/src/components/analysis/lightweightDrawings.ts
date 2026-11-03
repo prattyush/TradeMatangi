@@ -9,6 +9,7 @@ import type {
   SeriesMarker,
   Time,
 } from 'lightweight-charts'
+import { attachRectangle, type RectanglePrimitive } from '../../indicators/rectanglePrimitive'
 
 /**
  * Drawing tools for the Lightweight Analysis/Patterns charts: the same seven
@@ -16,19 +17,19 @@ import type {
  * real-trading chart stays untouched. Drawings are kept in localStorage only
  * (KLine drawings are the ones saved to the backend).
  */
-export type LwDrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'channel' | 'buymarker' | 'sellmarker' | 'rrindicator'
+export type LwDrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'rect' | 'buymarker' | 'sellmarker' | 'rrindicator'
 
 export const LW_DRAW_ITEMS: { mode: Exclude<LwDrawMode, 'none'>; label: string }[] = [
   { mode: 'hline', label: '─ Horizontal Line' },
   { mode: 'trendline', label: '↗ Trend Line' },
   { mode: 'fibretracement', label: '◫ Fib Retracement' },
-  { mode: 'channel', label: '⊟ Parallel Channel' },
+  { mode: 'rect', label: '▭ Rectangle' },
   { mode: 'buymarker', label: '▲ Buy Marker' },
   { mode: 'sellmarker', label: '▼ Sell Marker' },
   { mode: 'rrindicator', label: '⚡ Risk:Reward' },
 ]
 export const LW_DRAW_LABEL: Partial<Record<LwDrawMode, string>> = {
-  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', channel: 'Channel',
+  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', rect: 'Rectangle',
   buymarker: 'Buy Mark', sellmarker: 'Sell Mark', rrindicator: 'R:R',
 }
 const FIB_LEVELS = [
@@ -42,13 +43,15 @@ const LINE = { priceLineVisible: false, lastValueVisible: false } as const
 
 type Drawing =
   | { type: 'hline'; ref: IPriceLine }
-  | { type: 'trendline' | 'fibretracement' | 'channel' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'trendline' | 'fibretracement' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
+  | { type: 'rect'; ref: RectanglePrimitive }
   | { type: 'buymarker' | 'sellmarker'; ref: ISeriesApi<'Line'> }
 type SavedLine = { data: LineData<Time>[]; options?: LineSeriesPartialOptions; markers?: SeriesMarker<Time>[] }
 // Same persisted shape as Chart.tsx so the two stay interchangeable.
 export type SavedDrawing =
   | { type: 'hline'; price: number; options?: Partial<PriceLineOptions> }
-  | { type: Exclude<LwDrawMode, 'none' | 'hline'>; lines: LineData<Time>[][]; series?: SavedLine[] }
+  | { type: 'rect'; p1: { time: number; price: number }; p2: { time: number; price: number } }
+  | { type: Exclude<LwDrawMode, 'none' | 'hline' | 'rect'>; lines: LineData<Time>[][]; series?: SavedLine[] }
 
 const saveLine = (ref: ISeriesApi<'Line'>): SavedLine => {
   const o = ref.options()
@@ -130,6 +133,7 @@ export class LightweightDrawingController {
   private remove(drawing: Drawing) {
     try {
       if (drawing.type === 'hline') this.series.removePriceLine(drawing.ref)
+      else if (drawing.type === 'rect') this.series.detachPrimitive(drawing.ref)
       else if ('refs' in drawing) drawing.refs.forEach(ref => this.chart.removeSeries(ref))
       else this.chart.removeSeries(drawing.ref)
     } catch { /* already removed */ }
@@ -143,6 +147,7 @@ export class LightweightDrawingController {
     if (!this.storageKey) return
     const saved: SavedDrawing[] = this.drawings.map(d => {
       if (d.type === 'hline') return { type: d.type, price: d.ref.options().price, options: d.ref.options() }
+      if (d.type === 'rect') return { type: 'rect', ...d.ref.toJSON() }
       const series = ('refs' in d ? d.refs : [d.ref]).map(saveLine)
       return { type: d.type, lines: series.map(s => s.data), series }
     })
@@ -159,6 +164,12 @@ export class LightweightDrawingController {
           this.drawings.push({ type: 'hline', ref })
           continue
         }
+        if (d.type === 'rect') {
+          if (d.p1 && d.p2) this.drawings.push({ type: 'rect', ref: attachRectangle(this.series, d.p1, d.p2) })
+          continue
+        }
+        // The parallel channel was replaced by the rectangle tool; drop legacy entries.
+        if ((d.type as string) === 'channel') continue
         const marker = d.type === 'buymarker' || d.type === 'sellmarker'
         const refs = (d.series ?? d.lines.map(data => ({ data } as SavedLine))).map((line, index) => {
           const ref = this.chart.addLineSeries({
@@ -174,7 +185,7 @@ export class LightweightDrawingController {
           return ref
         })
         if (marker) { if (refs[0]) this.drawings.push({ type: d.type as 'buymarker' | 'sellmarker', ref: refs[0] }) }
-        else this.drawings.push({ type: d.type as 'trendline' | 'fibretracement' | 'channel' | 'rrindicator', refs })
+        else this.drawings.push({ type: d.type as 'trendline' | 'fibretracement' | 'rrindicator', refs })
       }
     } catch { /* Ignore invalid old local drawings. */ }
   }
@@ -207,9 +218,6 @@ export class LightweightDrawingController {
         ref.setData([{ time: time as Time, value: price }])
         ref.setMarkers([{ time: time as Time, position: buy ? 'belowBar' : 'aboveBar', color: buy ? '#3b82f6' : '#f97316', shape: buy ? 'arrowUp' : 'arrowDown', text: buy ? 'Buy UL' : 'Sell UL', size: 2 }])
         this.finish({ type: mode, ref })
-      } else if (mode === 'channel' && this.points.length < 2) {
-        this.points = [...this.points, { time, price }]
-        this.notify()
       } else if (!first) {
         this.points = [{ time, price }]
         this.notify()
@@ -231,19 +239,8 @@ export class LightweightDrawingController {
           return ref
         })
         this.finish({ type: 'fibretracement', refs })
-      } else if (mode === 'channel') {
-        const [p1, p2] = this.points
-        const start = Math.min(p1.time, p2.time)
-        const end = Math.max(p1.time, p2.time)
-        const startPrice = p1.time <= p2.time ? p1.price : p2.price
-        const endPrice = p1.time <= p2.time ? p2.price : p1.price
-        const slope = end !== start ? (endPrice - startPrice) / (end - start) : 0
-        const offset = price - (startPrice + slope * (time - start))
-        const baseline = line('#ffa657')
-        baseline.setData([{ time: start as Time, value: startPrice }, { time: end as Time, value: endPrice }])
-        const parallel = line('#79c0ff')
-        parallel.setData([{ time: start as Time, value: startPrice + offset }, { time: end as Time, value: endPrice + offset }])
-        this.finish({ type: 'channel', refs: [baseline, parallel] })
+      } else if (mode === 'rect') {
+        this.finish({ type: 'rect', ref: attachRectangle(this.series, first, { time, price }) })
       } else if (mode === 'rrindicator') {
         const risk = first.price
         const isBuy = risk < price
