@@ -149,7 +149,15 @@ def test_market_window_rejects_closed_hours_and_weekend():
 
 
 @pytest.mark.asyncio
-async def test_amendment_keeps_old_day_window_instructions_for_recovery(db):
+async def test_amendment_keeps_old_day_window_instructions_for_recovery(
+    db, monkeypatch
+):
+    # amend_attempt starts the new attempt at max(real clock, session clock) + 1.
+    # Pin the real clock to the scenario's date, otherwise the test only passes
+    # when run during weekday market hours (or before 2026-11-02).
+    monkeypatch.setattr(
+        recovery, "current_market_timestamp", lambda: stamp("2026-11-02T15:03:00")
+    )
     parent, child = await held()
     order = exit_order(child)
     child.current_time = str(stamp("2026-11-02T15:03:00"))

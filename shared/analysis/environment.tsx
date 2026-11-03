@@ -12,6 +12,12 @@ export type AnalysisApi = Pick<typeof websiteApi,
 }
 export interface AnalysisEnvironment {
   swingRequest?: import('../SwingPortfolioPanel').SwingRequest
+  /** Transport for `/api/desktop/v1/*` (persisted KLine drawings, chart settings). Absent => drawing tools stay disabled. */
+  drawingRequest?: (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<unknown>
+  /** Catalogue kind/exchange of an underlying, so Analysis drawings share the trading chart's instrument key. */
+  resolveSymbolInstrument?: (symbol: string) => Promise<{ kind: string; exchange: string } | undefined>
+  /** Scopes locally-stored chart preferences (indicators) to the signed-in account. */
+  accountKey?: string
   api: AnalysisApi
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>

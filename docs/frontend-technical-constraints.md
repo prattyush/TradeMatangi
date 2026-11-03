@@ -98,3 +98,19 @@
   timestamps: format notification milliseconds in Asia/Kolkata. Persist at most
   100 records per account/backend, expire after seven days, and never replay old
   flashes on reload. No backend audit or cross-device sync is implied.
+
+## Analysis & Patterns charts
+
+- Analysis charts get their renderer from `AnalysisEnvironment.charts`. On the website
+  the map is chosen by the separate `website_analysis_chart_renderer` setting; never
+  reuse the trading `website_chart_renderer` for it.
+- KLine and Lightweight tool sets are intentionally different. KLine drawings persist
+  to the backend under the same instrument identity as the trading charts
+  (`analysisDrawingInstrument` + `drawingIdentity(..., shareDayDrawings=true)`); keep
+  those two in lockstep with `WebsiteKLineChart.tsx` and desktop `App.tsx`, or
+  Analysis drawings stop appearing on the trading chart. Lightweight Analysis drawings
+  are local only.
+- Lightweight Analysis charts are recreated when maximized (`[isMaximized]`); anything
+  drawn must be restorable from storage at chart creation.
+- Website KLine Analysis styles live in `klineAnalysisSite.css`, scoped by
+  `.kline-analysis-site`; do not import the desktop `desktopAnalysis.css` there.
