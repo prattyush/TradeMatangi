@@ -105,3 +105,10 @@
   position, order or strategy, because the old contract stops receiving ticks. The
   App's workspace-reset effect is skipped for the resulting strike change
   (`skipWorkspaceResetKeyRef`) so the user's pane layout is not rebuilt.
+- Rectangle drawing (`indicators/rectanglePrimitive.ts`) is an `ISeriesPrimitive` that
+  resolves pixel coordinates inside `draw()`; a corner time absent from the loaded
+  candles (e.g. past the last bar) is extrapolated from bar spacing, never dropped.
+  Its fill follows `indicators/rectangleStyle.ts`, which reads `drawingFillColor` /
+  `drawingFillOpacity` from `/api/desktop/v1/chart-settings` (shared with the desktop
+  app) and re-publishes on the `website-chart-appearance` window event. Settings ->
+  Display must save with read-modify-write so other chart-settings keys survive.
