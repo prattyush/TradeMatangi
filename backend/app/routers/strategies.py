@@ -7,6 +7,8 @@ POST /api/strategies/{id}/cancel      — cancel a single strategy
 PATCH /api/strategies/{id}/price      — update lock price for LockProfit / TargetProfit
 GET  /api/strategies                  — list running strategies for a session
 """
+from app.services.strategy_presentation import strategy_line_price
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.models.schemas import (
@@ -185,6 +187,10 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         right=instance.right,
         status=instance.status.value,
         triggered=bool(instance.metadata.get("triggered", False)),
+        price=strategy_line_price(instance),
+        strike=instance.metadata.get("desktop_strike"),
+        expiry=instance.metadata.get("desktop_expiry"),
+        contract_key=instance.metadata.get("desktop_contract_key"),
         target_profit_value=instance.metadata.get("target_profit_value"),
         target_profit_size=instance.metadata.get("underlying_stoploss_size" if instance.strategy_type == "UnderlyingStoploss" else "target_profit_size", "full"),
         target_profit_is_pct=bool(instance.metadata.get("target_profit_is_pct", False)),
@@ -241,6 +247,10 @@ def list_strategies(session_id: str, user_id: str = Depends(get_request_user_id)
             right=s.right,
             status=s.status.value,
             triggered=bool(s.metadata.get("triggered", False)),
+            price=strategy_line_price(s),
+            strike=s.metadata.get("desktop_strike"),
+            expiry=s.metadata.get("desktop_expiry"),
+            contract_key=s.metadata.get("desktop_contract_key"),
             target_profit_value=s.metadata.get("target_profit_value"),
             target_profit_size=s.metadata.get("underlying_stoploss_size" if s.strategy_type == "UnderlyingStoploss" else "target_profit_size", "full"),
             target_profit_is_pct=bool(s.metadata.get("target_profit_is_pct", False)),

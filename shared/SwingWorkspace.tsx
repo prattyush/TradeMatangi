@@ -1,3 +1,4 @@
+import { AppWindowControls } from "./AppWindowControls";
 import { snapSwingPrice } from './swingOrderPrice';
 import type { SwingSubscribe } from "./swingStream";
 import { SwingIconButton } from "./SwingIcon";
@@ -36,6 +37,7 @@ export interface SwingCandle {
   volume?: number;
 }
 export interface SwingChartProps {
+  refreshKey?: number
   pane: SwingPane;
   drawingScope: string;
   chartKind?: string;
@@ -50,6 +52,7 @@ export interface SwingChartProps {
   trades?: any[];
   showHistoricalTrades?: boolean;
   toolsContainer?: HTMLElement | null;
+  onCancelPick?: () => void;
   onPick: (price: number) => void;
   onActivate: () => void;
   onOrderDrag?: (order: any, price: number) => Promise<void>;
@@ -169,10 +172,14 @@ function PaneChart({
   markerBasis,
   surface,
   toolsContainer,
+  onCancelPick,
   onPick,
   onActivate,
   onOrderSelect, onOrderDrag, onChartContext,
+  headerStart, headerEnd,
 }: {
+  headerStart?: ReactNode;
+  headerEnd?: ReactNode;
   pane: SwingPane;
   request: SwingRequest;
   prefix: string;
@@ -189,6 +196,7 @@ function PaneChart({
   markerBasis: any[];
   surface: "website" | "desktop";
   toolsContainer?: HTMLElement | null;
+  onCancelPick?: () => void;
   onPick: (price: number) => void;
   onActivate: () => void;
   onOrderDrag?: (order: any, price: number) => Promise<void>;
@@ -283,30 +291,50 @@ function PaneChart({
     }));
     return { candles: older, more: page.more };
   };
+  const live =
+    Boolean(quote) &&
+    marketOpen &&
+    Date.now() / 1000 + 19800 - (quote?.time ?? 0) < 120;
+  const statusText =
+    surface === "desktop"
+      ? ""
+      : `${loading ? "Loading" : history.provider || "History"} · ${
+          pane.as_of_date !== swingToday()
+            ? "Historical"
+            : quote
+              ? live
+                ? "Live quote"
+                : "Last quote"
+              : "Today"
+        }`;
   return (
     <>
-      {(surface !== "desktop" || error) && (
-        <div className="swing-data-label">
-          {surface !== "desktop" && (
-            <>
-              {loading ? "Loading" : history.provider || "History"} ·{" "}
-              {pane.as_of_date === swingToday()
-                ? quote
-                  ? marketOpen && Date.now() / 1000 + 19800 - quote.time < 120
-                    ? "Live quote"
-                    : "Last quote"
-                  : "Today"
-                : "Historical"}
-            </>
-          )}
-          {error && (
-            <button onClick={() => setRetry((v) => v + 1)}>Retry</button>
-          )}
-        </div>
-      )}
+      <div className="swing-pane-bar">
+        {headerStart}
+        {(surface !== "desktop" || error) && (
+          <span
+            className={`swing-data-label ${error ? "swing-data-error" : ""}`}
+            title={statusText || undefined}
+          >
+            {statusText}
+            {error && (
+              <button type="button" onClick={() => setRetry((v) => v + 1)}>
+                Retry
+              </button>
+            )}
+          </span>
+        )}
+        <SwingIconButton
+          label="Refresh chart and drawings"
+          icon="Refresh"
+          onClick={() => setRetry((v) => v + 1)}
+        />
+        {headerEnd}
+      </div>
       <Renderer
         key={`${paneKey(pane)}:${pane.interval}`}
         pane={pane}
+        refreshKey={retry}
         drawingScope={drawingScope}
         toolsContainer={toolsContainer}
         chartKind={chartKind}
@@ -338,6 +366,7 @@ function PaneChart({
           markerBasis,
         )}
         showHistoricalTrades
+        onCancelPick={onCancelPick}
         onPick={onPick}
         onActivate={onActivate}
         loadOlder={loadOlder}
@@ -361,6 +390,7 @@ export default function SwingWorkspace({
   onCreateLinked,
   onPopOut,
   onSelect,
+  onCancelPick,
   onPick,
   picking,
   ticket,
@@ -372,7 +402,9 @@ export default function SwingWorkspace({
   busy,
   onPause,
   onOrderSelect, onOrderEdit, onOrderCancel, onOrderDrag, onChartTicket, pickOrder, quoteOrder, onOrderQuote,
+  paneBarExtras,
 }: {
+  paneBarExtras?: ReactNode;
   request: SwingRequest;
   subscribe: SwingSubscribe;
   snapshot: any;
@@ -387,6 +419,7 @@ export default function SwingWorkspace({
   onCreateLinked?: (portfolioId: string) => void;
   onPopOut?: (portfolioId: string) => void;
   onSelect: (pane: SwingPane) => void;
+  onCancelPick?: () => void;
   onPick: (price: number) => void;
   picking: boolean;
   ticket: ReactNode;
@@ -678,6 +711,7 @@ export default function SwingWorkspace({
         </div>
       </div>}
       <div className="swing-workspace-bar">
+        <AppWindowControls />
         {navigationControls}
         {portfolioControls}
         <strong>
@@ -926,7 +960,8 @@ export default function SwingWorkspace({
                 }}
                 onPointerDown={() => setActive(index)}
               >
-                <div className="swing-pane-bar">
+                <PaneChart
+                  headerStart={<>
                   <strong>
                     {pane.symbol} {pane.right} {pane.strike}
                   </strong>
@@ -1005,6 +1040,8 @@ export default function SwingWorkspace({
                       )
                     }
                   />
+                  </>}
+                  headerEnd={<>
                   <SwingIconButton
                     icon={maximized === index ? "Restore" : "Maximize"}
                     label={
@@ -1014,8 +1051,8 @@ export default function SwingWorkspace({
                       setMaximized(maximized === index ? null : index)
                     }
                   />
-                </div>
-                <PaneChart
+                    {paneBarExtras}
+                  </>}
                   pane={pane}
                   request={request}
                   prefix={prefix}
@@ -1030,6 +1067,7 @@ export default function SwingWorkspace({
                   }
                   active={active === index}
                   picking={picking && (pickOrder ? exact(pane, pickOrder) : active === index)}
+                  onCancelPick={onCancelPick}
                   onPick={onPick}
                   onActivate={() => setActive(index)}
                   position={snapshot.positions?.find((p: any) =>

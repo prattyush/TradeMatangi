@@ -112,17 +112,7 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       'options',
       'underlying'
     ]),
-    toggle('experimental_patterns_enabled', 'Experimental pattern detection'),
-    {
-      key: 'pattern_share_emails',
-      label: 'Pattern sharing emails (comma separated)',
-      type: 'text'
-    },
-    {
-      key: 'fine_structure_share_emails',
-      label: 'Fine-structure sharing emails (comma separated)',
-      type: 'text'
-    }
+    toggle('experimental_patterns_enabled', 'Experimental pattern detection')
   ],
   Strategies: [
     select('strategy_interval_secs', 'Strategy candle interval (seconds)', [
@@ -145,6 +135,18 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
   'Desktop Options': [
     toggle('desktop_hide_chart_labels', 'Hide chart labels'),
     toggle('desktop_confirm_flatten', 'Confirm Flatten')
+  ],
+  Sharing: [
+    {
+      key: 'pattern_share_emails',
+      label: 'Pattern sharing emails (comma separated)',
+      type: 'text'
+    },
+    {
+      key: 'fine_structure_share_emails',
+      label: 'Fine-structure sharing emails (comma separated)',
+      type: 'text'
+    }
   ]
 }
 export function sectionSettings(
