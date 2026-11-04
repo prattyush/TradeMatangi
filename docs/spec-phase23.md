@@ -369,7 +369,13 @@ The Habits tab now has three sections (**Scorecard | Trends across days | Compar
 
 ### 11.5 Porting to preprod / main
 
-Phase 23 cannot be cherry-picked piecemeal: it touches shared settings files that differ because of dev-only #750, depends on the dev-only KLine Analysis charts, and the website live labeling lives in the dev webapp-era `App.tsx`/`useSimulation.ts`. Recommended path: the normal dev→preprod merge once the KLine/webapp work is validated, run `bash scripts/check-preprod-synced.sh` first, and test live labeling in a real session before the merge reaches `main`. Items that touch real trading and need that test: the pause/resume label-tracking fix, `seedFromTrades`, desktop real-session label state, and the real-day alias handling in the Habits ledger.
+Strategy (per `CLAUDE.md`): `dev` gets the new features; `preprod` is where everything, real trading included, is known to work and where bug fixes are made; once tested there it goes to `main`. Working `dev` changes are merged into `preprod` with a merge commit, and in the worst case only up to an earlier `dev` commit (`git merge <sha>`), never by squashing or piecemeal cherry-picks.
+
+Phase 23 landed on `dev` as one merge commit per sprint, so there are natural cut points: the merges of PRs #752–#761 (Sprints 1–7d) and #762 (Sprint 8). Merge up to the last sprint that passes your acceptance run; later sprints stay on `dev`. Before each merge run `bash scripts/check-preprod-synced.sh`. Phase 23 touches shared settings files and the dev-only KLine Analysis charts, and `dev` currently has the unexplained chart-stops-updating issue noted in `CLAUDE.md`, so choose the cut point deliberately and test live labeling in a real session on `preprod` before it reaches `main`.
+
+Real-trading-relevant items to test there: desktop real-session label state, real-day alias handling in the Habits ledger, and the live-labeling popups.
+
+**Bug fix for `preprod`:** the pause/resume label-tracking reset (§11.2) also exists on `preprod` (`App.tsx` resets on every `running`). By the branch rules it should be fixed on `preprod` first and synced into `dev`; it is currently only fixed on `dev`.
 
 ### 11.6 Manual acceptance
 
