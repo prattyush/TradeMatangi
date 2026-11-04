@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import assert from 'node:assert/strict'
-import { ledger, expected } from './habits-ledger-fixture.mjs'
+import { ledger, expected, trades as ledgerTrades } from './habits-ledger-fixture.mjs'
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright-core')
 const root = resolve(new URL('..', import.meta.url).pathname)
 const artifacts = root + '/.cache/habits-validation'
@@ -26,7 +26,7 @@ const server = createServer(async (req, res) => { try { res.setHeader('Content-T
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
 try {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } }), errors = [], ledgerCalls = []
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } }), errors = [], ledgerCalls = [], detailCalls = []
   page.on('pageerror', error => errors.push(String(error)))
   let ledgerBody = ledger
   await page.route('**/api/**', async route => {
@@ -35,6 +35,7 @@ try {
     if (path.endsWith('/behavior/questions')) return route.fulfill({ json: { questions: ledgerBody.questions } })
     if (path.endsWith('/analysis/performance')) return route.fulfill({ json: overview.report })
     if (path.endsWith('/analysis/performance/cycles')) return route.fulfill({ json: { items: overview.cycles, total: overview.cycles.length, next_offset: null } })
+    if (path.includes('/analysis/performance/cycles/')) { detailCalls.push({ path, ...Object.fromEntries(url.searchParams) }); return route.fulfill({ json: overview.cycles[0] }) }
     return route.fulfill({ json: {} })
   })
   await page.goto(`http://127.0.0.1:${server.address().port}`)
@@ -104,6 +105,94 @@ try {
   await page.screenshot({ path: artifacts + '/habits-size-timing.png', fullPage: true })
   await page.getByRole('group', { name: 'Columns' }).getByRole('button', { name: 'Results' }).click()
 
+
+  // ── Trends across days ───────────────────────────────────────────────────
+  await page.getByRole('button', { name: 'Trends across days', exact: true }).click()
+  const chart = page.locator('.hb-chart'); await chart.waitFor()
+  const readout = page.locator('.hb-readout')
+  const mean = values => values.reduce((a, b) => a + b, 0) / values.length
+  const dayKeys = [...new Set(ledgerTrades.map(t => t.date))].sort()
+  const habitDay = (id, day) => ledgerTrades.filter(t => t.habits.includes(id) && t.date === day)
+  assert.match(await chart.locator('svg').getAttribute('aria-label'), /^Net \(% of capital\) per trading day for /)
+  assert.equal(await page.getByRole('group', { name: 'Habits shown' }).getByRole('button').count(), 4, 'a chip per habit')
+  assert.equal(await page.getByRole('group', { name: 'Habits shown' }).locator('[aria-pressed="true"]').count(), 4)
+  // Capital %: a line per habit; the chased habit is taken with less capital as the days go on.
+  await page.getByLabel('Metric').selectOption('capital')
+  await chart.focus(); await page.keyboard.press('Home')
+  const firstDay = dayKeys[0], lastDay = dayKeys[dayKeys.length - 1]
+  await page.waitForFunction(() => document.querySelector('.hb-readout strong')?.textContent === '14 Sep')
+  const pctOf = n => `${n.toFixed(1)}%`
+  assert.match(await readout.textContent(), new RegExp(`Chased the move: ${pctOf(mean(habitDay('qa', firstDay).map(t => t.capital_pct)))}`))
+  await page.keyboard.press('End')
+  assert.match(await readout.textContent(), new RegExp(`Chased the move: ${pctOf(mean(habitDay('qa', lastDay).map(t => t.capital_pct)))}`))
+  assert.ok(mean(habitDay('qa', firstDay).map(t => t.capital_pct)) > mean(habitDay('qa', lastDay).map(t => t.capital_pct)))
+  // The archived habit stops after day 3: a gap (—), never 0, on later days.
+  await chart.focus(); await page.keyboard.press('End')
+  assert.match(await readout.textContent(), /Old revenge habit: —/)
+  // Legend chips switch a habit's line off and on.
+  const chips = page.getByRole('group', { name: 'Habits shown' })
+  await chips.getByRole('button', { name: 'Exited after one bar in profit' }).click()
+  assert.doesNotMatch(await readout.textContent(), /Exited after one bar/)
+  await chips.getByRole('button', { name: 'Exited after one bar in profit' }).click()
+  assert.match(await readout.textContent(), /Exited after one bar in profit: 10\.0%/)
+  // Occurrences are counts: 0 (not a gap) on a day without the habit.
+  await page.getByLabel('Metric').selectOption('occurrences')
+  await chart.focus(); await page.keyboard.press('End')
+  assert.match(await readout.textContent(), /Old revenge habit: 0/)
+  await page.keyboard.press('Home')
+  assert.match(await readout.textContent(), new RegExp(`Chased the move: ${habitDay('qa', firstDay).length}`))
+  // Rolling average and unit change the chart description.
+  await page.getByRole('checkbox', { name: '5-day average' }).check()
+  assert.match(await chart.locator('svg').getAttribute('aria-label'), /5-day average/)
+  await page.getByRole('checkbox', { name: '5-day average' }).uncheck()
+  await page.getByLabel('Metric').selectOption('net')
+  await page.getByRole('group', { name: 'Unit' }).getByRole('button', { name: '₹' }).click()
+  assert.match(await chart.locator('svg').getAttribute('aria-label'), /\(₹\)/)
+  await page.getByRole('group', { name: 'Unit' }).getByRole('button', { name: '% of capital' }).click()
+  // Select a day: the trades carrying the shown habits, and open one in the cycle drawer.
+  await chart.focus(); await page.keyboard.press('Home'); await page.keyboard.press('Enter')
+  await page.getByRole('heading', { name: `${firstDay}: trades carrying the shown habits` }).waitFor()
+  const shown = ledgerTrades.filter(t => t.date === firstDay && t.habits.some(id => ['qa', 'qb', 'qc', 'qd'].includes(id)))
+  assert.equal(await page.locator('.hb-day tbody tr').count(), shown.length)
+  await page.locator('.hb-day tbody tr').first().getByRole('button', { name: /^Open trade/ }).click()
+  await page.getByRole('dialog', { name: 'Trade cycle details' }).waitFor()
+  assert.equal(detailCalls.at(-1).session_id, shown[0].session_id); assert.ok(detailCalls.at(-1).path.endsWith(shown[0].cycle_id))
+  await page.getByRole('button', { name: 'Close trade details' }).click()
+  await page.screenshot({ path: artifacts + '/habits-trends.png' })
+
+  // ── Compare periods ──────────────────────────────────────────────────────
+  await page.getByRole('button', { name: 'Compare periods', exact: true }).click()
+  await page.getByText(/Needs more than 10 trading days of history/).waitFor()   // 10 days cannot be split 10 vs 10
+  await page.getByRole('group', { name: 'Period length' }).getByRole('button', { name: 'Last 5 days vs before' }).click()
+  const compare = page.locator('table.hb-compare'); await compare.waitFor()
+  await page.getByText(/Before 2026-09-14/).waitFor()
+  const compareRow = name => compare.locator('tbody tr', { has: page.locator('.hb-name', { hasText: name }) })
+  const half = dayKeys.length / 2, beforeDays = dayKeys.slice(0, half), recentDays = dayKeys.slice(half)
+  const perDay = (id, days) => ledgerTrades.filter(t => t.habits.includes(id) && days.includes(t.date)).length / days.length
+  assert.equal(await compareRow('Chased the move').locator('.hb-flag').textContent(), 'Improving')
+  assert.equal(await compareRow('Exited after one bar').locator('.hb-flag').textContent(), 'Same')
+  assert.equal(await compareRow('Waited for the retest').locator('.hb-flag').textContent(), 'Same')
+  assert.equal(await compareRow('Old revenge habit').locator('.hb-flag').textContent(), 'Too few trades')
+  const chasedRow = (await compareRow('Chased the move').locator('td').allTextContents()).join(' | ')
+  assert.ok(chasedRow.includes(`${perDay('qa', beforeDays).toFixed(2)} → ${perDay('qa', recentDays).toFixed(2)}`), `per-day cell in: ${chasedRow}`)
+  const capitalOf = days => mean(ledgerTrades.filter(t => t.habits.includes('qa') && days.includes(t.date) && t.capital_pct != null).map(t => t.capital_pct))
+  assert.ok(chasedRow.includes(`${capitalOf(beforeDays).toFixed(1)}% → ${capitalOf(recentDays).toFixed(1)}%`), `capital cell in: ${chasedRow}`)
+  assert.equal(await compareRow('Chased the move').locator('.hb-delta.good').count() >= 2, true, 'net and loss changes are shown as better')
+  assert.match(await compareRow('Chased the move').locator('.hb-flag').getAttribute('title'), /Loss per day improved/)
+  // Days with vs without the habit.
+  const dwTable = page.locator('table.hb-table').last()
+  assert.equal(await dwTable.locator('tbody tr').count(), 4)
+  // Custom ranges.
+  await page.getByRole('group', { name: 'Period length' }).getByRole('button', { name: 'Custom' }).click()
+  await page.getByLabel('Recent: from').waitFor()
+  await page.getByLabel('Recent: from').fill(dayKeys[8]); await page.getByLabel('Recent: from').press('Tab')
+  await page.getByText(new RegExp(`Recent ${dayKeys[8]} – ${dayKeys[9]} \\(2 days\\)`)).waitFor()
+  const pressedStyle = await page.getByRole('group', { name: 'Period length' }).locator('[aria-pressed="true"]').evaluate(el => getComputedStyle(el).backgroundColor)
+  assert.equal(pressedStyle, 'rgb(165, 180, 252)', 'a pressed segmented button keeps its highlight while hovered')
+  await page.screenshot({ path: artifacts + '/habits-compare.png' })
+  await page.getByRole('group', { name: 'Period length' }).getByRole('button', { name: 'Last 5 days vs before' }).click()
+  await page.getByRole('button', { name: 'Scorecard', exact: true }).click(); await page.locator('table.hb-table').first().waitFor()
+
   // Manage questions opens the manager; closing it reloads the ledger.
   const callsBefore = ledgerCalls.length
   await page.getByRole('button', { name: 'Manage questions' }).click()
@@ -129,6 +218,21 @@ try {
   const sticky = await page.locator('tbody th.hb-sticky').first().boundingBox(), wrapBox = await wrap.boundingBox()
   assert.ok(sticky.x >= wrapBox.x - 1 && sticky.x <= wrapBox.x + 4, 'the habit column stays at the left edge')
   await page.screenshot({ path: artifacts + '/habits-phone.png', fullPage: true })
+  for (const section of ['Trends across days', 'Compare periods']) {
+    await page.getByRole('button', { name: section, exact: true }).click(); await page.waitForTimeout(250)
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `no horizontal page scroll in ${section} on a phone`)
+  }
+  await page.getByRole('button', { name: 'Compare periods', exact: true }).click()
+  await page.getByRole('group', { name: 'Period length' }).getByRole('button', { name: 'Last 5 days vs before' }).click()
+  await page.locator('table.hb-compare').waitFor()
+  assert.ok(await page.locator('table.hb-compare').evaluate(el => el.closest('.pa-table-wrap').scrollWidth > el.closest('.pa-table-wrap').clientWidth), 'the comparison table scrolls inside its wrapper')
+  await page.getByRole('button', { name: 'Trends across days', exact: true }).click()
+  const chartBox = await page.locator('.hb-chart svg').boundingBox()
+  assert.ok(chartBox.width <= 390 && chartBox.height >= 250, `the chart scales to the phone width: ${JSON.stringify(chartBox)}`)
+  await page.locator('.hb-chart').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: artifacts + '/habits-phone-trends.png' })
+  await page.getByRole('button', { name: 'Scorecard', exact: true }).click(); await page.locator('svg.hb-diverging').scrollIntoViewIfNeeded()
+  await page.screenshot({ path: artifacts + '/habits-phone-chart.png' })
   assert.deepEqual(errors, [])
   console.log('Stats → Habits scorecard, chart, controls and phone layout passed')
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)) }
