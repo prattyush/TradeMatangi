@@ -6,6 +6,7 @@ import { completeCycleExport } from "./exportCycles";
 import { useAnalysisError } from "./environment";
 import { useAnalysisEnvironment } from "./environment";
 import { AnalysisChart, OptionsChart } from "./TradeAnalysis";
+import HabitsView from "./habits/HabitsView";
 import type { AnalysisTrade } from "./api";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -30,7 +31,7 @@ interface Props {
   defaultInstrumentType: string;
   defaultSessionType: string;
 }
-type View = "Overview" | "Entries" | "Exits" | "Sizing" | "Behavior";
+type View = "Overview" | "Entries" | "Exits" | "Sizing" | "Behavior" | "Habits";
 const money = (n: number | null | undefined) =>
   n == null
     ? "—"
@@ -822,7 +823,7 @@ export default function PerformanceDashboard(props: Props) {
         </button>
       </div>
       <nav className="pa-tabs" aria-label="Performance sections">
-        {(["Overview", "Entries", "Exits", "Sizing", "Behavior"] as View[]).map(
+        {(["Overview", "Entries", "Exits", "Sizing", "Behavior", "Habits"] as View[]).map(
           (t) => (
             <button
               key={t}
@@ -867,8 +868,9 @@ export default function PerformanceDashboard(props: Props) {
             <button onClick={() => setRefresh((r) => r + 1)}>Retry</button>
           </div>
         )}
-        {loading && !report && <p role="status">Reading your executions…</p>}
-        {report && (
+        {view === "Habits" && <HabitsView filters={filters} refresh={refresh} />}
+        {loading && !report && view !== "Habits" && <p role="status">Reading your executions…</p>}
+        {report && view !== "Habits" && (
           <>
             <div className="pa-kpis">
               {[
@@ -1222,7 +1224,7 @@ export default function PerformanceDashboard(props: Props) {
             {view !== "Overview" && tradesPanel}
           </>
         )}
-        {!loading && !error && report && total === 0 && (
+        {!loading && !error && report && view !== "Habits" && total === 0 && (
           <section className="pa-card">
             <h3>A clear view starts with your trades.</h3>
             <p>

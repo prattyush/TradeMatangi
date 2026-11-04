@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os'
 import {join,resolve} from 'node:path'
 import {execFileSync} from 'node:child_process'
 import assert from 'node:assert/strict'
+import {ledger as habitLedger} from './habits-ledger-fixture.mjs'
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright-core')
 const root=resolve(new URL('..',import.meta.url).pathname),artifacts=root+'/.cache/desktop-analysis-validation'
 await mkdir(artifacts,{recursive:true})
@@ -55,6 +56,7 @@ try{
   else if(path.endsWith('/analysis/data/expiry'))value={expiry:'2026-10-08'}
   else if(path.endsWith('/analysis/pattern/categories'))value={categories:['Momentum']}
   else if(path.endsWith('/analysis/pattern/strategies'))value={strategies:['Breakout']}
+  else if(path.endsWith('/behavior/habit-ledger'))value=habitLedger
   else if(path.endsWith('/behavior/questions'))value=method==='POST'?{question_id:'created',kind:'entry',text:'Created',status:'active',sort_order:9,created_at:'2026-10-05',archived_at:null}:{questions:[{question_id:'qe',kind:'entry',text:'Chased the move',status:'active',sort_order:0,created_at:'2026-10-01',archived_at:null},{question_id:'qx',kind:'exit',text:'Exited after one bar in profit',status:'active',sort_order:1,created_at:'2026-10-02',archived_at:null}]}
   else if(path.endsWith('/analysis/behavior/marks')){if(method==='POST')behaviorPosts.push(route.request().postDataJSON());value={marks:[]}}
   else if(path.endsWith('/analysis/entry-tags')||path.endsWith('/analysis/exit-tags'))value={tags:['AS_PER_PATTERN']}
@@ -152,6 +154,10 @@ try{
  await page.getByRole('button',{name:'Trades',exact:true}).click();await page.getByRole('button',{name:/Snapshots/}).click();const sharedSnapshots=page.getByRole('dialog',{name:'Event snapshots'});await sharedSnapshots.waitFor();assert.equal(await sharedSnapshots.getByRole('button',{name:/Delete All/}).count(),0);await sharedSnapshots.getByRole('button',{name:/Close/}).click()
  await page.getByRole('complementary',{name:'Session navigator'}).getByRole('button').filter({hasText:'0 closed trades'}).click();await page.getByText('No executions yet.',{exact:true}).waitFor();await page.getByText('Stored order history (1)',{exact:true}).click();await page.getByRole('cell',{name:'PENDING',exact:true}).waitFor()
  await analysisViews.getByRole('button',{name:'Stats',exact:true}).click();await page.getByRole('heading',{name:'Your trading, understood.'}).waitFor()
+ // Habits over the desktop Analysis proxy: scorecard rows, most destructive habit first
+ await page.getByRole('button',{name:'Habits',exact:true}).click();await page.locator('table.hb-table').waitFor()
+ assert.equal(await page.locator('table.hb-table tbody th .hb-name').first().textContent(),'Chased the move');assert.ok(calls.some(c=>c.path.endsWith('/analysis/behavior/habit-ledger')&&c.method==='GET'))
+ await page.getByRole('button',{name:'Overview',exact:true}).click()
  failExport=true;await page.getByRole('button',{name:'Export CSV',exact:true}).click();await page.getByRole('alert').filter({hasText:'503'}).waitFor();failExport=false
  const download=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();const csv=await readFile(await(await download).path(),'utf8');assert.equal(csv.split('\r\n').length,fixture.cycles.length+1)
  await nav.selectOption('Workspace');await page.getByRole('button',{name:'Chart settings',exact:true}).click();await page.getByRole('tab',{name:'Analytics',exact:true}).click();await page.getByRole('region',{name:'Behavior questions'}).getByRole('button',{name:'Edit question: Chased the move'}).waitFor();await page.getByRole('tab',{name:'Sharing',exact:true}).click();await page.getByLabel('Share real history with emails').fill('bob@example.com');await page.getByRole('button',{name:'Save sharing',exact:true}).click();await page.getByText('History sharing saved.',{exact:true}).waitFor();assert.deepEqual(shareEmails,['bob@example.com'])
