@@ -5,7 +5,7 @@ import DesktopAnalysisChart from './AnalysisChart'
 
 import { contractTabs } from './analysisContracts'
 export { contractTabs } from './analysisContracts'
-export default function AnalysisPanels({ symbol, date, allTrades, historicalDays=2, getMarkerText, focusTime, labelContractMarkers }: {symbol:string;date:string;allTrades:AnalysisTrade[];historicalDays?:number;getMarkerText?:(t:AnalysisTrade)=>string;focusTime?:number;labelContractMarkers?:boolean}) {
+export default function AnalysisPanels({ symbol, date, allTrades, historicalDays=2, getMarkerText, focusTime, labelContractMarkers, layout }: {symbol:string;date:string;allTrades:AnalysisTrade[];historicalDays?:number;getMarkerText?:(t:AnalysisTrade)=>string;focusTime?:number;labelContractMarkers?:boolean;layout?:'single'|'split'}) {
   const environment = useAnalysisEnvironment()
   const tabs = useMemo(()=>contractTabs(allTrades),[allTrades])
   const [selected,setSelected] = useState('')
@@ -22,7 +22,7 @@ export default function AnalysisPanels({ symbol, date, allTrades, historicalDays
     window.addEventListener('keydown',escape); return()=>window.removeEventListener('keydown',escape)
   },[max,environment.active])
   const drag=(clientX:number)=>{ const box=root.current?.getBoundingClientRect(); if(box)setRatio(Math.max(25,Math.min(75,100*(clientX-box.left)/box.width))) }
-  return <div ref={root} className={`analysis-panels ${tabs.length?'has-options':''} ${max?'chart-maximized':''}`} data-pane={pane} data-max={max??''} style={{'--analysis-chart-split':`${ratio}%`} as React.CSSProperties}>
+  return <div ref={root} className={`analysis-panels ${tabs.length?'has-options':''} ${max?'chart-maximized':''} ${layout==='single'?'is-single':''}`} data-pane={pane} data-max={max??''} style={{'--analysis-chart-split':`${ratio}%`} as React.CSSProperties}>
     {tabs.length>0 && <nav className="analysis-pane-navigation" aria-label="Chart pane"><button aria-pressed={pane==='underlying'} onClick={()=>setPane('underlying')}>Underlying</button><button aria-pressed={pane==='option'} onClick={()=>setPane('option')}>Option</button></nav>}
     <div className="analysis-underlying-pane" hidden={max==='option'}>
       {environment.active !== false && <DesktopAnalysisChart symbol={symbol} date={date} trades={allTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} title="Underlying" isMaximized={max==='underlying'} onMaximize={()=>setMax(value=>value==='underlying'?null:'underlying')} />}

@@ -240,7 +240,8 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
     </div>
   )
   const maximizeButton = (
-    <button type="button" className="tl-ghost" onClick={() => setMaximized(!maximized)} title={maximized ? 'Restore' : 'Maximize'}>{maximized ? '⤡' : '⤢'}</button>
+    <button type="button" className="tl-ghost" onClick={() => setMaximized(!maximized)} aria-pressed={maximized}
+      aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): one chart with a switcher' : 'Maximize: larger view, Underlying and strike charts stacked'}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
   )
 
   const LabelCharts = environment.charts?.LabelCharts
@@ -252,8 +253,8 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
       {/* Chart */}
       <div className="label-chart-container tl-chart-col">
         {LabelCharts
-          ? <LabelCharts symbol={symbol} date={date} allTrades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers />
-          : <LabelChartPanes symbol={symbol} date={date} trades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} />}
+          ? <LabelCharts symbol={symbol} date={date} allTrades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers layout={maximized ? 'split' : 'single'} />
+          : <LabelChartPanes symbol={symbol} date={date} trades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized} />}
       </div>
 
       {/* Round-trip forms */}
