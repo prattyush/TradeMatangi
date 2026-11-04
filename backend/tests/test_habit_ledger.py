@@ -258,3 +258,102 @@ def test_desktop_proxy_exposes_the_ledger_read_only(db):
         assert client.post("/api/desktop/v1/analysis/behavior/habit-ledger").status_code in (404, 405)
     finally:
         app.dependency_overrides.pop(desktop_analysis.get_analysis_user_id, None)
+
+
+# ── Sprint 8 hardening ───────────────────────────────────────────────────────
+
+def test_swing_scope_returns_an_empty_ledger_without_reading_cycles(db, monkeypatch):
+    qa = question("entry", "Chased")
+    monkeypatch.setattr(perf, "load_cycles", lambda *a, **k: (_ for _ in ()).throw(AssertionError("swing books must not be read")))
+    result = ledger.load_ledger(USER, {"trading_style": "swing"})
+    assert result["trades"] == [] and [q["question_id"] for q in result["questions"]] == [qa]
+    assert result["coverage"]["closed_trades"] == 0
+
+
+def test_ledger_reads_only_intraday_sessions(db, monkeypatch):
+    s1 = add_session(db, "s1", "2026-10-05")
+    qa = question("entry", "Chased")
+    bsvc.set_marks(USER, s1, 0, {qa: True})
+    seen = {}
+    real = perf.load_cycles
+    monkeypatch.setattr(perf, "load_cycles", lambda user, **scope: seen.update(scope) or real(user, **scope))
+    ledger.load_ledger(USER, {"symbol": "NIFTY"})
+    assert seen["trading_style"] == "intraday" and seen["include_shared"] is False and seen["symbol"] == "NIFTY"
+
+
+def test_session_rows_are_fetched_in_batches_of_100_and_unprocessed_keys_are_retried(db, monkeypatch):
+    for index in range(230):
+        db.Table("Sessions").put_item(Item=dict(session_id=f"x{index:03d}", user_id=USER, date="2026-10-05"))
+    calls = []
+    real = db.batch_get_item
+
+    def flaky(RequestItems):
+        calls.append(len(RequestItems["Sessions"]["Keys"]))
+        response = real(RequestItems=RequestItems)
+        if len(calls) == 2:  # pretend DynamoDB returned part of the second batch as unprocessed
+            keys = RequestItems["Sessions"]["Keys"]
+            done = {item["session_id"] for item in response["Responses"]["Sessions"][:40]}
+            response = {"Responses": {"Sessions": [i for i in response["Responses"]["Sessions"] if i["session_id"] in done]},
+                        "UnprocessedKeys": {"Sessions": {"Keys": [k for k in keys if k["session_id"] not in done], "ConsistentRead": True}}}
+        return response
+
+    monkeypatch.setattr(db, "batch_get_item", flaky)
+    rows = ledger._fetch_sessions({f"x{index:03d}" for index in range(230)} | {"missing"})
+    assert len(rows) == 230 and "missing" not in rows
+    assert calls == [100, 100, 60, 31]   # 100, 100 (40 processed), the 60 unprocessed retried, then the last 31 (230 sessions + 1 unknown id)
+
+
+def test_a_trade_cannot_be_marked_against_an_unbounded_number_of_questions(db):
+    s1 = add_session(db, "s1", "2026-10-05")
+    client = TestClient(app)
+    answers = {f"q{i}": True for i in range(101)}
+    response = client.post("/api/behavior/marks", json={"session_id": "s1", "round_trip_index": 0, "answers": answers}, headers={"X-User-Id": USER})
+    assert response.status_code == 422
+    assert client.post("/api/behavior/marks", json={"session_id": "s1", "round_trip_index": 0, "answers": {}}, headers={"X-User-Id": USER}).status_code == 200
+
+
+@pytest.mark.parametrize("query", [
+    "", "symbol=NIFTY", "symbol=BANKNIFTY", "session_type=paper", "session_type=real", "start_date=2026-10-06", "end_date=2026-10-05",
+    "start_date=2026-10-05&end_date=2026-10-06&symbol=NIFTY", "instrument_type=equity", "direction=LONG", "direction=SHORT", "session_type=paper&symbol=NIFTY&direction=LONG",
+])
+def test_ledger_reconciles_with_the_stats_overview_for_every_filter(db, query):
+    """The Habits ledger is exactly the set of closed trades the Stats overview counts, whatever the filters."""
+    add_session(db, "s1", "2026-10-05")
+    add_session(db, "s2", "2026-10-06", round_trips=((100, 90), (95, 99), (50, 60)))
+    add_session(db, "s3", "2026-10-06", symbol="BANKNIFTY", session_type="sim", round_trips=((200, 210),))
+    add_session(db, "s4", "2026-10-07", session_type="real", open_leg=True)
+    add_session(db, "b1", "2026-10-05", user="bob")
+    qa = question("entry", "Chased the move")
+    for sid, index in (("s1", 0), ("s2", 1), ("s3", 0)):
+        bsvc.set_marks(USER, db.Table("Sessions").get_item(Key={"session_id": sid})["Item"], index, {qa: True})
+    client = TestClient(app)
+    headers = {"X-User-Id": USER}
+    overview = client.get(f"/api/analysis/performance?{query}", headers=headers).json()["summary"]
+    result = client.get(f"/api/behavior/habit-ledger?{query}", headers=headers).json()
+    assert len(result["trades"]) == overview["count"], query
+    assert sum(t["net_pnl"] for t in result["trades"]) == pytest.approx(overview["net_pnl"], abs=0.05), query
+    assert result["coverage"]["closed_trades"] == overview["count"]
+    cycles = client.get(f"/api/analysis/performance/cycles?limit=200&{query}", headers=headers).json()["items"]
+    closed = {c["cycle_id"]: c for c in cycles if c["state"] == "closed"}
+    assert {t["cycle_id"] for t in result["trades"]} == set(closed), query
+    for row in result["trades"]:
+        assert row["pnl_pct"] == pytest.approx(round(closed[row["cycle_id"]]["pnl_pct"], 4)), query
+
+
+def test_a_large_ledger_is_gzipped_only_when_asked_and_small_ones_never(db, monkeypatch):
+    rows = [ledger.trade_row(cycle(i, entry_time=1_000 + i)) for i in range(400)]
+    big = {"questions": [], "trades": rows, "coverage": ledger.build_ledger([cycle(0)], [], {}, [])["coverage"]}
+    small = {**big, "trades": rows[:3]}
+    state = {"data": big}
+    monkeypatch.setattr(ledger, "load_ledger", lambda user, criteria: state["data"])
+    client = TestClient(app)
+    plain = client.get("/api/behavior/habit-ledger", headers={"X-User-Id": USER, "Accept-Encoding": "identity"})
+    assert plain.status_code == 200 and "content-encoding" not in plain.headers and len(plain.json()["trades"]) == 400
+    assert len(plain.content) > 64 * 1024
+    zipped = client.get("/api/behavior/habit-ledger", headers={"X-User-Id": USER, "Accept-Encoding": "gzip"})
+    assert zipped.headers["content-encoding"] == "gzip" and zipped.headers["vary"] == "Accept-Encoding"
+    assert zipped.json() == plain.json()                               # the client decompresses transparently
+    assert zipped.num_bytes_downloaded < len(plain.content) / 10        # bytes on the wire, before the client decompresses
+    state["data"] = small
+    tiny = client.get("/api/behavior/habit-ledger", headers={"X-User-Id": USER, "Accept-Encoding": "gzip"})
+    assert "content-encoding" not in tiny.headers and len(tiny.json()["trades"]) == 3

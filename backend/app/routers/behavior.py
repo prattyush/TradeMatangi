@@ -10,10 +10,11 @@ read access (real sessions) can read.
 from __future__ import annotations
 
 import asyncio
+import gzip
 import logging
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_request_user_id
@@ -63,7 +64,7 @@ class MarksResponse(BaseModel):
 class MarksIn(BaseModel):
     session_id: str
     round_trip_index: int = Field(ge=0)
-    answers: dict[str, bool]
+    answers: dict[str, bool] = Field(max_length=100)  # one trade is never marked against more questions than can exist
 
 
 class DayCounts(BaseModel):
@@ -225,7 +226,21 @@ async def stats(
 
 # ── Habit ledger (Stats → Habits) ─────────────────────────────────────────────
 
+LEDGER_GZIP_MIN_BYTES = 64 * 1024
+
+
 @router.get("/habit-ledger", response_model=HabitLedgerResponse)
-async def habit_ledger(criteria: dict = Depends(performance_filters), user_id: str = Depends(get_request_user_id)):
-    """One row per closed own intraday trade in the filtered scope, with the habits it was marked with."""
-    return await _run(habit_ledger_service.load_ledger, user_id, criteria)
+async def habit_ledger(request: Request, criteria: dict = Depends(performance_filters), user_id: str = Depends(get_request_user_id)):
+    """One row per closed own intraday trade in the filtered scope, with the habits it was marked with.
+
+    A long history is large (about 0.4 KB per trade, 1 MB for a year of 10 round trips a day) and compresses ~60x, so
+    this endpoint gzips big bodies itself when the client accepts it. (Not a global middleware: the trading streams
+    must never be compressed.)
+    """
+    data = await _run(habit_ledger_service.load_ledger, user_id, criteria)
+    body = HabitLedgerResponse.model_validate(data).model_dump_json().encode()
+    headers = {"Vary": "Accept-Encoding"}
+    if len(body) > LEDGER_GZIP_MIN_BYTES and "gzip" in request.headers.get("accept-encoding", "").lower():
+        body = gzip.compress(body, compresslevel=5)
+        headers["Content-Encoding"] = "gzip"
+    return Response(content=body, media_type="application/json", headers=headers)

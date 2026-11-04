@@ -1,3 +1,4 @@
+import { shouldResetLabelTracking } from './hooks/roundTripIndexer'
 import { AppWindowControls } from '../../shared/AppWindowControls'
 import { InstallAppControl } from '../../webapp/src/InstallApp'
 import AccountNamePopup from './components/AccountNamePopup'
@@ -423,13 +424,16 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
     }
   }, [sim.sessionState])
 
-  // Reset RT tracking on new session start (works for all session types)
+  // Reset RT tracking when a different session becomes active (all session types). Pausing and resuming the same
+  // session must NOT reset it: that wiped pending labels and restarted round-trip numbering at 0, so later trades
+  // overwrote earlier labels.
+  const labelTrackedSession = useRef<string | null>(null)
   useEffect(() => {
-    if (sim.sessionState === 'running') {
-      sim.resetLabelTracking()
-      setStepwiseLabels(null)
-    }
-  }, [sim.sessionState, sim.sessionId, sim.resetLabelTracking])
+    if (!shouldResetLabelTracking(labelTrackedSession.current, sim.sessionId)) return
+    labelTrackedSession.current = sim.sessionId
+    sim.resetLabelTracking()
+    setStepwiseLabels(null)
+  }, [sim.sessionId, sim.resetLabelTracking])
 
   // RT open/close detection is now handled inline in buy/sell/addTradeFromSSE
   // (addTradeAndDetectLabels) — no effect needed here.

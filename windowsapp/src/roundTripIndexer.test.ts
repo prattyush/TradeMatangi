@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emptyIndexState, legOf, openIndex, stepLeg, type IndexState, type Leg } from '../../frontend/src/hooks/roundTripIndexer'
+import { emptyIndexState, legOf, openIndex, seedFromTrades, shouldResetLabelTracking, stepLeg, type IndexState, type Leg } from '../../frontend/src/hooks/roundTripIndexer'
 
 /** Drives the indexer the way useSimulation does: one net-quantity change per leg. */
 function run(steps: [Leg, number, number][]) {
@@ -50,5 +50,41 @@ describe('round trip numbering', () => {
   it('a reopened contract gets a fresh number', () => {
     const { events } = run([['ce', 0, 65], ['ce', 65, 0], ['ce', 0, 65], ['ce', 65, 0]])
     expect(events).toEqual(['open ce=0', 'close ce=0', 'open ce=1', 'close ce=1'])
+  })
+})
+
+describe('reversals, seeding and reset', () => {
+  it('a reversal through zero closes the old trip and opens a new one', () => {
+    const { events } = run([['ce', 0, 65], ['ce', 65, -65], ['ce', -65, 0]])
+    // the reversal step reports both the trip it closed (0) and the one it opened (1)
+    expect(events).toEqual(['open ce=0', 'open ce=1', 'close ce=0', 'close ce=1'])
+  })
+  it('seeding from existing trades reproduces the numbering and keeps an open leg\'s number', () => {
+    const seed = seedFromTrades([
+      { side: 'BUY', quantity: 65, right: 'CE', timestamp: 100 },
+      { side: 'BUY', quantity: 65, right: 'PE', timestamp: 110 },
+      { side: 'SELL', quantity: 65, right: 'PE', timestamp: 120 },
+      { side: 'BUY', quantity: 10, right: null, timestamp: 130 },
+    ])
+    expect(seed.qty).toEqual({ eq: 10, ce: 65, pe: 0 })
+    expect(seed.state.counter).toBe(3)
+    expect(openIndex(seed.state, 'ce')).toBe(0)
+    expect(openIndex(seed.state, 'eq')).toBe(2)
+    // closing the CE after a resume still reports trip 0
+    expect(stepLeg(seed.state, 'ce', 65, 0).closed).toBe(0)
+  })
+  it('seeding orders trades by time, not by array position', () => {
+    const seed = seedFromTrades([
+      { side: 'SELL', quantity: 65, right: 'CE', timestamp: 200 },
+      { side: 'BUY', quantity: 65, right: 'CE', timestamp: 100 },
+    ])
+    expect(seed.qty.ce).toBe(0)
+    expect(seed.state.counter).toBe(1)
+  })
+  it('resets label tracking only when a different session becomes active, not on pause/resume', () => {
+    expect(shouldResetLabelTracking(null, 's1')).toBe(true)
+    expect(shouldResetLabelTracking('s1', 's1')).toBe(false)
+    expect(shouldResetLabelTracking('s1', 's2')).toBe(true)
+    expect(shouldResetLabelTracking('s1', null)).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import { emptyIndexState, legOf, openIndex, stepLeg, type IndexState } from './roundTripIndexer'
+import { emptyIndexState, legOf, openIndex, seedFromTrades, stepLeg, type IndexState } from './roundTripIndexer'
 import { isBrokerSnapshot } from '../brokerSnapshot'
 import { mergeOpenOrders } from '../services/brokerOrderState'
 import { contractPosition, unrealizedPnl, advancePositionClock, mergeConfirmedTrade, PositionSnapshot, ContractPosition } from '../services/positionAccounting'
@@ -258,6 +258,10 @@ export function useSimulation() {
       api.getOrders(res.session_id, true).catch(() => []),
     ])
     if (generation !== attachGenerationRef.current || sequence !== positionSequenceRef.current) return
+    // A reloaded or resumed session already has trades: number from them so labels keep the backend's round-trip numbers.
+    const seed = seedFromTrades(trades)
+    indexStateRef.current = seed.state
+    lastNetQtyRef.current = seed.qty
     setState(s => s.sessionId !== res.session_id ? s : ({
       ...s,
       trades,
