@@ -17,7 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_request_user_id
+from app.routers.performance import filters as performance_filters
 from app.services import behavior_service as svc
+from app.services import habit_ledger_service
 from app.services import trade_label_service
 
 logger = logging.getLogger(__name__)
@@ -113,6 +115,46 @@ async def _run(fn, *args, **kwargs):
         raise HTTPException(status_code=500, detail="Behavior data could not be read or saved; retry later") from exc
 
 
+class LedgerTrade(BaseModel):
+    cycle_id: str
+    session_id: str
+    date: str
+    entry_time: int
+    exit_time: Optional[int] = None
+    symbol: str = ""
+    right: Optional[str] = None
+    strike: Optional[float] = None
+    direction: str = ""
+    net_pnl: float
+    pnl_pct: Optional[float] = None
+    capital_pct: Optional[float] = None
+    risk_pct: Optional[float] = None
+    entries: int
+    exits: int
+    holding_seconds: Optional[int] = None
+    bars: Optional[int] = None
+    r_multiple: Optional[float] = None
+    entry_method: Optional[str] = None
+    habits: list[str]
+
+
+class LedgerCoverage(BaseModel):
+    closed_trades: int
+    marked_trades: int
+    marks: int
+    unmatched_marks: int
+    open_marked_trades: int
+    trades_without_capital: int
+    trades_without_bars: int
+    truncated: bool
+
+
+class HabitLedgerResponse(BaseModel):
+    questions: list[QuestionOut]
+    trades: list[LedgerTrade]
+    coverage: LedgerCoverage
+
+
 # ── Questions ────────────────────────────────────────────────────────────────
 
 @router.get("/questions", response_model=QuestionsResponse)
@@ -179,3 +221,11 @@ async def stats(
     user_id: str = Depends(get_request_user_id),
 ):
     return await _run(svc.get_stats, user_id, start_date, end_date, symbol, session_type, instrument_type)
+
+
+# ── Habit ledger (Stats → Habits) ─────────────────────────────────────────────
+
+@router.get("/habit-ledger", response_model=HabitLedgerResponse)
+async def habit_ledger(criteria: dict = Depends(performance_filters), user_id: str = Depends(get_request_user_id)):
+    """One row per closed own intraday trade in the filtered scope, with the habits it was marked with."""
+    return await _run(habit_ledger_service.load_ledger, user_id, criteria)

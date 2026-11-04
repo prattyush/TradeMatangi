@@ -2,6 +2,7 @@ import { AnalysisHistoryCache } from './analysisHistoryCache'
 import type { AnalysisApi, AnalysisEnvironment } from '../../shared/analysis/environment'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from '../../shared/analysis/performance'
 import type { SessionDetail } from '../../shared/analysis/api'
+import type { HabitLedger } from '../../shared/analysis/habits/types'
 
 export type AnalysisRequest = <T>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown, signal?: AbortSignal) => Promise<T>
 export function validAnalysisPath(path: string, method: string): boolean {
@@ -9,7 +10,7 @@ export function validAnalysisPath(path: string, method: string): boolean {
   if (!route || route.startsWith('/') || route.includes('%') || route.includes('#') || route.includes('\\') || route.split('/').some(p => p === '.' || p === '..')) return false
   if (method === 'POST') return route === 'labels' || route === 'performance/real-fees' || route === 'pattern/strategies' || route === 'pattern/categories' || route === 'behavior/questions' || route === 'behavior/marks' || /^behavior\/questions\/[A-Za-z0-9_-]+\/(update|archive|restore)$/.test(route)
   if (method === 'DELETE') return route === 'snapshots' || route === 'performance/real-fees'
-  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/swing|\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options))|behavior\/(questions|marks|marks\/by-question|stats))$/.test(route)
+  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/swing|\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options))|behavior\/(questions|marks|marks\/by-question|stats|habit-ledger))$/.test(route)
 }
 function awaitNative<T>(promise:Promise<T>,signal?:AbortSignal):Promise<T> {
   if(!signal)return promise
@@ -115,6 +116,7 @@ export function createAnalysisApi(request: AnalysisRequest) {
     saveRealFees: (date, account_id, actual_total, execution_broker) => scopedRequest<RealFeesDay>('performance/real-fees', 'POST', {date, account_id, actual_total, ...(execution_broker ? {execution_broker} : {})}),
     deleteRealFees: (date, account_id, execution_broker) => scopedRequest<RealFeesDay>(`performance/real-fees?${params({date, account_id, execution_broker})}`, 'DELETE'),
     getPerformance: (filters:PerformanceFilters,signal) => scopedRequest<PerformanceReport>(`performance?${params({...filters,include_shared:true})}`,'GET',undefined,signal),
+    getHabitLedger: (filters,signal) => scopedRequest<HabitLedger>(`behavior/habit-ledger?${params(filters)}`,'GET',undefined,signal),
     getPerformanceCycles: async (filters,offset=0,signal) => { const current=generation; const page=await scopedRequest<{items:PerformanceCycle[];total:number;next_offset:number|null}>(`performance/cycles?${params({...filters,offset,include_shared:true})}`,'GET',undefined,signal); if(current===generation) page.items.forEach(remember); return page },
     getPerformanceDetail: async (cycle,enrich=false,signal) => { const current=generation; const detail=await scopedRequest<PerformanceCycle>(`performance/cycles/${encodeURIComponent(cycle.cycle_id)}?${params({session_id:cycle.session_id,enrich})}`,'GET',undefined,signal); if(current===generation) remember(detail); return detail },
   }

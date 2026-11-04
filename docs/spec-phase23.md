@@ -25,7 +25,7 @@ The user labels how many times a behavior was demonstrated in a trading day, e.g
 2. **Labeling a trade** — for each round trip the user answers **yes / no** per question ("this trade showed this behavior"). Two places:
    - **During trading** (replay, paper, real; stepwise optional): added to the existing entry-label and exit-label popups/panels (website right panel, desktop left tool panel).
    - **In Analysis → Label Trades**, in the trade's form (entry questions next to the entry fields, exit questions next to the exit fields).
-3. **Stats** — a new **Habits** view in the Stats dashboard: a line chart of the number of trades per trading day that showed each behavior, so the user can see whether a behavior is decreasing. Click-through lists the flagged trades.
+3. **Stats** — a new **Habits** view in the Stats dashboard. It started as a per-day count chart and was **expanded after Sprint 6** into a performance analysis of each habit — which habit is most destructive and which is rewarding, and whether each is improving across days (profit %, loss %, entries/exits, capital %, holding bars, comparisons between periods, a single-habit deep dive). Full definition in §10.
 
 ### 1.3 Decisions and assumptions
 
@@ -38,6 +38,8 @@ The user labels how many times a behavior was demonstrated in a trading day, e.g
 | Storage | Behavior marks in their own table (see §3) so existing full-overwrite label writes and the real-session label projection cannot clobber them. |
 | Swing | Out of scope for v1 (swing has its own label flow in `SwingHistory`). |
 | Stats tab name | "Habits" (a "Behavior" tab for automatic metrics already exists). |
+| Habit price-path stats | **Not** in Sprint 7: time in profit, best price reached/give-back and automatic "profit then loss" detection need each trade's price path (cached history, per trade, slow and partial). That habit is tracked by manual marking; the existing cycle drawer's "Analyze cached price path" remains available per trade. |
+| Habits delivery | Sprint 7 is split into four PRs, 7a–7d (§10.6). |
 | Sharing | Marks are per user; shared real-session history is read-only for viewers. |
 | Process | Every sprint updates this document on `dev`. |
 
@@ -70,20 +72,23 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 - **Behavior Questions manager** (one shared component): Entry and Exit sections of active questions, collapsible Archived list. Add (text + type), edit text, **Archive**, **Unarchive**. Reachable from Settings → Analytics (permanent home), Stats → Habits ("Manage questions"), Label Trades header, and the live labeling popups (add only).
 - **Label Trades one-by-one**: sticky header "Trade n of N · contract · P&L", Prev/Next (keyboard ←/→), a strip of per-trade dots (P&L colour, ✓ when labeled), form, save status. Phone layout: chart on top, form below, sticky bottom Prev/Next.
 - **Live labeling**: entry checklist in the entry-label step, exit checklist in the exit-label step, in the website popup and the desktop popup.
-- **Habits**: multi-series line chart per question over trading days (zero-filled from the dashboard's trading days), legend toggles, summary table with last 7 days vs prior, drill-down list.
+- **Habits**: scorecard, trends across days, period comparison and single-habit deep dive — see §10 (the original per-day count chart is one of its trend metrics).
 
 ## 4. Implementation status
 
 | Sprint | Scope | Status |
 |---|---|---|
 | 0 | Docs and scaffolding | PR #751 |
-| 1 | Backend foundation | Implemented (this PR): tables, service, router, setting, cleanup/maintenance/setup script, 27 new tests; full backend suite 2830 passed, 3 failed (the same 3 swing tests fail on unchanged `origin/dev`: `test_swing_api::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]`) |
+| 1 | Backend foundation | Merged (PR #752): tables, service, router, setting, cleanup/maintenance/setup script, 27 new tests; full backend suite 2830 passed, 3 failed (the same 3 swing tests fail on unchanged `origin/dev`: `test_swing_api::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]`) |
 | 2 | Desktop transport and real labels | Merged (PR #753) — see §5 |
 | 3 | Analysis one-by-one core | Merged (PR #754) — see §6 |
 | 4 | Charts, responsive and webapp | Merged (PR #755) — see §7 |
 | 5 | Behavior questions manager + Analysis marks | Merged (PR #756) — see §8 |
-| 6 | Live labeling | Implemented (this PR) — see §9 |
-| 7 | Habits stats | Not started |
+| 6 | Live labeling | Merged (PR #757) — see §9 |
+| 7a | Habits: ledger backend + transports | Implemented (this PR) — §10.7 |
+| 7b | Habits: stats engine + scorecard | Not started |
+| 7c | Habits: trends across days + period comparison | Not started |
+| 7d | Habits: single-habit deep dive + polish | Not started |
 | 8 | Hardening and close-out | Not started |
 
 Details, acceptance criteria and the verification matrix are in [spec-phase23-implementation-plan.md](spec-phase23-implementation-plan.md).
@@ -145,7 +150,7 @@ Verification:
 **Where the manager lives** — one shared component, `shared/analysis/behavior/BehaviorQuestionsManager.tsx`, with the API injected (`BehaviorApi`):
 1. **Settings → Analytics → Behavior questions** on the website/webapp (`SettingsModal.tsx`) and on desktop (`DesktopSettingsModal.tsx`, using `createDesktopBehaviorApi` over the desktop trading routes). Permanent home.
 2. **Analysis → Label Trades → "Manage questions"** (modal, both views, all clients); closing or changing it reloads the checklists.
-3. (Sprint 6) the live labeling popups; (Sprint 7) Stats → Habits.
+3. (Sprint 6) the live labeling popups; (Sprint 7b) Stats → Habits ("Manage questions").
 
 **Manager behaviour:** add form (text + Entry/Exit radio; client-side validation mirrors the backend: empty, >140 characters, duplicate among active questions of the same type, 40 active max), Entry and Exit sections of active questions with counts, inline **Edit** (text only — the type is fixed), **Archive** with an inline confirmation that says past marks stay in Stats, a collapsible **Archived (n)** list (greyed, archive date, **Unarchive**), server validation errors shown inline (the website API surfaces `detail`; desktop transports are parsed by `readableError`). Questions are never deleted.
 
@@ -193,6 +198,58 @@ Behavior questions now appear in the labels you fill in **while trading**: repla
 - `scripts/desktop-live-label-check.mjs` (new): real-session slots (open CE #3, closed PE #2), entry/exit popups, retry with a readable server error, empty state + manager.
 - Regression: Label Trades website check (both renderers), `desktop-analysis-workflows.mjs` (apart from its pre-existing snapshot-time assertion), whole webapp suite 23; all three TypeScript checks.
 - Not covered here (manual): a live replay/paper/real session end to end on the website and desktop, in particular two legs open at once on the website.
+
+## 10. Habits stats (Sprint 7 — expanded design)
+
+**Goal.** Let the user see *which habit is most destructive and which is rewarding* and *whether each habit is improving across days* — including cases such as "I still took the bad habit but with a smaller capital %" or "I exited at a loss, but within the same bar".
+
+### 10.1 Data: a trade ledger from the backend, statistics in TypeScript
+- `GET /api/behavior/habit-ledger` takes the same filter query as `/api/analysis/performance` (the `performance.filters()` dependency: dates, symbol, instrument/session type, client, direction, methods, tags…). It loads the user's cycles with `performance_service.load_cycles` (so every filter, real-day alias de-duplication and sharing rules match the Stats overview), keeps **own, closed, intraday** cycles, joins the user's marks and returns **one compact row per closed trade** plus the questions (incl. archived) and coverage counts:
+  - Row: `cycle_id, session_id, date, entry_time, symbol, right, strike, direction, net_pnl, pnl_pct, capital_pct, risk_pct, entries, exits, holding_seconds, bars, r_multiple, habits:[question_id…]`.
+  - Coverage: `closed_trades, marked_trades, marks, unmatched_marks, open_marked_trades, trades_without_capital, trades_without_bars, truncated` (row cap 20,000).
+- All statistics (summaries, baseline, per-day series, buckets, period comparison, verdicts) are computed client-side by one pure module, `shared/analysis/habits/habitStats.ts`, so any slice (two periods, kind filter, mean vs median) needs no extra request and every number reconciles with the same rows.
+- **Join.** A mark is `(session_id, round_trip_index)`. For sim/paper/stepwise/real intraday sessions `round_trip_index == cycle["index"]` (`build_cycles` numbers a cycle when it opens — the same number labels use and the website now assigns). Swing (keyed by `label_index`) is out of scope. Linked real-day aliases: a mark's session is mapped to its book (`broker_projection_id or session_id`) and joined on `(book_id, index)`; duplicate marks on aliases collapse to one `(book, round_trip_index, question_id)`; marks whose trade cannot be found are **reported as unmatched**, never dropped silently. Marks are not remapped by the real-book restage, so they can drift after a re-sync — unmatched counts make that visible. Only the user's own sessions are used (a viewer has none of the owner's marks). Open cycles are excluded from P&L statistics and counted in coverage.
+
+### 10.2 Definitions
+| Term | Definition |
+|---|---|
+| Trade | One closed cycle (round trip). A trade can carry several habits (entry and exit habits are independent). |
+| P&L % | `pnl_pct` = net P&L ÷ the session capital (already normalised for real days). "Profit %" / "Loss %" of a habit = sum of its winning / losing trades' P&L %, i.e. percent-of-capital points. **Net %** = their sum. ₹ values are shown alongside (toggle). |
+| Capital % | Total capital deployed on the trade = **sum of its entries'** `effective_allocation_pct`; unavailable (null, counted in coverage) when an entry has no analytics (older or broker-imported rows). Risk % likewise from `effective_risk_pct`. |
+| Bars held | Candles touched = `exit_time // interval − entry_time // interval + 1`, so the **same candle = 1 bar**; interval = the entry's `strategy_interval_seconds`, else 180 s (the cycle does not carry the session, so there is no session fallback). It is the strategy candle size, not necessarily the chart interval. |
+| Entries / exits | `entry_count` / `exit_count` of the trade (scale-ins and partial exits). |
+| Baseline | The user's other trades in the same scope (those **without** that habit). |
+| Low sample | A habit with fewer than 10 trades in scope. |
+
+### 10.3 Scorecard (answers "destructive vs rewarding")
+One row per habit (kind badge, archived muted), sortable, default worst net % first: trades; days with the habit; **net %, profit %, loss %**; win %, average win/loss %, payoff ratio, profit factor, largest loss %; **vs without the habit** (Δ average % vs baseline) and **"if skipped"** (net % saved or lost); share of all losses / all profits attributable to the habit; **entries and exits per trade** (mean and median); **capital %** (mean, median, max) and risk %; **holding** (median/mean bars and time, share exited within 1 and within 2 bars, share of losers closed within 1 bar). A **verdict** chip with an explanation: *Costly* (net < 0 and below the baseline), *Rewarding* (net > 0 and above it), *Mixed*, *Low sample*. Global **Mean | Median** and **% | ₹** toggles; a diverging bar chart of net % per habit sits above the table.
+
+### 10.4 Across days
+- **Trends:** per-day, per-habit metric — occurrences, net %, loss %, profit %, average capital %, median bars held, share exited within 1 bar, entries/exits per trade. Counts and sums plot 0 on trading days without the habit; averages leave a **gap**. Legend toggles, readout on hover/focus, optional 5-day rolling mean; clicking a point lists that day's trades for the habit and opens the cycle drawer.
+- **Compare periods:** last *N* trading days vs the *N* before (5/10/20) or two custom ranges; per habit: occurrences per day, net %, loss %, capital %, median bars, ≤1-bar share, entries/exits as A | B | Δ. Colour shows favourable/unfavourable (smaller loss %, higher net % are favourable; fewer occurrences of a *Costly* habit is favourable; capital % and bars show a neutral arrow). A per-habit flag **improving / same / worse** combines loss % and capital % ("still taking it, but smaller").
+- **Days with vs without** the habit: average day net %.
+
+### 10.5 Single-habit deep dive
+Stat tiles; buckets (count, net %, win %) by **bars held** (1, 2, 3–5, 6–10, >10), **capital %** (terciles of the user's trades in scope), **time of day** and weekday; a **scatter** of capital % vs P&L % (colour = recency); the habit's **trade list** (sortable) opening the existing cycle drawer; coverage line (matched/unmatched marks, trades missing capital % or bars).
+
+### 10.6 Delivery
+| PR | Scope |
+|---|---|
+| 7a | `habit_ledger_service.py` + `GET /api/behavior/habit-ledger`; website `getHabitLedger`; desktop adapter and the three allowlists (`desktop_analysis.py`, `analysisApi.ts`, `lib.rs`) — desktop rebuild required |
+| 7b | `habitStats.ts` + Habits tab shell, controls, scorecard, diverging chart, verdicts, coverage line, "Manage questions" |
+| 7c | Trend chart + metric selector, period comparison, days with/without |
+| 7d | Deep dive (buckets, scatter, trade list → cycle drawer), accessibility and phone polish |
+
+Verification includes a backend test that **ledger totals reconcile with the Stats report summary** for the same filters, vitest on hand-computed fixtures for every metric, and browser checks on a shared multi-day synthetic ledger (website with both chart renderers, desktop, webapp phone).
+
+### 10.7 Sprint 7a — ledger backend and transports (implemented)
+- `backend/app/services/habit_ledger_service.py`: pure `interval_seconds`, `bars_held`, `capital_pct`, `risk_pct`, `trade_row`, `owner_session_id`, `build_ledger`; `load_ledger(user_id, criteria)` does the I/O (`performance_service.load_cycles` with `include_shared=False`, marks from `behavior_service._user_marks` pre-filtered by date/symbol/session/instrument type, the mark sessions' rows for the alias → owner mapping, all questions incl. archived).
+- `GET /api/behavior/habit-ledger` (`routers/behavior.py`) takes the `performance.filters()` query (422 for an inverted date range or an invalid mode) and returns `{questions, trades, coverage}`. Row order is chronological; the cap is 20,000 rows and keeps the most recent (`coverage.truncated`).
+- **`unmatched_marks` means "a mark in this date/symbol/mode scope that no trade in the loaded scope matches"**: the trade is missing (the broker book was restaged), or it is excluded by a trade-level filter (direction, entry method, tags…). Marks of other symbols/modes/dates are out of scope and not counted.
+- Not in the ledger by design: swing portfolios, other users' shared cycles, open trades (counted in `open_marked_trades`).
+- Cost: one `load_cycles` pass — the same cost as opening the Stats overview — plus one `get_item` per distinct session that has marks. Sprint 8 measures it on a large history and adds a cache if needed.
+- Transports: website `getHabitLedger` in `frontend/src/services/performanceApi.ts` (added to `AnalysisEnvironment.performance`, optional); desktop adapter in `windowsapp/src/analysisApi.ts`; `behavior/habit-ledger` GET added to all three allowlists (`desktop_analysis.py`, `analysisApi.ts`, `lib.rs`) — **the desktop app must be rebuilt**. Shared types: `shared/analysis/habits/types.ts` (`LedgerTrade`, `LedgerCoverage`, `HabitLedger`).
+- Tests: `backend/tests/test_habit_ledger.py` (16: bars/interval/capital/risk derivation and fallbacks, join on the cycle index, open/shared/swing exclusion, alias de-duplication, unmatched marks, row cap and ordering, filters scoping trades and marks, other users isolated, archived questions kept, **ledger totals reconcile with `report()["summary"]` (count, net P&L, P&L %)**, endpoint validation, desktop proxy read-only); vitest (allowlist, adapter call shape); `cargo test` (allowlist); totals: vitest 343, `cargo test` 23, full backend suite 2856 passed with only the same 3 swing tests failing as on unchanged `dev`.
 
 ## Appendix — original requirement text (free hand, as written)
 
