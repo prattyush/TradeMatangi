@@ -191,7 +191,8 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   return (
     <div className={environment.desktop && group.trading_style !== 'swing' && expanded && activeTab === 'trades' ? 'desktop-day-trades-card' : undefined} style={{
       background: '#161b22', border: '1px solid #21262d', borderRadius: 8,
-      overflow: 'hidden', marginBottom: 10,
+      // `clip`, not `hidden`: still rounds the corners but does not become a scroll container, so the Label Trades phone bar can stay sticky.
+      overflow: 'clip', marginBottom: 10,
     }}>
       {/* Summary row */}
       <div

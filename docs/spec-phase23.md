@@ -79,8 +79,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 0 | Docs and scaffolding | PR #751 |
 | 1 | Backend foundation | Implemented (this PR): tables, service, router, setting, cleanup/maintenance/setup script, 27 new tests; full backend suite 2830 passed, 3 failed (the same 3 swing tests fail on unchanged `origin/dev`: `test_swing_api::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]`) |
 | 2 | Desktop transport and real labels | Merged (PR #753) — see §5 |
-| 3 | Analysis one-by-one core | Implemented (this PR) — see §6 |
-| 4 | Charts, responsive and webapp | Not started |
+| 3 | Analysis one-by-one core | Merged (PR #754) — see §6 |
+| 4 | Charts, responsive and webapp | Implemented (this PR) — see §7 |
 | 5 | Behavior questions manager + Analysis marks | Not started |
 | 6 | Live labeling | Not started |
 | 7 | Habits stats | Not started |
@@ -118,6 +118,27 @@ Verification:
 - `scripts/desktop-analysis-workflows.mjs` extended with the one-at-a-time scenario (mode switch, Prev/Next, ←, strip jump, auto-save, setting PUT). Two **pre-existing, unrelated** problems in that script: it needs `nodePaths` for `klinecharts` (added) and its `snapshotTimes.every(t<captured.bar_time)` assertion fails on unmodified `dev` too, and its final Settings step still looks for the old "History sharing" tab (renamed "Sharing"); the label scenarios before them pass.
 - All three TypeScript checks pass.
 - Not yet done (later sprints): phone layout / sticky bottom bar (Sprint 4); behavior checklists (Sprint 5).
+
+## 7. Charts, responsive layout and webapp (Sprint 4)
+
+**Charts (website/webapp)** — `shared/analysis/labeling/LabelChartPanes.tsx` replaces the single chart with pills. For the viewed trade it stacks the **Underlying chart and the trade's strike chart** (both Lightweight and KLine renderers), each showing that trade's markers numbered `#idx B/S`. Several contracts (only when "All markers" is on) get a contract switcher above the strike pane. Equity trades show just the Underlying pane. Desktop keeps `AnalysisPanels` (side-by-side panes) and receives the same `focusTime` / `labelContractMarkers` props.
+
+**New chart props** (`shared/analysis/chartProps.ts`, additive and optional):
+- `focusTime` — epoch seconds to centre on; the entry of the viewed round trip. KLine keeps the zoom and scrolls the bar to the middle on load and whenever it changes; Lightweight sets the visible range to ±45 bars once the candles of the current interval are drawn.
+- `fill` — Lightweight charts fill their parent's height instead of `width × 0.6` (Label Trades panes).
+- `labelContractMarkers` / option-chart `getMarkerText` — numbering on strike-chart markers is **opt-in**: option-contract markers remain unlabeled everywhere else (an existing test and decision), so Pattern-vs-Trade comparison and the normal Analysis panels are unchanged. `analysisMarkers(..., labelContract)`; coincident fills merge their texts.
+
+**Responsive layout** (`labeling.css`, `tl-layout`): ≤900 px is one column. The chart panes show one at a time behind **Underlying / strike tabs**; the header's Prev/Next buttons are replaced by a **bottom bar fixed to the bottom of the screen** (44 px targets, right padding so the floating AI button stays reachable, safe-area aware, content gets bottom padding) with the counter (`n / N`). The compact "Trade n of N" counter stays in the header. Wider windows keep two columns.
+
+Decision notes:
+- The phone bar is `position: fixed`, not `sticky`: inside the Analysis modal the nearest scroll containers are padded/clipped and sticky did not engage at rest. As part of this, the Analysis **session group card uses `overflow: clip`** instead of `hidden` (same rounded-corner clipping, but it is no longer a scroll container).
+- Trade selection state: the strike pane follows the viewed trade's contract automatically; a manual switch applies only while several contracts are shown.
+
+Verification:
+- `windowsapp/src/analysisMarkers.test.ts` (+1: opt-in strike labels, merge); vitest 324.
+- `scripts/website-label-trades-check.mjs`, run with **both renderers** (`ANALYSIS_RENDERER=lightweight|kline`): stacked panes with usable height, strike pane only for option trades, "All markers", KLine centring on the entry (and recentring on Prev/Next), plus the **390 px phone checks** (no horizontal scroll, fixed bottom bar, pane tabs, bar reachable after scrolling). Screenshots in `.cache/desktop-analysis-validation/`.
+- `webapp/tests/label-trades.spec.ts` (new): the real Analysis modal at 390×844 — Label Trades, bottom bar pinned at the screen bottom, only-edited-trade auto-save, pane tabs, no sideways scroll. The whole webapp suite passes (22). Running it requires `bash scripts/build-frontend-with-webapp.sh` first (the tests serve `frontend/dist`).
+- Not verified here: native touch behaviour on a real phone and the Windows desktop build (manual).
 
 ## Appendix — original requirement text (free hand, as written)
 

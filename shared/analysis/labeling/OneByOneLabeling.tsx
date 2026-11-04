@@ -86,6 +86,12 @@ export default function OneByOneLabeling({ trips, index, sessionCount, labels, b
           : save.pending ? <span>Unsaved changes…</span>
           : save.savedCount ? <span className="ok">Saved ✓</span> : <span>Changes save automatically.</span>}
       </div>
+      {/* Phones: Prev/Next live in a sticky bar at the bottom, within thumb reach. */}
+      <div className="tl-bottom-nav">
+        <button type="button" className="tl-nav-button" disabled={busy || index === 0} onClick={() => onGo(index - 1)} aria-label="Previous trade">◀ Prev</button>
+        <span className="tl-count">{index + 1} / {total}</span>
+        <button type="button" className="tl-nav-button primary" disabled={busy || index >= total - 1} onClick={() => onGo(index + 1)} aria-label="Next trade">Next ▶</button>
+      </div>
     </div>
   )
 }

@@ -86,7 +86,7 @@ function ChartToolbar({ title, isMaximized = false, onMaximize, tools }: {
 export function WebsiteAnalysisChart({
   symbol, date, trades, historicalDays = 2, title = 'Underlying',
   isMaximized = false, onMaximize,
-  getMarkerText,
+  getMarkerText, fill = false, focusTime,
 }: {
   symbol: string
   date: string
@@ -96,7 +96,10 @@ export function WebsiteAnalysisChart({
   isMaximized?: boolean
   onMaximize?: () => void
   getMarkerText?: (trade: AnalysisTrade) => string
+  fill?: boolean
+  focusTime?: number
 }) {
+  const fillContainer = isMaximized || fill
   const api = useAnalysisApi()
   const { intervalMinutes = 3 } = useAnalysisEnvironment()
   const [historyState,setHistoryState]=useState<HistoryState>('loading')
@@ -116,7 +119,7 @@ export function WebsiteAnalysisChart({
   useEffect(() => {
     if (!containerRef.current) return
     const w = containerRef.current.clientWidth
-    const h = isMaximized ? (containerRef.current.clientHeight || 500) : Math.max(300, Math.floor(w * 0.6))
+    const h = fillContainer ? (containerRef.current.clientHeight || 300) : Math.max(300, Math.floor(w * 0.6))
     const chart = createChart(containerRef.current, {
       width: w,
       height: h,
@@ -154,7 +157,7 @@ export function WebsiteAnalysisChart({
 
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect
-      const newHeight = isMaximized ? height : Math.max(300, Math.floor(width * 0.6))
+      const newHeight = fillContainer ? height : Math.max(300, Math.floor(width * 0.6))
       chart.applyOptions({ width, height: newHeight })
     })
     ro.observe(containerRef.current)
@@ -170,7 +173,7 @@ export function WebsiteAnalysisChart({
       detachTools()
       chart.remove()
     }
-  }, [isMaximized])
+  }, [isMaximized, fill])
 
   // EMA 9/21 is now toggleable (still on by default). The chart is recreated on maximize, hence isMaximized.
   useEffect(() => {
@@ -230,6 +233,14 @@ export function WebsiteAnalysisChart({
   }, [api, symbol, date, historicalDays, intervalMinutes, historyRetry])
 
   const hasOptions = trades.some(t => t.right)
+
+  // Centre on the requested time (e.g. the round trip being labeled) once this interval's candles are drawn.
+  useEffect(() => {
+    if (focusTime == null || historyState !== 'ready' || loadedInterval !== intervalMinutes) return
+    const bar = intervalMinutes * 60
+    const slot = Math.floor(focusTime / bar) * bar
+    try { chartRef.current?.timeScale().setVisibleRange({ from: (slot - 45 * bar) as Time, to: (slot + 45 * bar) as Time }) } catch { /* range outside the loaded data */ }
+  }, [focusTime, historyState, loadedInterval, intervalMinutes])
 
   useEffect(() => {
     const chart = chartRef.current
@@ -295,7 +306,7 @@ export function WebsiteAnalysisChart({
     <div style={{
       position: 'relative',
       width: '100%',
-      height: isMaximized ? '100%' : 'auto',
+      height: fillContainer ? '100%' : 'auto',
       display: 'flex',
       flexDirection: 'column',
       borderRadius: 6,
@@ -325,7 +336,7 @@ export function WebsiteAnalysisChart({
           ))}
         </div>
       )}
-      <div ref={containerRef} style={{ width: '100%', flex: 1 }} />
+      <div ref={containerRef} style={{ width: '100%', flex: 1, minHeight: 0 }} />
     </div>
   )
 }
@@ -334,7 +345,7 @@ export function WebsiteAnalysisChart({
 
 export function WebsiteOptionsChart({
   symbol, date, strike, expiry, right, trades, historicalDays = 2,
-  isMaximized = false, onMaximize,
+  isMaximized = false, onMaximize, getMarkerText, fill = false, focusTime,
 }: {
   symbol: string
   date: string
@@ -345,7 +356,11 @@ export function WebsiteOptionsChart({
   historicalDays?: number
   isMaximized?: boolean
   onMaximize?: () => void
+  getMarkerText?: (trade: AnalysisTrade) => string
+  fill?: boolean
+  focusTime?: number
 }) {
+  const fillContainer = isMaximized || fill
   const api = useAnalysisApi()
   const { intervalMinutes = 3 } = useAnalysisEnvironment()
   const [historyState,setHistoryState]=useState<HistoryState>('loading')
@@ -363,7 +378,7 @@ export function WebsiteOptionsChart({
   useEffect(() => {
     if (!containerRef.current) return
     const w = containerRef.current.clientWidth
-    const h = isMaximized ? (containerRef.current.clientHeight || 500) : Math.max(300, Math.floor(w * 0.6))
+    const h = fillContainer ? (containerRef.current.clientHeight || 300) : Math.max(300, Math.floor(w * 0.6))
     const chart = createChart(containerRef.current, {
       width: w,
       height: h,
@@ -401,7 +416,7 @@ export function WebsiteOptionsChart({
 
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect
-      const newHeight = isMaximized ? height : Math.max(300, Math.floor(width * 0.6))
+      const newHeight = fillContainer ? height : Math.max(300, Math.floor(width * 0.6))
       chart.applyOptions({ width, height: newHeight })
     })
     ro.observe(containerRef.current)
@@ -417,7 +432,7 @@ export function WebsiteOptionsChart({
       detachTools()
       chart.remove()
     }
-  }, [isMaximized])
+  }, [isMaximized, fill])
 
   // EMA 9/21 is now toggleable (still on by default). The chart is recreated on maximize, hence isMaximized.
   useEffect(() => {
@@ -468,6 +483,14 @@ export function WebsiteOptionsChart({
     return () => { cancelled = true }
   }, [api, symbol, date, strike, expiry, right, historicalDays, intervalMinutes, historyRetry])
 
+  // Centre on the requested time (e.g. the round trip being labeled) once this interval's candles are drawn.
+  useEffect(() => {
+    if (focusTime == null || historyState !== 'ready' || loadedInterval !== intervalMinutes) return
+    const bar = intervalMinutes * 60
+    const slot = Math.floor(focusTime / bar) * bar
+    try { chartRef.current?.timeScale().setVisibleRange({ from: (slot - 45 * bar) as Time, to: (slot + 45 * bar) as Time }) } catch { /* range outside the loaded data */ }
+  }, [focusTime, historyState, loadedInterval, intervalMinutes])
+
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
@@ -498,19 +521,19 @@ export function WebsiteOptionsChart({
           position: 'inBar' as const,
           color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
           shape: 'circle' as const,
-          text: t.side === 'BUY' ? 'B' : 'S',
+          text: getMarkerText ? getMarkerText(t) : (t.side === 'BUY' ? 'B' : 'S'),
           size: 0.6,
         }])
         tradeMarkerPoolRef.current.push(markerSeries)
       } catch { /* disposed */ }
     }
-  }, [trades, intervalMinutes, historyState, loadedInterval])
+  }, [trades, getMarkerText, intervalMinutes, historyState, loadedInterval])
 
   return (
     <div style={{
       position: 'relative',
       width: '100%',
-      height: isMaximized ? '100%' : 'auto',
+      height: fillContainer ? '100%' : 'auto',
       display: 'flex',
       flexDirection: 'column',
       borderRadius: 6,
@@ -523,7 +546,7 @@ export function WebsiteOptionsChart({
         onMaximize={onMaximize}
         tools={tools}
       />
-      <div ref={containerRef} style={{ width: '100%', flex: 1 }} />
+      <div ref={containerRef} style={{ width: '100%', flex: 1, minHeight: 0 }} />
     </div>
   )
 }

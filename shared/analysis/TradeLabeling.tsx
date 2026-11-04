@@ -1,7 +1,7 @@
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AnalysisChart, OptionsChart } from './TradeAnalysis'
 import { AnalysisTrade, TradeLabel } from './api'
+import LabelChartPanes from './labeling/LabelChartPanes'
 import OneByOneLabeling from './labeling/OneByOneLabeling'
 import RoundTripLabelForm from './labeling/RoundTripLabelForm'
 import { LabelSaver, type SaverState } from './labeling/saver'
@@ -22,15 +22,6 @@ interface TradeLabelingProps {
 
 const RT_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff', '#f85149', '#79c0ff', '#a371f7', '#f778ba', '#7ee787']
 const IDLE: SaverState = { pending: 0, saving: false, error: '', savedCount: 0 }
-
-interface OptionTab {
-  key: string
-  label: string
-  right: string
-  strike: number
-  expiry: string
-  trades: AnalysisTrade[]
-}
 
 export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds, allTrades, historicalDays }: TradeLabelingProps) {
   const api = useAnalysisApi()
@@ -172,6 +163,8 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
 
   const current = view === 'one_by_one' ? roundTrips[index] : undefined
   const getMarkerText = useCallback((trade: AnalysisTrade) => roundTripMarkerText(roundTrips, trade), [roundTrips])
+  // Centre the charts on the viewed trade's entry.
+  const focusTime = current?.entry_trades[0]?.timestamp ?? current?.exit_trades[0]?.timestamp
   // One at a time: the chart shows only the viewed trade's executions (unless "All markers" is on).
   const chartTrades = useMemo(() => {
     if (!current || showAllMarkers) return allTrades
@@ -179,27 +172,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
     return own.length ? own : allTrades
   }, [current, showAllMarkers, allTrades])
 
-  // Option tabs: derived from the trades the chart is showing, same as AnalysisChartPanel
-  const optionTabs = useMemo<OptionTab[]>(() => {
-    const tabMap = new Map<string, OptionTab>()
-    for (const t of chartTrades) {
-      if (!t.right || t.strike == null || !t.expiry) continue
-      const key = `${t.right}-${t.strike}-${t.expiry}`
-      if (!tabMap.has(key)) {
-        tabMap.set(key, { key, label: `${t.right} ${t.strike}`, right: t.right, strike: t.strike, expiry: t.expiry, trades: [] })
-      }
-      tabMap.get(key)!.trades.push(t)
-    }
-    return Array.from(tabMap.values()).sort((a, b) => {
-      if (a.right !== b.right) return a.right === 'CE' ? -1 : 1
-      return a.strike - b.strike
-    })
-  }, [chartTrades])
-
-  const [chartView, setChartView] = useState<'underlying' | string>('underlying')
   const [maximized, setMaximized] = useState(false)
-  const activeOptionTab = optionTabs.find(t => t.key === chartView) ?? null
-  useEffect(() => { setChartView('underlying') }, [index, view])
 
   useEffect(() => {
     if (!maximized) return
@@ -230,62 +203,16 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
   for (const rt of roundTrips) sessionGroups.set(rt.session_id, [...(sessionGroups.get(rt.session_id) ?? []), rt])
 
   const content = (
-    <div className="tl-root" style={{ display: 'flex', gap: 12, minHeight: maximized ? 0 : 400, flex: maximized ? 1 : undefined, overflow: maximized ? 'hidden' : undefined }}>
+    <div className={`tl-root tl-layout ${maximized ? 'maximized' : ''}`}>
       {/* Chart */}
-      <div className="label-chart-container" style={{ flex: 3, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {LabelCharts ? <LabelCharts symbol={symbol} date={date} allTrades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} /> : chartView === 'underlying' ? (
-          <AnalysisChart
-            symbol={symbol}
-            date={date}
-            trades={chartTrades}
-            historicalDays={historicalDays}
-            title={symbol}
-            getMarkerText={getMarkerText}
-          />
-        ) : activeOptionTab ? (
-          <OptionsChart
-            symbol={symbol}
-            date={date}
-            strike={activeOptionTab.strike}
-            expiry={activeOptionTab.expiry}
-            right={activeOptionTab.right}
-            trades={activeOptionTab.trades}
-            historicalDays={historicalDays}
-          />
-        ) : null}
-        {!LabelCharts && optionTabs.length > 0 && (
-          <div style={{ display: 'flex', gap: 4, marginTop: 4, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-            <button
-              onClick={() => setChartView('underlying')}
-              style={{
-                padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
-                cursor: 'pointer', border: 'none',
-                background: chartView === 'underlying' ? '#58a6ff' : '#21262d',
-                color: chartView === 'underlying' ? '#0d1117' : '#8b949e',
-              }}
-            >
-              Underlying
-            </button>
-            {optionTabs.map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setChartView(tab.key)}
-                style={{
-                  padding: '2px 8px', borderRadius: 10, fontSize: 10, fontWeight: 600,
-                  cursor: 'pointer', border: 'none',
-                  background: tab.key === chartView ? '#58a6ff' : '#21262d',
-                  color: tab.key === chartView ? '#0d1117' : '#8b949e',
-                }}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        )}
+      <div className="label-chart-container tl-chart-col">
+        {LabelCharts
+          ? <LabelCharts symbol={symbol} date={date} allTrades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers />
+          : <LabelChartPanes symbol={symbol} date={date} trades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} />}
       </div>
 
       {/* Round-trip forms */}
-      <div style={{ flex: 2, minWidth: 0, display: 'flex', flexDirection: 'column', maxHeight: maximized ? undefined : 560, overflowY: 'auto', gap: 10 }}>
+      <div className="tl-side-col">
         {view === 'one_by_one' ? (
           <OneByOneLabeling
             trips={roundTrips} index={Math.min(index, Math.max(roundTrips.length - 1, 0))} sessionCount={sessionGroups.size} labels={labels}
