@@ -78,7 +78,7 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 |---|---|---|
 | 0 | Docs and scaffolding | PR #751 |
 | 1 | Backend foundation | Implemented (this PR): tables, service, router, setting, cleanup/maintenance/setup script, 27 new tests; full backend suite 2830 passed, 3 failed (the same 3 swing tests fail on unchanged `origin/dev`: `test_swing_api::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]`) |
-| 2 | Desktop transport and real labels | Not started |
+| 2 | Desktop transport and real labels | Implemented (this PR) — see §5 |
 | 3 | Analysis one-by-one core | Not started |
 | 4 | Charts, responsive and webapp | Not started |
 | 5 | Behavior questions manager + Analysis marks | Not started |
@@ -87,6 +87,14 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 8 | Hardening and close-out | Not started |
 
 Details, acceptance criteria and the verification matrix are in [spec-phase23-implementation-plan.md](spec-phase23-implementation-plan.md).
+
+## 5. Desktop transport and real labels (Sprint 2)
+
+- **Analysis screens** (Label Trades, Habits) reach behavior data through the desktop analysis proxy: `GET|POST behavior/questions`, `POST behavior/questions/{id}/update|archive|restore`, `GET|POST behavior/marks`, `GET behavior/marks/by-question`, `GET behavior/stats`. They are listed in all three allowlists — `backend/app/routers/desktop_analysis.py`, `windowsapp/src/analysisApi.ts` (`validAnalysisPath`) and `windowsapp/src-tauri/src/lib.rs` (`valid_analysis_path`) — with tests in each. All are GET/POST because the native analysis command supports nothing else. **The desktop app must be rebuilt for the Rust change** (browser dev mode only needs the TS and backend changes).
+- **In-session and Settings** use `/api/desktop/v1/trading/...` (no allowlist): `GET|POST behavior/questions`, `POST behavior/questions/{id}/update|archive|restore`, `GET|POST {session_id}/behavior-marks` (body `{round_trip_index, answers}`). Marks require the session to be the caller's own, of type stepwise/sim/paper/real (else 409).
+- **Capability flag** `behavior-labels` is advertised in `trading_capabilities`.
+- **Real sessions on desktop:** `GET {session_id}/trade-labels` no longer returns 409 for `real`. Slots come from the committed broker book — `trade_label_service.real_round_trip_state` (`load_session_cycles` + `cycle_round_trips`), the same source Analysis and `save_labels` use for real sessions, so the indices labeled in-session equal the indices Analysis shows later (covered by a test). A transient read race returns 503 so the desktop's existing 3x retry applies. The desktop UI itself is unchanged in this sprint; its label panel will simply start loading state for real sessions (UI work for behavior is Sprint 6).
+- Still to verify manually (cannot be automated here): a live linked real session on desktop — that the open/closed slots appear as soon as a fill is committed, and that indices match the website for the same session.
 
 ## Appendix — original requirement text (free hand, as written)
 

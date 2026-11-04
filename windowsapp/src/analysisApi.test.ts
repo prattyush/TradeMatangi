@@ -13,6 +13,25 @@ describe('desktop analysis transport', () => {
     for (const path of ['pattern/chart', 'pattern/ohlc/equity', 'pattern/strategies/extra']) expect(validAnalysisPath(path, 'POST')).toBe(false)
     expect(validAnalysisPath('snapshots?session_id=owned', 'DELETE')).toBe(true)
   })
+  it('allows only the exact behavior question, mark and stats routes', () => {
+    for (const path of ['behavior/questions', 'behavior/marks']) {
+      expect(validAnalysisPath(path, 'GET')).toBe(true)
+      expect(validAnalysisPath(path, 'POST')).toBe(true)
+      expect(validAnalysisPath(path, 'DELETE')).toBe(false)
+      expect(validAnalysisPath(path, 'PUT')).toBe(false)
+    }
+    expect(validAnalysisPath('behavior/stats?symbol=NIFTY', 'GET')).toBe(true)
+    expect(validAnalysisPath('behavior/marks/by-question?question_id=abc', 'GET')).toBe(true)
+    expect(validAnalysisPath('behavior/stats', 'POST')).toBe(false)
+    for (const action of ['update', 'archive', 'restore']) {
+      expect(validAnalysisPath(`behavior/questions/abc123-_X/${action}`, 'POST')).toBe(true)
+      expect(validAnalysisPath(`behavior/questions/abc123/${action}`, 'GET')).toBe(false)
+    }
+    for (const path of ['behavior/questions/abc/delete', 'behavior/questions//archive', 'behavior/questions/a%2Fb/archive', 'behavior/questions/../archive', 'behavior/questions/abc/archive/extra', 'behavior/other', 'behavior/marks/extra', 'behavior/stats/extra']) {
+      expect(validAnalysisPath(path, 'POST')).toBe(false)
+      expect(validAnalysisPath(path, 'GET')).toBe(false)
+    }
+  })
   it('registers a new category or strategy through the allowlisted POST routes', async () => {
     const request = vi.fn().mockResolvedValue({ categories: ['Trend'] }) as unknown as AnalysisRequest
     const adapter = createAnalysisApi(request)
