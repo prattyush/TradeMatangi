@@ -80,8 +80,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 1 | Backend foundation | Implemented (this PR): tables, service, router, setting, cleanup/maintenance/setup script, 27 new tests; full backend suite 2830 passed, 3 failed (the same 3 swing tests fail on unchanged `origin/dev`: `test_swing_api::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]`) |
 | 2 | Desktop transport and real labels | Merged (PR #753) — see §5 |
 | 3 | Analysis one-by-one core | Merged (PR #754) — see §6 |
-| 4 | Charts, responsive and webapp | Implemented (this PR) — see §7 |
-| 5 | Behavior questions manager + Analysis marks | Not started |
+| 4 | Charts, responsive and webapp | Merged (PR #755) — see §7 |
+| 5 | Behavior questions manager + Analysis marks | Implemented (this PR) — see §8 |
 | 6 | Live labeling | Not started |
 | 7 | Habits stats | Not started |
 | 8 | Hardening and close-out | Not started |
@@ -139,6 +139,30 @@ Verification:
 - `scripts/website-label-trades-check.mjs`, run with **both renderers** (`ANALYSIS_RENDERER=lightweight|kline`): stacked panes with usable height, strike pane only for option trades, "All markers", KLine centring on the entry (and recentring on Prev/Next), plus the **390 px phone checks** (no horizontal scroll, fixed bottom bar, pane tabs, bar reachable after scrolling). Screenshots in `.cache/desktop-analysis-validation/`.
 - `webapp/tests/label-trades.spec.ts` (new): the real Analysis modal at 390×844 — Label Trades, bottom bar pinned at the screen bottom, only-edited-trade auto-save, pane tabs, no sideways scroll. The whole webapp suite passes (22). Running it requires `bash scripts/build-frontend-with-webapp.sh` first (the tests serve `frontend/dist`).
 - Not verified here: native touch behaviour on a real phone and the Windows desktop build (manual).
+
+## 8. Behavior questions manager and Analysis marks (Sprint 5)
+
+**Where the manager lives** — one shared component, `shared/analysis/behavior/BehaviorQuestionsManager.tsx`, with the API injected (`BehaviorApi`):
+1. **Settings → Analytics → Behavior questions** on the website/webapp (`SettingsModal.tsx`) and on desktop (`DesktopSettingsModal.tsx`, using `createDesktopBehaviorApi` over the desktop trading routes). Permanent home.
+2. **Analysis → Label Trades → "Manage questions"** (modal, both views, all clients); closing or changing it reloads the checklists.
+3. (Sprint 6) the live labeling popups; (Sprint 7) Stats → Habits.
+
+**Manager behaviour:** add form (text + Entry/Exit radio; client-side validation mirrors the backend: empty, >140 characters, duplicate among active questions of the same type, 40 active max), Entry and Exit sections of active questions with counts, inline **Edit** (text only — the type is fixed), **Archive** with an inline confirmation that says past marks stay in Stats, a collapsible **Archived (n)** list (greyed, archive date, **Unarchive**), server validation errors shown inline (the website API surfaces `detail`; desktop transports are parsed by `readableError`). Questions are never deleted.
+
+**Checklists** (`BehaviorChecklist`): yes/no switches, entry questions under the Entry Tag field and exit questions under the Exit Tag field of the label form (`RoundTripLabelForm`), so they sit beside the entry/exit fields in both views. A type with nothing to show renders nothing. An **archived question appears on a trade only if that trade is already marked with it** — muted, tagged "archived", and it can be cleared but never set again.
+
+**Saving:** toggles are optimistic and saved by `MarkSaver` (debounce 400 ms; toggles on the same trade made before a save are combined into one `POST behavior/marks`; saves never overlap). Prev/Next/jump, switching view and leaving Label Trades flush the label saver **and** the mark saver; the status line combines both (`combineSaverStates`). Marks save automatically even in **All together** mode (they are toggles, independent of the Save Labels button; a failure shows an inline Retry). Read-only shared history cannot mark. If behavior data fails to load, labeling still works and a note says "Behavior questions unavailable: …".
+
+**Transports** — website: `/api/behavior/*` (`api.ts`: `getBehaviorQuestions`, `addBehaviorQuestion`, `updateBehaviorQuestion`, `archiveBehaviorQuestion`, `restoreBehaviorQuestion`, `getBehaviorMarks`, `saveBehaviorMarks`; errors surface `detail`). Desktop Analysis: `createAnalysisApi` over the allowlisted proxy routes (no cache invalidation, so chart loads are not aborted). Desktop Settings/in-session: `windowsapp/src/behaviorApi.ts` over `trading/behavior/*` and `trading/{sid}/behavior-marks`.
+
+Code: `shared/analysis/behavior/{model,types}.ts`, `BehaviorChecklist.tsx`, `BehaviorQuestionsManager.tsx`; `labeling/saver.ts` is now a generic `AutoSaver<T>` with `LabelSaver` and `MarkSaver`.
+
+Verification:
+- `windowsapp/src/behavior.test.ts` (9 tests: grouping, which questions a trade shows, validation, mark indexing, readable errors, `MarkSaver` combining, both desktop transports); vitest 333 pass; all three TypeScript checks pass.
+- `scripts/website-label-trades-check.mjs` (both renderers): checklists per trade (active + archived-marked only), auto-saved marks, flush on Prev, add/duplicate/edit/archive/confirm/unarchive in the modal, form picks up the new question.
+- `scripts/desktop-analysis-workflows.mjs`: marks over the Analysis proxy flushed on Prev, the manager modal, and the Settings → Analytics manager. This sprint also repaired the script's stale final step (the "History sharing" tab is now "Sharing"); it passes end to end except its pre-existing, unrelated snapshot-time assertion.
+- `webapp/tests/label-trades.spec.ts` (+1): Settings → Analytics add/edit/archive/unarchive on the website; whole webapp suite 23 pass.
+- Not covered here: archived-question history in Stats (Sprint 7) and live-trading popups (Sprint 6).
 
 ## Appendix — original requirement text (free hand, as written)
 

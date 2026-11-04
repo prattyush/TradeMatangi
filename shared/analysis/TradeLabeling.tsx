@@ -1,10 +1,13 @@
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AnalysisTrade, TradeLabel } from './api'
+import { AnalysisTrade, BehaviorQuestion, TradeLabel } from './api'
+import BehaviorQuestionsManager from './behavior/BehaviorQuestionsManager'
+import { questionIdsByTrip } from './behavior/model'
+import { readableError } from './behavior/types'
 import LabelChartPanes from './labeling/LabelChartPanes'
 import OneByOneLabeling from './labeling/OneByOneLabeling'
 import RoundTripLabelForm from './labeling/RoundTripLabelForm'
-import { LabelSaver, type SaverState } from './labeling/saver'
+import { combineSaverStates, LabelSaver, MarkSaver, type MarkEdit, type SaverState } from './labeling/saver'
 import {
   blankLabel, finalizeLabel, labelKey, legsText, money, orderRoundTrips, roundTripMarkerText, tradesForRoundTrip, tripKey,
   type LabelView, type LabeledRoundTrip,
@@ -22,6 +25,7 @@ interface TradeLabelingProps {
 
 const RT_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff', '#f85149', '#79c0ff', '#a371f7', '#f778ba', '#7ee787']
 const IDLE: SaverState = { pending: 0, saving: false, error: '', savedCount: 0 }
+const NO_MARKS: ReadonlySet<string> = new Set()
 
 export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds, allTrades, historicalDays }: TradeLabelingProps) {
   const api = useAnalysisApi()
@@ -57,6 +61,22 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
   const envRef = useRef(environment)
   envRef.current = environment
 
+  // Behavior questions (Phase 23): yes/no marks per trade, saved on their own (always automatically).
+  const [questions, setQuestions] = useState<BehaviorQuestion[]>([])
+  const [marks, setMarks] = useState<Map<string, Set<string>>>(new Map())
+  const marksRef = useRef(marks)
+  const [behaviorError, setBehaviorError] = useState('')
+  const [manageOpen, setManageOpen] = useState(false)
+  const [markState, setMarkState] = useState<SaverState>(IDLE)
+  const saveMarksRef = useRef<(edits: MarkEdit[]) => Promise<unknown>>(async () => undefined)
+  const markSaver = useMemo(() => new MarkSaver(edits => saveMarksRef.current(edits), setMarkState), [])
+  saveMarksRef.current = async edits => { for (const edit of edits) await api.saveBehaviorMarks(edit.session_id, edit.round_trip_index, edit.answers) }
+  const flushAll = useCallback(async () => (await Promise.all([saver.flush(), markSaver.flush()])).every(Boolean), [saver, markSaver])
+  const reloadQuestions = useCallback(async () => {
+    try { const rows = await api.getBehaviorQuestions(true); setQuestions(Array.isArray(rows) ? rows : []); setBehaviorError('') }
+    catch (error) { setBehaviorError(readableError(error)) }
+  }, [api])
+
   const refreshTags = useCallback(async () => {
     const [et, xt] = await Promise.all([api.getEntryTags(), api.getExitTags()])
     setEntryTags(et); setExitTags(xt)
@@ -81,19 +101,33 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
       const loaded = new Map(labelPages.flat().map(label => [labelKey(label.session_id, label.round_trip_index), label]))
       labelsRef.current = loaded; setLabels(loaded)
       setStrategies(strats.strategies); setCategories(cats.categories); setEntryTags(etags); setExitTags(xtags)
-      setDirtyAll(false); setIndex(0); saver.reset()
+      setDirtyAll(false); setIndex(0); saver.reset(); markSaver.reset()
+      // Behavior data failing must not hide the labels: the checklists just stay unavailable.
+      const [behaviorQuestions, markPages] = await Promise.all([
+        api.getBehaviorQuestions(true).then(rows => ({ rows }), error => ({ error })),
+        Promise.all(sessionIds.map(id => api.getBehaviorMarks(id).then(rows => ({ id, rows }), error => ({ id, error })))),
+      ])
+      if (cancelled) return
+      const failed = 'error' in behaviorQuestions ? behaviorQuestions.error : markPages.map(page => 'error' in page ? page.error : null).find(Boolean)
+      setBehaviorError(failed ? readableError(failed) : '')
+      setQuestions('rows' in behaviorQuestions && Array.isArray(behaviorQuestions.rows) ? behaviorQuestions.rows : [])
+      const loadedMarks = new Map<string, Set<string>>()
+      for (const page of markPages) if ('rows' in page && Array.isArray(page.rows)) for (const [key, ids] of questionIdsByTrip(page.rows, page.id)) loadedMarks.set(key, ids)
+      marksRef.current = loadedMarks; setMarks(loadedMarks)
     }
     void load().catch(error => { if (!cancelled) setLoadError(String(error)) }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [api, sessionKey, retry, saver])
+  }, [api, sessionKey, retry, saver, markSaver])
 
   // Leaving Label Trades (tab change, close) saves whatever is still pending, then tells Stats the data changed.
   useEffect(() => () => {
-    void saver.flush().then(() => { if (saver.snapshot().savedCount > 0) envRef.current.onDataChanged?.() })
-  }, [saver])
+    void flushAll().then(() => { if (saver.snapshot().savedCount > 0 || markSaver.snapshot().savedCount > 0) envRef.current.onDataChanged?.() })
+  }, [saver, markSaver, flushAll])
 
-  const dirty = view === 'all' ? dirtyAll : saverState.pending > 0 || saverState.saving
-  const busySaving = view === 'all' ? saving : saverState.saving
+  const markPending = markState.pending > 0 || markState.saving
+  const dirty = view === 'all' ? dirtyAll || markPending : saverState.pending > 0 || saverState.saving || markPending
+  const busySaving = (view === 'all' ? saving : saverState.saving) || markState.saving
+  const combinedState = useMemo(() => combineSaverStates(saverState, markState), [saverState, markState])
   useEffect(() => { notifySaving?.(busySaving); return () => notifySaving?.(false) }, [busySaving, notifySaving])
   useEffect(() => { notifyDirty?.(dirty); return () => notifyDirty?.(false) }, [dirty, notifyDirty])
   useEffect(() => {
@@ -112,6 +146,16 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
     if (view === 'one_by_one') saver.edit(next)
     else { edits.current++; setDirtyAll(true); setSaveMsg(null) }
   }, [readOnly, loading, loadError, view, saving, saver])
+
+  const toggleMark = useCallback((rt: LabeledRoundTrip, questionId: string, showed: boolean) => {
+    if (readOnly || loading || loadError) return
+    const key = tripKey(rt)
+    const ids = new Set(marksRef.current.get(key))
+    if (showed) ids.add(questionId); else ids.delete(questionId)
+    const map = new Map(marksRef.current); map.set(key, ids)
+    marksRef.current = map; setMarks(map)
+    markSaver.edit({ session_id: rt.session_id, round_trip_index: rt.index, answers: { [questionId]: showed } })
+  }, [readOnly, loading, loadError, markSaver])
 
   const handleSave = useCallback(async () => {
     const revision = edits.current
@@ -145,18 +189,18 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
   const go = useCallback(async (to: number) => {
     if (to < 0 || to >= roundTrips.length || to === index || navBusy) return
     setNavBusy(true)
-    const saved = await saver.flush()
+    const saved = await flushAll()
     setNavBusy(false)
     if (saved) setIndex(to)
-  }, [roundTrips.length, index, navBusy, saver])
+  }, [roundTrips.length, index, navBusy, flushAll])
 
   const switchView = useCallback(async (next: LabelView) => {
     if (next === view) return
-    if (view === 'one_by_one') { if (!(await saver.flush())) return }
+    if (view === 'one_by_one') { if (!(await flushAll())) return }
     else if (dirtyAll) return
     setView(next)
     void Promise.resolve(environment.onLabelViewChange?.(next)).catch(() => undefined)
-  }, [view, dirtyAll, saver, environment])
+  }, [view, dirtyAll, flushAll, environment])
 
   const displayedCategories = useMemo(() => [...new Set([...categories, ...[...labels.values()].flatMap(label => [label.expected_category, label.actual_category]).filter(Boolean)])].sort(), [categories, labels])
   const displayedStrategies = useMemo(() => [...new Set([...strategies, ...[...labels.values()].flatMap(label => [label.expected_strategy, label.actual_strategy]).filter(Boolean)])].sort(), [strategies, labels])
@@ -185,7 +229,8 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
   const formFor = (rt: LabeledRoundTrip) => (
     <RoundTripLabelForm idPrefix={tripKey(rt)} label={blankFor(rt)} disabled={readOnly || (view === 'all' && saving)}
       categories={displayedCategories} strategies={displayedStrategies} entryTags={entryTags} exitTags={exitTags}
-      onChange={patch => editLabel(rt, patch)} onCreateName={addName} />
+      onChange={patch => editLabel(rt, patch)} onCreateName={addName}
+      behavior={behaviorError ? undefined : { questions, marked: marks.get(tripKey(rt)) ?? NO_MARKS, disabled: readOnly, onToggle: (id, showed) => toggleMark(rt, id, showed) }} />
   )
 
   const modeSwitch = (
@@ -213,15 +258,17 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
 
       {/* Round-trip forms */}
       <div className="tl-side-col">
+        {behaviorError && <p role="note" className="tl-status">Behavior questions unavailable: {behaviorError}</p>}
         {view === 'one_by_one' ? (
           <OneByOneLabeling
             trips={roundTrips} index={Math.min(index, Math.max(roundTrips.length - 1, 0))} sessionCount={sessionGroups.size} labels={labels}
-            busy={navBusy} readOnly={readOnly} save={saverState} active={environment.active !== false}
-            onGo={to => void go(to)} onRetry={() => void saver.flush()}
+            busy={navBusy} readOnly={readOnly} save={combinedState} active={environment.active !== false}
+            onGo={to => void go(to)} onRetry={() => void flushAll()}
             controls={<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }} title="Show every trade's markers on the chart, not just this trade's">
                 <input type="checkbox" checked={showAllMarkers} onChange={event => setShowAllMarkers(event.target.checked)} /> All markers
               </label>
+              <button type="button" className="tl-ghost" onClick={() => setManageOpen(true)}>Manage questions</button>
               {modeSwitch}{maximizeButton}
             </>}
           >
@@ -234,9 +281,11 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
                 {roundTrips.length} round trip{roundTrips.length !== 1 ? 's' : ''}
               </span>
               <div style={{ flex: 1 }} />
+              <button type="button" className="tl-ghost" onClick={() => setManageOpen(true)}>Manage questions</button>
               {modeSwitch}{maximizeButton}
               {readOnly && <span>Shared history · read only</span>}
               {dirtyAll && <span>Unsaved labels</span>}
+              {markState.error && <span role="alert" style={{ fontSize: 12, color: '#f85149' }}>{markState.error} <button type="button" className="tl-ghost" onClick={() => void flushAll()}>Retry</button></span>}
               {saveMsg && (
                 <span role={saveMsg.startsWith('Saved') ? 'status' : 'alert'} style={{ fontSize: 12, color: saveMsg.startsWith('Saved') ? '#3fb950' : '#f85149' }}>
                   {saveMsg}
@@ -290,6 +339,15 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
           </>
         )}
       </div>
+      {manageOpen && (
+        <div className="tl-modal tl-root" role="dialog" aria-modal="true" aria-label="Behavior questions" onClick={event => { if (event.target === event.currentTarget) setManageOpen(false) }}
+          onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setManageOpen(false) } }}>
+          <div className="tl-modal-card">
+            <header><h3>Behavior questions</h3><button type="button" className="tl-ghost" onClick={() => setManageOpen(false)}>Close</button></header>
+            <BehaviorQuestionsManager api={api} onChanged={() => void reloadQuestions()} />
+          </div>
+        </div>
+      )}
     </div>
   )
 

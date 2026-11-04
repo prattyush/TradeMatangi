@@ -32,6 +32,16 @@ api.saveLabels=async rows=>{window.saves.push(rows);labels=[...labels.filter(l=>
 api.patternListStrategies=async()=>({strategies:['Breakout']});api.patternListCategories=async()=>({categories:['Momentum']});
 api.getEntryTags=async()=>['AS_PER_PATTERN'];api.getExitTags=async()=>['AS_PER_PATTERN'];
 api.getUserSettings=async()=>({analysis_label_view:'one_by_one'});
+let questions=[{question_id:'qe',kind:'entry',text:'Chased the move',status:'active',sort_order:0,created_at:'2026-10-01',archived_at:null},{question_id:'qx',kind:'exit',text:'Exited after one bar in profit',status:'active',sort_order:1,created_at:'2026-10-02',archived_at:null},{question_id:'qo',kind:'exit',text:'Old habit',status:'archived',sort_order:2,created_at:'2026-10-03',archived_at:'2026-10-20T10:00:00Z'}];
+let marks=[{round_trip_index:1,question_id:'qo',kind:'exit'}];window.markSaves=[];
+const copy=q=>({...q});
+api.getBehaviorQuestions=async()=>questions.map(copy);
+api.addBehaviorQuestion=async(text,kind)=>{const q={question_id:'n'+questions.length,kind,text:text.trim(),status:'active',sort_order:questions.length,created_at:'2026-10-05',archived_at:null};questions.push(q);return copy(q)};
+api.updateBehaviorQuestion=async(id,text)=>{const q=questions.find(x=>x.question_id===id);q.text=text.trim();return copy(q)};
+api.archiveBehaviorQuestion=async id=>{const q=questions.find(x=>x.question_id===id);q.status='archived';q.archived_at='2026-10-21T08:00:00Z';return copy(q)};
+api.restoreBehaviorQuestion=async id=>{const q=questions.find(x=>x.question_id===id);q.status='active';q.archived_at=null;return copy(q)};
+api.getBehaviorMarks=async()=>marks.map(copy);
+api.saveBehaviorMarks=async(sid,idx,answers)=>{window.markSaves.push({sid,idx,answers});for(const [q,v] of Object.entries(answers)){marks=marks.filter(m=>!(m.round_trip_index===idx&&m.question_id===q));if(v)marks.push({round_trip_index:idx,question_id:q,kind:questions.find(x=>x.question_id===q).kind})}return marks.filter(m=>m.round_trip_index===idx)};
 api.updateUserSettings=async s=>{window.settings.push(s);return s};
 const app=createRoot(document.getElementById('root'));
 app.render(<React.StrictMode><TradeLabeling symbol="NIFTY" date="2026-10-07" sessionIds={['s1']} allTrades={trades} historicalDays={2}/></React.StrictMode>);
@@ -89,6 +99,46 @@ try {
   await page.locator('input[list^="et-"]').first().fill('SECOND TAG'); await page.getByText('Saved ✓', { exact: true }).waitFor()
   saves = await page.evaluate(() => window.saves)
   assert.deepEqual(saves.at(-1).map(r => [r.round_trip_index, r.entry_tag]), [[1, 'SECOND TAG']])
+  // ── Behavior questions: checklists beside the entry/exit fields, auto-saved marks, archived history ──
+  const entryList = page.getByRole('group', { name: 'Entry behaviors' }), exitList = page.getByRole('group', { name: 'Exit behaviors' })
+  await entryList.waitFor()
+  assert.deepEqual(await exitList.getByRole('switch').allTextContents().then(rows => rows.map(row => row.replace(/\s+/g, ' ').trim())), ['Exited after one bar in profitNo', 'Old habit · archivedYes'], 'trade 2 shows active exit questions plus its archived marked one')
+  assert.equal(await exitList.getByRole('switch', { name: /Old habit/ }).isEnabled(), true, 'an archived, marked behavior can be cleared')
+  await entryList.getByRole('switch', { name: /Chased the move/ }).click()
+  assert.equal(await entryList.getByRole('switch', { name: /Chased the move/ }).getAttribute('aria-checked'), 'true')
+  await page.getByText('Saved ✓', { exact: true }).waitFor()
+  assert.deepEqual(await page.evaluate(() => window.markSaves), [{ sid: 's1', idx: 1, answers: { qe: true } }])
+  // Toggle an exit behavior and the archived one off, then leave the trade: the pending save is flushed first.
+  await exitList.getByRole('switch', { name: /Exited after/ }).click(); await exitList.getByRole('switch', { name: /Old habit/ }).click()
+  await page.getByRole('button', { name: 'Previous trade' }).click(); await page.getByText('Trade 1 of 2', { exact: true }).waitFor()
+  assert.deepEqual((await page.evaluate(() => window.markSaves)).at(-1), { sid: 's1', idx: 1, answers: { qx: true, qo: false } }, 'leaving flushes combined toggles')
+  // Trade 1 has no marks, and the archived question (not marked here) is not offered.
+  assert.equal(await exitList.getByRole('switch').count(), 1)
+  assert.equal(await entryList.getByRole('switch', { name: /Chased the move/ }).getAttribute('aria-checked'), 'false')
+  await page.getByRole('button', { name: 'Next trade' }).click(); await page.getByText('Trade 2 of 2', { exact: true }).waitFor()
+  assert.equal(await exitList.getByRole('switch', { name: /Exited after/ }).getAttribute('aria-checked'), 'true')
+  assert.equal(await exitList.getByRole('switch', { name: /Old habit/ }).count(), 0, 'cleared archived mark disappears from the trade')
+  // Manage questions: add, validate, edit, archive (confirm), unarchive.
+  await page.getByRole('button', { name: 'Manage questions' }).click()
+  const manager = page.getByRole('dialog', { name: 'Behavior questions' })
+  await manager.getByLabel('New question text').fill('Held too long')
+  await manager.getByRole('radio', { name: 'Exit' }).click(); await manager.getByRole('button', { name: 'Add question' }).click()
+  await manager.getByText('Held too long', { exact: true }).waitFor()
+  await manager.getByLabel('New question text').fill('held  TOO long'); await manager.getByRole('radio', { name: 'Exit' }).click(); await manager.getByRole('button', { name: 'Add question' }).click()
+  await manager.getByRole('alert').filter({ hasText: 'already exists' }).waitFor()
+  await manager.getByRole('button', { name: 'Edit question: Held too long' }).click()
+  await manager.getByLabel('Question text', { exact: true }).fill('Held far too long'); await manager.getByRole('button', { name: 'Save', exact: true }).click()
+  await manager.getByText('Held far too long', { exact: true }).waitFor()
+  await manager.getByRole('button', { name: 'Archive question: Held far too long' }).click()
+  await manager.getByText(/leaves every labeling form/).waitFor(); await manager.getByRole('button', { name: 'Archive', exact: true }).click()
+  assert.equal(await manager.getByText('Held far too long', { exact: true }).count(), 0, 'archived question leaves the active list')
+  await manager.getByRole('button', { name: /Archived \(2\)/ }).click()
+  await manager.getByRole('button', { name: 'Unarchive question: Held far too long' }).waitFor()
+  await manager.getByRole('button', { name: 'Unarchive question: Held far too long' }).click()
+  await manager.getByRole('button', { name: 'Archive question: Held far too long' }).waitFor()
+  await page.screenshot({ path: artifacts + '/website-behavior-manager.png' })
+  await manager.getByRole('button', { name: 'Close' }).click(); await manager.waitFor({ state: 'detached' })
+  await exitList.getByRole('switch', { name: /Held far too long/ }).waitFor()  // the labeling form picked up the new question
   // All together keeps the explicit Save, persists the choice, and lists both trades.
   await page.getByRole('group', { name: 'Label view' }).getByRole('button', { name: 'All together' }).click()
   await page.getByRole('button', { name: 'Save Labels', exact: true }).waitFor()

@@ -5,7 +5,8 @@ import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesD
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
-  'getEntryTags' | 'getExitTags' | 'getHistorical' | 'getPreSession' | 'getOptionsHistorical' |
+  'getEntryTags' | 'getExitTags' | 'getBehaviorQuestions' | 'addBehaviorQuestion' | 'updateBehaviorQuestion' |
+  'archiveBehaviorQuestion' | 'restoreBehaviorQuestion' | 'getBehaviorMarks' | 'saveBehaviorMarks' | 'getHistorical' | 'getPreSession' | 'getOptionsHistorical' |
   'getExpiry' | 'getSnapshots' | 'deleteSnapshots' | 'patternListStrategies' |
   'patternListCategories' | 'patternAddStrategy' | 'patternAddCategory' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'> & {
   getSnapshotCandle?: (sessionId: string, eventId: string, instrument: 'underlying' | 'CE' | 'PE', signal?: AbortSignal) => Promise<{candle: OHLCCandle | null}>
