@@ -6,6 +6,9 @@ import { useFlashError } from '../hooks/useFlashError'
  */
 import { useState, useEffect } from 'react'
 import api from '../services/api'
+import BehaviorManagerModal from '../../../shared/analysis/behavior/BehaviorManagerModal'
+import BehaviorPicker from '../../../shared/analysis/behavior/BehaviorPicker'
+import { useBehaviorData } from '../../../shared/analysis/behavior/useBehaviorData'
 
 interface PendingRoundTrip {
   right: string
@@ -41,6 +44,10 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   useFlashError(error, 'StepwiseLabelPopup')
+  // Behavior answers per round trip and type; sent after the labels are saved.
+  const behavior = useBehaviorData(api, sid)
+  const [answers, setAnswers] = useState<Record<string, Record<string, boolean>>>({})
+  const [managing, setManaging] = useState(false)
 
   const [fields, setFields] = useState(roundTrips.map(() => ({
     expCat: '', expStrat: '', actCat: '', actStrat: '', entryTag: 'AS_PER_PATTERN', exitTag: 'AS_PER_PATTERN',
@@ -79,6 +86,10 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
         })
       })
       await api.saveLabels(labels)
+      for (const [i, rt] of roundTrips.entries()) {
+        const combined = { ...answers[`${i}:entry`], ...answers[`${i}:exit`] }
+        if (Object.keys(combined).length) await api.saveBehaviorMarks(sid, rt.round_trip_index, combined)
+      }
       onDone()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save labels')
@@ -147,16 +158,23 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
                 <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Entry Tag</div>
                 <input list={`et-step-${i}`} value={fields[i].entryTag} onChange={e => updateField(i, 'entryTag', e.target.value)} placeholder="AS_PER_PATTERN" style={inputStyle} />
                 <datalist id={`et-step-${i}`}>{entryTags.map(t => <option key={t} value={t} />)}</datalist>
+                {behavior.status === 'ready' && <BehaviorPicker kind="entry" questions={behavior.questions} initial={behavior.markedFor(rt.round_trip_index)}
+                  onAnswersChange={value => setAnswers(prev => ({ ...prev, [`${i}:entry`]: value }))} onManage={() => setManaging(true)} />}
               </div>
               <div>
                 <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Exit Tag</div>
                 <input list={`xt-step-${i}`} value={fields[i].exitTag} onChange={e => updateField(i, 'exitTag', e.target.value)} placeholder="AS_PER_PATTERN" style={inputStyle} />
                 <datalist id={`xt-step-${i}`}>{exitTags.map(t => <option key={t} value={t} />)}</datalist>
+                {behavior.status === 'ready' && <BehaviorPicker kind="exit" questions={behavior.questions} initial={behavior.markedFor(rt.round_trip_index)}
+                  onAnswersChange={value => setAnswers(prev => ({ ...prev, [`${i}:exit`]: value }))} onManage={() => setManaging(true)} />}
               </div>
             </div>
           </div>
         ))}
 
+
+        {behavior.status === 'error' && <div role="note" style={{ marginBottom: 12, fontSize: 11, color: '#8b949e' }}>Behavior questions unavailable: {behavior.error}</div>}
+        {managing && <BehaviorManagerModal api={api} zIndex={10000} onClose={() => setManaging(false)} onChanged={() => void behavior.refresh()} />}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
           <button onClick={onDone} style={{

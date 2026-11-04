@@ -81,8 +81,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 2 | Desktop transport and real labels | Merged (PR #753) — see §5 |
 | 3 | Analysis one-by-one core | Merged (PR #754) — see §6 |
 | 4 | Charts, responsive and webapp | Merged (PR #755) — see §7 |
-| 5 | Behavior questions manager + Analysis marks | Implemented (this PR) — see §8 |
-| 6 | Live labeling | Not started |
+| 5 | Behavior questions manager + Analysis marks | Merged (PR #756) — see §8 |
+| 6 | Live labeling | Implemented (this PR) — see §9 |
 | 7 | Habits stats | Not started |
 | 8 | Hardening and close-out | Not started |
 
@@ -163,6 +163,36 @@ Verification:
 - `scripts/desktop-analysis-workflows.mjs`: marks over the Analysis proxy flushed on Prev, the manager modal, and the Settings → Analytics manager. This sprint also repaired the script's stale final step (the "History sharing" tab is now "Sharing"); it passes end to end except its pre-existing, unrelated snapshot-time assertion.
 - `webapp/tests/label-trades.spec.ts` (+1): Settings → Analytics add/edit/archive/unarchive on the website; whole webapp suite 23 pass.
 - Not covered here: archived-question history in Stats (Sprint 7) and live-trading popups (Sprint 6).
+
+## 9. Live labeling (Sprint 6)
+
+Behavior questions now appear in the labels you fill in **while trading**: replay, paper and real sessions on the website/webapp and on the desktop; stepwise on the website.
+
+| Where | Entry questions | Exit questions |
+|---|---|---|
+| Website/webapp `PendingLabelPanel` (all session types, incl. real) | "Label Entry" popup (open trade) | "Label Exit" popup (pending exit) |
+| Website stepwise popup (`StepwiseLabelPopup`) | per round trip, under Entry Tag | per round trip, under Exit Tag |
+| Desktop left panel (`DesktopLabelPanel`) — replay, stepwise, paper and **real** | "Expected Pattern" popup | "Actual Pattern" popup |
+
+**Behaviour**
+- A popup asks only the questions of its type and pre-fills the trade's saved answers (an archived question appears only if the trade already has its mark; it can be cleared, not set).
+- **Save order:** the label first, then the behavior answers — and only the answers that changed (`diffAnswers`), so an untouched checklist sends nothing. If the behavior save fails the popup stays open with the choice intact (website: notification; desktop: inline message) and Save retries (the label is re-sent, which is idempotent).
+- **Empty state:** with no questions of that type the popup says so and offers **Add questions**, opening the manager above the popup; the checklist updates in place without resetting the toggles already made. Behavior data failing to load never blocks labeling ("Behavior questions unavailable: …").
+- Stepwise popup: marks are saved after the labels for every round trip in one pass.
+- Limits: once an entry label is saved its button leaves the panel, so entry behaviors for that trade are edited afterwards in **Analysis → Label Trades**.
+
+**Round-trip numbering bug fixed (website).** Labels and marks are keyed by `(session_id, round_trip_index)`. The backend numbers a round trip when it **opens** (`build_cycles`: `index = len(cycles)`), but the website numbered it when it **closed**, with one counter shared by every open leg. With CE and PE open together and the second-opened leg closing first, both entry labels collided on one number and the exit numbers were swapped relative to the backend — so labels, and now marks, landed on the wrong trade. `frontend/src/hooks/roundTripIndexer.ts` (`stepLeg`, `openIndex`) now assigns the number at open and keeps it until that leg closes (at the three detection sites in `useSimulation.ts`); a leg already open when tracking began takes the next free number on close. Known remaining limit: the website still tracks one leg per instrument right (equity/CE/PE), so two different CE strikes open at once share one leg — the same as before; the desktop takes its slots from the server and is not affected.
+
+**Desktop real sessions** use the server slots added in Sprint 2 (committed broker book), so the popup indices equal the ones Analysis shows later. `DesktopLabelPanel` is exported for testing; its popup now stays mounted until closed (a saved label no longer removes it mid-retry).
+
+**Code:** shared `behavior/{useBehaviorData,BehaviorPicker,BehaviorManagerModal}`; `PendingLabelPanel.tsx`, `StepwiseLabelPopup.tsx`, desktop `App.tsx` (`DesktopLabelPanel`, `DesktopLabelPopup`, async `saveTradeLabel`); `TradeLabeling` reuses `BehaviorManagerModal`.
+
+**Verification**
+- `windowsapp/src/roundTripIndexer.test.ts` (7: sequential, concurrent CE+PE out of order, stable open numbers, partial fills, resumed position, reopen) and `behavior.test.ts` +1 (`diffAnswers`); vitest 341.
+- `scripts/website-live-label-check.mjs` (new): entry popup → label then mark; exit popup pre-filled incl. archived-marked; failed behavior save keeps the popup and choice and retries; unchanged → no request; empty state + manager above the popup + in-place refresh; "unavailable" note; stepwise popup with two round trips.
+- `scripts/desktop-live-label-check.mjs` (new): real-session slots (open CE #3, closed PE #2), entry/exit popups, retry with a readable server error, empty state + manager.
+- Regression: Label Trades website check (both renderers), `desktop-analysis-workflows.mjs` (apart from its pre-existing snapshot-time assertion), whole webapp suite 23; all three TypeScript checks.
+- Not covered here (manual): a live replay/paper/real session end to end on the website and desktop, in particular two legs open at once on the website.
 
 ## Appendix — original requirement text (free hand, as written)
 

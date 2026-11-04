@@ -47,3 +47,10 @@ export const questionIdsByTrip = (marks: BehaviorMark[], sessionId: string): Map
   }
   return map
 }
+
+/** Answers to send: only the questions whose state differs from what was saved (`true` = showed it, `false` = cleared). */
+export function diffAnswers(initial: ReadonlySet<string>, current: ReadonlySet<string>, questionIds: string[]): Record<string, boolean> {
+  const answers: Record<string, boolean> = {}
+  for (const id of questionIds) if (initial.has(id) !== current.has(id)) answers[id] = current.has(id)
+  return answers
+}

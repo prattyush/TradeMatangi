@@ -16,6 +16,9 @@ import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect } from 'react'
 import api from '../services/api'
 import type { PendingExitRt } from '../hooks/useSimulation'
+import BehaviorManagerModal from '../../../shared/analysis/behavior/BehaviorManagerModal'
+import BehaviorPicker from '../../../shared/analysis/behavior/BehaviorPicker'
+import { useBehaviorData } from '../../../shared/analysis/behavior/useBehaviorData'
 
 interface Props {
   sessionId: string
@@ -108,6 +111,7 @@ export default function PendingLabelPanel({
     expCat: string,
     expStrat: string,
     entryTag: string,
+    behaviors: Record<string, boolean>,
   ) => {
     const key = rtKey(sessionId, rtIndex, right)
     setSavingKey(key)
@@ -118,6 +122,8 @@ export default function PendingLabelPanel({
         expected_strategy: expStrat,
         entry_tag: entryTag,
       })
+      // The label is saved first; a failing behavior save keeps the popup open so Save can be retried.
+      if (Object.keys(behaviors).length) await api.saveBehaviorMarks(sessionId, rtIndex, behaviors)
       setOpenPopup(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -132,6 +138,7 @@ export default function PendingLabelPanel({
     actCat: string,
     actStrat: string,
     exitTag: string,
+    behaviors: Record<string, boolean>,
   ) => {
     const key = rtKey(sessionId, rtIndex, right)
     setSavingKey(key)
@@ -142,6 +149,7 @@ export default function PendingLabelPanel({
         actual_strategy: actStrat,
         exit_tag: exitTag,
       })
+      if (Object.keys(behaviors).length) await api.saveBehaviorMarks(sessionId, rtIndex, behaviors)
       setOpenPopup(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -224,6 +232,7 @@ export default function PendingLabelPanel({
 
       {openPopup && (
         <LabelPopup
+          sessionId={sessionId}
           mode={openPopup.mode}
           rtIndex={openPopup.rtIndex}
           right={openPopup.right}
@@ -245,6 +254,7 @@ export default function PendingLabelPanel({
 }
 
 function LabelPopup({
+  sessionId,
   mode,
   rtIndex,
   right,
@@ -260,6 +270,7 @@ function LabelPopup({
   onSaveEntry,
   onSaveExit,
 }: {
+  sessionId: string
   mode: 'entry' | 'exit'
   rtIndex: number
   right: string | null
@@ -272,12 +283,16 @@ function LabelPopup({
   exitTags: string[]
   saving: boolean
   onClose: () => void
-  onSaveEntry: (rtIndex: number, right: string | null, expCat: string, expStrat: string, entryTag: string) => void
-  onSaveExit: (rtIndex: number, right: string | null, actCat: string, actStrat: string, exitTag: string) => void
+  onSaveEntry: (rtIndex: number, right: string | null, expCat: string, expStrat: string, entryTag: string, behaviors: Record<string, boolean>) => void
+  onSaveExit: (rtIndex: number, right: string | null, actCat: string, actStrat: string, exitTag: string, behaviors: Record<string, boolean>) => void
 }) {
   const [cat, setCat] = useState('')
   const [strat, setStrat] = useState('')
   const [tag, setTag] = useState('AS_PER_PATTERN')
+  // Behavior questions of this popup's type: entry questions when labeling an entry, exit questions for an exit.
+  const behavior = useBehaviorData(api, sessionId)
+  const [behaviors, setBehaviors] = useState<Record<string, boolean>>({})
+  const [managing, setManaging] = useState(false)
 
   const isEntry = mode === 'entry'
   const ageMin = closedAt ? Math.max(1, Math.round((Date.now() - closedAt) / 60000)) : null
@@ -343,6 +358,17 @@ function LabelPopup({
           </datalist>
         </div>
 
+        {behavior.status === 'ready' && (
+          <div style={{ marginBottom: 16 }}>
+            <BehaviorPicker kind={mode} questions={behavior.questions} initial={behavior.markedFor(rtIndex)}
+              onAnswersChange={setBehaviors} onManage={() => setManaging(true)} />
+          </div>
+        )}
+        {behavior.status === 'error' && (
+          <div role="note" style={{ marginBottom: 16, fontSize: 11, color: '#8b949e' }}>Behavior questions unavailable: {behavior.error}</div>
+        )}
+        {managing && <BehaviorManagerModal api={api} zIndex={10000} onClose={() => setManaging(false)} onChanged={() => void behavior.refresh()} />}
+
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button
             onClick={onClose}
@@ -356,8 +382,8 @@ function LabelPopup({
           </button>
           <button
             onClick={() => {
-              if (isEntry) onSaveEntry(rtIndex, right, cat, strat, tag)
-              else onSaveExit(rtIndex, right, cat, strat, tag)
+              if (isEntry) onSaveEntry(rtIndex, right, cat, strat, tag, behaviors)
+              else onSaveExit(rtIndex, right, cat, strat, tag, behaviors)
             }}
             disabled={saving}
             style={{
