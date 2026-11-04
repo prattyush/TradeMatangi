@@ -1,6 +1,6 @@
 # Phase 23 — Label Trades one-by-one + Manual Behavioral Analysis
 
-**Status: In progress** (Sprint 0 — documentation). Implementation plan and sprint table: [spec-phase23-implementation-plan.md](spec-phase23-implementation-plan.md).
+**Status: Complete on `dev`** (Sprints 0–8 delivered; manual acceptance on live sessions and the Windows build pending — [phase23-manual-acceptance.md](phase23-manual-acceptance.md)). Implementation plan and sprint table: [spec-phase23-implementation-plan.md](spec-phase23-implementation-plan.md).
 
 Applies to all three clients: website (`frontend/`), webapp (`webapp/`, which renders the same website code) and desktop (`windowsapp/`). All work lands on `dev` first; nothing here is ported to `preprod`/`main` until reviewed (see `CLAUDE.md` branch strategy).
 
@@ -88,8 +88,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 7a | Habits: ledger backend + transports | Merged (PR #758) — §10.7 |
 | 7b | Habits: stats engine + scorecard | Merged (PR #759) — §10.8 |
 | 7c | Habits: trends across days + period comparison | Merged (PR #760) — §10.9 |
-| 7d | Habits: single-habit deep dive + polish | Implemented (this PR) — §10.10, glossary §10.11 |
-| 8 | Hardening and close-out | Not started |
+| 7d | Habits: single-habit deep dive + polish | Merged (PR #761) — §10.10, glossary §10.11 |
+| 8 | Hardening and close-out | Implemented (this PR) — §11 |
 
 Details, acceptance criteria and the verification matrix are in [spec-phase23-implementation-plan.md](spec-phase23-implementation-plan.md).
 
@@ -331,6 +331,55 @@ The Habits tab now has three sections (**Scorecard | Trends across days | Compar
 | Trend flag | Improving / Worse / Mixed / Same / Too few trades from loss per day, frequency and capital % between two periods (§10.9). |
 | Idle habit | An active habit with no trade in the current filters. |
 | Unmatched marks | Marks in the date/symbol scope that no loaded trade matches (filtered out by a trade-level filter, or the broker day was re-synced). |
+
+## 11. Hardening and close-out (Sprint 8)
+
+### 11.1 Results
+
+| Suite | Result |
+|---|---|
+| Backend `pytest tests/` | 2840 passed, 3 failed — the same 3 swing tests that fail on unchanged `origin/dev` (listed in §4) |
+| `windowsapp` vitest | 384 passed (52 files) |
+| `cargo test --lib` | 23 passed |
+| `tsc --noEmit` | frontend, windowsapp, webapp clean |
+| Browser scripts | `habits-browser-check`, `website-label-trades-check` (both renderers), `website-live-label-check`, `desktop-live-label-check`, `phase20-browser-check` pass; `desktop-analysis-workflows` passes except its snapshot-time assertion, which already fails on unmodified `dev` |
+| webapp Playwright suite | 23 passed (after `scripts/build-frontend-with-webapp.sh`) |
+
+### 11.2 Code-review fixes made in this sprint
+
+- **Label tracking was reset on every pause/resume (website, pre-existing).** `App.tsx` called `resetLabelTracking()` whenever the session state became `running`, so resuming a paused replay cleared pending exit labels and restarted round-trip numbering at 0; later trades then overwrote earlier labels and behavior marks. It now resets only when a different `sessionId` becomes active (`shouldResetLabelTracking`).
+- **Reloaded/resumed sessions keep their numbers.** On activation, `useSimulation` seeds the indexer from the session's existing trades (`seedFromTrades`), so an open leg keeps the number the backend gave it and new trips continue from the right counter.
+- **Reversal through zero** (long to short in one fill) closes the old trip and opens a new one in the indexer, matching `build_cycles`, which splits such a cycle.
+- **Ledger:** session records are fetched with chunked `batch_get_item` (100 keys, `UnprocessedKeys` retried, then an error rather than a silent gap); swing scope returns an empty ledger; the cycle load is forced to own intraday sessions.
+- **Marks API:** `answers` is bounded to 100 entries.
+- **Ledger response** is gzipped when larger than 64 KiB and the client accepts it.
+
+### 11.3 Habits reconciliation and performance
+
+- Automated: for 12 filter combinations, ledger totals (trades, net P&L, wins/losses) equal `GET /api/analysis/performance` summary values, and the ledger rows equal the cycles list for the same filters.
+- Benchmark (`scripts/habit-ledger-benchmark.py`, moto, 250 sessions / 5,000 trades / 769 marks): Stats overview read 10.1 s, Habit ledger 10.5 s, building the ledger without I/O 1.4 s; the ledger adds essentially nothing to the cost of the existing Stats overview because both use `load_cycles`. Response 1 MiB for 2,500 rows (418 B/row), which gzip shrinks substantially. **No cache was added**: the dominant cost is the shared `load_cycles` path (about 750 DynamoDB requests on moto), not the habit join; caching belongs to that path if Stats itself becomes slow on real history.
+
+### 11.4 Known limitations
+
+- Marks are keyed `(session_id, round_trip_index)`; if a real broker book is re-synced and trips renumber, existing marks can point at a different trade. Habits reports these as unmatched marks where the trade no longer exists but cannot detect a shifted match.
+- Website in-session numbering tracks one open trip per leg (equity, CE, PE). Two open strikes of the same right share one leg.
+- Swing portfolios are out of scope (labels there use `label_index`).
+- `GET /api/behavior/stats` and `/marks/by-question` remain available but are not used by the UI (Habits uses the ledger).
+- No price-path statistics (time in profit, best price reached); that behavior is tracked by manual marking.
+
+### 11.5 Porting to preprod / main
+
+Strategy (per `CLAUDE.md`): `dev` gets the new features; `preprod` is where everything, real trading included, is known to work and where bug fixes are made; once tested there it goes to `main`. Working `dev` changes are merged into `preprod` with a merge commit, and in the worst case only up to an earlier `dev` commit (`git merge <sha>`), never by squashing or piecemeal cherry-picks.
+
+Phase 23 landed on `dev` as one merge commit per sprint, so there are natural cut points: the merges of PRs #752–#761 (Sprints 1–7d) and #762 (Sprint 8). Merge up to the last sprint that passes your acceptance run; later sprints stay on `dev`. Before each merge run `bash scripts/check-preprod-synced.sh`. Phase 23 touches shared settings files and the dev-only KLine Analysis charts, and `dev` currently has the unexplained chart-stops-updating issue noted in `CLAUDE.md`, so choose the cut point deliberately and test live labeling in a real session on `preprod` before it reaches `main`.
+
+Real-trading-relevant items to test there: desktop real-session label state, real-day alias handling in the Habits ledger, and the live-labeling popups.
+
+**Bug fix for `preprod`:** the pause/resume label-tracking reset (§11.2) also exists on `preprod` (`App.tsx` resets on every `running`). By the branch rules it should be fixed on `preprod` first and synced into `dev`; it is currently only fixed on `dev`.
+
+### 11.6 Manual acceptance
+
+See [phase23-manual-acceptance.md](phase23-manual-acceptance.md).
 
 ## Appendix — original requirement text (free hand, as written)
 

@@ -163,14 +163,26 @@ def build_ledger(cycles: list[dict], marks: list[dict], sessions: dict[str, dict
 
 
 def _fetch_sessions(session_ids: set[str]) -> dict[str, dict]:
+    """Sessions rows for the sessions that carry marks, 100 per request (consistent reads, unprocessed keys retried)."""
+    import time
+
     from app.services.db import get_dynamodb_resource
 
-    table = get_dynamodb_resource().Table("Sessions")
+    resource = get_dynamodb_resource()
     rows: dict[str, dict] = {}
-    for sid in session_ids:
-        item = table.get_item(Key={"session_id": sid}, ConsistentRead=True).get("Item")
-        if item:
-            rows[sid] = item
+    pending = sorted(session_ids)
+    for offset in range(0, len(pending), 100):
+        request = {"Sessions": {"Keys": [{"session_id": sid} for sid in pending[offset:offset + 100]], "ConsistentRead": True}}
+        for attempt in range(6):
+            response = resource.batch_get_item(RequestItems=request)
+            for item in response.get("Responses", {}).get("Sessions", []):
+                rows[item["session_id"]] = item
+            request = response.get("UnprocessedKeys") or {}
+            if not request:
+                break
+            time.sleep(0.05 * 2 ** attempt)
+        else:
+            raise RuntimeError("Sessions could not be read completely; retry later")
     return rows
 
 
@@ -178,7 +190,10 @@ def load_ledger(user_id: str, criteria: dict) -> dict:
     """Read the user's cycles (scoped by the dashboard filters) and marks, and build the ledger."""
     from app.services import behavior_service, performance_service
 
-    scope = {**criteria, "include_shared": False}  # own sessions only: a viewer has none of the owner's marks
+    if criteria.get("trading_style") == "swing":  # swing portfolios are keyed differently and are not part of Habits
+        return build_ledger([], [], {}, behavior_service.list_questions(user_id, include_archived=True))
+    # Own intraday sessions only: a viewer has none of the owner's marks, and swing books would only add read cost.
+    scope = {**criteria, "include_shared": False, "trading_style": "intraday"}
     cycles = performance_service.load_cycles(user_id, **scope)
     marks = [
         row for row in behavior_service._user_marks(user_id, criteria.get("start_date"), criteria.get("end_date"))
