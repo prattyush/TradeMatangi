@@ -9,7 +9,7 @@ import OneByOneLabeling from './labeling/OneByOneLabeling'
 import RoundTripLabelForm from './labeling/RoundTripLabelForm'
 import { combineSaverStates, LabelSaver, MarkSaver, type MarkEdit, type SaverState } from './labeling/saver'
 import {
-  blankLabel, finalizeLabel, labelKey, legsText, money, orderRoundTrips, roundTripMarkerText, tradesForRoundTrip, tripKey,
+  blankLabel, finalizeLabel, labelKey, legsText, orderRoundTrips, peakCapitalText, pnlText, pnlTitle, roundTripMarkerText, tradesForRoundTrip, tripKey,
   type LabelView, type LabeledRoundTrip,
 } from './labeling/model'
 import './labeling/labeling.css'
@@ -263,7 +263,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
         {view === 'one_by_one' ? (
           <OneByOneLabeling
             trips={roundTrips} index={Math.min(index, Math.max(roundTrips.length - 1, 0))} sessionCount={sessionGroups.size} labels={labels}
-            busy={navBusy} readOnly={readOnly} save={combinedState} active={environment.active !== false}
+            busy={navBusy} readOnly={readOnly} pnlMode={environment.pnlDisplayMode} save={combinedState} active={environment.active !== false}
             onGo={to => void go(to)} onRetry={() => void flushAll()}
             controls={<>
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }} title="Show every trade's markers on the chart, not just this trade's">
@@ -324,7 +324,8 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                         <span className="tl-dot" style={{ background: RT_COLORS[rt.index % RT_COLORS.length] }} />
                         <span style={{ fontSize: 12, fontWeight: 600 }}>RT#{rt.index} — {rt.right || 'EQ'}</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: pnlColor }}>{money(rt.pnl)}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: pnlColor }} title={pnlTitle(rt)}>{pnlText(rt, environment.pnlDisplayMode)}</span>
+                        {peakCapitalText(rt) && <span className="tl-peak">{peakCapitalText(rt)}</span>}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--tl-muted, #8b949e)', marginBottom: 8, lineHeight: 1.5 }}>
                         <span style={{ color: 'var(--tl-text, #e6edf3)' }}>{legsText(rt.entry_trades, 'B')}</span>

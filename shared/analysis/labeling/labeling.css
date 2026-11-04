@@ -25,6 +25,7 @@
 .tl-contract { font-weight: 700; color: var(--tl-text); }
 .tl-pnl { font-weight: 700; }
 .tl-pnl.up { color: var(--tl-good); } .tl-pnl.down { color: var(--tl-bad); }
+.tl-peak { padding: 1px 8px; border: 1px solid var(--tl-border); border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--tl-muted); background: var(--tl-bg); white-space: nowrap; }
 .tl-grow { flex: 1; }
 .tl-ghost { border: 1px solid var(--tl-border); background: transparent; color: var(--tl-muted); border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
 .tl-ghost:hover { color: var(--tl-text); border-color: var(--tl-accent); }

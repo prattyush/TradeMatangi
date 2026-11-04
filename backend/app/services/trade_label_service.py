@@ -171,6 +171,10 @@ def legacy_round_trip_state(trades: list[dict]) -> tuple[list[dict], list[dict]]
     return completed, open_trips
 
 
+def _round_or_none(value):
+    return None if value is None else round(float(value), 2)
+
+
 def cycle_round_trips(cycles):
     completed, opened = [], []
     for cycle in cycles:
@@ -191,6 +195,9 @@ def cycle_round_trips(cycles):
                 if r["role"] == "exit"
             ],
             pnl=round(cycle["net_pnl"], 2),
+            # % of the session capital: result, and the most capital the trade had in use at any one time.
+            pnl_pct=_round_or_none(cycle.get("pnl_pct")),
+            max_capital_pct=_round_or_none(cycle.get("peak_capital_pct")),
         )
         (completed if cycle["state"] == "closed" else opened).append(trip)
     return completed, opened

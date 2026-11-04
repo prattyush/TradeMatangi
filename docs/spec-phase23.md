@@ -155,6 +155,15 @@ The always-stacked (website) and side-by-side (desktop) Underlying + strike char
 - `TradeLabeling` passes `maximized` to `LabelChartPanes` and `layout` to the desktop `LabelCharts`. The Maximize button now has a text label and `aria-label`.
 - Tests: `website-label-trades-check.mjs` (single chart, switcher below, maximize/restore, both renderers), `desktop-analysis-workflows.mjs` (single/Option switch, maximize shows both, size assertions), webapp phone spec unchanged.
 
+### 7.2 Follow-up: P&L % and peak capital % in the Label Trades panel
+
+- **P&L follows the P&L display setting** (`desktop_pnl_display_mode`, Settings → P&L display): in percent mode the trade's P&L is shown as % of the session capital (`+0.70%`), otherwise as money (`+₹700.00`). The tooltip shows both. If the % is unknown (no capital) the money is shown. Applies to the one-at-a-time header and chips and the all-together list.
+- **Peak capital** is shown beside it as `Peak 3.00% of capital`: the most capital the round trip had in use at any one moment. Example: three entries of 10 lots at 100, one exit, one more entry, then exit all - the peak is the 30 lots held at once (3,000 of 100,000 = 3.00%), not the 40 lots bought. Computed in `performance_service.build_cycles` as the maximum, after each entry fill, of the open lots at cost times their margin rate (the same margin adjustment as an entry's `effective_allocation_pct`), over the session capital; exposed per cycle as `peak_capital_pct`.
+- **API:** `round-trips` items (`trade_label_service.cycle_round_trips`) gain `pnl_pct` and `max_capital_pct` (both null when the capital is unknown).
+- **Plumbing:** `AnalysisEnvironment.pnlDisplayMode` - website via `useAnalysisPnlMode` (published from the user settings in `api.ts`, first paint from the Settings browser mirror), desktop from `trading/settings/current`.
+- Not changed: the in-session label popups, and the Habits "capital %" (sum of entry allocations, a different measure).
+- Tests: `test_trade_label_service.py` (peak/P&L % example, no-capital case), `website-label-trades-check.mjs` and `desktop-analysis-workflows.mjs`.
+
 ## 8. Behavior questions manager and Analysis marks (Sprint 5)
 
 **Where the manager lives** — one shared component, `shared/analysis/behavior/BehaviorQuestionsManager.tsx`, with the API injected (`BehaviorApi`):

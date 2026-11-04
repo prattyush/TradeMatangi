@@ -146,6 +146,8 @@ def build_cycles(session, executions):
                         if row.get("execution_id") or row.get("execution_sort_time")
                         else "order_rows"
                     ),
+                    peak_capital_pct=None,
+                    _peak_exposure=0.0,
                     _lots=deque(),
                     _sign=sign,
                 )
@@ -213,8 +215,15 @@ def build_cycles(session, executions):
                     fee_unit=fee_unit,
                     entry=entry,
                     identifier=identifier,
+                    margin=number(meta.get("margin_rate")) or 1.0,
                 )
                 state["_lots"].append(lot)
+                # Capital in use right after this fill (open lots at cost, margin-adjusted like the entry's
+                # effective allocation); the trade's peak is the most it ever had at once.
+                state["_peak_exposure"] = max(
+                    state["_peak_exposure"],
+                    sum(l["quantity"] * l["price"] * l["margin"] for l in state["_lots"]),
+                )
                 state["executions"].append(
                     {
                         **row,
@@ -310,6 +319,7 @@ def build_cycles(session, executions):
             l["quantity"] * l["fee_unit"] for l in state["_lots"]
         )
         state["pnl_pct"] = percent(state["net_pnl"], state["capital"])
+        state["peak_capital_pct"] = percent(state["_peak_exposure"], state["capital"])
         state["entry_count"] = len(state["entries"])
         state["exit_count"] = len({e["exit_id"] for e in state["exits"]})
         state["holding_seconds"] = (
@@ -336,7 +346,7 @@ def build_cycles(session, executions):
                 if entry["initial_risk"] and not entry["open_quantity"]
                 else None
             )
-        del state["_lots"], state["_sign"]
+        del state["_lots"], state["_sign"], state["_peak_exposure"]
     return cycles
 
 

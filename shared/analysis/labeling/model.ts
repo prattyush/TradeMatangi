@@ -66,5 +66,20 @@ export function fmtHHMM(ts: number): string {
 
 export const money = (value: number) => `${value >= 0 ? '+' : '-'}₹${Math.abs(value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
+export type PnlDisplayMode = 'currency' | 'percent'
+export const percentText = (value: number) => `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(2)}%`
+
+/** The round trip's P&L as the user prefers it: % of capital in percent mode (money when the % is unknown), else money. */
+export function pnlText(rt: Pick<RoundTrip, 'pnl' | 'pnl_pct'>, mode: PnlDisplayMode | undefined): string {
+  return mode === 'percent' && rt.pnl_pct != null ? percentText(rt.pnl_pct) : money(rt.pnl)
+}
+/** The other representation, for a tooltip. */
+export function pnlTitle(rt: Pick<RoundTrip, 'pnl' | 'pnl_pct'>): string {
+  return rt.pnl_pct != null ? `${money(rt.pnl)} · ${percentText(rt.pnl_pct)} of capital` : money(rt.pnl)
+}
+/** Most capital the trade had in use at one time, e.g. "Peak 3.00%"; null when unknown. */
+export const peakCapitalText = (rt: Pick<RoundTrip, 'max_capital_pct'>): string | null =>
+  rt.max_capital_pct != null ? `Peak ${rt.max_capital_pct.toFixed(2)}% of capital` : null
+
 export const legsText = (legs: LabeledRoundTrip['entry_trades'], letter: 'B' | 'S') =>
   legs.map(leg => `${letter} ${leg.quantity}@${leg.price.toFixed(2)} ${fmtHHMM(leg.timestamp)}`).join(', ')

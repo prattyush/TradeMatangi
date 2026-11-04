@@ -21,8 +21,8 @@ const end=Date.parse('2026-10-07T10:15:00Z')/1000;
 const bars=Array.from({length:80},(_,i)=>({time:end-(79-i)*180,open:100+i,high:103+i,low:98+i,close:101+i}));
 const leg=(trade_id,side,t,extra={})=>({trade_id,side,quantity:65,price:100+t,timestamp:end-(60-t)*180,...extra});
 const ce={right:'CE',strike:25000,expiry:'2026-10-08'};
-const trip0={index:0,right:null,pnl:120.5,entry_trades:[leg('t1','BUY',1)],exit_trades:[leg('t2','SELL',3)]};
-const trip1={index:1,right:'CE',pnl:-45.25,entry_trades:[leg('t3','BUY',10,ce)],exit_trades:[leg('t4','SELL',12,ce)]};
+const trip0={index:0,right:null,pnl:120.5,pnl_pct:0.12,max_capital_pct:1.5,entry_trades:[leg('t1','BUY',1)],exit_trades:[leg('t2','SELL',3)]};
+const trip1={index:1,right:'CE',pnl:-45.25,pnl_pct:-0.05,max_capital_pct:3.25,entry_trades:[leg('t3','BUY',10,ce)],exit_trades:[leg('t4','SELL',12,ce)]};
 const trade=(l,extra={})=>({...l,session_id:'s1',user_id:'u',symbol:'NIFTY',instrument_type:extra.right?'options':'equity',right:null,strike:null,expiry:null,commission:1,...extra});
 const trades=[trade(trip0.entry_trades[0]),trade(trip0.exit_trades[0]),trade(trip1.entry_trades[0],ce),trade(trip1.exit_trades[0],ce)];
 let labels=[];window.saves=[];window.settings=[];
@@ -57,6 +57,14 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}`)
   await page.getByText('Trade 1 of 2', { exact: true }).waitFor()
   assert.equal(await page.getByRole('button', { name: 'Previous trade' }).isDisabled(), true)
+  // P&L follows the user's P&L display setting (money by default, % of capital in percent mode); peak capital sits beside it.
+  const meta = page.locator('.tl-meta')
+  assert.match(await meta.textContent(), /\+₹120\.50/); assert.equal(await page.locator('.tl-peak').textContent(), 'Peak 1.50% of capital')
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('analysis-pnl-mode', { detail: 'percent' })))
+  await page.waitForFunction(() => document.querySelector('.tl-pnl')?.textContent === '+0.12%')
+  assert.match(await page.locator('.tl-pnl').getAttribute('title'), /₹120\.50 · \+0\.12% of capital/)
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('analysis-pnl-mode', { detail: 'currency' })))
+  await page.waitForFunction(() => document.querySelector('.tl-pnl')?.textContent === '+₹120.50')
   assert.equal(await page.getByRole('button', { name: 'Save Labels', exact: true }).count(), 0, 'no explicit Save in one-at-a-time mode')
   // The equity trade has no option contract, so only the Underlying pane is shown.
   const underlying = page.getByLabel('Underlying chart pane'), strike = page.getByLabel('Strike chart pane')
