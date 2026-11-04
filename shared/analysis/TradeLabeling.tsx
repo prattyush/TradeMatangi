@@ -1,7 +1,7 @@
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalysisTrade, BehaviorQuestion, TradeLabel } from './api'
-import BehaviorQuestionsManager from './behavior/BehaviorQuestionsManager'
+import BehaviorManagerModal from './behavior/BehaviorManagerModal'
 import { questionIdsByTrip } from './behavior/model'
 import { readableError } from './behavior/types'
 import LabelChartPanes from './labeling/LabelChartPanes'
@@ -339,15 +339,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
           </>
         )}
       </div>
-      {manageOpen && (
-        <div className="tl-modal tl-root" role="dialog" aria-modal="true" aria-label="Behavior questions" onClick={event => { if (event.target === event.currentTarget) setManageOpen(false) }}
-          onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setManageOpen(false) } }}>
-          <div className="tl-modal-card">
-            <header><h3>Behavior questions</h3><button type="button" className="tl-ghost" onClick={() => setManageOpen(false)}>Close</button></header>
-            <BehaviorQuestionsManager api={api} onChanged={() => void reloadQuestions()} />
-          </div>
-        </div>
-      )}
+      {manageOpen && <BehaviorManagerModal api={api} onClose={() => setManageOpen(false)} onChanged={() => void reloadQuestions()} />}
     </div>
   )
 

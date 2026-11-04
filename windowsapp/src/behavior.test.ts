@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { BehaviorQuestion } from '../../shared/analysis/api'
-import { groupQuestions, questionIdsByTrip, questionsToShow, validateQuestionText } from '../../shared/analysis/behavior/model'
+import { diffAnswers, groupQuestions, questionIdsByTrip, questionsToShow, validateQuestionText } from '../../shared/analysis/behavior/model'
 import { readableError } from '../../shared/analysis/behavior/types'
 import { combineSaverStates, MarkSaver } from '../../shared/analysis/labeling/saver'
 import { createAnalysisApi, type AnalysisRequest } from './analysisApi'
@@ -45,6 +45,14 @@ describe('behavior question helpers', () => {
     expect(readableError(new Error('Analysis request failed (400 Bad Request): {"detail":"At most 40 active questions; archive one first"}'))).toBe('At most 40 active questions; archive one first')
     expect(readableError(new Error('Settings request failed (500): {"detail":"say \\"hi\\""}'))).toBe('say "hi"')
     expect(readableError('plain')).toBe('plain')
+  })
+})
+
+describe('diffAnswers', () => {
+  it('sends only the questions whose answer changed, as true/false', () => {
+    expect(diffAnswers(new Set(['a', 'b']), new Set(['b', 'c']), ['a', 'b', 'c', 'd'])).toEqual({ a: false, c: true })
+    expect(diffAnswers(new Set(['a']), new Set(['a']), ['a', 'b'])).toEqual({})
+    expect(diffAnswers(new Set(), new Set(['x']), ['a'])).toEqual({}) // ids outside the shown questions are never sent
   })
 })
 
