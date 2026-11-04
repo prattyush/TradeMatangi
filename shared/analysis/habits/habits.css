@@ -85,3 +85,36 @@
 .hb-flag.same, .hb-flag.too_few { background: #263041; color: #94a3b8; }
 
 .hb-day th:nth-child(2), .hb-day td:nth-child(2), .hb-day th:nth-child(3), .hb-day td:nth-child(3) { text-align: left; }
+
+/* Deep dive */
+.hb-deep { display: flex; flex-direction: column; gap: 14px; }
+.hb-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.hb-tile { background: #18243d; border: 1px solid #28354d; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; cursor: help; }
+.hb-tile span { font-size: 11px; color: #94a3b8; }
+.hb-tile strong { font-size: 18px; color: #e2e8f0; }
+.hb-tile strong.positive { color: #55dbb1; } .hb-tile strong.negative { color: #fb8c9e; }
+.hb-quick h4, .hb-bucket h4 { margin: 0 0 4px; font-size: 14px; }
+.hb-quick p { margin: 4px 0 0; color: #cbd5e1; font-size: 13px; line-height: 1.6; }
+.hb-hint { margin: 0 0 8px; color: #94a3b8; font-size: 12px; }
+.hb-bucket-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 14px; }
+.hb-bucket th[scope='row'] { text-align: left; font-weight: 500; white-space: nowrap; }
+.hb-minibar { display: inline-block; height: 6px; margin-left: 8px; border-radius: 3px; vertical-align: middle; }
+.hb-minibar.positive { background: #36c9a0; } .hb-minibar.negative { background: #ef7c8e; }
+.hb-name.hb-link { background: transparent; border: 0; color: #e2e8f0; font: inherit; font-weight: 600; cursor: pointer; text-align: left; padding: 0; text-decoration: underline dotted #64748b; text-underline-offset: 3px; }
+.hb-name.hb-link:hover { color: #a5b4fc; }
+.hb-scatter { width: 100%; }
+.hb-scatter svg { display: block; max-width: 100%; }
+.hb-scatter .hb-grid { stroke: #29384c; stroke-width: 1; } .hb-scatter .hb-grid.zero { stroke: #64748b; stroke-width: 1.5; }
+.hb-scatter .hb-tick { fill: #94a3b8; font-size: 12px; } .hb-scatter .hb-axis { fill: #94a3b8; font-size: 12px; }
+.hb-dot { cursor: pointer; } .hb-dot:hover, .hb-dot:focus-visible { stroke: #fff; stroke-width: 2; outline: none; }
+.hb-scatter-legend { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; font-size: 11px; color: #94a3b8; }
+.hb-scatter-legend i { width: 120px; height: 8px; border-radius: 4px; display: inline-block; }
+.hb-trades tbody th { text-align: left; font-weight: 400; white-space: nowrap; }
+.hb-more { margin-top: 10px; }
+
+@media (max-width: 650px) {
+  .hb-bucket-grid { grid-template-columns: minmax(0, 1fr); }
+  .hb-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.hb-trades th:nth-child(2), .hb-trades td:nth-child(2), .hb-trades th:nth-child(10), .hb-trades td:nth-child(10) { text-align: left; }

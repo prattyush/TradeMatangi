@@ -124,6 +124,7 @@ export default function HabitCompare({ trades, overview, unit, mode }: Props) {
         <div className="pa-card-title"><div><h3>Days with vs without the habit</h3><p>How the whole day ended (all trades that day) when the habit did and did not occur, in the current filters.</p></div></div>
         <div className="pa-table-wrap">
           <table className="hb-table">
+            <caption className="hb-visually-hidden">How the day ended with and without each habit</caption>
             <thead><tr><th scope="col" className="hb-sticky">Habit</th><th scope="col">Days with</th><th scope="col">{unit === 'pct' ? 'Avg day net %' : 'Avg day net ₹'}</th><th scope="col">Days without</th><th scope="col">{unit === 'pct' ? 'Avg day net %' : 'Avg day net ₹'}</th><th scope="col">Difference</th></tr></thead>
             <tbody>
               {overview.habits.map(h => {

@@ -87,8 +87,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 6 | Live labeling | Merged (PR #757) — see §9 |
 | 7a | Habits: ledger backend + transports | Merged (PR #758) — §10.7 |
 | 7b | Habits: stats engine + scorecard | Merged (PR #759) — §10.8 |
-| 7c | Habits: trends across days + period comparison | Implemented (this PR) — §10.9 |
-| 7d | Habits: single-habit deep dive + polish | Not started |
+| 7c | Habits: trends across days + period comparison | Merged (PR #760) — §10.9 |
+| 7d | Habits: single-habit deep dive + polish | Implemented (this PR) — §10.10, glossary §10.11 |
 | 8 | Hardening and close-out | Not started |
 
 Details, acceptance criteria and the verification matrix are in [spec-phase23-implementation-plan.md](spec-phase23-implementation-plan.md).
@@ -294,6 +294,43 @@ The Habits tab now has three sections (**Scorecard | Trends across days | Compar
 - `windowsapp/src/habitSeries.test.ts` (12, hand-computed): trading days, period splitting and custom ranges, every series metric incl. zero-fill vs gaps and rupee/% handling, rolling mean with gaps, flags (improving, worse, mixed, same, too few, rewarding, mixed habit), tones, days with/without. vitest total 369.
 - `scripts/habits-browser-check.mjs` extended (fixture expectations by independent loops): chips and metric switching, capital % readout per day via keyboard (first/last day), archived habit gap (—) vs occurrence 0, legend toggling, 5-day average and ₹ in the chart description, day selection → trade list → cycle drawer request (session and cycle id), compare presets (10-vs-10 impossible message, 5 vs before), flags per habit (Improving / Same / Same / Too few), per-day and capital cells, days with/without, custom ranges, and phone layout for both new sections (no sideways page scroll, table scrolls inside, chart scales). Desktop workflow script and `phase20-browser-check.mjs` still pass; whole webapp suite 23; all three TypeScript checks pass.
 - Not in this PR: the single-habit deep dive (buckets, scatter, trade list) — 7d.
+
+### 10.10 Sprint 7d — single-habit deep dive and polish (implemented)
+**Opening it:** the **Deep dive** section, or click a habit's name in the scorecard (its name is a button, "Deep dive: <habit>"). A selector switches habit (archived ones are labelled); it defaults to the most destructive one.
+
+**Contents** (`HabitDeepDive.tsx`, logic in `deepDiveStats.ts` — named to avoid a case-insensitive file-name clash with the component on Windows):
+- **Tiles:** trades, days, net, profit, loss, win %, average per trade, vs without, if skipped, average capital %, average bars, ≤1 bar, losers ≤1 bar — the same values and tooltips as the scorecard, plus the verdict and its reasoning.
+- **Losses closed within one bar:** "X of Y losing trades (Z%) were closed inside the candle they were entered in, accounting for W% of this habit's total loss (−n%)" — losers without a bar count are left out of Y and said so.
+- **Four breakdowns** (trades, net, win %, average per trade, with a small net bar): **by bars held** (1, 2, 3–5, 6–10, over 10, unknown), **by capital used** (thirds of *all* the user's trades in the current filters — edges are shown in the group labels, an edge value belongs to the lower group, and the split is skipped with an explanation below 6 trades or without spread), **by time of day** (half-hour of the entry, IST; empty half-hours omitted) and **by weekday**.
+- **Size against result** (`ScatterPlot`): one dot per trade with a capital % and a result; dim = older, bright = recent, so a habit "still taken but smaller" shows as recent dots drifting left. Dots are keyboard-focusable and Enter or a click opens the trade in the cycle drawer.
+- **Trades with this habit:** sortable (date, result, capital %, risk %, bars, held, entries, exits; missing values always last), 25 at a time with "Show more", the habit's co-occurring habits, and **Open** per row. A footnote counts trades without capital % or bars.
+
+**Polish:** every table has a caption and column scopes, every button an accessible name (an automatic check runs in four sections of the browser test), sortable headings expose `aria-sort`, charts have descriptive labels and keyboard operation, tiles use two columns on a phone, bucket cards stack, and charts draw at their real width.
+
+**Verification**
+- `windowsapp/src/deepDiveStats.test.ts` (11, hand-computed): bar-bucket boundaries and per-bucket results incl. a bucket with no P&L %, interpolated quantiles, capital thirds with inclusive edges and the too-few/no-spread cases, half-hour and weekday buckets, quick-loss counts and share (unknown-bar losers excluded), scatter points and recency, sorting with missing values last. vitest total 380.
+- `scripts/habits-browser-check.mjs` extended with independent expectations: opening from the scorecard link, tiles, the bars/capital/time/weekday tables (counts, edge labels), the quick-loss sentence, scatter dot count, Enter on a dot → cycle drawer request, trade list order and sorting, Open, switching to the archived habit, the accessibility floor in four sections, and the 390 px phone layout. Desktop workflow script, `phase20-browser-check.mjs` and the whole webapp suite (23) still pass; all three TypeScript checks pass.
+
+### 10.11 Glossary of Habits statistics
+| Term | Meaning |
+|---|---|
+| Habit | A behavior question you mark yes/no on a trade (Entry or Exit type). |
+| Trade | One closed round trip. A trade can carry several habits. |
+| P&L % | Net result ÷ the session's capital. Profit %, loss % and net % add these over trades. |
+| Net / Profit / Loss | Sum of all / of winning / of losing trades of the habit. A win or loss is a net result beyond ±₹0.005. |
+| Average per trade | Mean or median (header switch) result of a habit trade. |
+| vs without | Typical habit trade minus typical trade without the habit, same period and filters. |
+| If skipped | −Net: what you would have gained (positive) or given up by not taking the habit's trades. |
+| Share of losses / profits | Part of all losing / winning % in scope from the habit's trades; habits overlap, so shares can exceed 100% in total. |
+| Capital % | Capital deployed on the trade (all entries together) as % of session capital; unavailable for older/imported fills. |
+| Risk % | Capital at risk at entry (distance to stoploss), same basis. |
+| Bars held | Candles the trade touched (3-minute strategy candles unless the entry recorded another size); entering and exiting inside one candle is 1 bar. |
+| ≤1 / ≤2 bars | Share of the habit's trades closed within one / two candles. |
+| Losers ≤1 bar | Share of losing trades closed within one candle. |
+| Verdict | Costly (net < 0 and a worse average than the other trades), Rewarding (net > 0 and a better average), Mixed, Low sample (< 10 trades). Means, % of capital (₹ if no trade has a P&L %). |
+| Trend flag | Improving / Worse / Mixed / Same / Too few trades from loss per day, frequency and capital % between two periods (§10.9). |
+| Idle habit | An active habit with no trade in the current filters. |
+| Unmatched marks | Marks in the date/symbol scope that no loaded trade matches (filtered out by a trade-level filter, or the broker day was re-synced). |
 
 ## Appendix — original requirement text (free hand, as written)
 
