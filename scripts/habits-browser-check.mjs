@@ -47,6 +47,13 @@ try {
 
   // Rows are listed most destructive first (lowest net %), with the independent expectation for each habit.
   const order = Object.entries(want).sort((a, b) => a[1].net_pct - b[1].net_pct).map(([id]) => id)
+  // Accessibility floor: every button has a name, every table a caption and column scopes.
+  const a11y = async where => {
+    const unnamed = await page.locator('.hb button').evaluateAll(buttons => buttons.filter(b => !(b.getAttribute('aria-label') || b.textContent.trim())).length)
+    const uncaptioned = await page.locator('.hb table').evaluateAll(tables => tables.filter(t => !t.querySelector('caption')).length)
+    const headerless = await page.locator('.hb table thead th:not([scope])').count()
+    assert.deepEqual([unnamed, uncaptioned, headerless], [0, 0, 0], `accessibility floor in ${where}: unnamed buttons, tables without caption, headers without scope`)
+  }
   const names = { qa: 'Chased the move', qb: 'Exited after one bar in profit', qc: 'Waited for the retest', qd: 'Old revenge habit' }
   const rowNames = async () => (await scorecard.locator('tbody th .hb-name').allTextContents())
   assert.deepEqual(await rowNames(), order.map(id => names[id]))
@@ -71,6 +78,7 @@ try {
   assert.match(await scorecard.locator('.hb-verdict.costly').first().getAttribute('title'), /Net −[\d.]+% over \d+ trades/)
   assert.ok(await scorecard.locator('tr.archived').count() === 1 && await scorecard.getByText('Archived', { exact: true }).count() === 1)
 
+  await a11y('scorecard')
   // Chart: one focusable row per habit, labelled with its numbers.
   const bars = page.locator('svg.hb-diverging g[role="img"]')
   assert.equal(await bars.count(), order.length)
@@ -152,6 +160,7 @@ try {
   // Select a day: the trades carrying the shown habits, and open one in the cycle drawer.
   await chart.focus(); await page.keyboard.press('Home'); await page.keyboard.press('Enter')
   await page.getByRole('heading', { name: `${firstDay}: trades carrying the shown habits` }).waitFor()
+  await a11y('trends day list')
   const shown = ledgerTrades.filter(t => t.date === firstDay && t.habits.some(id => ['qa', 'qb', 'qc', 'qd'].includes(id)))
   assert.equal(await page.locator('.hb-day tbody tr').count(), shown.length)
   await page.locator('.hb-day tbody tr').first().getByRole('button', { name: /^Open trade/ }).click()
@@ -165,6 +174,7 @@ try {
   await page.getByText(/Needs more than 10 trading days of history/).waitFor()   // 10 days cannot be split 10 vs 10
   await page.getByRole('group', { name: 'Period length' }).getByRole('button', { name: 'Last 5 days vs before' }).click()
   const compare = page.locator('table.hb-compare'); await compare.waitFor()
+  await a11y('compare')
   await page.getByText(/Before 2026-09-14/).waitFor()
   const compareRow = name => compare.locator('tbody tr', { has: page.locator('.hb-name', { hasText: name }) })
   const half = dayKeys.length / 2, beforeDays = dayKeys.slice(0, half), recentDays = dayKeys.slice(half)
@@ -191,6 +201,76 @@ try {
   assert.equal(pressedStyle, 'rgb(165, 180, 252)', 'a pressed segmented button keeps its highlight while hovered')
   await page.screenshot({ path: artifacts + '/habits-compare.png' })
   await page.getByRole('group', { name: 'Period length' }).getByRole('button', { name: 'Last 5 days vs before' }).click()
+  await page.getByRole('button', { name: 'Scorecard', exact: true }).click(); await page.locator('table.hb-table').first().waitFor()
+
+
+  // ── Single-habit deep dive ───────────────────────────────────────────────
+  await page.getByRole('button', { name: 'Scorecard', exact: true }).click()
+  await page.getByRole('button', { name: 'Deep dive: Chased the move' }).click()
+  await page.getByRole('heading', { name: 'Habit deep dive' }).waitFor()
+  assert.equal(await page.locator('.hb-deep select').inputValue() !== '', true)
+  const qa = ledgerTrades.filter(t => t.habits.includes('qa'))
+  const tile = async label => (await page.locator('.hb-tile', { has: page.locator('span', { hasText: new RegExp(`^${label}$`) }) }).locator('strong').textContent()).trim()
+  assert.equal(await tile('Trades'), String(qa.length)); assert.equal(await tile('Days'), String(new Set(qa.map(t => t.date)).size))
+  near(await tile('Net %'), want.qa.net_pct, 'deep dive net %')
+  near(await tile('Avg capital %'), want.qa.avg_capital, 'deep dive capital %', 0.051)
+  const bucketRows = async title => page.locator('section.hb-bucket', { has: page.getByRole('heading', { name: title }) }).locator('tbody tr').evaluateAll(rows => rows.map(row => [...row.children].map(cell => cell.textContent.trim()).join('|')))
+  // By bars held: independent grouping.
+  const barsOf = b => b == null ? 'Unknown' : b <= 1 ? '1 bar' : b === 2 ? '2 bars' : b <= 5 ? '3–5 bars' : b <= 10 ? '6–10 bars' : 'Over 10 bars'
+  const barCounts = new Map(); for (const t of qa) barCounts.set(barsOf(t.bars), (barCounts.get(barsOf(t.bars)) ?? 0) + 1)
+  const barRows = await bucketRows('By bars held')
+  for (const [label, count] of barCounts) assert.ok(barRows.some(r => r.startsWith(`${label}|${count}|`)), `bars bucket ${label}=${count} in ${barRows}`)
+  assert.equal(barRows.length, barCounts.size)
+  // By capital: terciles of ALL trades' capital % (independent quantile).
+  const allCapital = ledgerTrades.map(t => t.capital_pct).filter(c => c != null).sort((a, b) => a - b)
+  const q = f => { const pos = (allCapital.length - 1) * f, lo = Math.floor(pos), hi = Math.ceil(pos); return allCapital[lo] + (allCapital[hi] - allCapital[lo]) * (pos - lo) }
+  const capitalRows = await bucketRows('By capital used')
+  assert.ok(capitalRows[0].startsWith(`Smaller (up to ${q(1 / 3).toFixed(1)}%)|`), `capital edges in ${capitalRows[0]}`)
+  const lowCount = qa.filter(t => t.capital_pct != null && t.capital_pct <= q(1 / 3)).length
+  assert.equal(capitalRows[0].split('|')[1], String(lowCount), `smaller-capital trades in ${capitalRows[0]}`)
+  // Time of day and weekday.
+  const timeRows = await bucketRows('By time of day')
+  assert.deepEqual(timeRows.map(r => r.split('|')[0]), ['09:00–09:30', '13:00–13:30'])
+  assert.equal(timeRows[0].split('|')[1], String(qa.filter(t => new Date(t.entry_time * 1000).getUTCHours() === 9).length))
+  const weekday = d => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(`${d}T00:00:00Z`).getUTCDay()]
+  const days = [...new Set(qa.map(t => weekday(t.date)))]
+  assert.equal((await bucketRows('By weekday')).length, days.length)
+  // Quick losses: independent count.
+  const losers = qa.filter(t => t.net_pnl < -0.005), known = losers.filter(t => t.bars != null), quick = known.filter(t => t.bars <= 1)
+  await page.getByRole('heading', { name: 'Losses closed within one bar' }).waitFor()
+  await a11y('deep dive')
+  assert.match(await page.locator('.hb-quick p').textContent(), new RegExp(`${quick.length} of ${known.length} losing trades`))
+  // Scatter: a dot per trade with a capital % and a result; Enter on a dot opens the trade.
+  const dots = page.locator('svg circle.hb-dot')
+  assert.equal(await dots.count(), qa.filter(t => t.capital_pct != null && t.pnl_pct != null).length)
+  await dots.first().focus(); await page.keyboard.press('Enter')
+  await page.getByRole('dialog', { name: 'Trade cycle details' }).waitFor()
+  assert.ok(qa.some(t => detailCalls.at(-1).path.endsWith(t.cycle_id)), 'the scatter dot opens one of the habit trades')
+  await page.getByRole('button', { name: 'Close trade details' }).click()
+  // Trade list: newest first; sorting by result puts the biggest loss first; Open works.
+  const tradeRows = page.locator('table.hb-trades tbody tr')
+  assert.equal(await tradeRows.count(), qa.length)
+  const newest = qa.reduce((a, t) => (t.entry_time > a.entry_time ? t : a))
+  assert.ok((await tradeRows.first().locator('th').textContent()).startsWith(newest.date))
+  await page.locator('table.hb-trades').getByRole('button', { name: /^P&L %/ }).click()
+  assert.equal(await page.locator('table.hb-trades th[aria-sort="descending"]').count(), 1)
+  await page.locator('table.hb-trades').getByRole('button', { name: /^P&L %/ }).click()   // ascending: the biggest loss first
+  const worst = qa.reduce((a, t) => (t.pnl_pct < a.pnl_pct ? t : a))
+  assert.ok((await tradeRows.first().locator('th').textContent()).startsWith(worst.date))
+  await tradeRows.first().getByRole('button', { name: /^Open trade/ }).click()
+  await page.getByRole('dialog', { name: 'Trade cycle details' }).waitFor(); await page.getByRole('button', { name: 'Close trade details' }).click()
+  await page.screenshot({ path: artifacts + '/habits-deep-dive.png' })
+  // Another habit, including the archived one, via the selector.
+  await page.locator('.hb-deep select').selectOption({ label: 'Entry · Old revenge habit (archived)' })
+  assert.equal(await tile('Trades'), String(ledgerTrades.filter(t => t.habits.includes('qd')).length))
+  assert.equal(await page.locator('.hb-verdict.low_sample').count() >= 1, true)
+  // Phone: no sideways page scroll, charts and tiles fit.
+  await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(300)
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no horizontal page scroll in the deep dive on a phone')
+  await page.locator('.hb-deep select').selectOption({ label: 'Entry · Chased the move' })
+  assert.ok((await page.locator('.hb-scatter svg').boundingBox()).width <= 390)
+  await page.locator('.hb-scatter').scrollIntoViewIfNeeded(); await page.screenshot({ path: artifacts + '/habits-phone-deep-dive.png' })
+  await page.setViewportSize({ width: 1280, height: 1000 }); await page.waitForTimeout(200)
   await page.getByRole('button', { name: 'Scorecard', exact: true }).click(); await page.locator('table.hb-table').first().waitFor()
 
   // Manage questions opens the manager; closing it reloads the ledger.

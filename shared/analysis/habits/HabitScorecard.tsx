@@ -4,7 +4,7 @@ import { metric, sortHabits, type HabitSummary, type SortKey, type StatMode, typ
 
 export type ColumnSet = 'results' | 'size'
 
-interface Column {
+export interface Column {
   key: SortKey
   label: (unit: Unit, mode: StatMode) => string
   title?: string
@@ -14,7 +14,7 @@ interface Column {
 }
 
 const avg = (mode: StatMode) => (mode === 'mean' ? 'Avg' : 'Median')
-const COLUMNS: Record<SortKey, Column> = {
+export const SCORE_COLUMNS: Record<SortKey, Column> = {
   text: { key: 'text', label: () => 'Habit', render: () => '' },
   trades: { key: 'trades', label: () => 'Trades', title: 'Closed trades carrying this habit', render: v => fmtNumber(v, 0) },
   days: { key: 'days', label: () => 'Days', title: 'Trading days with at least one trade carrying this habit', render: v => fmtNumber(v, 0) },
@@ -54,10 +54,12 @@ interface Props {
   columns: ColumnSet
   unit: Unit
   mode: StatMode
+  /** Opens the habit in the deep dive. */
+  onOpenHabit?: (questionId: string) => void
 }
 
 /** One row per habit, sortable by any column; the first column stays in view when the table scrolls on a phone. */
-export default function HabitScorecard({ habits, columns, unit, mode }: Props) {
+export default function HabitScorecard({ habits, columns, unit, mode, onOpenHabit }: Props) {
   const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'net', direction: 'asc' })
   const sortKey = SETS[columns].includes(sort.key) || sort.key === 'text' ? sort.key : 'trades'
   const rows = useMemo(() => sortHabits(habits, sortKey, sort.direction, unit, mode), [habits, sortKey, sort.direction, unit, mode])
@@ -66,7 +68,7 @@ export default function HabitScorecard({ habits, columns, unit, mode }: Props) {
     : { key, direction: key === 'text' ? 'asc' : 'desc' })
   const ariaSort = (key: SortKey) => (sortKey === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none') as 'ascending' | 'descending' | 'none'
   const header = (key: SortKey) => {
-    const column = COLUMNS[key]
+    const column = SCORE_COLUMNS[key]
     return (
       <th key={key} scope="col" aria-sort={ariaSort(key)} title={column.title}>
         <button type="button" onClick={() => choose(key)}>{column.label(unit, mode)}{sortKey === key ? (sort.direction === 'asc' ? ' ▲' : ' ▼') : ''}</button>
@@ -91,14 +93,16 @@ export default function HabitScorecard({ habits, columns, unit, mode }: Props) {
             <tr key={summary.question_id} className={summary.status === 'archived' ? 'archived' : ''}>
               <th scope="row" className="hb-sticky">
                 <span className={`hb-kind ${summary.kind}`}>{summary.kind === 'entry' ? 'Entry' : 'Exit'}</span>
-                <span className="hb-name">{summary.text}</span>
+                {onOpenHabit
+                  ? <button type="button" className="hb-name hb-link" onClick={() => onOpenHabit(summary.question_id)} title="Open the deep dive for this habit" aria-label={`Deep dive: ${summary.text}`}>{summary.text}</button>
+                  : <span className="hb-name">{summary.text}</span>}
                 {summary.status === 'archived' && <small className="pa-badge">Archived</small>}
               </th>
               {columns === 'results' && (
                 <td><span className={`hb-verdict ${summary.verdict}`} title={summary.verdict_reason}>{VERDICT_LABEL[summary.verdict]}</span></td>
               )}
               {SETS[columns].map(key => {
-                const column = COLUMNS[key]
+                const column = SCORE_COLUMNS[key]
                 const value = metric(summary, key, unit, mode) as number | null
                 return <td key={key} className={column.signed ? tint(value) : ''}>{column.render(value, unit)}</td>
               })}

@@ -4,6 +4,7 @@ import { useAnalysisEnvironment } from '../environment'
 import type { PerformanceFilters } from '../performance'
 import DivergingBars from './DivergingBars'
 import HabitCompare from './HabitCompare'
+import HabitDeepDive from './HabitDeepDive'
 import HabitScorecard, { type ColumnSet } from './HabitScorecard'
 import HabitTrends from './HabitTrends'
 import { fmtSigned } from './format'
@@ -21,7 +22,7 @@ interface Props {
 }
 
 type Kind = 'all' | 'entry' | 'exit'
-type Section = 'Scorecard' | 'Trends' | 'Compare'
+type Section = 'Scorecard' | 'Trends' | 'Compare' | 'Deep dive'
 const plural = (count: number, noun: string) => (count === 1 ? noun : `${noun}s`)
 
 /** Segmented control: one active option. */
@@ -47,6 +48,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
   const [unit, setUnit] = useState<Unit>('pct')
   const [columns, setColumns] = useState<ColumnSet>('results')
   const [section, setSection] = useState<Section>('Scorecard')
+  const [deepHabit, setDeepHabit] = useState<string | null>(null)
   const [managing, setManaging] = useState(false)
   const generation = useRef(0)
 
@@ -127,7 +129,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
           {overview.habits.length > 0 && (
             <>
               <nav className="hb-sections" aria-label="Habits sections">
-                {(['Scorecard', 'Trends', 'Compare'] as Section[]).map(id => (
+                {(['Scorecard', 'Trends', 'Compare', 'Deep dive'] as Section[]).map(id => (
                   <button key={id} type="button" aria-pressed={section === id} className={section === id ? 'active' : ''} onClick={() => setSection(id)}>
                     {id === 'Trends' ? 'Trends across days' : id === 'Compare' ? 'Compare periods' : id}
                   </button>
@@ -135,6 +137,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
               </nav>
               {section === 'Trends' && <HabitTrends trades={ledger.trades} overview={overview} unit={unit} mode={mode} onOpenTrade={onOpenTrade} />}
               {section === 'Compare' && <HabitCompare trades={ledger.trades} overview={overview} unit={unit} mode={mode} />}
+              {section === 'Deep dive' && <HabitDeepDive trades={ledger.trades} overview={overview} unit={unit} mode={mode} habitId={deepHabit ?? ordered[0]?.question_id ?? null} onSelectHabit={setDeepHabit} onOpenTrade={onOpenTrade} />}
               {section === 'Scorecard' && (
                 <>
                 <section className="pa-card">
@@ -152,7 +155,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
                       </p>
                     </div>
                   </div>
-                  <HabitScorecard habits={overview.habits} columns={columns} unit={unit} mode={mode} />
+                  <HabitScorecard habits={overview.habits} columns={columns} unit={unit} mode={mode} onOpenHabit={id => { setDeepHabit(id); setSection('Deep dive') }} />
                   {overview.habits.some(h => h.verdict === 'low_sample') && <p className="pa-footnote">Habits with fewer than 10 trades are marked “Low sample”: too few to judge.</p>}
                   {overview.idle.length > 0 && <p className="pa-footnote">Not marked on any trade in this period: {overview.idle.map(q => q.text).join(' · ')}</p>}
                 </section>

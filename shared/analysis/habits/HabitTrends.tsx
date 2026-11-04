@@ -89,6 +89,7 @@ export default function HabitTrends({ trades, overview, unit, mode, onOpenTrade 
           {dayRows.length === 0 ? <p className="pa-muted">None of the shown habits occurred on this day.</p> : (
             <div className="pa-table-wrap">
               <table>
+                <caption className="hb-visually-hidden">Trades on {day} carrying the shown habits</caption>
                 <thead><tr><th scope="col">Time</th><th scope="col">Instrument</th><th scope="col">Habits</th><th scope="col">P&amp;L</th><th scope="col">Capital %</th><th scope="col">Bars</th><th scope="col"><span className="hb-visually-hidden">Open</span></th></tr></thead>
                 <tbody>
                   {dayRows.map(t => (
