@@ -1,6 +1,7 @@
 import { rendererAccountKey, rendererPreferenceVersion, publishRenderer } from './websiteChartPreferences'
 import { publishAnalysisRenderer } from './analysisRendererPreference'
 import { publishAnalysisLabelView } from './analysisLabelViewPreference'
+import { publishAnalysisPnlMode } from './analysisPnlModePreference'
 import { isBrokerSnapshot } from '../brokerSnapshot'
 import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
@@ -536,6 +537,10 @@ export interface RoundTrip {
   entry_trades: RoundTripTrade[]
   exit_trades: RoundTripTrade[]
   pnl: number
+  /** Net P&L as % of the session capital; null when capital is unknown. */
+  pnl_pct?: number | null
+  /** Most capital in use at any one moment of the round trip, % of the session capital. */
+  max_capital_pct?: number | null
 }
 
 export type BehaviorKind = 'entry' | 'exit'
@@ -1819,6 +1824,7 @@ const api = {
     if(renderer!==undefined&&renderer!==(settings.website_chart_renderer??'lightweight'))settings={...settings,website_chart_renderer:renderer}
     publishAnalysisRenderer(settings.website_analysis_chart_renderer,rendererOwner)
     publishAnalysisLabelView(settings.analysis_label_view)
+    publishAnalysisPnlMode(settings.desktop_pnl_display_mode)
     return settings
   },
 
@@ -1837,6 +1843,7 @@ const api = {
     publishRenderer(data.website_chart_renderer,rendererOwner)
     publishAnalysisRenderer(data.website_analysis_chart_renderer,rendererOwner)
     publishAnalysisLabelView(data.analysis_label_view)
+    publishAnalysisPnlMode(data.desktop_pnl_display_mode)
     window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: data }))
     return data
   },

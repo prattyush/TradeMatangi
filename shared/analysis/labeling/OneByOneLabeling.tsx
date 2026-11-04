@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import type { TradeLabel } from '../api'
-import { contractName, isLabeled, legsText, money, tripKey, type LabeledRoundTrip } from './model'
+import { contractName, isLabeled, legsText, peakCapitalText, pnlText, pnlTitle, tripKey, type LabeledRoundTrip, type PnlDisplayMode } from './model'
 import type { SaverState } from './saver'
 
 const RT_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff', '#f85149', '#79c0ff', '#a371f7', '#f778ba', '#7ee787']
@@ -12,6 +12,7 @@ interface Props {
   labels: Map<string, TradeLabel>
   busy: boolean
   readOnly: boolean
+  pnlMode?: PnlDisplayMode
   save: SaverState
   /** Shown beside the counter: view switch, maximize. */
   controls: ReactNode
@@ -28,7 +29,7 @@ const typing = (target: EventTarget | null) => {
 }
 
 /** Header, trade summary and save status of the one-round-trip-at-a-time view. The label fields are its children. */
-export default function OneByOneLabeling({ trips, index, sessionCount, labels, busy, readOnly, save, controls, children, active, onGo, onRetry }: Props) {
+export default function OneByOneLabeling({ trips, index, sessionCount, labels, busy, readOnly, pnlMode, save, controls, children, active, onGo, onRetry }: Props) {
   const total = trips.length
   const rt = trips[index]
 
@@ -60,7 +61,8 @@ export default function OneByOneLabeling({ trips, index, sessionCount, labels, b
         <div className="tl-meta">
           <span className="tl-dot" style={{ background: RT_COLORS[rt.index % RT_COLORS.length] }} />
           <span className="tl-contract">RT#{rt.index} — {contractName(rt)}</span>
-          <span className={`tl-pnl ${up ? 'up' : down ? 'down' : ''}`}>{money(rt.pnl)}</span>
+          <span className={`tl-pnl ${up ? 'up' : down ? 'down' : ''}`} title={pnlTitle(rt)}>{pnlText(rt, pnlMode)}</span>
+          {peakCapitalText(rt) && <span className="tl-peak" title="The most capital this trade had in use at any one time (open lots at cost, as % of the session capital)">{peakCapitalText(rt)}</span>}
           <span className="tl-grow" />
           {controls}
         </div>
@@ -69,7 +71,7 @@ export default function OneByOneLabeling({ trips, index, sessionCount, labels, b
             {trips.map((trip, position) => (
               <button key={tripKey(trip)} type="button" disabled={busy}
                 className={`tl-chip ${trip.pnl > 0 ? 'up' : trip.pnl < 0 ? 'down' : ''} ${position === index ? 'current' : ''} ${isLabeled(labels.get(tripKey(trip))) ? 'done' : ''}`}
-                aria-current={position === index ? 'true' : undefined} title={`RT#${trip.index} · ${contractName(trip)} · ${money(trip.pnl)}`}
+                aria-current={position === index ? 'true' : undefined} title={`RT#${trip.index} · ${contractName(trip)} · ${pnlText(trip, pnlMode)}`}
                 onClick={() => onGo(position)}>{position + 1}</button>
             ))}
           </div>

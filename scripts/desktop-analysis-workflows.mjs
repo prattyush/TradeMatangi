@@ -27,7 +27,7 @@ const session={session_id:cycle.session_id,user_id:'alice',symbol:'NIFTY',date:c
 const extraSession={...session,session_id:'shared-real',user_id:'bob',session_type:'real',shared:true,owner_email:'bob@example.com'}
 const ordersOnly={...session,session_id:'orders-only',session_type:'real',trade_count:0,round_trip_count:0,buy_count:0,sell_count:0,net_pnl:0,pnl_pct:0,total_commission:0}
 const rows=Array.from({length:125},(_,i)=>({time:start+i*180,open:100,high:102,low:88,close:99}))
-const trip={index:0,right:'CE',pnl:cycle.net_pnl,entry_trades:[{...trades[0],quantity:entryTotal,commission:entryFee,trade_id:trades[0].stored_trade_id}],exit_trades:[{...trades[1],trade_id:trades[1].stored_trade_id}]}
+const trip={index:0,right:'CE',pnl:cycle.net_pnl,pnl_pct:0.67,max_capital_pct:2.5,entry_trades:[{...trades[0],quantity:entryTotal,commission:entryFee,trade_id:trades[0].stored_trade_id}],exit_trades:[{...trades[1],trade_id:trades[1].stored_trade_id}]}
 let behaviorPosts=[],labelView='all',twoTrips=false,settingsPuts=[],labels=[],snapshots=[],shareEmails=[],deleted=false,failDelete=false,failSnapshots=false,failLabels=false,failCompare=false,failExport=false
 const captured={current_price:100,current_price_ce:100,current_price_pe:90,bar_time:Math.floor(trades[0].timestamp/180)*180,bar_ohlc:{open:99,high:101,low:98,close:100},bar_observation_resolution_seconds:1,position:{side:'FLAT',quantity:0,avg_entry_price:0,pnl:0,pnl_pct:0},position_ce:{side:'LONG',quantity:65,avg_entry_price:100,pnl:0,pnl_pct:0},position_pe:{side:'FLAT',quantity:0,avg_entry_price:0,pnl:0,pnl_pct:0},combined_pnl:0,combined_pnl_pct:0,session_pnl:0,session_pnl_pct:0,wallet_balance:90000,session_capital:100000,wallet_used_pct:10,active_positions:1,open_orders:[],strike_ce:25000,strike_pe:25000,expiry:'2026-10-08',event_timestamp:trades[0].timestamp,quantity_mode:'quantity',filled_trades:trades.filter(t=>t.side==='BUY')}
 snapshots=[{event_id:'later',session_id:session.session_id,user_id:'alice',symbol:'NIFTY',date:cycle.date,instrument_type:'options',session_type:'paper',timestamp:trades[1].timestamp,event:{type:'order_filled',description:'Exit recorded',details:{}},snapshot:captured},{event_id:'earlier',session_id:session.session_id,user_id:'alice',symbol:'NIFTY',date:cycle.date,instrument_type:'options',session_type:'paper',timestamp:trades[0].timestamp,event:{type:'order_filled',description:'Entry recorded',details:{}},snapshot:captured}]
@@ -66,7 +66,7 @@ try{
   else if(path.endsWith('/screens'))value={screens:[]}
   else if(path.endsWith('/catalogue'))value={instruments:[{symbol:'NIFTY',display_name:'NIFTY 50',exchange:'NSE',chart_type:'index',option_eligible:true,supported_intervals:[1,3,15]}]}
   else if(path.endsWith('/historical/pages'))value={candles:[],available:true}
-  else if(path.endsWith('/settings/current')){if(method==='PUT'){settingsPuts.push(route.request().postDataJSON().settings);labelView=route.request().postDataJSON().settings.analysis_label_view??labelView}value={analysis_label_view:labelView}}
+  else if(path.endsWith('/settings/current')){if(method==='PUT'){settingsPuts.push(route.request().postDataJSON().settings);labelView=route.request().postDataJSON().settings.analysis_label_view??labelView}value={analysis_label_view:labelView,desktop_pnl_display_mode:'percent'}}
   else if(path.endsWith('/chart-settings'))value={settings:{}}
   else if(path.endsWith('/candidate'))value={status:'none'}
   else if(path.endsWith('/drawings'))value={drawings:[]}
@@ -111,6 +111,7 @@ try{
  await page.getByRole('group',{name:'Label view'}).getByRole('button',{name:'One at a time'}).click();assert.deepEqual(settingsPuts.at(-1),{analysis_label_view:'one_by_one'})
  await page.getByText('Trade 1 of 2',{exact:true}).waitFor()
  assert.equal(await page.getByRole('button',{name:'Previous trade'}).isDisabled(),true)
+ assert.equal(await page.locator('.tl-peak').textContent(),'Peak 2.50% of capital');assert.equal(await page.locator('.tl-pnl').textContent(),'+0.67%','P&L follows the desktop percent display setting')
  assert.equal(await page.getByRole('button',{name:'Save Labels',exact:true}).count(),0)
  await page.locator('input[list^="et-"]').first().fill('FIRST TAG')
  await page.getByRole('button',{name:'Next trade'}).click()

@@ -45,6 +45,8 @@ export interface AnalysisEnvironment {
   labelView?: 'one_by_one' | 'all'
   /** Persists the user's choice; the host owns the settings transport. */
   onLabelViewChange?: (view: 'one_by_one' | 'all') => void | Promise<unknown>
+  /** User setting `desktop_pnl_display_mode`: Label Trades shows P&L as % of capital or as money. Absent => money. */
+  pnlDisplayMode?: 'currency' | 'percent'
   dataRevision?: number
   onDataChanged?: () => void
   onLabelSavingChange?: (saving: boolean) => void
