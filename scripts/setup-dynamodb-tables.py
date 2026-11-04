@@ -420,6 +420,43 @@ TABLES = [
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
+    # ── Phase 23 Manual Behavioral Analysis ──────────────────────────────────
+    {
+        "TableName": "BehaviorQuestions",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "question_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "question_id", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
+        "TableName": "BehaviorMarks",
+        "KeySchema": [
+            {"AttributeName": "session_id", "KeyType": "HASH"},
+            {"AttributeName": "mark_key", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "session_id", "AttributeType": "S"},
+            {"AttributeName": "mark_key", "AttributeType": "S"},
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "date", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "UserIdDateIndex",
+                "KeySchema": [
+                    {"AttributeName": "user_id", "KeyType": "HASH"},
+                    {"AttributeName": "date", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "ALL"},
+            }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
 ]
 
 

@@ -52,14 +52,18 @@ The user labels how many times a behavior was demonstrated in a trading day, e.g
 
 ### 3.1 Data model (new DynamoDB tables)
 
-- `BehaviorQuestions`: PK `user_id`, SK `question_id`. Attributes `kind` (`entry`|`exit`), `text` (≤140), `status` (`active`|`archived`), `sort_order`, `created_at`, `archived_at`. Never hard-deleted.
+- `BehaviorQuestions`: PK `user_id`, SK `question_id`. Attributes `kind` (`entry`|`exit`), `text` (≤140), `status` (`active`|`archived`), `sort_order`, `created_at`, `archived_at`. Never hard-deleted. The **type is fixed for the life of a question** (decided in Sprint 1, simpler and stricter than "locked once marks exist"): to change a type, archive the question and add a new one; text can be edited.
 - `BehaviorMarks`: PK `session_id`, SK `"{round_trip_index:05d}#{question_id}"`; attributes `user_id`, `date`, `symbol`, `session_type`, `round_trip_index`, `question_id`, `kind`, `marked_at`; GSI `UserIdDateIndex` (`user_id`, `date`). Only "yes" is stored; "no" deletes the row.
 
 ### 3.2 API (`/api/behavior`)
 
 `GET questions?include_archived=` · `POST questions` · `POST questions/{id}/update` · `POST questions/{id}/archive` · `POST questions/{id}/restore` · `GET marks?session_id=` · `POST marks` · `GET stats` · `GET marks/by-question`. Desktop reaches the same service through the analysis proxy (analysis screens) and `/api/desktop/v1/trading/...` (in-session).
 
-Rules: text trimmed and unique (case-insensitive) among active questions; kind cannot change once marks exist; at most 40 active questions; only active questions can be newly marked; writes are owner-only.
+Rules: text trimmed and unique (case-insensitive) among active questions of the same type; kind cannot be changed; at most 40 active questions; only active questions can be newly marked (an archived question's existing marks can be kept or cleared); writes are owner-only, reads follow shared-history access. `POST marks` takes `answers: {question_id: bool}`: true sets, false clears, both idempotent. `GET stats` returns only days that have at least one mark; the client zero-fills trading days. Validation errors are HTTP 400, unknown question/session 404.
+
+Settings: `analysis_label_view` (`one_by_one` default | `all`) in `UserSettings`, shared by all clients.
+
+Known v1 limits: marks of two linked real sessions for the same day are counted separately (labels de-duplicate those through the canonical session; revisit if linked real screens show doubled counts); `get_stats` is a GSI query, not a pre-aggregated table.
 
 ### 3.3 UI
 
@@ -72,8 +76,8 @@ Rules: text trimmed and unique (case-insensitive) among active questions; kind c
 
 | Sprint | Scope | Status |
 |---|---|---|
-| 0 | Docs and scaffolding | In progress |
-| 1 | Backend foundation | Not started |
+| 0 | Docs and scaffolding | PR #751 |
+| 1 | Backend foundation | Implemented (this PR): tables, service, router, setting, cleanup/maintenance/setup script, 27 new tests; full backend suite 2830 passed, 3 failed (the same 3 swing tests fail on unchanged `origin/dev`: `test_swing_api::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]`) |
 | 2 | Desktop transport and real labels | Not started |
 | 3 | Analysis one-by-one core | Not started |
 | 4 | Charts, responsive and webapp | Not started |

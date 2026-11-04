@@ -5,7 +5,7 @@ Requirements and design: [spec-phase23.md](spec-phase23.md). Work is on `dev` on
 ## Decisions and boundaries
 
 - Behavior answers are yes/no per round trip; stored as rows only for "yes" in a new `BehaviorMarks` table. Existing `TradeLabels` writes and the real-session label projection (`real_broker_state.encode_label_fields`) are not modified.
-- Questions live in `BehaviorQuestions` (per user), have a kind (`entry`/`exit`), and are archived/unarchived, never deleted.
+- Questions live in `BehaviorQuestions` (per user), have a kind (`entry`/`exit`) that never changes (archive and re-add to change it), and are archived/unarchived, never deleted. `BehaviorMarks` is created lazily; session cascade delete tolerates its absence.
 - New analysis-proxy routes are GET/POST only (the desktop Rust command supports no PUT/PATCH) and must be added to all three allowlists: `backend/app/routers/desktop_analysis.py`, `windowsapp/src/analysisApi.ts`, `windowsapp/src-tauri/src/lib.rs`. Desktop in-session routes go under `trading/...` (no allowlist).
 - Label Trades one-by-one auto-saves only trades the user edited; untouched trades are never written.
 - Out of scope in v1: swing portfolios, TradeHistory "Behavior" column, per-trade-rate (percentage) stats.
@@ -15,8 +15,8 @@ Requirements and design: [spec-phase23.md](spec-phase23.md). Work is on `dev` on
 
 | Sprint | Work | Acceptance | Status |
 |---|---|---|---|
-| 0 | Spec + implementation plan docs; CLAUDE.md phase row | Every requirement maps to a sprint and verification scenario | In progress |
-| 1 | Backend: tables, behavior service/router, `analysis_label_view` setting, session cleanup + ddb maintenance, setup script | pytest: CRUD/archive/restore, validation, ownership, mark idempotency, stats pagination, cascade delete, settings default | Not started |
+| 0 | Spec + implementation plan docs; CLAUDE.md phase row | Every requirement maps to a sprint and verification scenario | PR #751 |
+| 1 | Backend: tables, behavior service/router, `analysis_label_view` setting, session cleanup + ddb maintenance, setup script | pytest: CRUD/archive/restore, validation, ownership, mark idempotency, stats pagination, cascade delete, settings default | Implemented; `tests/test_behavior.py` (27 tests) |
 | 2 | Desktop transport (3 allowlists), `desktop_trading` behavior routes, desktop real label state, capability flag | `cargo test`, vitest allowlist, pytest desktop real state/save; indices match website for same real session | Not started |
 | 3 | Label Trades one-by-one core: split component, Prev/Next, strip, auto-save, setting plumbing, marker filtering by round trip | vitest helper/autosave tests; updated Playwright scripts; untouched trades never saved | Not started |
 | 4 | Charts: `focusTime`, strike-chart marker text (Lightweight + KLine), stacked panes, `labeling.css`, webapp phone layout | Markers on Underlying and strike chart for the viewed trade; screenshots at 1440/900/390 px; webapp phone spec | Not started |
