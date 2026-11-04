@@ -462,6 +462,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   // Trade analysis price source: "options" (CE/PE OHLC) or "underlying" (NIFTY OHLC)
   const [analysisPriceSource, setAnalysisPriceSource] = useState<'options' | 'underlying'>('options')
+  const [analysisLabelView, setAnalysisLabelView] = useState<'one_by_one' | 'all'>('one_by_one')
 
   // Experimental: live pattern detection
   const [experimentalPatternsEnabled, setExperimentalPatternsEnabled] = useState(false)
@@ -606,6 +607,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         }
         if (s.analysis_price_source === 'underlying' || s.analysis_price_source === 'options') {
           setAnalysisPriceSource(s.analysis_price_source)
+        }
+        if (s.analysis_label_view === 'one_by_one' || s.analysis_label_view === 'all') {
+          setAnalysisLabelView(s.analysis_label_view)
         }
         if (s.experimental_patterns_enabled != null) {
           setExperimentalPatternsEnabled(s.experimental_patterns_enabled)
@@ -1991,6 +1995,34 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </div>
                   <div style={{ fontSize: 11, color: '#484f58' }}>
                     OHLC data used for Trade Analysis pattern detection in options sessions
+                  </div>
+                </div>
+
+                {/* Label Trades view */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>LABEL TRADES VIEW</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    {([['one_by_one', 'One trade at a time'], ['all', 'All trades together']] as const).map(([view, text]) => (
+                      <button
+                        key={view}
+                        onClick={() => {
+                          void savePreference({ analysis_label_view: view }, () => {
+                            setAnalysisLabelView(view)
+                          })
+                        }}
+                        style={{
+                          padding: '5px 14px',
+                          background: analysisLabelView === view ? '#1f6feb' : '#21262d',
+                          border: `1px solid ${analysisLabelView === view ? '#1f6feb' : '#30363d'}`,
+                          borderRadius: 6, color: '#e6edf3', cursor: 'pointer', fontSize: 12,
+                        }}
+                      >
+                        {text}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#484f58' }}>
+                    Analysis → Label Trades: step through round trips with Prev/Next (changes save automatically), or list every trade with a Save button
                   </div>
                 </div>
 

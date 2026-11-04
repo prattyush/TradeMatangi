@@ -1,5 +1,6 @@
 import { rendererAccountKey, rendererPreferenceVersion, publishRenderer } from './websiteChartPreferences'
 import { publishAnalysisRenderer } from './analysisRendererPreference'
+import { publishAnalysisLabelView } from './analysisLabelViewPreference'
 import { isBrokerSnapshot } from '../brokerSnapshot'
 import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
@@ -1766,6 +1767,7 @@ const api = {
     const renderer=publishRenderer(settings.website_chart_renderer,rendererOwner,rendererVersion)
     if(renderer!==undefined&&renderer!==(settings.website_chart_renderer??'lightweight'))settings={...settings,website_chart_renderer:renderer}
     publishAnalysisRenderer(settings.website_analysis_chart_renderer,rendererOwner)
+    publishAnalysisLabelView(settings.analysis_label_view)
     return settings
   },
 
@@ -1783,6 +1785,7 @@ const api = {
     cacheSharedSettings(data, localStorage)
     publishRenderer(data.website_chart_renderer,rendererOwner)
     publishAnalysisRenderer(data.website_analysis_chart_renderer,rendererOwner)
+    publishAnalysisLabelView(data.analysis_label_view)
     window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: data }))
     return data
   },

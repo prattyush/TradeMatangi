@@ -31,6 +31,22 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
   },[drawingRequest])
   const swingRequest=useCallback<SwingRequest>((path,method,body)=>drawingRequest(`swing/portfolios/${path}`,method,body),[drawingRequest])
   const swingRenderer=useCallback((props:SwingChartProps)=><SwingChart {...props} drawingRequest={drawingRequest}/>,[drawingRequest])
+  // Label Trades layout lives in the shared user settings (the website reads the same record).
+  const [labelView, setLabelView] = useState<'one_by_one' | 'all'>('one_by_one')
+  useEffect(() => {
+    if (!active) return // re-read when the user comes back to Analysis: Settings may have changed it
+    let cancelled = false
+    void drawingRequest<{ analysis_label_view?: string }>('trading/settings/current', 'GET').then(value => {
+      if (!cancelled && (value.analysis_label_view === 'one_by_one' || value.analysis_label_view === 'all')) setLabelView(value.analysis_label_view)
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [drawingRequest, active])
+  const onLabelViewChange = useCallback(async (next: 'one_by_one' | 'all') => {
+    const previous = labelView
+    setLabelView(next)
+    try { await drawingRequest('trading/settings/current', 'PUT', { settings: { analysis_label_view: next } }) }
+    catch (error) { setLabelView(previous); throw error }
+  }, [drawingRequest, labelView])
   const [statsVisited, setStatsVisited] = useState(false)
   const mountVersion = useRef(0)
   const dirty = useRef(false)
@@ -67,7 +83,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return () => window.removeEventListener('keydown', escape, true)
   }, [active, trade])
   const environment: AnalysisEnvironment = useMemo(() => ({
-    swingRequest, drawingRequest, resolveSymbolInstrument, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays,
+    swingRequest, drawingRequest, resolveSymbolInstrument, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, onLabelViewChange,
     onDataChanged: () => setDataRevision(n => n + 1),
     onLabelSavingChange: saving => { labelSaving.current = saving; if(!saving)setNavigationMessage('') },
     charts: { SwingChart:swingRenderer,AnalysisChartPanel: AnalysisPanels, LabelCharts: AnalysisPanels, AnalysisChart: DesktopAnalysisChart, OptionsChart: DesktopAnalysisChart, SnapshotChart: DesktopAnalysisChart, SnapshotOptionsChart: DesktopAnalysisChart, TradesChart: ComparisonChart, PatternChart: ComparisonChart },
@@ -75,7 +91,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     onDirtyChange: value => { dirty.current = value },
     confirmDiscard: () => { if(labelSaving.current){setNavigationMessage('Labels are saving. Wait for the result before changing sessions.');return false}; if (!dirty.current || window.confirm('Discard unsaved labels?')) { dirty.current = false; return true }; return false },
     onSelectionContextChange: () => setTrade(null),
-  }), [adapter, active, dataRevision,historicalDays,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
+  }), [adapter, active, dataRevision,historicalDays,labelView,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
   const navigationReady = useRef(onNavigationReady);
   navigationReady.current = onNavigationReady;
   const guard = useRef(environment.confirmDiscard);

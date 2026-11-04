@@ -37,6 +37,10 @@ export interface AnalysisEnvironment {
   intervalMinutes?: number
   setIntervalMinutes?: (minutes: number) => void
   historicalDays?: number
+  /** Label Trades layout (user setting `analysis_label_view`); absent => one trade at a time. */
+  labelView?: 'one_by_one' | 'all'
+  /** Persists the user's choice; the host owns the settings transport. */
+  onLabelViewChange?: (view: 'one_by_one' | 'all') => void | Promise<unknown>
   dataRevision?: number
   onDataChanged?: () => void
   onLabelSavingChange?: (saving: boolean) => void

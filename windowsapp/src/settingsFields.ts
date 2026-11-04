@@ -115,6 +115,7 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       'options',
       'underlying'
     ]),
+    select('analysis_label_view', 'Label Trades view', ['one_by_one', 'all']),
     toggle('experimental_patterns_enabled', 'Experimental pattern detection')
   ],
   Strategies: [
