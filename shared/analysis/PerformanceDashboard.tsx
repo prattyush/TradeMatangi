@@ -868,7 +868,7 @@ export default function PerformanceDashboard(props: Props) {
             <button onClick={() => setRefresh((r) => r + 1)}>Retry</button>
           </div>
         )}
-        {view === "Habits" && <HabitsView filters={filters} refresh={refresh} />}
+        {view === "Habits" && <HabitsView filters={filters} refresh={refresh} onOpenTrade={(identity) => void showDetail(identity)} />}
         {loading && !report && view !== "Habits" && <p role="status">Reading your executions…</p>}
         {report && view !== "Habits" && (
           <>

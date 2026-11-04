@@ -86,8 +86,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 5 | Behavior questions manager + Analysis marks | Merged (PR #756) — see §8 |
 | 6 | Live labeling | Merged (PR #757) — see §9 |
 | 7a | Habits: ledger backend + transports | Merged (PR #758) — §10.7 |
-| 7b | Habits: stats engine + scorecard | Implemented (this PR) — §10.8 |
-| 7c | Habits: trends across days + period comparison | Not started |
+| 7b | Habits: stats engine + scorecard | Merged (PR #759) — §10.8 |
+| 7c | Habits: trends across days + period comparison | Implemented (this PR) — §10.9 |
 | 7d | Habits: single-habit deep dive + polish | Not started |
 | 8 | Hardening and close-out | Not started |
 
@@ -273,6 +273,27 @@ Verification includes a backend test that **ledger totals reconcile with the Sta
 - `scripts/habits-browser-check.mjs` (new) on a deterministic 10-day ledger (`scripts/habits-ledger-fixture.mjs`; expectations computed by independent plain loops): row order, net/loss/profit %, trades and verdicts per habit, chart rows, coverage, idle habits, every control (unit, mean/median, type, archived, columns, sorting), the manager, empty states, and the 390 px phone layout (no sideways page scroll, table scrolls inside, habit column pinned). Screenshots in `.cache/habits-validation/`.
 - `scripts/desktop-analysis-workflows.mjs`: Habits through the desktop Analysis proxy (scorecard order, ledger GET). `phase20-browser-check.mjs` still passes (its missing `nodePaths` was added). Whole webapp suite 23; all three TypeScript checks pass.
 - Not in this PR: trends across days, period comparison (7c); the single-habit deep dive (7d).
+
+### 10.9 Sprint 7c — trends across days and period comparison (implemented)
+The Habits tab now has three sections (**Scorecard | Trends across days | Compare periods**); the type, Mean/Median, %/₹ and archived controls apply to all of them.
+
+**Engine** — `shared/analysis/habits/habitSeries.ts` (pure):
+- `tradingDays` (the chart axis: every day with a closed trade in the filters), `lastPeriods(days, n)` (the last *n* trading days vs the *n* before; the earlier period may be shorter; null when nothing precedes), `customPeriods` (two inclusive ranges that each contain trading days).
+- `daySeries(trades, days, habit, metric, unit, mode)`: metrics **occurrences, net, loss, profit, capital %, bars held, closed within 1 bar, entries per trade, exits per trade**. Counts and sums are **0** on a day without the habit; averages and shares are **gaps (null), never 0**. `rollingMean` (5 days) ignores gaps.
+- `compareHabit(trades, habit, before, recent, unit, mode, verdict)` → for **trades per day, net, loss, capital %, bars, ≤1 bar, entries, exits**: `before`, `recent`, `delta` and a `tone`; plus the **flag**.
+- `toneFor`: green/red only for results (net up, loss closer to 0) and, for a habit whose verdict is Costly or Rewarding, how often it happens (fewer is good for a Costly habit, more for a Rewarding one); capital, bars, ≤1 bar and entries/exits stay neutral (shown with the arrow).
+- **Flag** = three components, each +1 better / −1 worse / 0 (a change of at least 10%): (1) **loss per trading day**, (2) **frequency** (trades per day), (3) **capital %**. For a Costly habit less is better, for a Rewarding habit more is better, for a Mixed habit (2) and (3) are not judged. **Improving**: total ≥ +1 and loss not worse; **Worse**: total ≤ −1 and loss not better; **Mixed**: signals disagree (e.g. "losses shrank but you now size it bigger"); **Same**: nothing moved; **Too few trades**: fewer than 3 in either period. The chip's tooltip lists the three components in words, so "still taking it, but with less capital" is visible as *Improving* with the capital arrow.
+- `daysWithWithout`: the average **day** net (all that day's trades) on days the habit occurred vs the other days, and the difference.
+
+**UI**
+- **Trends:** metric selector (help text states how empty days are shown), legend chips (up to the 4 most frequent habits are on by default), optional **5-day average**, a multi-series line chart (`MultiLineChart`: gridlines with 0 emphasised, date axis, a gap breaks the line). Hover or ←/→/Home/End pick a day, with a live readout of every shown habit's value for that day; click or Enter **selects the day** and lists the shown habits' trades that day (time, instrument, habits, P&L, capital %, bars) with **Open**, which opens the dashboard's cycle drawer. The chart's `aria-label` states metric, unit and habits.
+- **Compare:** presets **Last 5 / 10 / 20 days vs before** or **Custom** (four date pickers), the two ranges with their trading-day counts, then a table per habit: Trend flag, trades, per day, net, loss, capital %, bars held, ≤1 bar, entries, exits, each as *before → recent* with a coloured delta; a footnote spells out the rules; below it the **days with vs without** table.
+- Both charts draw in **real pixels** (`useWidth`): text stays readable on a phone, and the scorecard's diverging chart switches to a compact layout (habit name above its bar) under 640 px. A pressed segmented button keeps its highlight while hovered.
+
+**Verification**
+- `windowsapp/src/habitSeries.test.ts` (12, hand-computed): trading days, period splitting and custom ranges, every series metric incl. zero-fill vs gaps and rupee/% handling, rolling mean with gaps, flags (improving, worse, mixed, same, too few, rewarding, mixed habit), tones, days with/without. vitest total 369.
+- `scripts/habits-browser-check.mjs` extended (fixture expectations by independent loops): chips and metric switching, capital % readout per day via keyboard (first/last day), archived habit gap (—) vs occurrence 0, legend toggling, 5-day average and ₹ in the chart description, day selection → trade list → cycle drawer request (session and cycle id), compare presets (10-vs-10 impossible message, 5 vs before), flags per habit (Improving / Same / Same / Too few), per-day and capital cells, days with/without, custom ranges, and phone layout for both new sections (no sideways page scroll, table scrolls inside, chart scales). Desktop workflow script and `phase20-browser-check.mjs` still pass; whole webapp suite 23; all three TypeScript checks pass.
+- Not in this PR: the single-habit deep dive (buckets, scatter, trade list) — 7d.
 
 ## Appendix — original requirement text (free hand, as written)
 

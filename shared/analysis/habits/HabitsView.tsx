@@ -3,7 +3,9 @@ import BehaviorManagerModal from '../behavior/BehaviorManagerModal'
 import { useAnalysisEnvironment } from '../environment'
 import type { PerformanceFilters } from '../performance'
 import DivergingBars from './DivergingBars'
+import HabitCompare from './HabitCompare'
 import HabitScorecard, { type ColumnSet } from './HabitScorecard'
+import HabitTrends from './HabitTrends'
 import { fmtSigned } from './format'
 import { summarize, worstFirst, type StatMode, type Unit } from './habitStats'
 import type { HabitLedger } from './types'
@@ -14,9 +16,12 @@ interface Props {
   filters: PerformanceFilters
   /** Bumped by the dashboard's Refresh button. */
   refresh: number
+  /** Opens the trade's detail drawer (the dashboard's own). */
+  onOpenTrade?: (identity: { session_id: string; cycle_id: string }) => void
 }
 
 type Kind = 'all' | 'entry' | 'exit'
+type Section = 'Scorecard' | 'Trends' | 'Compare'
 const plural = (count: number, noun: string) => (count === 1 ? noun : `${noun}s`)
 
 /** Segmented control: one active option. */
@@ -29,7 +34,7 @@ function Segmented<T extends string>({ label, value, options, onChange }: { labe
 }
 
 /** Stats → Habits: which habits cost you and which pay, from the trade ledger for the dashboard's filters. */
-export default function HabitsView({ filters, refresh }: Props) {
+export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
   const environment = useAnalysisEnvironment()
   const getLedger = environment.performance.getHabitLedger
   const [ledger, setLedger] = useState<HabitLedger | null>(null)
@@ -41,6 +46,7 @@ export default function HabitsView({ filters, refresh }: Props) {
   const [mode, setMode] = useState<StatMode>('mean')
   const [unit, setUnit] = useState<Unit>('pct')
   const [columns, setColumns] = useState<ColumnSet>('results')
+  const [section, setSection] = useState<Section>('Scorecard')
   const [managing, setManaging] = useState(false)
   const generation = useRef(0)
 
@@ -80,7 +86,7 @@ export default function HabitsView({ filters, refresh }: Props) {
           <Segmented label="Habit type" value={kind} onChange={setKind} options={[['all', 'All'], ['entry', 'Entry'], ['exit', 'Exit']]} />
           <Segmented label="Average" value={mode} onChange={setMode} options={[['mean', 'Mean'], ['median', 'Median']]} />
           <Segmented label="Unit" value={unit} onChange={setUnit} options={[['pct', '% of capital'], ['money', '₹']]} />
-          <Segmented label="Columns" value={columns} onChange={setColumns} options={[['results', 'Results'], ['size', 'Size & timing']]} />
+          {section === 'Scorecard' && <Segmented label="Columns" value={columns} onChange={setColumns} options={[['results', 'Results'], ['size', 'Size & timing']]} />}
           <label className="hb-check"><input type="checkbox" checked={includeArchived} onChange={event => setIncludeArchived(event.target.checked)} /> Include archived</label>
         </div>
       </section>
@@ -120,36 +126,49 @@ export default function HabitsView({ filters, refresh }: Props) {
 
           {overview.habits.length > 0 && (
             <>
-              <section className="pa-card">
-                <div className="pa-card-title">
-                  <div><h3>Which habit costs or earns the most</h3><p>Losses to the left, profits to the right, ◆ the net. Most destructive first.</p></div>
-                </div>
-                <DivergingBars habits={ordered} unit={unit} mode={mode} />
-              </section>
-              <section className="pa-card">
-                <div className="pa-card-title">
-                  <div>
-                    <h3>Scorecard</h3>
-                    <p>
-                      Click a heading to sort · across {overview.scope.trades} closed trades, net {unit === 'pct' ? fmtSigned(overview.scope.net_pct, 'pct') : fmtSigned(overview.scope.net_pnl, 'money')}
-                    </p>
+              <nav className="hb-sections" aria-label="Habits sections">
+                {(['Scorecard', 'Trends', 'Compare'] as Section[]).map(id => (
+                  <button key={id} type="button" aria-pressed={section === id} className={section === id ? 'active' : ''} onClick={() => setSection(id)}>
+                    {id === 'Trends' ? 'Trends across days' : id === 'Compare' ? 'Compare periods' : id}
+                  </button>
+                ))}
+              </nav>
+              {section === 'Trends' && <HabitTrends trades={ledger.trades} overview={overview} unit={unit} mode={mode} onOpenTrade={onOpenTrade} />}
+              {section === 'Compare' && <HabitCompare trades={ledger.trades} overview={overview} unit={unit} mode={mode} />}
+              {section === 'Scorecard' && (
+                <>
+                <section className="pa-card">
+                  <div className="pa-card-title">
+                    <div><h3>Which habit costs or earns the most</h3><p>Losses to the left, profits to the right, ◆ the net. Most destructive first.</p></div>
                   </div>
-                </div>
-                <HabitScorecard habits={overview.habits} columns={columns} unit={unit} mode={mode} />
-                {overview.habits.some(h => h.verdict === 'low_sample') && <p className="pa-footnote">Habits with fewer than 10 trades are marked “Low sample”: too few to judge.</p>}
-                {overview.idle.length > 0 && <p className="pa-footnote">Not marked on any trade in this period: {overview.idle.map(q => q.text).join(' · ')}</p>}
-              </section>
-              <details className="pa-card hb-help">
-                <summary>How these numbers are calculated</summary>
-                <ul>
-                  <li><b>% of capital</b> is each trade’s net result divided by the session’s capital; profit %, loss % and net % add those percentages over the trades with the habit.</li>
-                  <li><b>vs without</b> compares a typical trade with the habit to a typical trade without it, in the same period and filters.</li>
-                  <li><b>If skipped</b> is the net you would have gained or given up by not taking the habit’s trades.</li>
-                  <li><b>Share of losses/profits</b> is the part of all losing/winning % that came from the habit’s trades. A trade can carry several habits, so shares overlap.</li>
-                  <li><b>Capital %</b> is the capital deployed on the trade (all entries together); <b>bars held</b> counts the candles the trade touched — entering and exiting inside one candle is 1 bar.</li>
-                  <li><b>Costly</b>: net negative and a worse average than your other trades. <b>Rewarding</b>: net positive and a better average. <b>Mixed</b> otherwise. Fewer than 10 trades is <b>Low sample</b>. Verdicts use means.</li>
-                </ul>
-              </details>
+                  <DivergingBars habits={ordered} unit={unit} mode={mode} />
+                </section>
+                <section className="pa-card">
+                  <div className="pa-card-title">
+                    <div>
+                      <h3>Scorecard</h3>
+                      <p>
+                        Click a heading to sort · across {overview.scope.trades} closed trades, net {unit === 'pct' ? fmtSigned(overview.scope.net_pct, 'pct') : fmtSigned(overview.scope.net_pnl, 'money')}
+                      </p>
+                    </div>
+                  </div>
+                  <HabitScorecard habits={overview.habits} columns={columns} unit={unit} mode={mode} />
+                  {overview.habits.some(h => h.verdict === 'low_sample') && <p className="pa-footnote">Habits with fewer than 10 trades are marked “Low sample”: too few to judge.</p>}
+                  {overview.idle.length > 0 && <p className="pa-footnote">Not marked on any trade in this period: {overview.idle.map(q => q.text).join(' · ')}</p>}
+                </section>
+                <details className="pa-card hb-help">
+                  <summary>How these numbers are calculated</summary>
+                  <ul>
+                    <li><b>% of capital</b> is each trade’s net result divided by the session’s capital; profit %, loss % and net % add those percentages over the trades with the habit.</li>
+                    <li><b>vs without</b> compares a typical trade with the habit to a typical trade without it, in the same period and filters.</li>
+                    <li><b>If skipped</b> is the net you would have gained or given up by not taking the habit’s trades.</li>
+                    <li><b>Share of losses/profits</b> is the part of all losing/winning % that came from the habit’s trades. A trade can carry several habits, so shares overlap.</li>
+                    <li><b>Capital %</b> is the capital deployed on the trade (all entries together); <b>bars held</b> counts the candles the trade touched — entering and exiting inside one candle is 1 bar.</li>
+                    <li><b>Costly</b>: net negative and a worse average than your other trades. <b>Rewarding</b>: net positive and a better average. <b>Mixed</b> otherwise. Fewer than 10 trades is <b>Low sample</b>. Verdicts use means.</li>
+                  </ul>
+                </details>
+                </>
+              )}
             </>
           )}
         </>

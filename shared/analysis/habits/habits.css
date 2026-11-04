@@ -3,7 +3,7 @@
 .hb-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 4px; }
 .hb-segmented { display: inline-flex; border: 1px solid #334155; border-radius: 8px; overflow: hidden; }
 .hb-segmented button { border: 0 !important; border-radius: 0 !important; background: transparent; color: #94a3b8; padding: 5px 12px; font-size: 12px; cursor: pointer; }
-.hb-segmented button[aria-pressed='true'] { background: #a5b4fc; color: #0a1020; font-weight: 700; }
+.hb .hb-segmented button[aria-pressed='true'], .hb .hb-segmented button[aria-pressed='true']:hover { background: #a5b4fc; color: #0a1020; font-weight: 700; }
 .hb-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #94a3b8; }
 .hb-coverage { gap: 6px 18px; flex-wrap: wrap; }
 
@@ -24,7 +24,8 @@
 .hb-verdict.low_sample { background: #263041; color: #94a3b8; }
 .hb-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-.hb-diverging { width: 100%; max-height: 520px; }
+.hb-diverging-box { width: 100%; }
+.hb-diverging { display: block; max-width: 100%; }
 .hb-diverging .hb-axis { fill: #94a3b8; font-size: 12px; }
 .hb-diverging .hb-zero { stroke: #475569; stroke-width: 1.5; }
 .hb-diverging .hb-label { fill: #e2e8f0; font-size: 14px; }
@@ -45,3 +46,42 @@
   .hb-segmented button { padding: 6px 10px; }
   .hb-sticky { max-width: 150px; white-space: normal; }
 }
+
+/* Sections, trends and comparison */
+.hb-sections { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid #28354d; padding-bottom: 8px; overflow-x: auto; }
+.hb-sections button { background: transparent; border: 1px solid transparent; color: #94a3b8; border-radius: 8px; padding: 6px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.hb .hb-sections button.active, .hb .hb-sections button.active:hover { background: #1c2a46; border-color: #a5b4fc; color: #e2e8f0; font-weight: 700; }
+.hb-field { display: inline-flex; flex-direction: column; gap: 3px; font-size: 11px; color: #94a3b8; }
+.hb-legend { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.hb-chip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; font-size: 12px; cursor: pointer; background: #111a2b; color: #94a3b8; }
+.hb-chip.on { color: #e2e8f0; background: #18243d; }
+.hb-chip i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid; display: inline-block; }
+
+.hb-chart { outline: none; }
+.hb-chart:focus-visible { box-shadow: 0 0 0 2px #a5b4fc; border-radius: 8px; }
+.hb-chart svg { display: block; max-width: 100%; }
+.hb-chart .hb-grid { stroke: #29384c; stroke-width: 1; }
+.hb-chart .hb-grid.zero { stroke: #64748b; stroke-width: 1.5; }
+.hb-chart .hb-tick { fill: #94a3b8; font-size: 12px; }
+.hb-chart .hb-cursor { stroke: #a5b4fc; stroke-width: 1; stroke-dasharray: 4 4; opacity: .7; }
+.hb-chart .hb-selected-day { fill: #a5b4fc; opacity: .12; }
+.hb-chart .hb-hit { cursor: pointer; }
+.hb-readout { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0 0; font-size: 13px; color: #cbd5e1; }
+.hb-readout span { display: inline-flex; align-items: center; gap: 6px; }
+.hb-readout i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.hb-day { margin-top: 12px; border-top: 1px solid #28354d; padding-top: 10px; }
+.hb-day h4 { margin: 0; font-size: 14px; }
+
+.hb-periods { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: 13px; color: #94a3b8; margin: 8px 0; }
+.hb-periods b { color: #e2e8f0; margin-right: 6px; }
+.hb-compare-cell { white-space: nowrap; }
+.hb-before-after { display: block; font-size: 13px; }
+.hb-delta { display: block; font-size: 11px; font-weight: 700; }
+.hb-delta.good { color: #55dbb1; } .hb-delta.bad { color: #fb8c9e; } .hb-delta.neutral { color: #94a3b8; }
+.hb-flag { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; cursor: help; }
+.hb-flag.improving { background: #12392f; color: #55dbb1; }
+.hb-flag.worse { background: #4c1d2b; color: #fb8c9e; }
+.hb-flag.mixed { background: #43350f; color: #fbbf24; }
+.hb-flag.same, .hb-flag.too_few { background: #263041; color: #94a3b8; }
+
+.hb-day th:nth-child(2), .hb-day td:nth-child(2), .hb-day th:nth-child(3), .hb-day td:nth-child(3) { text-align: left; }
