@@ -3,7 +3,7 @@ import type { BehaviorQuestion } from '../../shared/analysis/api'
 import { diffAnswers, groupQuestions, questionIdsByTrip, questionsToShow, validateQuestionText } from '../../shared/analysis/behavior/model'
 import { readableError } from '../../shared/analysis/behavior/types'
 import { combineSaverStates, MarkSaver } from '../../shared/analysis/labeling/saver'
-import { createAnalysisApi, type AnalysisRequest } from './analysisApi'
+import { createAnalysisApi, validAnalysisPath, type AnalysisRequest } from './analysisApi'
 import { createDesktopBehaviorApi } from './behaviorApi'
 
 const question = (id: string, kind: 'entry' | 'exit', status: 'active' | 'archived' = 'active', extra: Partial<BehaviorQuestion> = {}): BehaviorQuestion => ({
@@ -98,6 +98,18 @@ describe('behavior transports', () => {
       ['behavior/marks?session_id=s%2F1', 'GET', undefined],
       ['behavior/marks', 'POST', { session_id: 's1', round_trip_index: 3, answers: { e1: true } }],
     ])
+  })
+  it('desktop Analysis adapter reads the habit ledger through the allowlisted route with the dashboard filters', async () => {
+    const ledgerBody = { questions: [], trades: [], coverage: { closed_trades: 0, marked_trades: 0, marks: 0, unmatched_marks: 0, open_marked_trades: 0, trades_without_capital: 0, trades_without_bars: 0, truncated: false } }
+    const request = vi.fn().mockResolvedValue(ledgerBody)
+    const { performance } = createAnalysisApi(request as unknown as AnalysisRequest)
+    const controller = new AbortController()
+    expect(await performance.getHabitLedger!({ start_date: '2026-10-01', symbol: 'NIFTY', session_type: '' }, controller.signal)).toEqual(ledgerBody)
+    const [path, method, , signal] = request.mock.calls[0]
+    expect(method).toBe('GET')
+    expect(path).toBe('behavior/habit-ledger?start_date=2026-10-01&symbol=NIFTY') // empty filters are dropped
+    expect(validAnalysisPath(path, method)).toBe(true)
+    expect(signal).toBeInstanceOf(AbortSignal)
   })
   it('desktop trading adapter uses the in-session routes', async () => {
     const request = vi.fn().mockImplementation(async (path: string) => path.endsWith('behavior-marks') ? { marks: [] } : path.startsWith('behavior/questions?') ? { questions: [] } : {})

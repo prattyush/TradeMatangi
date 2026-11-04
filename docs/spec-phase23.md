@@ -85,7 +85,7 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 4 | Charts, responsive and webapp | Merged (PR #755) — see §7 |
 | 5 | Behavior questions manager + Analysis marks | Merged (PR #756) — see §8 |
 | 6 | Live labeling | Merged (PR #757) — see §9 |
-| 7a | Habits: ledger backend + transports | In progress — §10 |
+| 7a | Habits: ledger backend + transports | Implemented (this PR) — §10.7 |
 | 7b | Habits: stats engine + scorecard | Not started |
 | 7c | Habits: trends across days + period comparison | Not started |
 | 7d | Habits: single-habit deep dive + polish | Not started |
@@ -216,7 +216,7 @@ Behavior questions now appear in the labels you fill in **while trading**: repla
 | Trade | One closed cycle (round trip). A trade can carry several habits (entry and exit habits are independent). |
 | P&L % | `pnl_pct` = net P&L ÷ the session capital (already normalised for real days). "Profit %" / "Loss %" of a habit = sum of its winning / losing trades' P&L %, i.e. percent-of-capital points. **Net %** = their sum. ₹ values are shown alongside (toggle). |
 | Capital % | Total capital deployed on the trade = **sum of its entries'** `effective_allocation_pct`; unavailable (null, counted in coverage) when an entry has no analytics (older or broker-imported rows). Risk % likewise from `effective_risk_pct`. |
-| Bars held | Candles touched = `exit_time // interval − entry_time // interval + 1`, so the **same candle = 1 bar**; interval = the entry's `strategy_interval_seconds`, else the session's `strategy_interval_secs`, else 180 s. It is the strategy candle size, not necessarily the chart interval. |
+| Bars held | Candles touched = `exit_time // interval − entry_time // interval + 1`, so the **same candle = 1 bar**; interval = the entry's `strategy_interval_seconds`, else 180 s (the cycle does not carry the session, so there is no session fallback). It is the strategy candle size, not necessarily the chart interval. |
 | Entries / exits | `entry_count` / `exit_count` of the trade (scale-ins and partial exits). |
 | Baseline | The user's other trades in the same scope (those **without** that habit). |
 | Low sample | A habit with fewer than 10 trades in scope. |
@@ -241,6 +241,15 @@ Stat tiles; buckets (count, net %, win %) by **bars held** (1, 2, 3–5, 6–10,
 | 7d | Deep dive (buckets, scatter, trade list → cycle drawer), accessibility and phone polish |
 
 Verification includes a backend test that **ledger totals reconcile with the Stats report summary** for the same filters, vitest on hand-computed fixtures for every metric, and browser checks on a shared multi-day synthetic ledger (website with both chart renderers, desktop, webapp phone).
+
+### 10.7 Sprint 7a — ledger backend and transports (implemented)
+- `backend/app/services/habit_ledger_service.py`: pure `interval_seconds`, `bars_held`, `capital_pct`, `risk_pct`, `trade_row`, `owner_session_id`, `build_ledger`; `load_ledger(user_id, criteria)` does the I/O (`performance_service.load_cycles` with `include_shared=False`, marks from `behavior_service._user_marks` pre-filtered by date/symbol/session/instrument type, the mark sessions' rows for the alias → owner mapping, all questions incl. archived).
+- `GET /api/behavior/habit-ledger` (`routers/behavior.py`) takes the `performance.filters()` query (422 for an inverted date range or an invalid mode) and returns `{questions, trades, coverage}`. Row order is chronological; the cap is 20,000 rows and keeps the most recent (`coverage.truncated`).
+- **`unmatched_marks` means "a mark in this date/symbol/mode scope that no trade in the loaded scope matches"**: the trade is missing (the broker book was restaged), or it is excluded by a trade-level filter (direction, entry method, tags…). Marks of other symbols/modes/dates are out of scope and not counted.
+- Not in the ledger by design: swing portfolios, other users' shared cycles, open trades (counted in `open_marked_trades`).
+- Cost: one `load_cycles` pass — the same cost as opening the Stats overview — plus one `get_item` per distinct session that has marks. Sprint 8 measures it on a large history and adds a cache if needed.
+- Transports: website `getHabitLedger` in `frontend/src/services/performanceApi.ts` (added to `AnalysisEnvironment.performance`, optional); desktop adapter in `windowsapp/src/analysisApi.ts`; `behavior/habit-ledger` GET added to all three allowlists (`desktop_analysis.py`, `analysisApi.ts`, `lib.rs`) — **the desktop app must be rebuilt**. Shared types: `shared/analysis/habits/types.ts` (`LedgerTrade`, `LedgerCoverage`, `HabitLedger`).
+- Tests: `backend/tests/test_habit_ledger.py` (16: bars/interval/capital/risk derivation and fallbacks, join on the cycle index, open/shared/swing exclusion, alias de-duplication, unmatched marks, row cap and ordering, filters scoping trades and marks, other users isolated, archived questions kept, **ledger totals reconcile with `report()["summary"]` (count, net P&L, P&L %)**, endpoint validation, desktop proxy read-only); vitest (allowlist, adapter call shape); `cargo test` (allowlist).
 
 ## Appendix — original requirement text (free hand, as written)
 

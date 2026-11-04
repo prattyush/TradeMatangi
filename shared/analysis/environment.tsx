@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ComponentType, typ
 import type { OHLCCandle } from './api'
 import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
+import type { HabitLedger } from './habits/types'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -28,6 +29,8 @@ export interface AnalysisEnvironment {
     getPerformance: (filters: PerformanceFilters, signal?: AbortSignal) => Promise<PerformanceReport>
     getPerformanceCycles: (filters: PerformanceFilters, offset?: number, signal?: AbortSignal) => Promise<{ items: PerformanceCycle[]; total: number; next_offset: number | null }>
     getPerformanceDetail: (cycle: Pick<PerformanceCycle, "session_id" | "cycle_id">, enrich?: boolean, signal?: AbortSignal) => Promise<PerformanceCycle>
+    /** Closed own trades with their habits for the dashboard filters (Stats → Habits). */
+    getHabitLedger?: (filters: PerformanceFilters, signal?: AbortSignal) => Promise<HabitLedger>
   }
   // Each adapter implements the existing chart's public props. The heterogeneous
   // snapshot/pattern inputs are normalized inside the desktop renderer boundary.

@@ -83,6 +83,7 @@ allowed = [
         "/api/behavior/marks": {"GET", "POST"},
         "/api/behavior/marks/by-question": {"GET"},
         "/api/behavior/stats": {"GET"},
+        "/api/behavior/habit-ledger": {"GET"},
     }),
 ]
 for source, paths in allowed:

@@ -1108,7 +1108,7 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
-        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" => true,
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -2188,6 +2188,11 @@ mod tests {
             assert!(!valid_analysis_path(path, "PUT"));
         }
         assert!(valid_analysis_path("behavior/stats?symbol=NIFTY", "GET"));
+        assert!(valid_analysis_path("behavior/habit-ledger?start_date=2026-10-01&symbol=NIFTY", "GET"));
+        for method in ["POST", "PUT", "DELETE"] {
+            assert!(!valid_analysis_path("behavior/habit-ledger", method));
+        }
+        assert!(!valid_analysis_path("behavior/habit-ledger/extra", "GET"));
         assert!(valid_analysis_path("behavior/marks/by-question?question_id=abc", "GET"));
         assert!(!valid_analysis_path("behavior/stats", "POST"));
         for action in ["update", "archive", "restore"] {

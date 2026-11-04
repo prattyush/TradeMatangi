@@ -21,6 +21,9 @@ describe('desktop analysis transport', () => {
       expect(validAnalysisPath(path, 'PUT')).toBe(false)
     }
     expect(validAnalysisPath('behavior/stats?symbol=NIFTY', 'GET')).toBe(true)
+    expect(validAnalysisPath('behavior/habit-ledger?start_date=2026-10-01&symbol=NIFTY', 'GET')).toBe(true)
+    for (const method of ['POST', 'PUT', 'DELETE']) expect(validAnalysisPath('behavior/habit-ledger', method)).toBe(false)
+    expect(validAnalysisPath('behavior/habit-ledger/extra', 'GET')).toBe(false)
     expect(validAnalysisPath('behavior/marks/by-question?question_id=abc', 'GET')).toBe(true)
     expect(validAnalysisPath('behavior/stats', 'POST')).toBe(false)
     for (const action of ['update', 'archive', 'restore']) {
