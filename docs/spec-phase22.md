@@ -119,3 +119,17 @@ Three requirements for desktop, website and webapp (the webapp mounts the websit
 2. When capital in use reaches 50% of the MAX SIZE limit (the same figure and limit MAX SIZE already enforces), the chart top bar turns orange.
 3. Priority: red states win. **(confirmed)** If the BAN "Alert at 50%" red bar is showing, or a BAN is active, the bar is not changed to orange.
 4. Day trading only; Swing has no MAX SIZE guardrail.
+
+### Implementation
+
+- **Settings (per user, synced).** New keys in `UserSettings`: `pnl_target_levels` (comma-separated numbers, normalized and validated server-side, at most 20), `candle_alert_enabled`, `candle_alert_interval_min` (1/3/5/10/15/30), `candle_alert_seconds_before` (1-600 and smaller than the interval), and `guardrail_maxsize_alert_enabled` (also on the guardrail settings routes and copied onto the session by `initialize_guardrails`).
+- **Target P&L levels.** `pnlTargetLevels` in `shared/charts/positionPnlLevels.ts` (mirrored in `frontend/src/indicators/positionPnlLevels.ts`, parity-tested) inverts `projectedTotalPnlAtTarget`: given the day total P&L marked at the current price, it solves for the exit price that gives the target, net of exit charges, and snaps to the best paisa. The KLine chart (`PnLTargets` in `shared/charts/catalogue.ts`) draws the lines with the same DOM geometry as `PositionPnL`; the Lightweight chart uses a second `PositionPnlPrimitive`. Neither feeds the price-scale range. Lines need the authoritative day P&L (`aggregatePnl`) and a position on that chart's own contract. The setting is in **Settings → Display** on the website and **Drawing & Display** on desktop. Analysis charts and Swing do not get the indicator.
+- **Candle-close sound.** `shared/candleAlert.ts` decides when to fire from a clock (once per candle, never on a start/resume already inside the window, tolerant of batched ticks); `shared/useCandleAlert.ts` hosts one timer per app (`AppInner` on the website/webapp, the desktop `App` on the primary linked screen); `shared/alertSound.ts` synthesizes a two-tone beep with Web Audio and unlocks on the first click/key press or **Test sound**. Replay uses the session market clock; Paper and Real use the wall clock. Stepwise and Browse are silent.
+- **MAX SIZE alert.** `shared/maxSizeAlert.ts` mirrors the backend capital-in-use formula (20% margin for equity, full premium for options, summed over every open contract) and the limit (percentage of session capital or fixed rupees). The website loads MAX SIZE settings itself (`useTradingDisplaySettings`), so the alert works before the Settings window is ever opened; the desktop reads them from the trading snapshot. `headerAlertColor` gives red priority over orange.
+
+### Verification
+
+- Backend: new cases in `test_user_settings.py` and `test_guardrails_api.py`. `test_allows_block_bars_zero` needs a running DynamoDB Local and fails without it, unrelated to this change.
+- Desktop/shared vitest: 311 pass, including target-level math (long/short, % and ₹ modes, parity with the website copy), candle-alert timing and MAX SIZE/colour priority.
+- `tsc --noEmit` clean for `frontend`, `webapp` and `windowsapp`; website and desktop production builds pass.
+- Manual acceptance still required: hear the beep in a real browser and in the Tauri desktop app; confirm lines and the orange bar in Replay, Paper and Real.

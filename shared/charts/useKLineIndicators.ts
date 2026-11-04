@@ -4,7 +4,9 @@ import type { Chart } from "klinecharts";
 import { allIndicators } from "./catalogue";
 
 /** `PositionPnL` only makes sense on a live trading chart. */
-export const analysisIndicators = allIndicators.filter((name) => name !== "PositionPnL");
+export const analysisIndicators = allIndicators.filter(
+  (name) => name !== "PositionPnL" && name !== "PnLTargets",
+);
 /** EMA 9/21 stays on by default: it was hard-wired on the Analysis charts before. */
 export const defaultAnalysisIndicators = ["EMA"];
 

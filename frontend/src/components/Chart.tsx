@@ -22,7 +22,7 @@ import {
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
 import { PositionPnlPrimitive } from '../indicators/positionPnlPrimitive'
-import { positionPnlLevels, projectedTotalPnlPctAtTarget } from '../indicators/positionPnlLevels'
+import { positionPnlLevels, projectedTotalPnlPctAtTarget, pnlTargetLevels, parsePnlTargets } from '../indicators/positionPnlLevels'
 import { exitOrderLineLabel } from '../orderLineLabel'
 import {
   computeOptionsRocComparison,
@@ -44,6 +44,7 @@ export interface LightweightChartState {
   drawings?: SavedDrawing[]
   showEma?: boolean
   showPositionLevels?: boolean
+  showPnlTargets?: boolean
   activeRatioIndicators?: RocComparisonKey[]
   expandedRatioIndicator?: RocComparisonKey | null
 }
@@ -118,6 +119,8 @@ export interface Props {
   // Position for this pane — used to annotate stoploss label with projected P&L
   position?: Position
   pnlPctMode?: boolean
+  /** Comma-separated target day-P&L values from Settings → Display. */
+  pnlTargetLevels?: string
   sessionCapital?: number
   brokeragePerOrder?: number
   aggregatePnl?: number
@@ -479,6 +482,7 @@ export default function Chart({
   currentSimTime,
   position,
   pnlPctMode,
+  pnlTargetLevels: pnlTargetLevelsSetting,
   sessionCapital,
   brokeragePerOrder = 0,
   aggregatePnl,
@@ -504,6 +508,7 @@ export default function Chart({
   const lastEma21Ref = useRef<number | null>(null)
   const candleTimesRef = useRef<number[]>([])
   const positionPnlPrimitiveRef = useRef<PositionPnlPrimitive | null>(null)
+  const pnlTargetPrimitiveRef = useRef<PositionPnlPrimitive | null>(null)
   const latestTickRef = useRef(latestTick)
   const currentSimTimeRef = useRef(currentSimTime)
   const drawModeRef = useRef<DrawMode>('none')
@@ -555,10 +560,11 @@ export default function Chart({
   const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(()=>lightweightState?.current.expandedRatioIndicator??null)
   const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
   const [showPositionLevels, setShowPositionLevels] = useState<boolean>(()=>lightweightState?.current.showPositionLevels??readSwingIndicators().showPositionLevels??false)
-  useEffect(()=>{if(drawingStorageKey)try{localStorage.setItem(`${drawingStorageKey}:indicators`,JSON.stringify({showEma,showPositionLevels}))}catch{/* Storage can be disabled. */}},[drawingStorageKey,showEma,showPositionLevels])
+  const [showPnlTargets, setShowPnlTargets] = useState<boolean>(()=>lightweightState?.current.showPnlTargets??readSwingIndicators().showPnlTargets??false)
+  useEffect(()=>{if(drawingStorageKey)try{localStorage.setItem(`${drawingStorageKey}:indicators`,JSON.stringify({showEma,showPositionLevels,showPnlTargets}))}catch{/* Storage can be disabled. */}},[drawingStorageKey,showEma,showPositionLevels,showPnlTargets])
   useEffect(()=>{
-    if(lightweightState)Object.assign(lightweightState.current,{showEma,showPositionLevels,activeRatioIndicators,expandedRatioIndicator})
-  },[lightweightState,showEma,showPositionLevels,activeRatioIndicators,expandedRatioIndicator])
+    if(lightweightState)Object.assign(lightweightState.current,{showEma,showPositionLevels,showPnlTargets,activeRatioIndicators,expandedRatioIndicator})
+  },[lightweightState,showEma,showPositionLevels,showPnlTargets,activeRatioIndicators,expandedRatioIndicator])
   const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
@@ -702,6 +708,9 @@ export default function Chart({
     const positionPnlPrimitive = new PositionPnlPrimitive()
     series.attachPrimitive(positionPnlPrimitive)
     positionPnlPrimitiveRef.current = positionPnlPrimitive
+    const pnlTargetPrimitive = new PositionPnlPrimitive()
+    series.attachPrimitive(pnlTargetPrimitive)
+    pnlTargetPrimitiveRef.current = pnlTargetPrimitive
     ema9Ref.current = e9
     ema21Ref.current = e21
 
@@ -969,6 +978,8 @@ export default function Chart({
       strategyPriceLinesRef.current.clear()
       series.detachPrimitive(positionPnlPrimitive)
       positionPnlPrimitiveRef.current = null
+      series.detachPrimitive(pnlTargetPrimitive)
+      pnlTargetPrimitiveRef.current = null
       chart.remove()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1640,7 +1651,7 @@ export default function Chart({
     setActiveRatioIndicators(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
     if (expandedRatioIndicator === key) setExpandedRatioIndicator(null)
   }
-  const indicatorButtonActive = showEma || activeRatioIndicators.length > 0 || showPositionLevels
+  const indicatorButtonActive = showEma || activeRatioIndicators.length > 0 || showPositionLevels || showPnlTargets
 
   const positionLevels = useMemo(() => showPositionLevels && positionLevelsMatch
     ? positionPnlLevels(position, sessionCapital ?? 0, brokeragePerOrder)
@@ -1659,6 +1670,19 @@ export default function Chart({
       fallbackTime === null ? null : Math.floor(fallbackTime / intervalSecs) * intervalSecs,
     )
   }, [positionLevels, positionAnchorTime, latestTick?.time, currentSimTime, intervalSecs])
+  // Day-total target lines: drawn by a second primitive, which (like the position levels) never feeds autoscale.
+  const targetMarkPrice = latestTick?.close ?? liveWindowRef.current?.close
+  const pnlTargetValues = useMemo(() => showPnlTargets ? parsePnlTargets(pnlTargetLevelsSetting) : [], [showPnlTargets, pnlTargetLevelsSetting])
+  const targetPnlLevels = useMemo(() => pnlTargetValues.length && positionLevelsMatch && aggregatePnl !== undefined && targetMarkPrice !== undefined && pnlAvailable !== false
+    ? pnlTargetLevels(position, targetMarkPrice, aggregatePnl, sessionCapital ?? 0, brokeragePerOrder, pnlTargetValues, pnlPctMode ? 'percent' : 'currency')
+    : [], [pnlTargetValues, positionLevelsMatch, aggregatePnl, targetMarkPrice, pnlAvailable, position?.side, position?.quantity, position?.avg_entry_price, position?.entry_commission, sessionCapital, brokeragePerOrder, pnlPctMode])
+  useEffect(() => {
+    const fallbackTime = latestTick?.time ?? currentSimTime ?? null
+    pnlTargetPrimitiveRef.current?.setLevels(
+      targetPnlLevels, positionAnchorTime,
+      fallbackTime === null ? null : Math.floor(fallbackTime / intervalSecs) * intervalSecs,
+    )
+  }, [targetPnlLevels, positionAnchorTime, latestTick?.time, currentSimTime, intervalSecs])
 
   return (
     <div
@@ -1714,6 +1738,10 @@ export default function Chart({
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: showPositionLevels ? '#f0883e' : '#e6edf3' }}>
                 <input type="checkbox" checked={showPositionLevels} onChange={() => setShowPositionLevels(value => !value)} />
                 <span>Position P&amp;L levels</span>
+              </label>
+              <label title="Lines at prices where exiting the whole position makes the day's net P&L equal your Settings → Display target values" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: showPnlTargets ? '#38bdf8' : '#e6edf3' }}>
+                <input type="checkbox" checked={showPnlTargets} onChange={() => setShowPnlTargets(value => !value)} />
+                <span>Target P&amp;L levels</span>
               </label>
               {ratioCandles && indicatorKeysForPane(paneType, right).length > 0 && (
                 <>

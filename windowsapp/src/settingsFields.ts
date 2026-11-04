@@ -47,6 +47,9 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       'risk_ratio'
     ]),
     toggle('merge_exit_orders_on_consolidate', 'Merge exit orders when consolidating (Move SL / Move to Limit)'),
+    toggle('candle_alert_enabled', 'Candle-close sound alert (Replay, Paper, Real)'),
+    select('candle_alert_interval_min', 'Alert candle interval', ['1', '3', '5', '10', '15', '30']),
+    number('candle_alert_seconds_before', 'Alert seconds before candle end', 1, 600),
     ...(['l', 'm', 'h'] as const).flatMap((size) => [
       number(
         `quantity_${size}`,

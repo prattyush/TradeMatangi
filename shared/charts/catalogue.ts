@@ -26,6 +26,7 @@ export const allIndicators = [
   "HMA",
   "PivotPoints",
   "PositionPnL",
+  "PnLTargets",
   "RSI_TV",
   "MACD_TV",
   "Stochastic",
@@ -35,4 +36,6 @@ export const allIndicators = [
 export const indicatorLabel = (name: string) =>
   name === "PositionPnL"
     ? "Position P&L levels"
-    : name.replace("_TV", "").replace("_Ribbon", " Ribbon");
+    : name === "PnLTargets"
+      ? "Target P&L levels"
+      : name.replace("_TV", "").replace("_Ribbon", " Ribbon");

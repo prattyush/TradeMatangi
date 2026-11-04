@@ -72,6 +72,7 @@ export interface DesktopTradingSettings {
   desktop_hide_chart_labels: boolean
   desktop_order_size_mode: 'quantity' | 'funds_ratio' | 'risk_ratio'
   desktop_pnl_display_mode: 'currency' | 'percent'
+  pnl_target_levels?: string
   desktop_confirm_flatten: boolean
   context_menu_sl_mode: 'longOnly' | 'both'
   target_deviation_pct: number

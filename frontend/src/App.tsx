@@ -7,6 +7,9 @@ import { chartPaneHeight } from "./services/chartLayout";
 import { useWebsiteChartRenderer } from "./hooks/useWebsiteChartRenderer";
 import { chartEntryError, chartMarketPrice, matchesChartContract } from "./services/chartOrderContext";
 import TradingChartHost from './components/TradingChartHost'
+import { useTradingDisplaySettings } from './hooks/useTradingDisplaySettings'
+import { useCandleAlert, type CandleAlertClock } from '../../shared/useCandleAlert'
+import { headerAlertColor, maxSizeAlertActive, type SizedPosition } from '../../shared/maxSizeAlert'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import KotakTOTPModal from './components/KotakTOTPModal'
 import SwingChart from './components/SwingChart'
@@ -516,6 +519,26 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   // ── Pane state ──────────────────────────────────────────────────────────────
   const [panes, setPanes] = useState<PaneConfig[]>(DEFAULT_EQUITY_PANES)
   const [openOptionContracts, setOpenOptionContracts] = useState<OpenOptionContract[]>([])
+
+  // ── Per-user chart/alert preferences: target P&L lines, candle sound, MAX SIZE alert ──
+  const tradingDisplay = useTradingDisplaySettings()
+  const candleAlertClock = useMemo<CandleAlertClock>(() => {
+    if (!sim.sessionId || (sim.sessionState !== 'running' && sim.sessionState !== 'paused')) return { kind: 'off' }
+    if (sim.sessionType === 'sim') return { kind: 'market', time: sim.latestEquityTick?.time }
+    if (sim.sessionType === 'paper' || sim.sessionType === 'real') return sim.sessionState === 'running' ? { kind: 'wall' } : { kind: 'off' }
+    return { kind: 'off' } // Stepwise has no continuous clock.
+  }, [sim.sessionId, sim.sessionState, sim.sessionType, sim.latestEquityTick?.time])
+  useCandleAlert(candleAlertClock, tradingDisplay.candleAlert, sim.sessionId)
+  const maxSizePositions = useMemo<SizedPosition[]>(() => {
+    const sized = (p: { side: 'LONG' | 'SHORT' | 'FLAT'; quantity: number; avg_entry_price: number }, isOption: boolean): SizedPosition =>
+      ({ side: p.side, quantity: p.quantity, avg_entry_price: p.avg_entry_price, isOption })
+    if (sim.sessionInstrumentType !== 'options') return [sized(sim.position, false)]
+    if (sim.sessionType === 'real') return sim.contractPositions.filter(p => p.right).map(p => sized(p, true))
+    if (sim.sessionType === 'paper') return openOptionContracts.map(c => sized(c.position, true))
+    return [sized(sim.positionCE, true), sized(sim.positionPE, true)]
+  }, [sim.sessionInstrumentType, sim.sessionType, sim.position, sim.positionCE, sim.positionPE, sim.contractPositions, openOptionContracts])
+  const maxSizeAlert = sim.sessionState === 'running' && maxSizeAlertActive(tradingDisplay.maxSize, maxSizePositions, sim.sessionCapital, sim.sessionInstrumentType)
+  const headerAlert = headerAlertColor({ redAlert: guardRailAlertActive, banActive: guardrailPopup?.type === 'BAN', maxSizeAlert })
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(2)
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
   useEffect(() => {
@@ -1954,6 +1977,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           pnl={draft ? 0 : getPnlForPane(pane)}
           pnlAvailable={sim.sessionType !== 'real' || getPositionForPane(pane).side === 'FLAT' || getTickForPane(pane) !== null}
           pnlPctMode={pnlPctMode}
+          pnlTargetLevels={tradingDisplay.pnlTargetLevels}
           sessionCapital={draft ? 0 : sim.sessionCapital}
           brokeragePerOrder={sim.brokeragePerOrder}
           aggregatePnl={draft ? undefined : totalDayPnl}
@@ -2170,7 +2194,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       </div>}
       {/* Header */}
       <div className="website-header" style={{
-        padding: '10px 20px', background: guardRailAlertActive ? '#7f1d1d' : '#161b22', borderBottom: '1px solid #30363d',
+        padding: '10px 20px', background: headerAlert === 'red' ? '#7f1d1d' : headerAlert === 'orange' ? '#9a4a0b' : '#161b22', borderBottom: '1px solid #30363d',
         display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</span>

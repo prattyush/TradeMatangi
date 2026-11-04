@@ -62,3 +62,87 @@ export function positionPnlLevels(position: LevelPosition | null | undefined, se
   }
   return levels
 }
+
+
+export type PnlTargetMode = 'percent' | 'currency'
+
+/** Parse the comma-separated Display setting; ignores blanks and non-numbers. */
+export function parsePnlTargets(raw: string | null | undefined): number[] {
+  if (!raw) return []
+  const values: number[] = []
+  for (const part of raw.split(',')) {
+    const text = part.trim()
+    if (!text) continue
+    const value = Number(text)
+    if (Number.isFinite(value) && !values.includes(value)) values.push(value)
+  }
+  return values
+}
+
+/**
+ * Prices at which exiting the whole position makes the day's total P&L equal
+ * each target (percent of session capital, or rupees). `totalPnl` is the day
+ * total marked at `currentPrice`, net of booked commissions; the exit charge
+ * is the same fee model as projectedTotalPnlAtTarget.
+ */
+export function pnlTargetLevels(
+  position: LevelPosition | null | undefined,
+  currentPrice: number,
+  totalPnl: number,
+  sessionCapital: number,
+  brokeragePerOrder: number,
+  targets: readonly number[],
+  mode: PnlTargetMode,
+): PositionPnlLevel[] {
+  if (
+    !position ||
+    position.side === 'FLAT' ||
+    !Number.isFinite(position.quantity) ||
+    position.quantity <= 0 ||
+    !Number.isFinite(currentPrice) ||
+    currentPrice <= 0 ||
+    !Number.isFinite(totalPnl) ||
+    !Number.isFinite(brokeragePerOrder) ||
+    brokeragePerOrder < 0 ||
+    (mode === 'percent' && (!Number.isFinite(sessionCapital) || sessionCapital <= 0))
+  )
+    return []
+  const direction = position.side === 'LONG' ? 1 : -1
+  const exitRate =
+    direction === 1
+      ? (0.15 + 1.18 * 0.03563) / 100
+      : (0.003 + 1.18 * 0.03563) / 100
+  const denominator = position.quantity * (direction - exitRate)
+  if (Math.abs(denominator) < 1e-12) return []
+  const levels: PositionPnlLevel[] = []
+  for (const target of targets) {
+    const targetPnl = mode === 'percent' ? (target / 100) * sessionCapital : target
+    const estimate =
+      (targetPnl -
+        totalPnl +
+        direction * position.quantity * currentPrice +
+        1.18 * brokeragePerOrder) /
+      denominator
+    if (!Number.isFinite(estimate) || estimate <= 0) continue
+    const candidates = [Math.floor(estimate * 100), Math.ceil(estimate * 100)]
+      .flatMap((paise) => [paise - 1, paise, paise + 1])
+      .filter((paise) => paise > 0)
+    const errorAt = (paise: number) =>
+      Math.abs(
+        (projectedTotalPnlAtTarget(position, currentPrice, paise / 100, totalPnl, brokeragePerOrder) ?? Infinity) -
+          targetPnl,
+      )
+    const bestPaise = candidates.reduce(
+      (best, paise) => (errorAt(paise) < errorAt(best) ? paise : best),
+      candidates[0],
+    )
+    const sign = target > 0 ? '+' : ''
+    levels.push({
+      key: `target:${target}`,
+      label: mode === 'percent' ? `P&L ${sign}${target}%` : `P&L ${sign}${target}`,
+      price: bestPaise / 100,
+      color: target >= 0 ? '#38bdf8' : '#f472b6',
+    })
+  }
+  return levels
+}
