@@ -1,3 +1,5 @@
+import BehaviorQuestionsManager from '../../shared/analysis/behavior/BehaviorQuestionsManager'
+import type { BehaviorApi } from '../../shared/analysis/behavior/types'
 import RealBrokerRestrictionSetting from '../../shared/RealBrokerRestrictionSetting'
 import KotakLoginDialog from './KotakLoginDialog'
 import RealSessionList, { type RealBookRequest } from '../../shared/RealSessionList'
@@ -52,6 +54,8 @@ interface Props {
     settings: Record<string, unknown>
   ) => Promise<Record<string, unknown>>
   accountRequest: AccountRequest
+  /** Behavior questions (Settings → Analytics). Absent => the section is hidden. */
+  behaviorApi?: BehaviorApi
   resetWallet: (amount: number) => Promise<void>
   walletResetDisabled: boolean
   walletResetContext?: string
@@ -178,6 +182,7 @@ export function DesktopSettingsModal({
   onSaveTradingSettings,
   saveGuardrails,
   accountRequest,
+  behaviorApi,
   resetWallet,
   walletResetDisabled,
   walletResetContext,
@@ -802,6 +807,13 @@ export function DesktopSettingsModal({
                         )
                       })}
                     </div>
+                  )}
+                  {tab === 'Analytics' && behaviorApi && (
+                    <section className="settings-section tl-desktop">
+                      <strong>Behavior questions</strong>
+                      <p>Yes/no questions you answer per trade: entry questions when you label an entry, exit questions when you label a closed trade. Archive a question to stop asking it; its past answers stay in your stats.</p>
+                      <BehaviorQuestionsManager api={behaviorApi} />
+                    </section>
                   )}
                   {tab === 'General' && (
                     <>

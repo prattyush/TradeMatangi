@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import PatternNameSelect from '../PatternNameSelect'
-import type { TradeLabel } from '../api'
+import type { BehaviorQuestion, TradeLabel } from '../api'
+import BehaviorChecklist from '../behavior/BehaviorChecklist'
 
 interface Props {
   idPrefix: string
@@ -13,6 +14,8 @@ interface Props {
   onChange: (patch: Partial<TradeLabel>) => void
   /** Persists a new registry name immediately and resolves to the stored name. */
   onCreateName: (kind: 'category' | 'strategy', name: string) => Promise<string>
+  /** Behavior questions and this trade's yes-marks; absent when behavior labeling is unavailable. */
+  behavior?: { questions: BehaviorQuestion[]; marked: ReadonlySet<string>; disabled: boolean; onToggle: (questionId: string, showed: boolean) => void }
 }
 
 const selectStyle: CSSProperties = {
@@ -21,7 +24,7 @@ const selectStyle: CSSProperties = {
 }
 
 /** Category / strategy / tag fields of one round trip; shared by the one-at-a-time panel and the all-together list. */
-export default function RoundTripLabelForm({ idPrefix, label, disabled, categories, strategies, entryTags, exitTags, onChange, onCreateName }: Props) {
+export default function RoundTripLabelForm({ idPrefix, label, disabled, categories, strategies, entryTags, exitTags, onChange, onCreateName, behavior }: Props) {
   const patternRow = (kind: 'expected' | 'actual') => (
     <div className="tl-field-row">
       <PatternNameSelect noun="category" placeholder="— Category —" disabled={disabled} value={label[`${kind}_category`]}
@@ -39,12 +42,14 @@ export default function RoundTripLabelForm({ idPrefix, label, disabled, categori
         <input id={`et-in-${idPrefix}`} className="tl-input" disabled={disabled} list={`et-${idPrefix}`} value={label.entry_tag}
           placeholder="AS_PER_PATTERN" onChange={event => onChange({ entry_tag: event.target.value })} />
         <datalist id={`et-${idPrefix}`}>{entryTags.map(tag => <option key={tag} value={tag} />)}</datalist>
+        {behavior && <BehaviorChecklist kind="entry" {...behavior} />}
       </div>
       <div className="tl-field">
         <label htmlFor={`xt-in-${idPrefix}`}>Exit Tag</label>
         <input id={`xt-in-${idPrefix}`} className="tl-input" disabled={disabled} list={`xt-${idPrefix}`} value={label.exit_tag}
           placeholder="AS_PER_PATTERN" onChange={event => onChange({ exit_tag: event.target.value })} />
         <datalist id={`xt-${idPrefix}`}>{exitTags.map(tag => <option key={tag} value={tag} />)}</datalist>
+        {behavior && <BehaviorChecklist kind="exit" {...behavior} />}
       </div>
     </div>
   )

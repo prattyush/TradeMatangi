@@ -13,6 +13,20 @@ export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); this.name = 'ApiError' }
 }
 
+/** Behavior endpoints report validation problems in `detail`; surface that text, not just the status. */
+async function behaviorRequest<T>(path: string, method: 'GET' | 'POST', body?: unknown): Promise<T> {
+  const res = await fetch(`${BACKEND_URL}/api/behavior/${path}`, {
+    method,
+    headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ..._authHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null))?.detail
+    throw new Error(typeof detail === 'string' ? detail : `Behavior request failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export function _authHeaders(): Record<string, string> {
   try {
     const stored = localStorage.getItem('auth_user')
@@ -523,6 +537,19 @@ export interface RoundTrip {
   exit_trades: RoundTripTrade[]
   pnl: number
 }
+
+export type BehaviorKind = 'entry' | 'exit'
+export interface BehaviorQuestion {
+  question_id: string
+  kind: BehaviorKind
+  text: string
+  status: 'active' | 'archived'
+  sort_order: number
+  created_at: string
+  archived_at: string | null
+}
+/** One "yes": this round trip showed the behavior. */
+export interface BehaviorMark { round_trip_index: number; question_id: string; kind: string }
 
 export interface TradeLabel {
   analytics_cycle_id?:string;
@@ -1607,6 +1634,30 @@ const api = {
     return res.json()
   },
 
+  // ── Behavior questions & marks (Phase 23) ──────────────────────────────────
+
+  async getBehaviorQuestions(includeArchived = false): Promise<BehaviorQuestion[]> {
+    return (await behaviorRequest<{ questions: BehaviorQuestion[] }>(`questions?include_archived=${includeArchived}`, 'GET')).questions
+  },
+  addBehaviorQuestion(text: string, kind: BehaviorKind): Promise<BehaviorQuestion> {
+    return behaviorRequest('questions', 'POST', { text, kind })
+  },
+  updateBehaviorQuestion(questionId: string, text: string): Promise<BehaviorQuestion> {
+    return behaviorRequest(`questions/${encodeURIComponent(questionId)}/update`, 'POST', { text })
+  },
+  archiveBehaviorQuestion(questionId: string): Promise<BehaviorQuestion> {
+    return behaviorRequest(`questions/${encodeURIComponent(questionId)}/archive`, 'POST', {})
+  },
+  restoreBehaviorQuestion(questionId: string): Promise<BehaviorQuestion> {
+    return behaviorRequest(`questions/${encodeURIComponent(questionId)}/restore`, 'POST', {})
+  },
+  async getBehaviorMarks(sessionId: string): Promise<BehaviorMark[]> {
+    return (await behaviorRequest<{ marks: BehaviorMark[] }>(`marks?session_id=${encodeURIComponent(sessionId)}`, 'GET')).marks
+  },
+  async saveBehaviorMarks(sessionId: string, roundTripIndex: number, answers: Record<string, boolean>): Promise<BehaviorMark[]> {
+    return (await behaviorRequest<{ marks: BehaviorMark[] }>('marks', 'POST', { session_id: sessionId, round_trip_index: roundTripIndex, answers })).marks
+  },
+
   async getEntryTags(): Promise<string[]> {
     const res = await fetch(`${BACKEND_URL}/api/analysis/entry-tags`, {
       headers: _authHeaders(),
@@ -2431,7 +2482,7 @@ const notifiedApi: typeof api = new Proxy(api, {
         const expectedMissing = ['patternGetChartByDate', 'getActiveSimulation'].includes(String(property)) &&
           ((error instanceof ApiError && error.status === 404) || /(?:^|\D)404(?:\D|$)/.test(message))
         const name = String(property)
-        const source = /wallet/i.test(name) ? 'Wallet' : /settings/i.test(name) ? 'Settings' : /kotak/i.test(name) ? 'Kotak' : /order|buy|sell|square|flatten/i.test(name) ? 'Orders' : /simulation|session|group/i.test(name) ? 'Sessions' : /histor|preSession|expiry|strike|indicator|chart/i.test(name) ? 'Charts' : /pattern|analysis|label/i.test(name) ? 'Analysis' : 'Website request'
+        const source = /wallet/i.test(name) ? 'Wallet' : /settings/i.test(name) ? 'Settings' : /kotak/i.test(name) ? 'Kotak' : /order|buy|sell|square|flatten/i.test(name) ? 'Orders' : /simulation|session|group/i.test(name) ? 'Sessions' : /histor|preSession|expiry|strike|indicator|chart/i.test(name) ? 'Charts' : /behavior/i.test(name) ? 'Behavior' : /pattern|analysis|label/i.test(name) ? 'Analysis' : 'Website request'
         if (!expectedMissing && scope === getNotificationScope()) flashError(error, source, requestContext)
         throw error
       }

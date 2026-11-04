@@ -3,31 +3,42 @@ import { finalizeLabel, labelKey } from './model'
 
 export interface SaverState { pending: number; saving: boolean; error: string; savedCount: number }
 
+export interface AutoSaverOptions<T> {
+  /** Applied to each item just before it is sent. */
+  prepare?: (item: T) => T
+  /** Combines a still-unsaved item with a newer edit of the same key (default: the newer item wins). */
+  merge?: (previous: T, next: T) => T
+  delayMs?: number
+}
+
 /**
- * Auto-save for one-at-a-time labeling.
+ * Debounced auto-save of keyed items.
  *
- * `edit` records the latest value of a label and (re)starts a debounce timer; `flush`
- * saves right now and resolves true only when nothing is left unsaved. Only edited
- * labels are ever sent. Saves never overlap: an edit made while a save is in flight is
- * kept and sent by the next pass, so a slow response cannot overwrite newer typing.
+ * `edit` records the latest value of an item and (re)starts a debounce timer; `flush` saves right now and resolves
+ * true only when nothing is left unsaved. Only edited items are ever sent. Saves never overlap: an edit made while a
+ * save is in flight is kept and sent by the next pass, so a slow response cannot overwrite newer input.
  */
-export class LabelSaver {
-  private pending = new Map<string, { label: TradeLabel; version: number }>()
+export class AutoSaver<T> {
+  private pending = new Map<string, { item: T; version: number }>()
   private version = 0
   private timer: ReturnType<typeof setTimeout> | null = null
   private running: Promise<boolean> | null = null
   private state: SaverState = { pending: 0, saving: false, error: '', savedCount: 0 }
+  private readonly delayMs: number
 
   constructor(
-    private readonly save: (labels: TradeLabel[]) => Promise<unknown>,
+    private readonly save: (items: T[]) => Promise<unknown>,
+    private readonly keyOf: (item: T) => string,
     private readonly onChange: (state: SaverState) => void = () => undefined,
-    private readonly delayMs = 600,
-  ) {}
+    private readonly options: AutoSaverOptions<T> = {},
+  ) { this.delayMs = options.delayMs ?? 600 }
 
   snapshot(): SaverState { return this.state }
 
-  edit(label: TradeLabel) {
-    this.pending.set(labelKey(label.session_id, label.round_trip_index), { label, version: ++this.version })
+  edit(item: T) {
+    const key = this.keyOf(item)
+    const previous = this.pending.get(key)?.item
+    this.pending.set(key, { item: previous && this.options.merge ? this.options.merge(previous, item) : item, version: ++this.version })
     this.update({ error: '' })
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => { this.timer = null; void this.flush() }, this.delayMs)
@@ -54,7 +65,7 @@ export class LabelSaver {
     try {
       while (this.pending.size) {
         const batch = [...this.pending.entries()]
-        await this.save(batch.map(([, entry]) => finalizeLabel(entry.label)))
+        await this.save(batch.map(([, entry]) => this.options.prepare ? this.options.prepare(entry.item) : entry.item))
         for (const [key, entry] of batch) if (this.pending.get(key)?.version === entry.version) this.pending.delete(key)
         this.update({ savedCount: this.state.savedCount + batch.length })
       }
@@ -69,5 +80,35 @@ export class LabelSaver {
   private update(patch: Partial<SaverState>) {
     this.state = { ...this.state, ...patch, pending: this.pending.size }
     this.onChange(this.state)
+  }
+}
+
+/** Auto-save of trade labels; unset actual pattern / tags get their defaults when sent. */
+export class LabelSaver extends AutoSaver<TradeLabel> {
+  constructor(save: (labels: TradeLabel[]) => Promise<unknown>, onChange: (state: SaverState) => void = () => undefined, delayMs = 600) {
+    super(save, label => labelKey(label.session_id, label.round_trip_index), onChange, { prepare: finalizeLabel, delayMs })
+  }
+}
+
+/** One round trip's behavior answers (`true` = showed it, `false` = cleared). */
+export interface MarkEdit { session_id: string; round_trip_index: number; answers: Record<string, boolean> }
+
+/** Auto-save of behavior marks; toggles on the same trade made before a save are combined. */
+export class MarkSaver extends AutoSaver<MarkEdit> {
+  constructor(save: (edits: MarkEdit[]) => Promise<unknown>, onChange: (state: SaverState) => void = () => undefined, delayMs = 400) {
+    super(save, edit => labelKey(edit.session_id, edit.round_trip_index), onChange, {
+      merge: (previous, next) => ({ ...next, answers: { ...previous.answers, ...next.answers } }),
+      delayMs,
+    })
+  }
+}
+
+/** Combines the label and mark savers into the single status the panel shows. */
+export function combineSaverStates(...states: SaverState[]): SaverState {
+  return {
+    pending: states.reduce((sum, state) => sum + state.pending, 0),
+    saving: states.some(state => state.saving),
+    error: states.find(state => state.error)?.error ?? '',
+    savedCount: states.reduce((sum, state) => sum + state.savedCount, 0),
   }
 }

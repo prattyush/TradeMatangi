@@ -73,3 +73,48 @@ test('Label Trades on a phone: one trade at a time, stacked panes become tabs, b
   expect(saves).toHaveLength(1) // untouched trade 2 is never written
   expect(errors).toEqual([])
 })
+
+test('Settings → Analytics manages behavior questions: add, edit, archive and unarchive', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.setViewportSize({ width: 1200, height: 900 })
+  await mockWorkspace(page)
+  let questions: Record<string, unknown>[] = [{ question_id: 'q1', kind: 'entry', text: 'Chased the move', status: 'active', sort_order: 0, created_at: '2026-10-01', archived_at: null }]
+  const found = (id: string) => questions.find(question => question.question_id === id)!
+  await page.route('**/api/behavior/**', async route => {
+    const url = new URL(route.request().url()), method = route.request().method()
+    const [, , , , id, action] = url.pathname.split('/')
+    if (method === 'GET') return route.fulfill({ json: { questions } })
+    if (!id || id === 'questions') {
+      const body = route.request().postDataJSON()
+      const created = { question_id: `q${questions.length + 1}`, kind: body.kind, text: body.text, status: 'active', sort_order: questions.length, created_at: '2026-10-05', archived_at: null }
+      questions.push(created); return route.fulfill({ json: created })
+    }
+    const question = found(id)
+    if (action === 'update') question.text = route.request().postDataJSON().text
+    if (action === 'archive') { question.status = 'archived'; question.archived_at = '2026-10-21T08:00:00Z' }
+    if (action === 'restore') { question.status = 'active'; question.archived_at = null }
+    return route.fulfill({ json: question })
+  })
+  await page.goto(app)
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
+  await settings.getByRole('button', { name: 'analytics', exact: true }).click()
+  const manager = settings.getByRole('region', { name: 'Behavior questions' })
+  await expect(manager.getByText('Chased the move', { exact: true })).toBeVisible()
+  await manager.getByLabel('New question text').fill('Exited after one bar in profit')
+  await manager.getByRole('radio', { name: 'Exit' }).click()
+  await manager.getByRole('button', { name: 'Add question' }).click()
+  await expect(manager.getByText('Exited after one bar in profit', { exact: true })).toBeVisible()
+  await manager.getByRole('button', { name: 'Edit question: Chased the move' }).click()
+  await manager.getByLabel('Question text', { exact: true }).fill('Chased price')
+  await manager.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(manager.getByText('Chased price', { exact: true })).toBeVisible()
+  await manager.getByRole('button', { name: 'Archive question: Chased price' }).click()
+  await manager.getByRole('button', { name: 'Archive', exact: true }).click()
+  await expect(manager.getByText('Chased price', { exact: true })).toHaveCount(0)
+  await manager.getByRole('button', { name: /Archived \(1\)/ }).click()
+  await manager.getByRole('button', { name: 'Unarchive question: Chased price' }).click()
+  await expect(manager.getByRole('button', { name: 'Archive question: Chased price' })).toBeVisible()
+  expect(errors).toEqual([])
+})

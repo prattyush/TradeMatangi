@@ -11,6 +11,7 @@ import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionS
 import FuturesRiskSettings from "./FuturesRiskSettings"
 import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
 import { NIFTY_PREMIUM_PRESETS as THRESHOLD_VALUES_NIFTY, SENSEX_PREMIUM_PRESETS as THRESHOLD_VALUES_SENSEX, withSavedPremium } from '../../../shared/optionPremiumPresets'
+import BehaviorQuestionsManager from '../../../shared/analysis/behavior/BehaviorQuestionsManager'
 import HistorySharingSettings, { type HistorySharingState } from '../../../shared/analysis/HistorySharingSettings'
 import { BACKEND_URL } from '../config'
 import { _authHeaders } from '../services/api'
@@ -2024,6 +2025,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   <div style={{ fontSize: 11, color: '#484f58' }}>
                     Analysis → Label Trades: step through round trips with Prev/Next (changes save automatically), or list every trade with a Save button
                   </div>
+                </div>
+
+                {/* Behavior questions */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 6, fontWeight: 600 }}>BEHAVIOR QUESTIONS</div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginBottom: 10 }}>
+                    Yes/no questions you answer per trade — entry questions when you label an entry, exit questions when you label a closed trade. Archive a question to stop asking it; its past answers stay in your stats.
+                  </div>
+                  <BehaviorQuestionsManager api={api} />
                 </div>
 
                 {/* Experimental Features */}

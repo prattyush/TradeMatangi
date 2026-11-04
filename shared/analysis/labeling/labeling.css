@@ -5,7 +5,7 @@
   --tl-accent: #58a6ff; --tl-good: #3fb950; --tl-bad: #f85149; --tl-save: #238636;
   color: var(--tl-text);
 }
-.desktop-label-workflow .tl-root {
+.tl-desktop .tl-root, .desktop-label-workflow .tl-root {
   --tl-bg: #10131a; --tl-card: #141924; --tl-border: #293142; --tl-soft: #252c39;
   --tl-text: #e2e8f0; --tl-muted: #94a3b8; --tl-dim: #64748b; --tl-accent: #60a5fa;
 }
@@ -95,3 +95,39 @@
   .tl-bottom-nav .tl-nav-button { flex: 1; min-height: 44px; font-size: 15px; }
   .tl-bottom-nav .tl-count { min-width: 56px; text-align: center; font-size: 13px; font-weight: 700; }
 }
+
+/* Behavior questions: manager and per-trade checklist */
+.bq { display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.bq-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bq-add .tl-input { flex: 1 1 220px; }
+.bq-error { margin: 0; color: var(--tl-bad); font-size: 12px; }
+.bq-section h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--tl-muted); }
+.bq-section h4 small { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--tl-dim); }
+.bq ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bq-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 8px; border: 1px solid var(--tl-border); border-radius: 6px; background: var(--tl-bg); }
+.bq-row .bq-text { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.bq-row.archived { opacity: .7; }
+.bq-row em, .bq-toggle em { font-style: normal; color: var(--tl-dim); font-size: 11px; }
+.bq-empty, .bq-count { margin: 0; color: var(--tl-dim); font-size: 12px; }
+.tl-ghost.danger { border-color: var(--tl-bad); color: var(--tl-bad); }
+
+.bq-checklist { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.bq-checklist .tl-label { display: block; font-size: 11px; color: var(--tl-muted); }
+.bq-checklist .tl-label small { color: var(--tl-dim); }
+.bq-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 5px 8px; text-align: left; border: 1px solid var(--tl-border); border-radius: 6px; background: var(--tl-bg); color: var(--tl-text); font-size: 12px; cursor: pointer; }
+.bq-toggle:hover:not(:disabled) { border-color: var(--tl-accent); }
+.bq-toggle:disabled { opacity: .55; cursor: default; }
+.bq-toggle .bq-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bq-switch { position: relative; flex: none; width: 28px; height: 16px; border-radius: 8px; background: var(--tl-soft); border: 1px solid var(--tl-border); }
+.bq-switch::after { content: ''; position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--tl-muted); transition: transform .12s; }
+.bq-toggle.on { border-color: var(--tl-accent); }
+.bq-toggle.on .bq-switch { background: var(--tl-accent); border-color: var(--tl-accent); }
+.bq-toggle.on .bq-switch::after { transform: translateX(12px); background: #0d1117; }
+.bq-state { flex: none; font-size: 11px; font-weight: 700; color: var(--tl-muted); }
+.bq-toggle.on .bq-state { color: var(--tl-accent); }
+
+/* Modal used to open the manager from Label Trades */
+.tl-modal { position: fixed; inset: 0; z-index: 2400; display: flex; align-items: center; justify-content: center; padding: 12px; background: rgba(0, 0, 0, .6); }
+.tl-modal-card { width: min(640px, 100%); max-height: 88vh; overflow: auto; padding: 14px; border-radius: 10px; border: 1px solid var(--tl-border); background: var(--tl-card); }
+.tl-modal-card > header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.tl-modal-card > header h3 { flex: 1; margin: 0; font-size: 15px; }
