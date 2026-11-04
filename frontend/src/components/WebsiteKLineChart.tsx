@@ -313,8 +313,9 @@ export default function WebsiteKLineChart(
       ({
         desktop_hide_chart_labels: !settings.showChartInfo,
         desktop_pnl_display_mode: props.pnlPctMode ? "percent" : "currency",
+        pnl_target_levels: props.pnlTargetLevels ?? "",
       }) as DesktopTradingSettings,
-    [settings.showChartInfo, props.pnlPctMode],
+    [settings.showChartInfo, props.pnlPctMode, props.pnlTargetLevels],
   );
   const pricePickAction = useMemo(
     () => (props.onPriceSelect ? { label: props.pricePickLabel } : null),

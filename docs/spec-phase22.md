@@ -92,3 +92,44 @@ Implementation: see [Installable webapp](spec-phase22-webapp.md) for the shared-
 The website login screen and trading header now offer **Install app**. The normal frontend startup scripts serve both the website at `/` and the webapp at `/webapp/` on port 5173 for preprod testing. Installation leaves the website tab unchanged; the installed app launches `/webapp/`. See the linked webapp document for startup and acceptance details.
 
 The webapp no longer reserves a separate app-title/install/fullscreen row. Fullscreen uses a compact icon in existing headers and a top-edge floating exit on desktop (or the header restore icon on touch). Installation controls remain on the website only. See the webapp implementation document for behavior and verification.
+
+
+## Target P&L lines, candle-close sound alert, MAX SIZE alert
+
+Three requirements for desktop, website and webapp (the webapp mounts the website, so it inherits them). Decisions confirmed with the user are marked **(confirmed)**.
+
+### 1. Target P&L levels indicator
+1. A new trading-chart indicator, **Target P&L levels**, with its setting in **Settings → Display**. The setting is a comma-separated list of doubles, for example `0,3,6,10,15,18`.
+2. If P&L display is **%**, the values are percentages of session capital. If it is **₹**, they are exact rupee amounts.
+3. One horizontal line is drawn per value. A line at X is the price where exiting the *entire* position makes the day's **net capital P&L** equal X. **(confirmed)** "Net" means the whole-day total, which is already-booked P&L (including earlier sessions that day) plus this position, after exit charges. With the day at +6.9% and a position open, the 0, 3 and 6 lines sit below the average entry and the rest above.
+4. Lines appear only while a position is active. In options sessions they appear only on the held contract's chart, in premium terms, and not on the underlying. **(confirmed)**
+5. The lines must never expand the chart viewport.
+6. Available in desktop, website and webapp, on Lightweight and KLine renderers. Day trading only; Swing and Analysis charts do not get it.
+
+### 2. Candle-close sound alert
+1. **Settings → Trading** gets an on/off toggle, a candle interval (1/3/5/10/15/30 min) and "seconds before candle end". The settings are per-user and synced through the backend. **(confirmed)**
+2. The alert is a short sound played that many seconds before each candle of the chosen interval ends. With 3 min and 15 s, it plays at 09:26:45.
+3. It works in replay, paper and real sessions on desktop, website and webapp. Stepwise is excluded.
+4. Replay uses the session's market clock, so the alert fires at the same market time at any speed and stops while paused.
+5. It fires at most once per candle, and not when a session starts or resumes already inside the window.
+6. The sound is synthesized in the browser (Web Audio), with no audio asset. A **Test sound** button unlocks audio.
+
+### 3. MAX SIZE "Alert at 50%"
+1. A new checkbox under the Guardrail MAX SIZE settings.
+2. When capital in use reaches 50% of the MAX SIZE limit (the same figure and limit MAX SIZE already enforces), the chart top bar turns orange.
+3. Priority: red states win. **(confirmed)** If the BAN "Alert at 50%" red bar is showing, or a BAN is active, the bar is not changed to orange.
+4. Day trading only; Swing has no MAX SIZE guardrail.
+
+### Implementation
+
+- **Settings (per user, synced).** New keys in `UserSettings`: `pnl_target_levels` (comma-separated numbers, normalized and validated server-side, at most 20), `candle_alert_enabled`, `candle_alert_interval_min` (1/3/5/10/15/30), `candle_alert_seconds_before` (1-600 and smaller than the interval), and `guardrail_maxsize_alert_enabled` (also on the guardrail settings routes and copied onto the session by `initialize_guardrails`).
+- **Target P&L levels.** `pnlTargetLevels` in `shared/charts/positionPnlLevels.ts` (mirrored in `frontend/src/indicators/positionPnlLevels.ts`, parity-tested) inverts `projectedTotalPnlAtTarget`: given the day total P&L marked at the current price, it solves for the exit price that gives the target, net of exit charges, and snaps to the best paisa. The KLine chart (`PnLTargets` in `shared/charts/catalogue.ts`) draws the lines with the same DOM geometry as `PositionPnL`; the Lightweight chart uses a second `PositionPnlPrimitive`. Neither feeds the price-scale range. Lines need the authoritative day P&L (`aggregatePnl`) and a position on that chart's own contract. The setting is in **Settings → Display** on the website and **Drawing & Display** on desktop. Analysis charts and Swing do not get the indicator.
+- **Candle-close sound.** `shared/candleAlert.ts` decides when to fire from a clock (once per candle, never on a start/resume already inside the window, tolerant of batched ticks); `shared/useCandleAlert.ts` hosts one timer per app (`AppInner` on the website/webapp, the desktop `App` on the primary linked screen); `shared/alertSound.ts` synthesizes a two-tone beep with Web Audio and unlocks on the first click/key press or **Test sound**. Replay uses the session market clock; Paper and Real use the wall clock. Stepwise and Browse are silent.
+- **MAX SIZE alert.** `shared/maxSizeAlert.ts` mirrors the backend capital-in-use formula (20% margin for equity, full premium for options, summed over every open contract) and the limit (percentage of session capital or fixed rupees). The website loads MAX SIZE settings itself (`useTradingDisplaySettings`), so the alert works before the Settings window is ever opened; the desktop reads them from the trading snapshot. `headerAlertColor` gives red priority over orange.
+
+### Verification
+
+- Backend: new cases in `test_user_settings.py` and `test_guardrails_api.py`. `test_allows_block_bars_zero` needs a running DynamoDB Local and fails without it, unrelated to this change.
+- Desktop/shared vitest: 311 pass, including target-level math (long/short, % and ₹ modes, parity with the website copy), candle-alert timing and MAX SIZE/colour priority.
+- `tsc --noEmit` clean for `frontend`, `webapp` and `windowsapp`; website and desktop production builds pass.
+- Manual acceptance still required: hear the beep in a real browser and in the Tauri desktop app; confirm lines and the orange bar in Replay, Paper and Real.

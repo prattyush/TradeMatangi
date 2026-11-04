@@ -1,4 +1,6 @@
 import { allIndicators, drawingTools, indicatorLabel } from '../../shared/charts/catalogue'
+import { useCandleAlert, type CandleAlertClock } from '../../shared/useCandleAlert'
+import { headerAlertColor, maxSizeAlertActive, type SizedPosition } from '../../shared/maxSizeAlert'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import { nativeSwingSubscribe } from "./swingStream";
 import { recordFeedReceipt, startPerformanceDiagnostics } from '../../frontend/src/services/performanceDiagnostics'
@@ -2574,6 +2576,20 @@ function ScreenController(props: ScreenControllerProps) {
   }
   const primaryId = primaryLinkedScreen(activeScreen, screens)
   const companion = primaryId !== activeScreenId
+  // Candle-close sound alert (Replay on the replay clock; Paper/Real on the wall clock). Not Stepwise/Browse,
+  // and only from the primary linked screen so linked screens do not beep twice.
+  const candleAlertConfig = useMemo(() => ({
+    enabled: Boolean(sharedPreferences.candle_alert_enabled),
+    intervalMin: Number(sharedPreferences.candle_alert_interval_min ?? 3),
+    secondsBefore: Number(sharedPreferences.candle_alert_seconds_before ?? 15),
+  }), [sharedPreferences.candle_alert_enabled, sharedPreferences.candle_alert_interval_min, sharedPreferences.candle_alert_seconds_before])
+  const candleAlertClock = useMemo<CandleAlertClock>(() => {
+    if (companion) return { kind: 'off' }
+    if (mode === 'Replay') return replay && replay.mode === 'replay' && replay.state !== 'stopped' ? { kind: 'market', time: replay.cursor } : { kind: 'off' }
+    if (isLiveTradingMode(mode)) return trading && trading.session.state !== 'ended' && live ? { kind: 'wall' } : { kind: 'off' }
+    return { kind: 'off' }
+  }, [companion, mode, replay?.mode, replay?.state, replay?.cursor, trading?.session.state, Boolean(live)])
+  useCandleAlert(candleAlertClock, candleAlertConfig, trading?.session.session_id ?? replay?.run_id ?? null)
   const createLinkedScreen = async () => {
     if (!trading || trading.session.state === 'ended') return
     await persistCurrentScreen()
@@ -2725,10 +2741,21 @@ function ScreenController(props: ScreenControllerProps) {
   const screenGuardRailAlertActive = Boolean(guardRailSettingsRecord.guardrail_ban_halfway_alert_enabled)
     && screenClosedPnlPct < 0
     && Math.abs(screenClosedPnlPct) >= 0.5 * Number(guardRailSettingsRecord.guardrail_ban_capital_pct ?? Infinity)
+  const maxSizePositions: SizedPosition[] = !trading ? [] : trading.session.instrument_type !== 'options'
+    ? [{ ...trading.positions.equity, isOption: false }]
+    : (Object.keys(trading.positions_by_contract ?? {}).length ? Object.values(trading.positions_by_contract) : [trading.positions.CE, trading.positions.PE]).map(position => ({ ...position, isOption: true }))
+  const screenMaxSizeAlert = Boolean(trading) && trading!.session.state !== 'ended' && maxSizeAlertActive({
+    enabled: Boolean(guardRailSettingsRecord.guardrail_maxsize_enabled),
+    alertEnabled: Boolean(guardRailSettingsRecord.guardrail_maxsize_alert_enabled),
+    mode: String(guardRailSettingsRecord.guardrail_maxsize_mode ?? 'percentage'),
+    pct: Number(guardRailSettingsRecord.guardrail_maxsize_pct ?? 20),
+    value: Number(guardRailSettingsRecord.guardrail_maxsize_value ?? 0),
+  }, maxSizePositions, screenSessionCapital, trading?.session.instrument_type)
+  const screenHeaderAlert = headerAlertColor({ redAlert: screenGuardRailAlertActive, banActive: Boolean(trading?.guardrails?.ban_active), maxSizeAlert: screenMaxSizeAlert })
   const screenHighTierDisabled = Boolean(guardRailSettingsRecord.guardrail_ban_enabled)
     && screenClosedPnlPct <= Number(guardRailSettingsRecord.high_tier_pnl_threshold_pct ?? -Infinity)
   return <main>
-    <header className={screenGuardRailAlertActive ? 'guardrail-alert' : undefined}>{props.viewSelector}
+    <header className={screenHeaderAlert === 'red' ? 'guardrail-alert' : screenHeaderAlert === 'orange' ? 'guardrail-size-alert' : undefined}>{props.viewSelector}
       <button className="icon-button panel-toggle" title={toolPanelOpen ? 'Hide chart tools' : 'Show chart tools'} aria-label={toolPanelOpen ? 'Hide chart tools' : 'Show chart tools'} aria-pressed={toolPanelOpen} onClick={() => setToolPanelOpen(value => !value)}>{toolPanelOpen ? '◧' : '◨'}</button>
       <nav className="screen-tabs">{(props.assignedId ? [activeScreen] : screens).map(screen => <button key={screen.id} className={screen.id === activeScreenId ? 'active' : ''} onClick={() => { setActiveScreenId(screen.id); setMaximizedTileId(null) }}>{screen.name}{props.external.includes(screen.id) ? ' ↗' : ''}</button>)}{!props.assignedId && <button className="new-screen" onClick={addScreen}>＋</button>}</nav>
       {!props.assignedId && <span className="screen-actions"><button className="icon-button" title="Rename screen" aria-label="Rename screen" onClick={renameScreen}>✎</button><button className="icon-button" title="Duplicate screen" aria-label="Duplicate screen" onClick={duplicateScreen}>⧉</button><button className="icon-button" title="Pop out screen" aria-label="Pop out screen" onClick={() => void popOutScreen()}>⇱</button><button className="icon-button" title="Move screen left" aria-label="Move screen left" onClick={() => moveScreen(-1)}>‹</button><button className="icon-button" title="Move screen right" aria-label="Move screen right" onClick={() => moveScreen(1)}>›</button><button className="icon-button" title="Close screen" aria-label="Close screen" disabled={screens.length <= 1} onClick={() => void closeScreen().catch(reportTradingError)}>×</button></span>}

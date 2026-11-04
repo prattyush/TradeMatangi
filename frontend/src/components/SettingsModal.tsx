@@ -1,5 +1,9 @@
 import WebsiteChartAppearanceSettings from './WebsiteChartAppearanceSettings'
 import SettingHelp from './SettingHelp'
+import { cachedTradingDisplaySettings, publishTradingDisplaySettings } from '../hooks/useTradingDisplaySettings'
+import { parsePnlTargets } from '../indicators/positionPnlLevels'
+import { unlockAlertAudio, playAlertBeep } from '../../../shared/alertSound'
+import { CANDLE_ALERT_INTERVALS } from '../../../shared/candleAlert'
 import { useWebsiteChartRenderer } from '../hooks/useWebsiteChartRenderer'
 import { useAnalysisChartRenderer } from '../hooks/useAnalysisChartRenderer'
 import DisplaySettings from './DisplaySettings'
@@ -340,6 +344,7 @@ export interface GuardRailSettingsLocal {
   maxSizeMode: "percentage" | "value"
   maxSizePct: number
   maxSizeValue: number
+  maxSizeAlertEnabled: boolean
 }
 
 interface Props {
@@ -404,6 +409,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   useFlashError(status && !/saved|success|connected|added|updated|deleted|^Streaming source set to:|^Reset to /i.test(status) ? status : null, 'Settings')
 
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
+  const [pnlTargetsInput, setPnlTargetsInput] = useState(() => cachedTradingDisplaySettings().pnlTargetLevels)
+  const [candleAlertEnabled, setCandleAlertEnabled] = useState(() => cachedTradingDisplaySettings().candleAlert.enabled)
+  const [candleAlertInterval, setCandleAlertInterval] = useState(() => cachedTradingDisplaySettings().candleAlert.intervalMin)
+  const [candleAlertSecondsInput, setCandleAlertSecondsInput] = useState(() => String(cachedTradingDisplaySettings().candleAlert.secondsBefore))
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
   const [sizingModeSaving, setSizingModeSaving] = useState(false)
   const [sizingMode, setSizingMode] = useState<SizingMode>(loadSizingMode)
@@ -470,6 +479,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
   const [grBanHalfwayAlertEnabled, setGrBanHalfwayAlertEnabled] = useState(false)
+  const [grMaxSizeAlertEnabled, setGrMaxSizeAlertEnabled] = useState(() => cachedTradingDisplaySettings().maxSize.alertEnabled)
   const [grHighTierThresholdInput, setGrHighTierThresholdInput] = useState('0')
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
@@ -610,6 +620,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         setExecutionBroker(s.real_execution_broker ?? "kotak")
         if (isRealTradingUser || isAdmin) void api.executionBrokerStatus().then(v => { if (active) setRealActiveSession(Boolean(v.active_session_id)) }).catch(() => { if (active) setRealActiveSession(true) })
         setKotakProtectionEnabled(s.kotak_automated_protection_enabled ?? true)
+        setPnlTargetsInput(s.pnl_target_levels ?? '')
+        setCandleAlertEnabled(s.candle_alert_enabled ?? false)
+        setCandleAlertInterval(s.candle_alert_interval_min ?? 3)
+        setCandleAlertSecondsInput(String(s.candle_alert_seconds_before ?? 15))
+        publishTradingDisplaySettings(s)
         if (s.entry_auto_sl_delay_sec != null) {
           setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
           localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(s.entry_auto_sl_delay_sec))
@@ -667,6 +682,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
           setGrBanEnabled(s.guardrail_ban_enabled)
           setGrBanHalfwayAlertEnabled(s.guardrail_ban_halfway_alert_enabled ?? false)
+          setGrMaxSizeAlertEnabled(s.guardrail_maxsize_alert_enabled ?? false)
+          publishTradingDisplaySettings(s)
           setGrHighTierThresholdInput(String(s.high_tier_pnl_threshold_pct ?? 0))
           setGrCooldownEnabled(s.guardrail_cooldown_enabled)
           localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
@@ -686,7 +703,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
           localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
         }
-        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0 })
+        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0, maxSizeAlertEnabled: guardrails.guardrail_maxsize_alert_enabled ?? false })
         if (tokens) { setIciciMasked(tokens.icici_session); setKiteMasked(tokens.kite_access); setFyersAccessMasked(tokens.fyers_access); setFyersRefreshMasked(tokens.fyers_refresh) }
         if (stream) setStreamSource(stream.source)
         if (history) { setHistoricalSource(history.source); setHistoricalFallback(history.allow_fallback) }
@@ -912,6 +929,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         high_tier_pnl_threshold_pct: highTierPnlThresholdPct,
         guardrail_cooldown_enabled: grCooldownEnabled,
         guardrail_maxsize_enabled: grMaxSizeEnabled,
+        guardrail_maxsize_alert_enabled: grMaxSizeAlertEnabled,
         guardrail_maxsize_mode: grMaxSizeMode,
         guardrail_maxsize_pct: maxSizePct,
         guardrail_maxsize_value: maxSizeValue,
@@ -928,7 +946,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, grMaxSizeMode)
       localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(maxSizePct))
       localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(maxSizeValue))
-      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, highTierPnlThresholdPct, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue })
+      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, highTierPnlThresholdPct, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue, maxSizeAlertEnabled: grMaxSizeAlertEnabled })
+      publishTradingDisplaySettings({ guardrail_maxsize_enabled: grMaxSizeEnabled, guardrail_maxsize_alert_enabled: grMaxSizeAlertEnabled, guardrail_maxsize_mode: grMaxSizeMode, guardrail_maxsize_pct: maxSizePct, guardrail_maxsize_value: maxSizeValue })
       setStatus('GuardRail settings saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -1155,6 +1174,21 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
                   </select>
                   <SettingHelp text={"Chart used in Trade Analysis and the Trade-vs-Pattern view. KLine adds more drawing tools and indicators, and its drawings are saved to your account and shared with the KLine trading chart. Lightweight uses the same tools as the Lightweight trading chart. Independent of the trading chart setting."} />
+                </label>
+              </div>
+
+              <div>
+                <div className="settings-block-title">Target P&amp;L levels indicator</div>
+                <label className="settings-field-row">
+                  <span>Target P&amp;L values</span>
+                  <input className="settings-control" aria-label="Target P&L values" placeholder="0,3,6,10,15,18" value={pnlTargetsInput}
+                    onChange={event => setPnlTargetsInput(event.target.value)}
+                    onBlur={() => {
+                      const normalized = parsePnlTargets(pnlTargetsInput).join(',')
+                      if (normalized === cachedTradingDisplaySettings().pnlTargetLevels) { setPnlTargetsInput(normalized); return }
+                      void savePreference({ pnl_target_levels: normalized }, () => { setPnlTargetsInput(normalized); publishTradingDisplaySettings({ pnl_target_levels: normalized }) })
+                    }} />
+                  <SettingHelp text={"Comma-separated numbers, e.g. 0,3,6,10,15,18. With P&L display in % of Capital they are percentages of session capital; with Monetary they are rupee amounts. Turn on Indicators → Target P&L levels on a chart: each line marks the price where exiting the whole position would make the day's total P&L (booked trades plus this position, after exit charges) equal that value. Lines show only while a position is open and never rescale the chart."} />
                 </label>
               </div>
 
@@ -1784,6 +1818,48 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
               </div>
             </div>
+            {/* Candle-close sound alert */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                CANDLE-CLOSE SOUND ALERT
+                <SettingHelp text={"Plays a short beep this many seconds before each candle of the chosen interval closes, e.g. 3 min and 15 s beeps at 09:26:45. Works in Replay, Paper and Real sessions (not Stepwise). Replay follows the session clock, so it fires at the same market time at any speed."} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11, color: '#8b949e' }}>
+                  <input type="checkbox" checked={candleAlertEnabled} onChange={e => {
+                    const enabled = e.target.checked
+                    unlockAlertAudio()
+                    void savePreference({ candle_alert_enabled: enabled }, () => { setCandleAlertEnabled(enabled); publishTradingDisplaySettings({ candle_alert_enabled: enabled }) })
+                  }} />
+                  Enabled
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#8b949e' }}>
+                  Candle
+                  <select aria-label="Alert candle interval" value={candleAlertInterval} style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '3px 6px', fontSize: 12 }}
+                    onChange={e => {
+                      const interval = Number(e.target.value)
+                      const seconds = Number(candleAlertSecondsInput)
+                      if (!(seconds >= 1 && seconds < interval * 60)) { setStatus('Alert seconds must be at least 1 and less than the candle interval'); return }
+                      void savePreference({ candle_alert_interval_min: interval, candle_alert_seconds_before: seconds }, () => { setCandleAlertInterval(interval); publishTradingDisplaySettings({ candle_alert_interval_min: interval, candle_alert_seconds_before: seconds }) })
+                    }}>
+                    {CANDLE_ALERT_INTERVALS.map(minutes => <option key={minutes} value={minutes}>{minutes} min</option>)}
+                  </select>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#8b949e' }}>
+                  Seconds before
+                  <input aria-label="Alert seconds before candle end" type="number" min={1} max={600} value={candleAlertSecondsInput}
+                    onChange={e => setCandleAlertSecondsInput(e.target.value)}
+                    onBlur={() => {
+                      const seconds = Math.floor(Number(candleAlertSecondsInput))
+                      if (!(seconds >= 1 && seconds < candleAlertInterval * 60)) { setStatus('Alert seconds must be at least 1 and less than the candle interval'); return }
+                      void savePreference({ candle_alert_interval_min: candleAlertInterval, candle_alert_seconds_before: seconds }, () => { setCandleAlertSecondsInput(String(seconds)); publishTradingDisplaySettings({ candle_alert_interval_min: candleAlertInterval, candle_alert_seconds_before: seconds }) })
+                    }}
+                    style={{ width: 60, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '3px 6px', fontSize: 12, textAlign: 'center' }} />
+                </label>
+                <button type="button" onClick={() => { unlockAlertAudio(); if (!playAlertBeep()) setStatus('Sound is not available in this browser') }}
+                  style={{ background: '#21262d', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '3px 10px', fontSize: 11, cursor: 'pointer' }}>Test sound</button>
+              </div>
+            </div>
             {/* Right-Click SL Direction */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
@@ -2257,6 +2333,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                         style={{ cursor: 'pointer' }}
                       />
                       <span style={{ fontSize: 11, color: '#8b949e' }}>Enabled</span>
+                    </label>
+                    <label title="Turn the top bar orange once capital in use reaches 50% of MAX SIZE. Red BAN alerts take priority." style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={grMaxSizeAlertEnabled}
+                        onChange={e => setGrMaxSizeAlertEnabled(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 10, color: '#8b949e' }}>Alert at 50%</span>
                     </label>
                   </div>
                   <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>

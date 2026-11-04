@@ -81,7 +81,11 @@ const optionLabels: Record<string, string> = {
   button: 'Button',
   '120': '2 min',
   '180': '3 min',
-  '300': '5 min'
+  '300': '5 min',
+  '1': '1 min',
+  '10': '10 min',
+  '15': '15 min',
+  '30': '30 min'
 }
 const tokenLabels: Record<string, string> = {
   icici_session: 'ICICI session token',
@@ -125,7 +129,8 @@ function SettingControl({
           value={String(value ?? '')}
           onChange={(e) =>
             onChange(
-              field.key === 'strategy_interval_secs'
+              field.key === 'strategy_interval_secs' ||
+                field.key === 'candle_alert_interval_min'
                 ? Number(e.target.value)
                 : e.target.value
             )
@@ -325,7 +330,14 @@ export function DesktopSettingsModal({
       }
     }
     await action(async () => {
-      if (tab === 'Drawing & Display') await onSave(draft)
+      if (tab === 'Drawing & Display') {
+        await onSave(draft)
+        setUserDraft(
+          await onSaveTradingSettings({
+            pnl_target_levels: String(userDraft.pnl_target_levels ?? '')
+          })
+        )
+      }
       else if (tab === 'GuardRails') {
         const saved = await saveGuardrails(
           Object.fromEntries(
@@ -675,6 +687,28 @@ export function DesktopSettingsModal({
                     Show OHLC and indicator information
                   </span>
                 </label>
+              </section>
+              <section
+                hidden={tab !== 'Drawing & Display'}
+                className="settings-section"
+              >
+                <strong>Target P&amp;L levels indicator</strong>
+                <div className="picker-fields">
+                  <label title="Comma-separated numbers, e.g. 0,3,6,10,15,18. Percent of session capital when P&L display is Percentage, rupees when Currency. Each line marks the price where exiting the whole position makes the day's net P&L equal that value. Shown only while a position is open.">
+                    Target P&amp;L values
+                    <input
+                      aria-label="Target P&L values"
+                      placeholder="0,3,6,10,15,18"
+                      value={String(userDraft.pnl_target_levels ?? '')}
+                      onChange={(event) =>
+                        setUserDraft({
+                          ...userDraft,
+                          pnl_target_levels: event.target.value
+                        })
+                      }
+                    />
+                  </label>
+                </div>
               </section>
               {sharedSettingsSections[tab] && (
                 <section className="settings-section">

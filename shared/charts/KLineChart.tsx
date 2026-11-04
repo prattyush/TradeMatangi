@@ -34,7 +34,12 @@ import type {
 import { formatCandleCloseCountdown } from "../../windowsapp/src/liveCountdown";
 import { buildTradeMarkers } from "./tradeMarkers";
 import { targetProfitLabel, targetProfitLinePrice } from "./targetProfitLabel";
-import { positionPnlLevels, type PositionPnlLevel } from "./positionPnlLevels";
+import {
+  parsePnlTargets,
+  pnlTargetLevels,
+  positionPnlLevels,
+  type PositionPnlLevel,
+} from "./positionPnlLevels";
 import { orderLineLabel, orderPrice } from "./orderLineLabel";
 import { TradingOverlayRegistry } from "./tradingOverlays";
 import { drawingTools, indicatorLabel } from "./catalogue";
@@ -1070,7 +1075,8 @@ export function KLineChart({
           },
           true,
         );
-      } else if (indicator !== "PositionPnL") chart.createIndicator(indicator);
+      } else if (indicator !== "PositionPnL" && indicator !== "PnLTargets")
+        chart.createIndicator(indicator);
     });
   }, [
     indicatorKey,
@@ -1082,9 +1088,32 @@ export function KLineChart({
   useEffect(() => {
     const chart = chartRef.current;
     const container = element.current;
-    const levels = indicators.includes("PositionPnL")
-      ? positionPnlLevels(levelsPosition, sessionCapital, brokeragePerOrder)
+    const targetValues = indicators.includes("PnLTargets")
+      ? parsePnlTargets(tradingSettings?.pnl_target_levels)
       : [];
+    const targetMark = positionMarkPrice ?? candles[candles.length - 1]?.close;
+    const levels = [
+      ...(indicators.includes("PositionPnL")
+        ? positionPnlLevels(levelsPosition, sessionCapital, brokeragePerOrder)
+        : []),
+      // Day-total targets need the authoritative day P&L; draw nothing without it.
+      ...(targetValues.length &&
+      pnlAvailable !== false &&
+      aggregatePnl !== undefined &&
+      targetMark !== undefined
+        ? pnlTargetLevels(
+            levelsPosition,
+            targetMark,
+            aggregatePnl,
+            sessionCapital,
+            brokeragePerOrder,
+            targetValues,
+            tradingSettings?.desktop_pnl_display_mode === "percent"
+              ? "percent"
+              : "currency",
+          )
+        : []),
+    ];
     if (!chart || !container || !levels.length) {
       positionLevelFallbackRef.current = null;
       setPositionLevelGeometry((current) => (current.length ? [] : current));
@@ -1173,6 +1202,11 @@ export function KLineChart({
     levelsPosition?.entry_commission,
     sessionCapital,
     brokeragePerOrder,
+    aggregatePnl,
+    positionMarkPrice,
+    pnlAvailable,
+    tradingSettings?.pnl_target_levels,
+    tradingSettings?.desktop_pnl_display_mode,
     latestPositionFill,
     drawingInstrumentKey,
     interval,
@@ -2463,7 +2497,7 @@ export function KLineChart({
               </button>
               {indicatorsMenuOpen && (
                 <div className="chart-dropdown-menu">
-                  {["MA", "PositionPnL"].map((name) => (
+                  {["MA", "PositionPnL", "PnLTargets"].map((name) => (
                     <label key={name}>
                       <input
                         type="checkbox"

@@ -189,6 +189,10 @@ export interface UserSettingsResponse {
   stoploss_limit_gap_pct?: number
   desktop_order_size_mode?: 'quantity' | 'funds_ratio' | 'risk_ratio'
   desktop_pnl_display_mode?: 'currency' | 'percent'
+  pnl_target_levels?: string
+  candle_alert_enabled?: boolean
+  candle_alert_interval_min?: number
+  candle_alert_seconds_before?: number
   funds_ratio_l_pct?: number
   funds_ratio_m_pct?: number
   funds_ratio_h_pct?: number
@@ -735,6 +739,7 @@ export interface GuardRailSettings {
   guardrail_ban_min_trades: number
   guardrail_ban_enabled: boolean
   guardrail_ban_halfway_alert_enabled?: boolean
+  guardrail_maxsize_alert_enabled?: boolean
   high_tier_pnl_threshold_pct?: number
   guardrail_cooldown_enabled: boolean
   guardrail_maxsize_enabled: boolean

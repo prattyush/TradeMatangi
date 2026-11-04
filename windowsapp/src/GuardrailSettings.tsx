@@ -10,6 +10,7 @@ export const guardrailFields = [
   ['guardrail_ban_loss_trade_pct', 'Losing trades limit (%)', 1, 100, 0.1],
   ['guardrail_ban_min_trades', 'Minimum completed trades for Ban', 1, 100, 1],
   ['guardrail_maxsize_enabled', 'Enable Max Size'],
+  ['guardrail_maxsize_alert_enabled', 'Turn header orange at 50% of Max Size (red alerts take priority)'],
   ['guardrail_maxsize_mode', 'Max Size mode'],
   ['guardrail_maxsize_pct', 'Max Size (% of capital)', 1, 100, 0.1],
   ['guardrail_maxsize_value', 'Max Size value (₹)', 0, undefined, 0.1],

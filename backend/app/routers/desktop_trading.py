@@ -856,6 +856,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "desktop_hide_chart_labels": settings.get("desktop_hide_chart_labels", False),
             "desktop_order_size_mode": settings.get("desktop_order_size_mode", "quantity"),
             "desktop_pnl_display_mode": settings.get("desktop_pnl_display_mode", "currency"),
+            "pnl_target_levels": settings.get("pnl_target_levels", ""),
             "desktop_confirm_flatten": settings.get("desktop_confirm_flatten", True),
             "context_menu_sl_mode": settings.get("context_menu_sl_mode", "longOnly"),
             "target_deviation_pct": settings.get("target_deviation_pct", 0.01),

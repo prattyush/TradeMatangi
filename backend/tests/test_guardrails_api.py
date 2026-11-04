@@ -176,6 +176,27 @@ class TestHighTierAndHalfwayAlertRoundTrip:
         assert data["high_tier_pnl_threshold_pct"] == -2.5
 
 
+class TestMaxSizeAlertRoundTrip:
+    STORED = {"guardrail_maxsize_enabled": True, "guardrail_maxsize_alert_enabled": True}
+
+    def test_default_is_off(self):
+        with patch("app.services.user_settings_service.get_settings", return_value={}):
+            data = client.get("/api/guardrails/settings", headers=HEADERS).json()
+        assert data["guardrail_maxsize_alert_enabled"] is False
+
+    def test_get_returns_stored_value(self):
+        with patch("app.services.user_settings_service.get_settings", return_value=self.STORED):
+            data = client.get("/api/guardrails/settings", headers=HEADERS).json()
+        assert data["guardrail_maxsize_alert_enabled"] is True
+
+    def test_post_returns_saved_value(self):
+        with patch("app.services.user_settings_service.update_settings", return_value=self.STORED) as update:
+            data = client.post("/api/guardrails/settings", json={"guardrail_maxsize_alert_enabled": True}, headers=HEADERS).json()
+        assert data["guardrail_maxsize_alert_enabled"] is True
+        update.assert_called_once()
+        assert update.call_args.args[1] == {"guardrail_maxsize_alert_enabled": True}
+
+
 # ── POST /api/guardrails/settings ─────────────────────────────────────────────
 
 class TestUpdateSettingsEndpoint:
