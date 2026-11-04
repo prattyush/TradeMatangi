@@ -226,6 +226,20 @@ def _serialize_rt_trade(t: dict) -> dict:
     }
 
 
+def real_round_trip_state(session_id: str):
+    """Closed and open round trips of a real session, using the committed broker book.
+
+    Same source as Analysis and ``save_labels`` for real sessions, so the indices the
+    desktop labels in-session are the indices Analysis shows later.
+    """
+    session = _load_session(session_id)
+    if not session:
+        return [], []
+    from app.services.performance_service import load_session_cycles
+
+    return cycle_round_trips(load_session_cycles(session, include_labels=False))
+
+
 def compute_round_trips_for_session(session_id: str) -> list[dict]:
     """Compute FIFO round-trips for a session."""
     try:

@@ -1097,14 +1097,18 @@ async fn desktop_settings_request(
 fn valid_analysis_path(path: &str, method: &str) -> bool {
     let route = path.split('?').next().unwrap_or("");
     if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
-    if method == "POST" { return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories"); }
+    let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if method == "POST" {
+        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks")
+            || route.strip_prefix("behavior/questions/").and_then(|rest| rest.split_once('/')).map(|(id, action)| valid_id(id) && matches!(action, "update" | "archive" | "restore")).unwrap_or(false);
+    }
     if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees"; }
     if method != "GET" { return false; }
-    let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     match route {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
-        "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" => true,
+        "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -2172,6 +2176,27 @@ mod tests {
         }
         for path in ["pattern/chart", "pattern/chart/by-date", "pattern/ohlc/equity", "pattern/strategies/extra"] {
             assert!(!valid_analysis_path(path, "POST"));
+        }
+    }
+
+    #[test]
+    fn behavior_routes_are_exact_and_only_post_or_get() {
+        for path in ["behavior/questions", "behavior/marks"] {
+            assert!(valid_analysis_path(path, "GET"));
+            assert!(valid_analysis_path(path, "POST"));
+            assert!(!valid_analysis_path(path, "DELETE"));
+            assert!(!valid_analysis_path(path, "PUT"));
+        }
+        assert!(valid_analysis_path("behavior/stats?symbol=NIFTY", "GET"));
+        assert!(valid_analysis_path("behavior/marks/by-question?question_id=abc", "GET"));
+        assert!(!valid_analysis_path("behavior/stats", "POST"));
+        for action in ["update", "archive", "restore"] {
+            assert!(valid_analysis_path(&format!("behavior/questions/abc123-_X/{action}"), "POST"));
+            assert!(!valid_analysis_path(&format!("behavior/questions/abc123/{action}"), "GET"));
+        }
+        for path in ["behavior/questions/abc/delete", "behavior/questions//archive", "behavior/questions/a%2Fb/archive", "behavior/questions/../archive", "behavior/questions/abc/archive/extra", "behavior/other", "behavior/marks/extra", "behavior/stats/extra"] {
+            assert!(!valid_analysis_path(path, "POST"), "{path}");
+            assert!(!valid_analysis_path(path, "GET"), "{path}");
         }
     }
 
