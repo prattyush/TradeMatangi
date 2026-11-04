@@ -30,6 +30,7 @@ def db():
             "Sessions": [("session_id", "S")], "Trades": [("session_id", "S"), ("trade_id", "S")],
             "Orders": [("session_id", "S"), ("order_id", "S")], "Strategies": [("strategy_id", "S")],
             "TradeLabels": [("session_id", "S"), ("round_trip_index", "N")],
+            "BehaviorMarks": [("session_id", "S"), ("mark_key", "S")],
             "EventSnapshots": [("session_id", "S"), ("event_id", "S")],
             "AICommands": [("user_id", "S"), ("command_id", "S")],
             "AIDecisionLog": [("session_id", "S"), ("ts_command_id", "S")],
@@ -68,6 +69,7 @@ def test_delete_one_preserves_other_and_wallet_and_restores(db, tmp_path):
         "Orders": dict(session_id="one", order_id="order"),
         "Strategies": dict(session_id="one", strategy_id="strategy"),
         "TradeLabels": dict(session_id="one", round_trip_index=1),
+        "BehaviorMarks": dict(session_id="one", mark_key="00001#question"),
         "EventSnapshots": dict(session_id="one", event_id="event"),
         "AICommands": dict(session_id="one", user_id="user", command_id="command"),
         "AIDecisionLog": dict(session_id="one", ts_command_id="ts"),
@@ -124,7 +126,7 @@ def test_full_backup_restore_types_empty_tables_and_missing_table(db, tmp_path):
     row = put(db, "Trades", session_id="s", trade_id="t", decimal=Decimal("1.00001"), binary=b"abc\x00", binaries={b"x", b"y"}, numbers={Decimal("1.1"), Decimal("2")}, strings={"a", "b"}, nested={"list": [None, True, Decimal("0.01")]})
     path = m.full_backup(db, tmp_path)
     backup = m.load_backup(path)
-    assert len(backup["schemas"]) == 10
+    assert len(backup["schemas"]) == 11
     assert backup["changes"][0]["before"] == row
     db.delete_table(TableName="Trades")
     db.delete_table(TableName="Orders")  # empty table must be recreated too

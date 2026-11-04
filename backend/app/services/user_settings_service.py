@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SETTINGS: dict = {
     "website_chart_renderer": "lightweight",
     "website_analysis_chart_renderer": "lightweight",
+    "analysis_label_view": "one_by_one",
     "real_execution_broker": "kotak",
     "brokerage_per_order": 1.0,
     "strategy_interval_secs": 180,

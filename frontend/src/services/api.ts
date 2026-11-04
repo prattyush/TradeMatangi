@@ -172,6 +172,7 @@ export interface SimulationStartRequest {
 export interface UserSettingsResponse {
   website_chart_renderer?: "lightweight" | "kline"
   website_analysis_chart_renderer?: "lightweight" | "kline"
+  analysis_label_view?: "one_by_one" | "all"
   real_execution_broker?: "kotak" | "kite"
   brokerage_per_order?: number
   strategy_interval_secs?: 120 | 180 | 300
