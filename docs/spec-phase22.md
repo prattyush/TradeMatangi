@@ -92,3 +92,30 @@ Implementation: see [Installable webapp](spec-phase22-webapp.md) for the shared-
 The website login screen and trading header now offer **Install app**. The normal frontend startup scripts serve both the website at `/` and the webapp at `/webapp/` on port 5173 for preprod testing. Installation leaves the website tab unchanged; the installed app launches `/webapp/`. See the linked webapp document for startup and acceptance details.
 
 The webapp no longer reserves a separate app-title/install/fullscreen row. Fullscreen uses a compact icon in existing headers and a top-edge floating exit on desktop (or the header restore icon on touch). Installation controls remain on the website only. See the webapp implementation document for behavior and verification.
+
+
+## Target P&L lines, candle-close sound alert, MAX SIZE alert
+
+Three requirements for desktop, website and webapp (the webapp mounts the website, so it inherits them). Decisions confirmed with the user are marked **(confirmed)**.
+
+### 1. Target P&L levels indicator
+1. A new trading-chart indicator, **Target P&L levels**, with its setting in **Settings → Display**. The setting is a comma-separated list of doubles, for example `0,3,6,10,15,18`.
+2. If P&L display is **%**, the values are percentages of session capital. If it is **₹**, they are exact rupee amounts.
+3. One horizontal line is drawn per value. A line at X is the price where exiting the *entire* position makes the day's **net capital P&L** equal X. **(confirmed)** "Net" means the whole-day total, which is already-booked P&L (including earlier sessions that day) plus this position, after exit charges. With the day at +6.9% and a position open, the 0, 3 and 6 lines sit below the average entry and the rest above.
+4. Lines appear only while a position is active. In options sessions they appear only on the held contract's chart, in premium terms, and not on the underlying. **(confirmed)**
+5. The lines must never expand the chart viewport.
+6. Available in desktop, website and webapp, on Lightweight and KLine renderers. Day trading only; Swing and Analysis charts do not get it.
+
+### 2. Candle-close sound alert
+1. **Settings → Trading** gets an on/off toggle, a candle interval (1/3/5/10/15/30 min) and "seconds before candle end". The settings are per-user and synced through the backend. **(confirmed)**
+2. The alert is a short sound played that many seconds before each candle of the chosen interval ends. With 3 min and 15 s, it plays at 09:26:45.
+3. It works in replay, paper and real sessions on desktop, website and webapp. Stepwise is excluded.
+4. Replay uses the session's market clock, so the alert fires at the same market time at any speed and stops while paused.
+5. It fires at most once per candle, and not when a session starts or resumes already inside the window.
+6. The sound is synthesized in the browser (Web Audio), with no audio asset. A **Test sound** button unlocks audio.
+
+### 3. MAX SIZE "Alert at 50%"
+1. A new checkbox under the Guardrail MAX SIZE settings.
+2. When capital in use reaches 50% of the MAX SIZE limit (the same figure and limit MAX SIZE already enforces), the chart top bar turns orange.
+3. Priority: red states win. **(confirmed)** If the BAN "Alert at 50%" red bar is showing, or a BAN is active, the bar is not changed to orange.
+4. Day trading only; Swing has no MAX SIZE guardrail.
