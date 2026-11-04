@@ -11,6 +11,11 @@ export type AnalysisChartProps = {
   isMaximized?: boolean
   onMaximize?: () => void
   getMarkerText?: (trade: AnalysisTrade) => string
+  /** Fill the parent's height instead of the width-derived default (Label Trades stacked panes). */
+  fill?: boolean
+  /** Epoch seconds (candle clock) to centre the chart on, e.g. the entry of the round trip being labeled. */
+  focusTime?: number
+  labelContractMarkers?: boolean
 }
 
 export type OptionsChartProps = {
@@ -23,6 +28,10 @@ export type OptionsChartProps = {
   historicalDays?: number
   isMaximized?: boolean
   onMaximize?: () => void
+  getMarkerText?: (trade: AnalysisTrade) => string
+  fill?: boolean
+  focusTime?: number
+  labelContractMarkers?: boolean
 }
 
 export type AnalysisChartPanelProps = {

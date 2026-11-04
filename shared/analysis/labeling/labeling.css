@@ -61,3 +61,37 @@
   .tl-form { grid-template-columns: 1fr; }
   .tl-input, .tl-root select { min-height: 36px; font-size: 14px; }
 }
+
+/* Page layout: chart column + label column (replaces the former inline flex styles). */
+.tl-layout { display: flex; gap: 12px; min-height: 400px; }
+.tl-layout.maximized { min-height: 0; flex: 1; overflow: hidden; }
+.tl-chart-col { flex: 3; min-width: 0; display: flex; flex-direction: column; }
+.tl-side-col { flex: 2; min-width: 0; display: flex; flex-direction: column; gap: 10px; max-height: 640px; overflow-y: auto; }
+.tl-layout.maximized .tl-side-col { max-height: none; }
+
+/* Stacked Underlying + strike panes */
+.tl-panes { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 640px; }
+.tl-layout.maximized .tl-panes { min-height: 0; }
+.tl-pane { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--tl-border); border-radius: 8px; overflow: hidden; background: var(--tl-bg); }
+.tl-pane-chart { flex: 1; min-height: 0; position: relative; }
+.tl-pane-chart > * { height: 100%; }
+.tl-pane-tabs { display: none; gap: 6px; }
+.tl-pane-tabs button, .tl-contracts button { border: 1px solid var(--tl-border); background: var(--tl-soft); color: var(--tl-muted); border-radius: 12px; padding: 3px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.tl-pane-tabs button[aria-pressed='true'], .tl-contracts button[aria-pressed='true'] { background: var(--tl-accent); border-color: var(--tl-accent); color: #0d1117; }
+.tl-contracts { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--tl-border); }
+.tl-bottom-nav { display: none; }
+
+@media (max-width: 900px) {
+  .tl-layout { flex-direction: column; }
+  .tl-layout:not(.maximized) { min-height: 0; }
+  .tl-side-col { max-height: none; overflow: visible; }
+  .tl-panes { height: 46vh; min-height: 320px; flex: none; }
+  .tl-pane-tabs { display: flex; }
+  .tl-head { position: static; }
+  .tl-head .tl-nav .tl-nav-button { display: none; }
+  /* Fixed to the screen bottom: sticky does not engage inside the Analysis modal's padded, clipped scroll containers. */
+  .tl-panel { padding-bottom: 84px; }
+  .tl-bottom-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2100; display: flex; align-items: center; gap: 8px; padding: 8px 72px calc(8px + env(safe-area-inset-bottom, 0px)) 8px; background: var(--tl-card); border-top: 1px solid var(--tl-border); box-shadow: 0 -4px 12px rgba(0, 0, 0, .35); }
+  .tl-bottom-nav .tl-nav-button { flex: 1; min-height: 44px; font-size: 15px; }
+  .tl-bottom-nav .tl-count { min-width: 56px; text-align: center; font-size: 13px; font-weight: 700; }
+}

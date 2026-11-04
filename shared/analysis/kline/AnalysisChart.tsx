@@ -18,6 +18,10 @@ interface Props {
   exchange?: string; product?: string;
   strike?: number; expiry?: string; right?: string; title?: string; isMaximized?: boolean
   onMaximize?: () => void; onMax?: () => void; getMarkerText?: (trade: AnalysisTrade) => string
+  /** Epoch seconds to centre the chart on (e.g. the round trip being labeled). Zoom is kept. */
+  focusTime?: number
+  /** Show `getMarkerText` on option-contract markers (they are unlabeled by default). */
+  labelContractMarkers?: boolean
   observationResolution?: number; snapshotEventId?: string; snapshotEventTime?: number;
   sessionId?: string; filledTrades?: Array<Partial<AnalysisTrade>>; barTime?: number
   barOhlc?: Omit<OHLCCandle, 'time'> | null; currentPrice?: number
@@ -64,6 +68,7 @@ export default function DesktopAnalysisChart(props: Props) {
   const loadedEventKey=useRef<string|null>(null)
   const snapshotPending=barTime!=null&&loadedEventKey.current!==key
   const selectRef=useRef(environment.onSelectExecution); selectRef.current=environment.onSelectExecution
+  const focusRef=useRef(props.focusTime); focusRef.current=props.focusTime
   const generation=useRef(0)
   const restoring=useRef(false)
   const restoreAnchor=(chart:Chart, timestamp:number)=>{
@@ -81,7 +86,7 @@ export default function DesktopAnalysisChart(props: Props) {
   },[api,capturedTrades,props.sessionId,props.filledTrades])
   const trades=resolvedTrades??capturedTrades
   const contract=props.right && props.strike && props.expiry ? {right:props.right,strike:props.strike,expiry:props.expiry,exchange:props.exchange,product:props.product}:undefined
-  const markers=analysisMarkers(trades,candles,contract,filter,props.getMarkerText,intervalMinutes)
+  const markers=analysisMarkers(trades,candles,contract,filter,props.getMarkerText,intervalMinutes,props.labelContractMarkers)
   const markersRef=useRef(markers); if(!snapshotPending&&(!loading||barTime==null))markersRef.current=markers
   const saveViewport=()=>{ const chart=chartRef.current; if(!chart||!candlesRef.current.length||restoring.current)return; const range=chart.getVisibleRange(); const index=Math.max(0,Math.min(candlesRef.current.length-1,Math.floor((range.from+range.to)/2))); viewports.set(loadedKey.current??keyRef.current,{barSpace:chart.getBarSpace().bar,anchor:candlesRef.current[index].time*1000}); while(viewports.size>32)viewports.delete(viewports.keys().next().value!) }
   useEffect(()=>{
@@ -174,6 +179,9 @@ export default function DesktopAnalysisChart(props: Props) {
             const point=chart.convertToPixel({timestamp:saved.anchor},{paneId:'candle_pane'})
             if(!Array.isArray(point)&&typeof point.x==='number')chart.scrollByDistance(anchorX-point.x,0)
           }
+        } else if(focusRef.current!=null&&barTime==null){
+          const bar=intervalMinutes*60
+          restoreAnchor(chart,Math.floor(focusRef.current/bar)*bar*1000)
         } else if(saved&&barTime==null)restoreAnchor(chart,saved.anchor)
         else chart.scrollToRealTime(0)
       }
@@ -186,6 +194,14 @@ export default function DesktopAnalysisChart(props: Props) {
     }})
     return () => { controller.abort(); generation.current++ }
   },[api,key,historicalDays,refresh])
+  // Re-centre when the requested time changes on an already loaded chart (Prev/Next in Label Trades).
+  useEffect(()=>{
+    const chart=chartRef.current
+    if(!chart||props.focusTime==null||loading||loadedKey.current!==chartKey||!candlesRef.current.length)return
+    const bar=intervalMinutes*60,slot=Math.floor(props.focusTime/bar)*bar
+    const frame=requestAnimationFrame(()=>{if(chartRef.current===chart)restoreAnchor(chart,slot*1000)})
+    return()=>cancelAnimationFrame(frame)
+  },[props.focusTime])
   useEffect(()=>{
     const chart=chartRef.current;if(!chart||snapshotPending||(barTime!=null&&loading))return
     overlays.current.forEach(id=>chart.removeOverlay({id}));overlays.current=[]
