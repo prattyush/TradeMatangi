@@ -78,8 +78,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 |---|---|---|
 | 0 | Docs and scaffolding | PR #751 |
 | 1 | Backend foundation | Implemented (this PR): tables, service, router, setting, cleanup/maintenance/setup script, 27 new tests; full backend suite 2830 passed, 3 failed (the same 3 swing tests fail on unchanged `origin/dev`: `test_swing_api::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]`) |
-| 2 | Desktop transport and real labels | Implemented (this PR) — see §5 |
-| 3 | Analysis one-by-one core | Not started |
+| 2 | Desktop transport and real labels | Merged (PR #753) — see §5 |
+| 3 | Analysis one-by-one core | Implemented (this PR) — see §6 |
 | 4 | Charts, responsive and webapp | Not started |
 | 5 | Behavior questions manager + Analysis marks | Not started |
 | 6 | Live labeling | Not started |
@@ -95,6 +95,29 @@ Details, acceptance criteria and the verification matrix are in [spec-phase23-im
 - **Capability flag** `behavior-labels` is advertised in `trading_capabilities`.
 - **Real sessions on desktop:** `GET {session_id}/trade-labels` no longer returns 409 for `real`. Slots come from the committed broker book — `trade_label_service.real_round_trip_state` (`load_session_cycles` + `cycle_round_trips`), the same source Analysis and `save_labels` use for real sessions, so the indices labeled in-session equal the indices Analysis shows later (covered by a test). A transient read race returns 503 so the desktop's existing 3x retry applies. The desktop UI itself is unchanged in this sprint; its label panel will simply start loading state for real sessions (UI work for behavior is Sprint 6).
 - Still to verify manually (cannot be automated here): a live linked real session on desktop — that the open/closed slots appear as soon as a fill is committed, and that indices match the website for the same session.
+
+## 6. Label Trades one at a time (Sprint 3)
+
+`shared/analysis/TradeLabeling.tsx` (used by website, webapp and desktop) is now an orchestrator over `shared/analysis/labeling/`:
+
+- `model.ts` — pure helpers: `finalizeLabel` (same defaults as the old Save: actual←expected, tags `AS_PER_PATTERN`), `isLabeled`, `tradesForRoundTrip` (executions of one round trip, matched by `trade_id`/`execution_id`/`stored_trade_id` inside the same session), `roundTripMarkerText` (`#3 BUY`, `#2/#3 SELL`), `contractName`, ordering.
+- `saver.ts` — `LabelSaver`, the auto-save engine: debounce (600 ms), sends **only edited trades**, never overlaps saves (an edit made during a save goes out in the next pass), keeps unsaved edits and reports the error on failure, `flush()` for Prev/Next/unmount.
+- `RoundTripLabelForm.tsx` — category/strategy (expected + actual) and tag fields, shared by both modes (Sprint 5 adds the behavior checklists here).
+- `OneByOneLabeling.tsx` — header "Trade n of N" with **◀ Prev / Next ▶** (also ←/→ when not typing in a field), round-trip strip (colour = P&L sign, dot = already labeled, click to jump), trade summary, save status ("Saving…", "Saved ✓", error + Retry save). Read-only shared history navigates but cannot edit.
+- `labeling.css` — `tl-` classes with CSS variables (website dark palette by default; desktop palette under `.desktop-label-workflow`).
+
+Behaviour:
+- **Default is one at a time**, chosen by the user setting `analysis_label_view` (`one_by_one` | `all`). A segmented control in the panel header switches views and persists the setting; Settings → Analytics (website/webapp) and Settings → Analytics (desktop) also expose it. **All together** keeps the previous list with the explicit **Save Labels** button; switching away from it is disabled while it has unsaved edits.
+- **Prev/Next/jump/close/tab change flush the pending save first.** If the save fails the user stays on the trade with a Retry button; Next is blocked while saving. Leaving Label Trades (unmount) flushes and then notifies Stats (`onDataChanged`) once.
+- **Chart markers:** only the viewed trade's executions are passed to the charts (`tradesForRoundTrip`, falling back to all trades if none match); an **All markers** checkbox restores every trade. Markers carry the round-trip number on the Underlying chart; the website's chart pills show the Underlying and only the viewed trade's strike. Desktop's `AnalysisPanels` follow the filtered trades automatically. Stacked panes, recentring the chart on the trade and numbering on strike charts are Sprint 4.
+- **Setting plumbing:** `AnalysisEnvironment.labelView` / `onLabelViewChange`. Website: `useAnalysisLabelView` (cached value, server wins once `getUserSettings` publishes it; writes via `updateUserSettings`). Desktop: `DesktopAnalysis` reads `trading/settings/current` whenever Analysis becomes active and writes with `PUT trading/settings/current`.
+
+Verification:
+- `windowsapp/src/labeling.test.ts` (11 tests: model helpers, saver debounce, only-edited, failure/retry, no overlap, reset); vitest total 323.
+- `scripts/website-label-trades-check.mjs` (new, StrictMode): Prev/Next, only the edited trade saved before navigating, untouched trades never written, debounced auto-save, per-trade chart pills, All markers, All-together switch persists the setting.
+- `scripts/desktop-analysis-workflows.mjs` extended with the one-at-a-time scenario (mode switch, Prev/Next, ←, strip jump, auto-save, setting PUT). Two **pre-existing, unrelated** problems in that script: it needs `nodePaths` for `klinecharts` (added) and its `snapshotTimes.every(t<captured.bar_time)` assertion fails on unmodified `dev` too, and its final Settings step still looks for the old "History sharing" tab (renamed "Sharing"); the label scenarios before them pass.
+- All three TypeScript checks pass.
+- Not yet done (later sprints): phone layout / sticky bottom bar (Sprint 4); behavior checklists (Sprint 5).
 
 ## Appendix — original requirement text (free hand, as written)
 

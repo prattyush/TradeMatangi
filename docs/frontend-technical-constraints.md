@@ -130,3 +130,4 @@
   drawn must be restorable from storage at chart creation.
 - Website KLine Analysis styles live in `klineAnalysisSite.css`, scoped by
   `.kline-analysis-site`; do not import the desktop `desktopAnalysis.css` there.
+- Label Trades (`shared/analysis/TradeLabeling.tsx` + `shared/analysis/labeling/`) is shared by website, webapp and desktop. Its layout is chosen by `AnalysisEnvironment.labelView` (user setting `analysis_label_view`; default one at a time); each host supplies `labelView`/`onLabelViewChange`. One-at-a-time mode auto-saves only edited trades through `LabelSaver` (never overlapping saves, flush before navigating); all-together mode keeps the explicit Save. Styling uses `tl-` classes with CSS variables, imported by the component itself, so it works without `desktopAnalysis.css`.

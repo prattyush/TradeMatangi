@@ -10,7 +10,7 @@ const {chromium}=await import(process.env.PLAYWRIGHT_MODULE||'playwright-core')
 const root=resolve(new URL('..',import.meta.url).pathname),artifacts=root+'/.cache/desktop-analysis-validation'
 await mkdir(artifacts,{recursive:true})
 const dir=await mkdtemp(join(tmpdir(),'desktop-analysis-workflows-'))
-await build({stdin:{contents:`import React from 'react';import{createRoot}from'react-dom/client';import App from '${root}/windowsapp/src/App.tsx';import{init}from'klinecharts';import '${root}/windowsapp/src/styles.css';window.getAnalysisChart=dom=>{dom.id=dom.getAttribute('k-line-chart-id');return init(dom)};createRoot(document.getElementById('root')).render(<React.StrictMode><App/></React.StrictMode>);`,resolveDir:root+'/windowsapp',loader:'tsx'},bundle:true,jsx:'automatic',outfile:dir+'/app.js',define:{'import.meta.env':'{}'},alias:{react:root+'/windowsapp/node_modules/react','react-dom':root+'/windowsapp/node_modules/react-dom'},logLevel:'silent'})
+await build({stdin:{contents:`import React from 'react';import{createRoot}from'react-dom/client';import App from '${root}/windowsapp/src/App.tsx';import{init}from'klinecharts';import '${root}/windowsapp/src/styles.css';window.getAnalysisChart=dom=>{dom.id=dom.getAttribute('k-line-chart-id');return init(dom)};createRoot(document.getElementById('root')).render(<React.StrictMode><App/></React.StrictMode>);`,resolveDir:root+'/windowsapp',loader:'tsx'},bundle:true,jsx:'automatic',outfile:dir+'/app.js',define:{'import.meta.env':'{}'},nodePaths:[root+'/windowsapp/node_modules'],alias:{react:root+'/windowsapp/node_modules/react','react-dom':root+'/windowsapp/node_modules/react-dom'},logLevel:'silent'})
 await writeFile(dir+'/index.html','<html><head><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>')
 const fixturePath=artifacts+'/workflow-fixture.json'
 execFileSync(process.env.PYTHON_BIN||'python3',[root+'/scripts/phase20-browser-fixture.py',fixturePath],{env:{...process.env,PYTHONPATH:root+'/backend'}})
@@ -27,7 +27,7 @@ const extraSession={...session,session_id:'shared-real',user_id:'bob',session_ty
 const ordersOnly={...session,session_id:'orders-only',session_type:'real',trade_count:0,round_trip_count:0,buy_count:0,sell_count:0,net_pnl:0,pnl_pct:0,total_commission:0}
 const rows=Array.from({length:125},(_,i)=>({time:start+i*180,open:100,high:102,low:88,close:99}))
 const trip={index:0,right:'CE',pnl:cycle.net_pnl,entry_trades:[{...trades[0],quantity:entryTotal,commission:entryFee,trade_id:trades[0].stored_trade_id}],exit_trades:[{...trades[1],trade_id:trades[1].stored_trade_id}]}
-let labels=[],snapshots=[],shareEmails=[],deleted=false,failDelete=false,failSnapshots=false,failLabels=false,failCompare=false,failExport=false
+let labelView='all',twoTrips=false,settingsPuts=[],labels=[],snapshots=[],shareEmails=[],deleted=false,failDelete=false,failSnapshots=false,failLabels=false,failCompare=false,failExport=false
 const captured={current_price:100,current_price_ce:100,current_price_pe:90,bar_time:Math.floor(trades[0].timestamp/180)*180,bar_ohlc:{open:99,high:101,low:98,close:100},bar_observation_resolution_seconds:1,position:{side:'FLAT',quantity:0,avg_entry_price:0,pnl:0,pnl_pct:0},position_ce:{side:'LONG',quantity:65,avg_entry_price:100,pnl:0,pnl_pct:0},position_pe:{side:'FLAT',quantity:0,avg_entry_price:0,pnl:0,pnl_pct:0},combined_pnl:0,combined_pnl_pct:0,session_pnl:0,session_pnl_pct:0,wallet_balance:90000,session_capital:100000,wallet_used_pct:10,active_positions:1,open_orders:[],strike_ce:25000,strike_pe:25000,expiry:'2026-10-08',event_timestamp:trades[0].timestamp,quantity_mode:'quantity',filled_trades:trades.filter(t=>t.side==='BUY')}
 snapshots=[{event_id:'later',session_id:session.session_id,user_id:'alice',symbol:'NIFTY',date:cycle.date,instrument_type:'options',session_type:'paper',timestamp:trades[1].timestamp,event:{type:'order_filled',description:'Exit recorded',details:{}},snapshot:captured},{event_id:'earlier',session_id:session.session_id,user_id:'alice',symbol:'NIFTY',date:cycle.date,instrument_type:'options',session_type:'paper',timestamp:trades[0].timestamp,event:{type:'order_filled',description:'Entry recorded',details:{}},snapshot:captured}]
 const server=createServer(async(req,res)=>{try{res.setHeader('Content-Type',req.url.endsWith('.js')?'text/javascript':req.url.endsWith('.css')?'text/css':'text/html');res.end(await readFile(dir+(req.url==='/'?'/index.html':req.url)))}catch{res.statusCode=404;res.end()}})
@@ -48,7 +48,7 @@ try{
   else if(path.includes('/analysis/sessions/')){const shared=path.endsWith('/shared-real');value={...(shared?extraSession:session),trades:shared?trades.map(t=>({...t,session_id:'shared-real'})):trades,cycles:[{...cycle,executions:trades}],orders:[{order_id:'cancelled',status:'CANCELLED',side:'BUY',quantity:65,order_type:'LIMIT',analytics:{entry_method:'MARKET'}}]}}
   else if(path.endsWith('/analysis/data/historical'))value={candles:rows.map(c=>({...c,time:c.time-86400})),dates:[]}
   else if(path.endsWith('/analysis/data/pre-session')||path.endsWith('/analysis/data/options-historical')||path.includes('/analysis/pattern/ohlc/'))value={candles:rows}
-  else if(path.endsWith('/analysis/round-trips')){if(failLabels)return reject(503,'Label data unavailable');value=[trip]}
+  else if(path.endsWith('/analysis/round-trips')){if(failLabels)return reject(503,'Label data unavailable');value=twoTrips?[trip,{...trip,index:1,pnl:-12.5,entry_trades:trip.entry_trades.map(t=>({...t,trade_id:'second-entry',execution_id:null})),exit_trades:trip.exit_trades.map(t=>({...t,trade_id:'second-exit',execution_id:null}))}]:[trip]}
   else if(path.endsWith('/analysis/labels')){if(method==='POST'){labels=route.request().postDataJSON().labels;value=labels}else value=labels}
   else if(path.endsWith('/analysis/snapshots')){if(method==='DELETE'){if(failDelete)return reject(503,'Deletion unavailable');deleted=true;value={deleted:snapshots.length};snapshots=[]}else{if(failSnapshots)return reject(503,'Snapshot history unavailable');value=snapshots}}
   else if(path.endsWith('/analysis/pattern/chart/by-date')){if(failCompare)return reject(503,'Pattern data unavailable');value={symbol:'NIFTY',date:cycle.date,strike:25000,annotations:[{time:trades[0].timestamp,price:100,instrument:'CE',type:'entry',strategy_name:'Breakout',category:'Momentum',text:'entry'}],top_patterns:{}}}
@@ -62,7 +62,7 @@ try{
   else if(path.endsWith('/screens'))value={screens:[]}
   else if(path.endsWith('/catalogue'))value={instruments:[{symbol:'NIFTY',display_name:'NIFTY 50',exchange:'NSE',chart_type:'index',option_eligible:true,supported_intervals:[1,3,15]}]}
   else if(path.endsWith('/historical/pages'))value={candles:[],available:true}
-  else if(path.endsWith('/settings/current'))value={}
+  else if(path.endsWith('/settings/current')){if(method==='PUT'){settingsPuts.push(route.request().postDataJSON().settings);labelView=route.request().postDataJSON().settings.analysis_label_view??labelView}value={analysis_label_view:labelView}}
   else if(path.endsWith('/chart-settings'))value={settings:{}}
   else if(path.endsWith('/candidate'))value={status:'none'}
   else if(path.endsWith('/drawings'))value={drawings:[]}
@@ -101,6 +101,32 @@ try{
  assert.equal(labels[0].entry_tag,'CUSTOM ENTRY')
  await page.getByRole('button',{name:'Trades',exact:true}).click()
  failLabels=true;await page.getByRole('button',{name:'Label Trades',exact:true}).click();await page.getByRole('button',{name:'Retry labels'}).waitFor();failLabels=false;await page.getByRole('button',{name:'Retry labels'}).click();await page.getByText('1 round trip',{exact:true}).waitFor();await page.getByRole('button',{name:'Trades',exact:true}).click()
+ // One at a time is the default view: Prev/Next, auto-save of only the edited trade, persisted view setting
+ twoTrips=true;labels=[];settingsPuts=[]
+ await page.getByRole('button',{name:'Label Trades',exact:true}).click()
+ await page.getByRole('group',{name:'Label view'}).getByRole('button',{name:'One at a time'}).click();assert.deepEqual(settingsPuts.at(-1),{analysis_label_view:'one_by_one'})
+ await page.getByText('Trade 1 of 2',{exact:true}).waitFor()
+ assert.equal(await page.getByRole('button',{name:'Previous trade'}).isDisabled(),true)
+ assert.equal(await page.getByRole('button',{name:'Save Labels',exact:true}).count(),0)
+ await page.locator('input[list^="et-"]').first().fill('FIRST TAG')
+ await page.getByRole('button',{name:'Next trade'}).click()
+ await page.getByText('Trade 2 of 2',{exact:true}).waitFor()
+ assert.deepEqual(labels.map(l=>[l.round_trip_index,l.entry_tag]),[[0,'FIRST TAG']],'only the edited trade is saved, before navigating away')
+ assert.equal(await page.getByRole('button',{name:'Next trade'}).isDisabled(),true)
+ assert.equal(await page.locator('input[list^="et-"]').first().inputValue(),'')
+ await page.keyboard.press('ArrowLeft');await page.getByText('Trade 1 of 2',{exact:true}).waitFor()
+ assert.equal(await page.locator('input[list^="et-"]').first().inputValue(),'FIRST TAG')
+ await page.getByRole('group',{name:'Round trips'}).getByRole('button',{name:'2',exact:true}).click();await page.getByText('Trade 2 of 2',{exact:true}).waitFor()
+ await page.locator('input[list^="et-"]').first().fill('SECOND TAG');await page.getByText('Saved ✓',{exact:true}).waitFor()
+ assert.deepEqual(labels.map(l=>[l.round_trip_index,l.entry_tag]),[[1,'SECOND TAG']],'auto-save sends just the edited trade')
+ await page.getByRole('group',{name:'Label view'}).getByRole('button',{name:'All together'}).click()
+ await page.getByRole('button',{name:'Save Labels',exact:true}).waitFor();assert.equal(labelView,'all');assert.deepEqual(settingsPuts.at(-1),{analysis_label_view:'all'})
+ await page.getByRole('group',{name:'Label view'}).getByRole('button',{name:'One at a time'}).click()
+ await page.getByText(/Trade \d of 2/).waitFor();assert.equal(labelView,'one_by_one')
+ await page.screenshot({path:artifacts+'/label-one-by-one.png'})
+ await page.getByRole('group',{name:'Label view'}).getByRole('button',{name:'All together'}).click();await page.getByRole('button',{name:'Save Labels',exact:true}).waitFor()
+ twoTrips=false;labels=[]
+ await page.getByRole('button',{name:'Trades',exact:true}).click()
  failSnapshots=true;await page.getByRole('button',{name:/Snapshots/}).click();await page.getByRole('alert').filter({hasText:'503'}).waitFor();failSnapshots=false
  await page.getByRole('button',{name:/Snapshots/}).click();const snapshot=page.getByRole('dialog',{name:'Event snapshots'});await snapshot.waitFor()
  await snapshot.getByPlaceholder('Search... (* = wildcard)').fill('Ent*recorded');assert.equal(await snapshot.getByText('Exit recorded',{exact:false}).count(),0)

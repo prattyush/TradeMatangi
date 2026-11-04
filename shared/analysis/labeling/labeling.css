@@ -1,0 +1,63 @@
+/* Label Trades — one-at-a-time panel. Variables default to the website palette; the desktop overrides them below. */
+.tl-root {
+  --tl-bg: #0d1117; --tl-card: #161b22; --tl-border: #30363d; --tl-soft: #21262d;
+  --tl-text: #e6edf3; --tl-muted: #8b949e; --tl-dim: #6e7681;
+  --tl-accent: #58a6ff; --tl-good: #3fb950; --tl-bad: #f85149; --tl-save: #238636;
+  color: var(--tl-text);
+}
+.desktop-label-workflow .tl-root {
+  --tl-bg: #10131a; --tl-card: #141924; --tl-border: #293142; --tl-soft: #252c39;
+  --tl-text: #e2e8f0; --tl-muted: #94a3b8; --tl-dim: #64748b; --tl-accent: #60a5fa;
+}
+.tl-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+.tl-head { position: sticky; top: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--tl-card); border: 1px solid var(--tl-border); border-radius: 8px; }
+.tl-nav { display: flex; align-items: center; gap: 8px; }
+.tl-nav-button { min-width: 84px; min-height: 36px; padding: 0 12px; border: 1px solid var(--tl-border); border-radius: 6px; background: var(--tl-soft); color: var(--tl-text); font-size: 13px; font-weight: 600; cursor: pointer; }
+.tl-nav-button:hover:not(:disabled) { border-color: var(--tl-accent); }
+.tl-nav-button:disabled { opacity: .4; cursor: default; }
+.tl-nav-button.primary { background: var(--tl-accent); border-color: var(--tl-accent); color: #0d1117; }
+.tl-counter { flex: 1; text-align: center; font-size: 13px; font-weight: 700; }
+.tl-counter small { display: block; font-size: 11px; font-weight: 500; color: var(--tl-muted); }
+
+.tl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--tl-muted); }
+.tl-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.tl-contract { font-weight: 700; color: var(--tl-text); }
+.tl-pnl { font-weight: 700; }
+.tl-pnl.up { color: var(--tl-good); } .tl-pnl.down { color: var(--tl-bad); }
+.tl-grow { flex: 1; }
+.tl-ghost { border: 1px solid var(--tl-border); background: transparent; color: var(--tl-muted); border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.tl-ghost:hover { color: var(--tl-text); border-color: var(--tl-accent); }
+
+.tl-strip { display: flex; flex-wrap: wrap; gap: 4px; max-height: 64px; overflow-y: auto; }
+.tl-chip { position: relative; width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 1px solid var(--tl-border); background: var(--tl-soft); color: var(--tl-muted); font-size: 10px; font-weight: 700; cursor: pointer; }
+.tl-chip.up { border-color: var(--tl-good); } .tl-chip.down { border-color: var(--tl-bad); }
+.tl-chip.current { background: var(--tl-accent); color: #0d1117; border-color: var(--tl-accent); }
+.tl-chip.done::after { content: ''; position: absolute; right: 1px; top: 1px; width: 5px; height: 5px; border-radius: 50%; background: var(--tl-good); }
+
+.tl-summary { padding: 10px; background: var(--tl-bg); border: 1px solid var(--tl-border); border-radius: 8px; font-size: 12px; line-height: 1.6; color: var(--tl-muted); }
+.tl-summary strong { color: var(--tl-text); font-weight: 600; }
+.tl-card { padding: 10px; background: var(--tl-bg); border: 1px solid var(--tl-soft); border-radius: 8px; }
+.tl-card + .tl-card { margin-top: 8px; }
+
+.tl-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; }
+.tl-field { min-width: 0; }
+.tl-field > label, .tl-field > .tl-label { display: block; margin-bottom: 3px; font-size: 11px; color: var(--tl-muted); }
+.tl-field-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.tl-input { width: 100%; box-sizing: border-box; background: var(--tl-bg); border: 1px solid var(--tl-border); color: var(--tl-text); border-radius: 4px; padding: 5px 7px; font-size: 12px; }
+
+.tl-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 22px; font-size: 12px; color: var(--tl-muted); }
+.tl-status .ok { color: var(--tl-good); } .tl-status .bad { color: var(--tl-bad); }
+.tl-status button { border: 1px solid var(--tl-border); background: var(--tl-soft); color: var(--tl-text); border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
+.tl-empty { padding: 24px 12px; text-align: center; color: var(--tl-muted); font-size: 13px; }
+
+.tl-mode { display: inline-flex; border: 1px solid var(--tl-border); border-radius: 6px; overflow: hidden; }
+.tl-mode button { border: 0; background: transparent; color: var(--tl-muted); padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.tl-mode button[aria-pressed='true'] { background: var(--tl-accent); color: #0d1117; font-weight: 700; }
+.tl-mode button:disabled { opacity: .5; cursor: default; }
+
+/* Phones and narrow windows: one column (the sticky bottom Prev/Next bar arrives with the responsive sprint). */
+@media (max-width: 900px) {
+  .tl-form { grid-template-columns: 1fr; }
+  .tl-input, .tl-root select { min-height: 36px; font-size: 14px; }
+}
