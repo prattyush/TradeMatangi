@@ -68,8 +68,21 @@ try {
   await page.getByText('Trade 2 of 2', { exact: true }).waitFor()
   let saves = await page.evaluate(() => window.saves)
   assert.deepEqual(saves.map(rows => rows.map(r => [r.round_trip_index, r.entry_tag, r.exit_tag])), [[[0, 'FIRST TAG', 'AS_PER_PATTERN']]])
-  // Trade 2 is the CE trade: the Underlying and its own strike are stacked, both with its markers.
+  // Trade 2 is the CE trade. Not maximized: ONE chart (Underlying) with a switcher below it listing its strike.
+  const switcher = page.getByRole('navigation', { name: 'Chart pane' })
+  await switcher.waitFor(); await underlying.waitFor()
+  assert.equal(await strike.count(), 0, 'one chart at a time when not maximized')
+  assert.deepEqual(await switcher.getByRole('button').allTextContents(), ['Underlying', 'CE 25000'])
+  const single = await underlying.boundingBox(), switcherBox = await switcher.boundingBox()
+  assert.ok(switcherBox.y >= single.y + single.height - 1, 'switcher sits below the chart')
+  await switcher.getByRole('button', { name: 'CE 25000' }).click(); await strike.waitFor(); await strike.locator('canvas').first().waitFor()
+  assert.equal(await underlying.count(), 0); assert.equal(await switcher.getByRole('button', { name: 'CE 25000' }).getAttribute('aria-pressed'), 'true')
+  await switcher.getByRole('button', { name: 'Underlying' }).click(); await underlying.waitFor()
+  assert.ok(single.height > 450, `the single chart uses the full chart height: ${single.height}`)
+  // Maximize: Underlying and the strike are stacked, both with the trade's markers; the switcher goes away.
+  await page.getByRole('button', { name: 'Maximize' }).click()
   await underlying.waitFor(); await strike.waitFor(); await strike.locator('canvas').first().waitFor()
+  assert.equal(await switcher.count(), 0, 'no switcher while stacked')
   const heights = await Promise.all([underlying, strike].map(pane => pane.evaluate(el => el.getBoundingClientRect().height)))
   assert.ok(heights.every(h => h > 200), `both panes have usable height: ${heights}`)
   const boxes = await Promise.all([underlying, strike].map(pane => pane.boundingBox()))
@@ -86,14 +99,17 @@ try {
     await page.keyboard.press('ArrowRight'); await page.getByText('Trade 2 of 2', { exact: true }).waitFor()
     assert.ok(await settled(underlying, entry[2]), 'KLine underlying recentres again on trade 2 entry')
   }
+  await page.screenshot({ path: artifacts + '/website-label-one-by-one-maximized.png' })
+  await page.getByRole('button', { name: 'Restore' }).click(); await switcher.waitFor()
+  assert.equal(await strike.count(), 0, 'restoring returns to one chart')
   await page.screenshot({ path: artifacts + '/website-label-one-by-one.png' })
   // Untouched trades are never written: navigating back and forth adds no save.
   await page.keyboard.press('ArrowLeft'); await page.getByText('Trade 1 of 2', { exact: true }).waitFor()
   assert.equal(await page.locator('input[list^="et-"]').first().inputValue(), 'FIRST TAG')
   assert.equal((await page.evaluate(() => window.saves)).length, 1)
   // "All markers" shows the other trade's strike as well.
-  assert.equal(await strike.count(), 0)
-  await page.getByLabel('All markers').check(); await strike.waitFor(); await page.getByLabel('All markers').uncheck(); await page.waitForFunction(() => !document.querySelector('[aria-label="Strike chart pane"]'))
+  assert.equal(await switcher.count(), 0, 'trade 1 is equity: no switcher')
+  await page.getByLabel('All markers').check(); await switcher.getByRole('button', { name: 'CE 25000' }).waitFor(); await page.getByLabel('All markers').uncheck(); await page.waitForFunction(() => !document.querySelector('nav[aria-label="Chart pane"]'))
   // Debounced auto-save without navigating.
   await page.getByRole('group', { name: 'Round trips' }).getByRole('button', { name: '2', exact: true }).click(); await page.getByText('Trade 2 of 2', { exact: true }).waitFor()
   await page.locator('input[list^="et-"]').first().fill('SECOND TAG'); await page.getByText('Saved ✓', { exact: true }).waitFor()

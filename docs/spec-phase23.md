@@ -145,6 +145,16 @@ Verification:
 - `webapp/tests/label-trades.spec.ts` (new): the real Analysis modal at 390×844 — Label Trades, bottom bar pinned at the screen bottom, only-edited-trade auto-save, pane tabs, no sideways scroll. The whole webapp suite passes (22). Running it requires `bash scripts/build-frontend-with-webapp.sh` first (the tests serve `frontend/dist`).
 - Not verified here: native touch behaviour on a real phone and the Windows desktop build (manual).
 
+### 7.1 Follow-up: one chart with a switcher, split when maximized
+
+The always-stacked (website) and side-by-side (desktop) Underlying + strike charts left each chart small. Now:
+
+- **Not maximized:** one chart at a time. Website/webapp: a switcher **below** the chart lists `Underlying` and each CE/PE strike of the viewed trade (`LabelChartPanes`, `nav[aria-label="Chart pane"]`); desktop: the existing `Underlying | Option` switcher (with the contract tabs inside the Option pane) at any window width (`AnalysisPanels` `layout="single"`, class `is-single`). The chart uses the full column, and on desktop the window height (`max(450px, 100vh - 300px)`).
+- **Maximized** (Label Trades' `⤢ Maximize` / `⤡ Restore`, Esc restores): Underlying and strike charts shown together — stacked on the website, side by side on desktop — with the label form in a 360–460 px column so the charts get the rest.
+- **Phones:** always the switcher.
+- `TradeLabeling` passes `maximized` to `LabelChartPanes` and `layout` to the desktop `LabelCharts`. The Maximize button now has a text label and `aria-label`.
+- Tests: `website-label-trades-check.mjs` (single chart, switcher below, maximize/restore, both renderers), `desktop-analysis-workflows.mjs` (single/Option switch, maximize shows both, size assertions), webapp phone spec unchanged.
+
 ## 8. Behavior questions manager and Analysis marks (Sprint 5)
 
 **Where the manager lives** — one shared component, `shared/analysis/behavior/BehaviorQuestionsManager.tsx`, with the API injected (`BehaviorApi`):

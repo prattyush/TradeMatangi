@@ -11,6 +11,8 @@ interface Props {
   getMarkerText: (trade: AnalysisTrade) => string
   /** Candle-clock epoch seconds to centre both charts on. */
   focusTime?: number
+  /** Label Trades is maximized: show the Underlying and strike charts stacked. Otherwise one chart with a switcher. */
+  maximized?: boolean
 }
 
 interface Contract { key: string; label: string; right: string; strike: number; expiry: string; trades: AnalysisTrade[] }
@@ -41,26 +43,23 @@ function usePhone() {
 }
 
 /**
- * Label Trades charts for the website/webapp: the Underlying chart and the strike chart of the viewed
- * trade, stacked so every marker of the round trip is visible at once (on phones: one pane at a time).
+ * Label Trades charts for the website/webapp. Normally ONE chart with a switcher below it (Underlying, then each CE/PE
+ * strike of the viewed trade) so the chart gets the full height; when Label Trades is maximized the Underlying and the
+ * strike chart are stacked so every marker of the round trip is visible at once. Phones always use the switcher.
  */
-export default function LabelChartPanes({ symbol, date, trades, historicalDays, getMarkerText, focusTime }: Props) {
+export default function LabelChartPanes({ symbol, date, trades, historicalDays, getMarkerText, focusTime, maximized = false }: Props) {
   const contracts = useMemo(() => contractsOf(trades), [trades])
   const [selected, setSelected] = useState('')
   const contract = contracts.find(item => item.key === selected) ?? contracts[0]
   const phone = usePhone()
   const [pane, setPane] = useState<'underlying' | 'strike'>('underlying')
   useEffect(() => { if (!contract) setPane('underlying') }, [contract])
-  const showUnderlying = !phone || pane === 'underlying' || !contract
-  const showStrike = Boolean(contract) && (!phone || pane === 'strike')
+  const stacked = maximized && !phone
+  const showUnderlying = stacked || pane === 'underlying' || !contract
+  const showStrike = Boolean(contract) && (stacked || pane === 'strike')
+  const pickContract = (key: string) => { setSelected(key); setPane('strike') }
   return (
-    <div className="tl-panes" data-pane={pane}>
-      {contract && (
-        <nav className="tl-pane-tabs" aria-label="Chart pane">
-          <button type="button" aria-pressed={pane === 'underlying'} onClick={() => setPane('underlying')}>Underlying</button>
-          <button type="button" aria-pressed={pane === 'strike'} onClick={() => setPane('strike')}>{contract.label}</button>
-        </nav>
-      )}
+    <div className="tl-panes" data-pane={pane} data-layout={stacked ? 'stacked' : 'single'}>
       {showUnderlying && (
         <div className="tl-pane tl-pane-underlying" aria-label="Underlying chart pane">
           <div className="tl-pane-chart">
@@ -71,7 +70,7 @@ export default function LabelChartPanes({ symbol, date, trades, historicalDays, 
       )}
       {showStrike && contract && (
         <div className="tl-pane tl-pane-strike" aria-label="Strike chart pane">
-          {contracts.length > 1 && (
+          {stacked && contracts.length > 1 && (
             <div className="tl-contracts" role="group" aria-label="Option contracts">
               {contracts.map(item => (
                 <button key={item.key} type="button" aria-pressed={item.key === contract.key} onClick={() => setSelected(item.key)}>{item.label}</button>
@@ -83,6 +82,14 @@ export default function LabelChartPanes({ symbol, date, trades, historicalDays, 
               trades={contract.trades} historicalDays={historicalDays} getMarkerText={getMarkerText} labelContractMarkers focusTime={focusTime} fill />
           </div>
         </div>
+      )}
+      {contract && !stacked && (
+        <nav className="tl-pane-tabs" aria-label="Chart pane">
+          <button type="button" aria-pressed={pane === 'underlying'} onClick={() => setPane('underlying')}>Underlying</button>
+          {contracts.map(item => (
+            <button key={item.key} type="button" aria-pressed={pane === 'strike' && item.key === contract.key} onClick={() => pickContract(item.key)}>{item.label}</button>
+          ))}
+        </nav>
       )}
     </div>
   )
