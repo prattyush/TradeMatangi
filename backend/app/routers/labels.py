@@ -46,6 +46,8 @@ class RoundTripOut(BaseModel):
     entry_trades: list[RoundTripTradeOut]
     exit_trades: list[RoundTripTradeOut]
     pnl: float
+    pnl_pct: float | None = None
+    max_capital_pct: float | None = None
 
 
 class LabelIn(BaseModel):
