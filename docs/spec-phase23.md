@@ -85,8 +85,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 4 | Charts, responsive and webapp | Merged (PR #755) — see §7 |
 | 5 | Behavior questions manager + Analysis marks | Merged (PR #756) — see §8 |
 | 6 | Live labeling | Merged (PR #757) — see §9 |
-| 7a | Habits: ledger backend + transports | Implemented (this PR) — §10.7 |
-| 7b | Habits: stats engine + scorecard | Not started |
+| 7a | Habits: ledger backend + transports | Merged (PR #758) — §10.7 |
+| 7b | Habits: stats engine + scorecard | Implemented (this PR) — §10.8 |
 | 7c | Habits: trends across days + period comparison | Not started |
 | 7d | Habits: single-habit deep dive + polish | Not started |
 | 8 | Hardening and close-out | Not started |
@@ -250,6 +250,29 @@ Verification includes a backend test that **ledger totals reconcile with the Sta
 - Cost: one `load_cycles` pass — the same cost as opening the Stats overview — plus one `get_item` per distinct session that has marks. Sprint 8 measures it on a large history and adds a cache if needed.
 - Transports: website `getHabitLedger` in `frontend/src/services/performanceApi.ts` (added to `AnalysisEnvironment.performance`, optional); desktop adapter in `windowsapp/src/analysisApi.ts`; `behavior/habit-ledger` GET added to all three allowlists (`desktop_analysis.py`, `analysisApi.ts`, `lib.rs`) — **the desktop app must be rebuilt**. Shared types: `shared/analysis/habits/types.ts` (`LedgerTrade`, `LedgerCoverage`, `HabitLedger`).
 - Tests: `backend/tests/test_habit_ledger.py` (16: bars/interval/capital/risk derivation and fallbacks, join on the cycle index, open/shared/swing exclusion, alias de-duplication, unmatched marks, row cap and ordering, filters scoping trades and marks, other users isolated, archived questions kept, **ledger totals reconcile with `report()["summary"]` (count, net P&L, P&L %)**, endpoint validation, desktop proxy read-only); vitest (allowlist, adapter call shape); `cargo test` (allowlist); totals: vitest 343, `cargo test` 23, full backend suite 2856 passed with only the same 3 swing tests failing as on unchanged `dev`.
+
+### 10.8 Sprint 7b — stats engine and scorecard (implemented)
+**Where:** a new **Habits** tab in the Stats dashboard (`shared/analysis/PerformanceDashboard.tsx`, after Behavior; not shown for swing). The tab replaces the overview KPI tiles with its own content and fetches `getHabitLedger` lazily with the dashboard's current filters (re-fetched on Refresh, filter change, data revision and after the question manager changes something). Website, webapp and desktop use the same component.
+
+**Engine** — `shared/analysis/habits/habitStats.ts` (pure, no React):
+- `totals(trades)` → trades, trades with a P&L %, days, wins/losses/break-even (net ₹ beyond ±0.005), win %, net/profit/loss in ₹ and in %, mean and median of ₹ and %, average win/loss %, payoff ratio, profit factor, largest loss.
+- `profile(trades)` → entries/exits per trade, capital % (mean, median, max), risk %, bars held, holding time (mean/median each), share closed within 1 and 2 bars, share of **losers** closed within 1 bar.
+- `summarize(questions, trades, {kind, includeArchived})` → per habit: its totals, the **baseline** (all other trades in scope), profile, **if skipped** (−net), **share of all losses / profits**, trades per trading day, and the **verdict**; plus the scope totals and the **idle** habits (active, no trade in scope). Archived habits appear only when they have trades.
+- `verdictFor`: *Low sample* below 10 trades; else *Costly* (net < 0 and mean below the baseline mean), *Rewarding* (net > 0 and above it), *Mixed* otherwise. It uses % of capital and means, falling back to ₹ when no trade has a P&L %; the reason text states the numbers and is shown as the chip's tooltip.
+- A % total over trades that have no P&L % is **unavailable (shown "—"), not 0**; such habits sort last in either direction.
+- `metric`/`sortHabits`/`worstFirst`: one place that decides what each column shows for the selected unit (% or ₹) and statistic (mean or median).
+
+**UI**
+- Controls: type (All/Entry/Exit), **Mean | Median**, **% of capital | ₹**, columns **Results | Size & timing**, **Include archived**, **Manage questions** (the shared modal; a change reloads the ledger).
+- **Diverging bar chart** (`DivergingBars`): losses left (red), profits right (green), ◆ at the net, most destructive habit first; each row is focusable with an `aria-label` carrying its numbers.
+- **Scorecard** (`HabitScorecard`): one row per habit with Entry/Exit badge, archived tag and Verdict chip. *Results*: trades, days, net, profit, loss, win %, average per trade, vs without, if skipped, share of losses and of profits, profit factor, payoff, worst loss. *Size & timing*: trades, entries, exits, capital % (average and max), risk %, bars held, time held, ≤1 bar, ≤2 bars, losers ≤1 bar. Sortable headings (`aria-sort`), the habit column stays in view while the table scrolls on a phone, default order = most destructive first.
+- Coverage line (closed trades, marks on trades, marks not matched, marked open trades, trades without capital % / bars), truncation note, idle habits, a "How these numbers are calculated" panel, and empty states ("Start with a habit to track" → opens the manager; "No habit marks in this selection").
+
+**Verification**
+- `windowsapp/src/habitStats.test.ts` (15): mean/median/stat, win/loss/break-even split, profit/loss % sums, mean and median per habit, baseline and "if skipped", shares, size/timing profile and the 1/2-bar shares, missing-% habits, idle/kind/archived filters, verdict boundaries and ₹ fallback, sort order with unavailable values last, unit and mean/median switching — all against numbers worked out by hand. vitest total 357.
+- `scripts/habits-browser-check.mjs` (new) on a deterministic 10-day ledger (`scripts/habits-ledger-fixture.mjs`; expectations computed by independent plain loops): row order, net/loss/profit %, trades and verdicts per habit, chart rows, coverage, idle habits, every control (unit, mean/median, type, archived, columns, sorting), the manager, empty states, and the 390 px phone layout (no sideways page scroll, table scrolls inside, habit column pinned). Screenshots in `.cache/habits-validation/`.
+- `scripts/desktop-analysis-workflows.mjs`: Habits through the desktop Analysis proxy (scorecard order, ledger GET). `phase20-browser-check.mjs` still passes (its missing `nodePaths` was added). Whole webapp suite 23; all three TypeScript checks pass.
+- Not in this PR: trends across days, period comparison (7c); the single-habit deep dive (7d).
 
 ## Appendix — original requirement text (free hand, as written)
 
