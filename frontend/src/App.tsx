@@ -41,7 +41,7 @@ import { useSnapshot } from './hooks/useSnapshot'
 import api, { ApiError, OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/optionsRoc'
 import { selectPaperResumePanes } from './paperResume'
-import { buildReselectBody, type StrikeRule } from './strikeRule'
+import { buildReselectBody, reselectOutcome, type StrikeRule } from './strikeRule'
 import ConfirmModal from './components/ConfirmModal'
 import { isBrokerSnapshot, brokerSnapshotSessionId } from './brokerSnapshot'
 
@@ -1044,19 +1044,17 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
       isIndex: sim.symbol === 'NIFTY' || sim.symbol === 'BSESEN',
     })
     const res = await api.reselectStrike(sessionId, body)
-    if (!res.changed) return `Strike ${res.strike} is still the best match`
-    const newCE = right === 'CE' ? res.strike : sim.sessionStrikeCE
-    const newPE = right === 'PE' ? res.strike : sim.sessionStrikePE
-    if (!(sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options')) {
-      skipWorkspaceResetKeyRef.current = `${newCE}:${newPE}`
-    }
+    const outcome = reselectOutcome(res, right, { ce: sim.sessionStrikeCE, pe: sim.sessionStrikePE },
+      sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options')
+    if (outcome.notice) return outcome.notice
+    if (outcome.skipKey) skipWorkspaceResetKeyRef.current = outcome.skipKey
     sim.updateSessionStrike(right, res.strike)
     const liveFromTs = sim.latestEquityTick?.time ?? undefined
     // The Chart is keyed by strike, so it remounts and loads the new contract's history.
     setPanes(prev => prev.map(p => p.id === paneId
       ? { ...p, strike: res.strike, liveFromTs, reloadKey: (p.reloadKey ?? 0) + 1 }
       : p))
-    setOptionsReady(o => o ? { ...o, ceStrike: newCE ?? o.ceStrike, peStrike: newPE ?? o.peStrike } : o)
+    setOptionsReady(o => o ? { ...o, ceStrike: outcome.ce ?? o.ceStrike, peStrike: outcome.pe ?? o.peStrike } : o)
   }, [panes, sim.sessionId, sim.sessionState, sim.sessionType, sim.sessionInstrumentType, sim.symbol,
       sim.sessionStrikeCE, sim.sessionStrikePE, sim.latestEquityTick, sim.updateSessionStrike, addOffset])
 

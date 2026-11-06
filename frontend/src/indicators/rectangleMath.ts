@@ -51,3 +51,38 @@ export function formatAxisTime(seconds: number): string {
   const d = new Date(seconds * 1000)
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 }
+
+/**
+ * The chart-settings record to save: everything already stored is kept (the record is shared with the desktop
+ * app), only the two rectangle keys change, and the values are sanitised exactly like they are on read.
+ */
+export function mergeRectSettings(latest: Record<string, unknown> | null | undefined, style: RectStyle): Record<string, unknown> {
+  const clean = normalizeRectStyle({ drawingFillColor: style.fillColor, drawingFillOpacity: style.opacity })
+  return { ...(latest ?? {}), drawingFillColor: clean.fillColor, drawingFillOpacity: clean.opacity }
+}
+
+/**
+ * x coordinate for a corner time the chart cannot place directly (`timeToCoordinate` is null because the time is
+ * not one of the loaded candles). `times` are the loaded candle times, oldest first; `coordinateOf` is the chart's
+ * own time -> x lookup. A time past either end is extrapolated from the average bar spacing, a time inside a gap
+ * snaps to the nearest candle, and fewer than two candles (nothing to measure against) gives null.
+ */
+export function extrapolateTimeX(
+  time: number, times: number[], barSpacing: number, coordinateOf: (time: number) => number | null,
+): number | null {
+  if (times.length < 2) return null
+  const first = times[0]
+  const last = times[times.length - 1]
+  const step = (last - first) / (times.length - 1)
+  if (!(step > 0)) return null
+  if (time > last) {
+    const edge = coordinateOf(last)
+    return edge === null ? null : edge + ((time - last) / step) * barSpacing
+  }
+  if (time < first) {
+    const edge = coordinateOf(first)
+    return edge === null ? null : edge - ((first - time) / step) * barSpacing
+  }
+  const nearest = times.reduce((best, t) => Math.abs(t - time) < Math.abs(best - time) ? t : best)
+  return coordinateOf(nearest)
+}

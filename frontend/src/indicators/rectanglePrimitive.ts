@@ -3,7 +3,7 @@ import type {
   ISeriesPrimitivePaneView, SeriesAttachedParameter, SeriesType, Time,
 } from 'lightweight-charts'
 import {
-  formatAxisTime, hexToRgba, normalizeRect, type RectPoint, type RectStyle,
+  extrapolateTimeX, formatAxisTime, hexToRgba, normalizeRect, type RectPoint, type RectStyle,
 } from './rectangleMath'
 import { getRectStyle, subscribeRectStyle } from './rectangleStyle'
 
@@ -61,22 +61,7 @@ export class RectanglePrimitive implements ISeriesPrimitive<Time>, ISeriesPrimit
     if (direct !== null) return direct
     const times = (attachment.series as ISeriesApi<SeriesType>).data()
       .flatMap(bar => typeof bar.time === 'number' ? [Number(bar.time)] : [])
-    if (times.length < 2) return null
-    const first = times[0]
-    const last = times[times.length - 1]
-    const step = (last - first) / (times.length - 1)   // average seconds per bar
-    const spacing = timeScale.options().barSpacing
-    if (time > last) {
-      const edge = timeScale.timeToCoordinate(last as Time)
-      return edge === null ? null : edge + ((time - last) / step) * spacing
-    }
-    if (time < first) {
-      const edge = timeScale.timeToCoordinate(first as Time)
-      return edge === null ? null : edge - ((first - time) / step) * spacing
-    }
-    // Gap inside the data: snap to the nearest bar.
-    const nearest = times.reduce((best, t) => Math.abs(t - time) < Math.abs(best - time) ? t : best)
-    return timeScale.timeToCoordinate(nearest as Time)
+    return extrapolateTimeX(time, times, timeScale.options().barSpacing, t => timeScale.timeToCoordinate(t as Time))
   }
 
   draw(target: RenderTarget): void {

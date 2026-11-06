@@ -151,3 +151,108 @@ async def test_wrong_user_not_options_ended_and_no_price():
     with pytest.raises(HTTPException) as exc:
         await call(make_session(last_price=0.0), right="CE", mode="otm")
     assert exc.value.status_code == 409
+
+
+# ── Real / paper sessions, swing and paused sessions ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_paused_session_can_reselect_and_swing_cannot():
+    result, _ = await call(make_session(state=SimulationState.PAUSED), right="CE", mode="otm", otm_offset=6)
+    assert result["changed"] is True
+    with pytest.raises(HTTPException) as exc:
+        await call(make_session(trading_style="swing"), right="CE", mode="otm")
+    assert exc.value.status_code == 409 and "Swing" in exc.value.detail
+
+
+@pytest.mark.parametrize("session_type", ["paper", "real"])
+def test_live_sessions_scan_strikes_at_the_wall_clock(session_type):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    ist = ZoneInfo("Asia/Kolkata")
+    with patch.object(route, "datetime", SimpleNamespace(now=lambda tz: datetime(2026, 11, 5, 10, 31, 7, tzinfo=tz))):
+        assert route._reselect_reference(make_session(session_type=session_type)) == (session_type, "2026-11-05", "10:31:07")
+    assert ist  # IST wall clock, not the replay clock stored on the session
+
+
+@pytest.mark.parametrize("session_type", ["paper", "real"])
+@pytest.mark.asyncio
+async def test_max_price_on_live_sessions_uses_live_history_mode(session_type):
+    session = make_session(session_type=session_type)
+    prepared = {"panes": [{"availability": "available", "reason": None, "pane": {"strike": "24350"}}]}
+    run = AsyncMock(return_value=prepared)
+    with patch("app.services.history_workers.run_history", new=run):
+        result, apply = await call(session, right="CE", mode="max_price", max_price=50)
+    assert run.await_args.args[1] == session_type and result["strike"] == 24350
+    apply.assert_awaited_once_with(session, "CE", 24350)
+
+
+def test_open_position_on_the_old_strike_blocks_even_after_the_chart_moved_on():
+    # A real position is tracked per right, so a PE bought at 24100 still blocks the PE side whatever strike is shown.
+    add_trade("PE", 24100)
+    assert "position" in route._side_open_risk(make_session(strike_pe=23900), "PE")
+    assert route._side_open_risk(make_session(strike_pe=23900), "CE") is None
+
+
+# ── A failed live-feed switch must not leave the session on the new strike ───
+
+def feed_session(session_type="real", **over):
+    feed = SimpleNamespace(replace_right=AsyncMock())
+    return make_session(session_type=session_type, desktop_origin=None, stream_manager=feed,
+                        last_price_ce=42.0, last_price_pe=26.2, **over)
+
+
+async def switch(session, right, strike):
+    with patch.object(route, "_ensure_options_data"):
+        await route._apply_session_strike(session, right, strike)
+
+
+@pytest.mark.parametrize("right,strike_attr,price_attr,old_strike,old_price", [
+    ("PE", "strike_pe", "last_price_pe", 24100, 26.2),
+    ("CE", "strike_ce", "last_price_ce", 24300, 42.0),
+])
+@pytest.mark.asyncio
+async def test_failed_feed_switch_on_a_real_session_rolls_the_strike_back(right, strike_attr, price_attr, old_strike, old_price):
+    session = feed_session("real")
+    session.stream_manager.replace_right.side_effect = RuntimeError("Live data unavailable: provider down")
+    with pytest.raises(HTTPException) as exc:
+        await switch(session, right, 24500)
+    assert exc.value.status_code == 502
+    assert getattr(session, strike_attr) == old_strike and getattr(session, price_attr) == old_price
+    other = "strike_ce" if strike_attr == "strike_pe" else "strike_pe"
+    assert getattr(session, other) == (24300 if other == "strike_ce" else 24100), "the other side is untouched"
+    session.stream_manager.replace_right.assert_awaited_once_with(right)
+
+
+@pytest.mark.asyncio
+async def test_successful_feed_switch_on_a_real_session_keeps_the_new_strike():
+    session = feed_session("real")
+    await switch(session, "PE", 23900)
+    assert session.strike_pe == 23900 and session.strike_ce == 24300
+    session.stream_manager.replace_right.assert_awaited_once_with("PE")
+
+
+@pytest.mark.asyncio
+async def test_reselect_on_a_real_session_reports_502_and_keeps_the_old_strike():
+    session = feed_session("real")
+    session.stream_manager.replace_right.side_effect = RuntimeError("Live data unavailable")
+    with patch.object(route.sim_svc, "get_session", return_value=session), patch.object(route, "_ensure_options_data"):
+        with pytest.raises(HTTPException) as exc:
+            await route.reselect_strike(SESSION, ReselectStrikeRequest(right="PE", mode="otm", otm_offset=6), USER)
+    assert exc.value.status_code == 502 and "stream" in exc.value.detail
+    assert session.strike_pe == 24100 and session.last_price_pe == 26.2
+    # The user can simply try again once the provider is back.
+    session.stream_manager.replace_right.side_effect = None
+    with patch.object(route.sim_svc, "get_session", return_value=session), patch.object(route, "_ensure_options_data"):
+        result = await route.reselect_strike(SESSION, ReselectStrikeRequest(right="PE", mode="otm", otm_offset=6), USER)
+    assert result["changed"] is True and session.strike_pe == 23900
+
+
+@pytest.mark.asyncio
+async def test_the_add_pane_endpoint_rolls_back_on_a_failed_feed_switch_too():
+    session = feed_session("real")
+    session.stream_manager.replace_right.side_effect = RuntimeError("Live data unavailable")
+    with patch.object(route.sim_svc, "get_session", return_value=session), patch.object(route, "_ensure_options_data"):
+        with pytest.raises(HTTPException) as exc:
+            await route.update_pane_strike(SESSION, route.UpdatePaneStrikeRequest(right="CE", strike=24500))
+    assert exc.value.status_code == 502 and session.strike_ce == 24300

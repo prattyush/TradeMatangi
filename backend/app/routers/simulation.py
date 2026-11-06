@@ -887,7 +887,20 @@ async def _apply_session_strike(session, right: str, strike: int | float) -> Non
         session.paper_base_contracts[right] = {"strike": req.strike, "expiry": session.expiry}
         sim_svc._upsert_session_to_db(session)
     elif hasattr(getattr(session, "stream_manager", None), "replace_right"):
-        await session.stream_manager.replace_right(req.right.upper())
+        # Managed live feed (real sessions, and paper sessions started on it). `replace_right` subscribes the new
+        # contract before closing the old one, so on failure the old subscription is still live: put the session
+        # back on the old strike instead of leaving it pointing at a contract that has no ticks.
+        try:
+            await session.stream_manager.replace_right(right)
+        except Exception as exc:
+            if right == "CE":
+                session.strike_ce = old_strike
+                session.last_price_ce = old_price
+            else:
+                session.strike_pe = old_strike
+                session.last_price_pe = old_price
+            logger.exception("update_pane_strike: live feed switch failed for %s %s", session_id, right)
+            raise HTTPException(status_code=502, detail="Unable to stream the selected option contract") from exc
     elif session.session_type in ("paper", "real"):
         # Keep non-website subscription behavior unchanged.
         try:
