@@ -9,6 +9,7 @@ import hashlib
 import math
 import random
 import statistics
+from zoneinfo import ZoneInfo
 
 VERSION = 1
 
@@ -18,6 +19,23 @@ def number(value, default=0.0):
     if not math.isfinite(result):
         raise ValueError("Nonfinite analytics input")
     return result
+
+
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def created_date_ist(created_at_ms):
+    """IST calendar day (ISO) a session was run on; None when the session has no wall-clock creation time.
+
+    ``created_at`` is true UTC epoch milliseconds (unlike candle times, which are IST-as-UTC).
+    """
+    try:
+        ms = float(created_at_ms or 0)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(ms) or ms <= 0:
+        return None
+    return datetime.fromtimestamp(ms / 1000, _IST).date().isoformat()
 
 
 def percent(pnl, capital):
@@ -120,6 +138,7 @@ def build_cycles(session, executions):
                     execution_broker=row.get("execution_broker") or (session.get("execution_broker") if session.get("session_type") == "real" else None),
                     broker_account_id=row.get("broker_account_id") or session.get("broker_account_id"),
                     date=session.get("date", ""),
+                    created_at=int(number(session.get("created_at"))),
                     trading_style=session.get("trading_style", "intraday"),
                     portfolio_id=session.get("portfolio_id"),
                     book_id=session.get("broker_projection_id")
@@ -1002,6 +1021,14 @@ def load_cycles(user_id, **filters):
         ):
             continue
         date = session.get("date", "")
+        if session.get("trading_style")!="swing" and (filters.get("created_from") or filters.get("created_to")):
+            run_date = created_date_ist(session.get("created_at"))
+            if (
+                run_date is None
+                or (filters.get("created_from") and run_date < filters["created_from"])
+                or (filters.get("created_to") and run_date > filters["created_to"])
+            ):
+                continue
         if session.get("trading_style")!="swing" and filters.get("start_date") and date < filters["start_date"]:
             continue
         if session.get("trading_style")!="swing" and filters.get("end_date") and date > filters["end_date"]:

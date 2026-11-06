@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LedgerTrade } from '../../shared/analysis/habits/types'
 import {
-  CHANGE_THRESHOLD, MIN_COMPARE_TRADES, compareHabit, customPeriods, daySeries, daysWithWithout, lastPeriods, metricOver, rollingMean, toneFor, tradesIn, tradingDays,
+  CHANGE_THRESHOLD, MIN_COMPARE_TRADES, bucketLabels, compareHabit, customPeriods, customSessionPeriods, daySeries, daysWithWithout, lastPeriods, metricOver, rollingMean, toneFor, tradesIn, tradingDays,
   type Period,
 } from '../../shared/analysis/habits/habitSeries'
 
@@ -139,5 +139,52 @@ describe('days with vs without a habit', () => {
     expect(result.netWithout).toBeCloseTo(1.0, 6)
     expect(result.difference).toBeCloseTo(result.netWith! - 1.0, 6)
     expect(daysWithWithout(trades, 'nope', 'pct')).toMatchObject({ daysWith: 0, daysWithout: 5, netWith: null, difference: null })
+  })
+})
+
+// ── Session axis: one point per session, in the order the sessions were run ──────────────────────────────
+
+describe('session axis', () => {
+  // Two sessions replay the same market day (run 13 Oct, in that order); a third replays an earlier day but was run last.
+  const session = (id: string, seq: number, market: string, run: string, pnl: number, extra: Partial<LedgerTrade> = {}) =>
+    trade(market, pnl, { session_id: id, session_seq: seq, created_date: run, created_at: seq + 1, habits: ['qa'], ...extra })
+  const rows = [
+    session('a', 0, '2026-03-10', '2026-10-13', -1),
+    session('a', 0, '2026-03-10', '2026-10-13', -1),
+    session('b', 1, '2026-03-10', '2026-10-13', 2),
+    session('c', 2, '2026-02-01', '2026-10-14', -3),
+  ]
+  it('gives every session its own point, ordered by session_seq instead of the replayed date', () => {
+    expect(tradingDays(rows, 'date')).toEqual(['2026-02-01', '2026-03-10'])
+    expect(tradingDays([...rows].reverse(), 'session')).toEqual(['a', 'b', 'c'])
+  })
+  it('builds the per-session series, with a gap-free zero for sessions without the habit', () => {
+    const points = daySeries(rows, tradingDays(rows, 'session'), 'qa', 'net', 'pct', 'mean', 'session')
+    expect(points.map(p => p.value)).toEqual([-2, 2, -3])
+    expect(points.map(p => p.trades)).toEqual([2, 1, 1])
+    expect(daySeries(rows, tradingDays(rows, 'session'), 'none', 'net', 'pct', 'mean', 'session').map(p => p.value)).toEqual([0, 0, 0])
+  })
+  it('labels sessions #n with when they were run and which market day they replayed', () => {
+    const labels = bucketLabels(rows, 'session')
+    expect(labels.a).toEqual({ tick: '#1', detail: 'Session 1 · run 13 Oct · market 10 Mar' })
+    expect(labels.c.tick).toBe('#3')
+    expect(bucketLabels(rows, 'date')['2026-03-10'].tick).toBe('10 Mar')
+    expect(bucketLabels([session('p', 0, '2026-10-13', '2026-10-13', 1)], 'session').p.detail).toBe('Session 1 · run 13 Oct')
+  })
+  it('compares the last N sessions with the N before, and by run day for custom ranges', () => {
+    const days = tradingDays(rows, 'session')
+    const split = lastPeriods(days, 1)!
+    expect(split.recent.days).toEqual(['c']); expect(split.before.days).toEqual(['b'])
+    expect(tradesIn(rows, { start: 'a', end: 'b', days: ['a', 'b'] }, 'session')).toHaveLength(3)
+    const custom = customSessionPeriods(rows, ['2026-10-13', '2026-10-13'], ['2026-10-14', '2026-10-14'])!
+    expect(custom.before.days).toEqual(['a', 'b']); expect(custom.recent.days).toEqual(['c'])
+    expect(customSessionPeriods(rows, ['2026-10-13', '2026-10-13'], ['2026-11-01', '2026-11-02'])).toBeNull()
+    const result = compareHabit(rows, 'qa', custom.before, custom.recent, 'pct', 'mean', 'costly', 'session')
+    expect(result.trades).toEqual({ before: 3, recent: 1 })
+  })
+  it('counts sessions, not market days, in days-with-vs-without', () => {
+    const result = daysWithWithout([...rows, session('d', 3, '2026-03-10', '2026-10-14', 1, { habits: [] })], 'qa', 'pct', 'session')
+    expect(result.daysWith).toBe(3); expect(result.daysWithout).toBe(1)
+    expect(daysWithWithout(rows, 'qa', 'pct', 'date').daysWith).toBe(2)
   })
 })

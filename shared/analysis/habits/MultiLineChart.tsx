@@ -10,6 +10,10 @@ interface Props {
   ariaLabel: string
   selectedDay?: string | null
   onSelectDay?: (date: string) => void
+  /** Axis text per key (tick label and hover detail); a key without one is shown as a short date. */
+  labels?: Record<string, { tick: string; detail: string }>
+  /** Noun for one axis point in screen-reader text. */
+  unitName?: string
 }
 
 const LEFT = 66, RIGHT = 18, TOP = 14, BOTTOM = 34
@@ -36,10 +40,12 @@ export function ticksFor(min: number, max: number): number[] {
 }
 
 /**
- * Multi-series line chart over trading days (categorical x axis). A missing value breaks the line (a gap, never 0).
+ * Multi-series line chart over trading days or sessions (categorical x axis). A missing value breaks the line (a gap, never 0).
  * Hover or arrow keys pick a day, Enter/click selects it.
  */
-export default function MultiLineChart({ days, series, format, ariaLabel, selectedDay, onSelectDay }: Props) {
+export default function MultiLineChart({ days, series, format, ariaLabel, selectedDay, onSelectDay, labels, unitName = 'day' }: Props) {
+  const tickOf = (key: string) => labels?.[key]?.tick ?? shortDate(key)
+  const detailOf = (key: string) => labels?.[key]?.detail ?? shortDate(key)
   const [active, setActive] = useState<number | null>(null)
   // The drawing is in real pixels (viewBox = rendered size), so text and points stay readable on a phone.
   const [box, measured] = useWidth<HTMLDivElement>(1000)
@@ -61,10 +67,10 @@ export default function MultiLineChart({ days, series, format, ariaLabel, select
     else if (event.key === 'End') { event.preventDefault(); setActive(days.length - 1) }
     else if ((event.key === 'Enter' || event.key === ' ') && onSelectDay) { event.preventDefault(); onSelectDay(days[current]) }
   }
-  if (!days.length) return <p className="pa-muted">No trading days in this selection.</p>
+  if (!days.length) return <p className="pa-muted">No trading {unitName}s in this selection.</p>
   const slot = days.length > 1 ? plotWidth / (days.length - 1) : plotWidth
   return (
-    <div ref={box} className="hb-chart" role="group" aria-label={`${ariaLabel}. Use the arrow keys to move between days and Enter to list the day's trades.`} tabIndex={0} onKeyDown={move} onBlur={() => setActive(null)}>
+    <div ref={box} className="hb-chart" role="group" aria-label={`${ariaLabel}. Use the arrow keys to move between ${unitName}s and Enter to list the ${unitName}'s trades.`} tabIndex={0} onKeyDown={move} onBlur={() => setActive(null)}>
       <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" aria-label={ariaLabel}>
         {ticks.map(tick => (
           <g key={tick}>
@@ -73,7 +79,7 @@ export default function MultiLineChart({ days, series, format, ariaLabel, select
           </g>
         ))}
         {days.map((date, index) => (days.length - 1 - index) % labelEvery === 0 && (
-          <text key={date} x={x(index)} y={H - 10} textAnchor={index === days.length - 1 && days.length > 1 ? 'end' : 'middle'} className="hb-tick">{shortDate(date)}</text>
+          <text key={date} x={x(index)} y={H - 10} textAnchor={index === days.length - 1 && days.length > 1 ? 'end' : 'middle'} className="hb-tick">{tickOf(date)}</text>
         ))}
         {selectedDay && days.includes(selectedDay) && <rect x={x(days.indexOf(selectedDay)) - slot / 2} y={TOP} width={slot} height={plotHeight} className="hb-selected-day" />}
         <line x1={x(current)} x2={x(current)} y1={TOP} y2={TOP + plotHeight} className="hb-cursor" />
@@ -98,7 +104,7 @@ export default function MultiLineChart({ days, series, format, ariaLabel, select
         ))}
       </svg>
       <p className="hb-readout" aria-live="polite">
-        <strong>{shortDate(days[current])}</strong>
+        <strong>{detailOf(days[current])}</strong>
         {series.map(s => (
           <span key={s.id}><i style={{ background: s.color }} />{s.label}: {s.values[current] == null ? '—' : format(s.values[current] as number)}</span>
         ))}

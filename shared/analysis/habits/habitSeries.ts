@@ -8,8 +8,44 @@ import type { LedgerTrade } from './types'
 
 // ── Days and periods ─────────────────────────────────────────────────────────
 
-/** Every trading day that has a closed trade in the ledger (the chart axis), oldest first. */
-export const tradingDays = (trades: LedgerTrade[]): string[] => [...new Set(trades.map(t => t.date))].sort()
+/**
+ * What one point on the across-days charts is. `date`: a market (replayed) date, so several sessions of one day merge.
+ * `session`: one point per session, in the order the sessions were run — replayed dates do not matter.
+ */
+export type AxisMode = 'session' | 'date'
+
+/** The key a trade is grouped under on the axis: its market date, or its session. */
+export const bucketKey = (trade: LedgerTrade, axis: AxisMode = 'date'): string => (axis === 'session' ? trade.session_id : trade.date)
+
+/** Every trading day (or session) that has a closed trade in the ledger (the chart axis), oldest first. */
+export function tradingDays(trades: LedgerTrade[], axis: AxisMode = 'date'): string[] {
+  if (axis === 'date') return [...new Set(trades.map(t => t.date))].sort()
+  const order = new Map<string, number>()
+  trades.forEach((t, index) => { if (!order.has(t.session_id)) order.set(t.session_id, t.session_seq ?? index) })
+  return [...order.keys()].sort((a, b) => (order.get(a) as number) - (order.get(b) as number))
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+export const shortDate = (iso: string) => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1] ?? ''}`
+
+/** Axis text per bucket key: the date itself, or `#n` for session n with a hover text saying when it was run and which day it replayed. */
+export function bucketLabels(trades: LedgerTrade[], axis: AxisMode = 'date'): Record<string, { tick: string; detail: string }> {
+  const labels: Record<string, { tick: string; detail: string }> = {}
+  if (axis === 'date') {
+    for (const t of trades) labels[t.date] ??= { tick: shortDate(t.date), detail: shortDate(t.date) }
+    return labels
+  }
+  const days = tradingDays(trades, 'session')
+  const first = new Map<string, LedgerTrade>()
+  for (const t of trades) if (!first.has(t.session_id)) first.set(t.session_id, t)
+  days.forEach((id, index) => {
+    const t = first.get(id) as LedgerTrade
+    const run = t.created_date ? `run ${shortDate(t.created_date)}` : 'run date unknown'
+    const same = t.created_date && t.created_date === t.date
+    labels[id] = { tick: `#${index + 1}`, detail: `Session ${index + 1} · ${run}${same ? '' : ` · market ${shortDate(t.date)}`}` }
+  })
+  return labels
+}
 
 export interface Period { start: string; end: string; days: string[] }
 
@@ -32,7 +68,23 @@ export function customPeriods(days: string[], before: [string, string], recent: 
   return a.days.length && b.days.length ? { before: a, recent: b } : null
 }
 
-export const tradesIn = (trades: LedgerTrade[], period: Period): LedgerTrade[] => trades.filter(t => t.date >= period.start && t.date <= period.end)
+/** Two custom inclusive ranges of the day a session was run on (session axis); null when either contains no session. Sessions are the Period's `days`. */
+export function customSessionPeriods(trades: LedgerTrade[], before: [string, string], recent: [string, string]): { before: Period; recent: Period } | null {
+  const sessions = tradingDays(trades, 'session')
+  const runDay = new Map<string, string>()
+  for (const t of trades) if (!runDay.has(t.session_id)) runDay.set(t.session_id, t.created_date ?? t.date)
+  const within = ([start, end]: [string, string]): Period => ({ start, end, days: sessions.filter(id => (runDay.get(id) as string) >= start && (runDay.get(id) as string) <= end) })
+  const a = within(before), b = within(recent)
+  return a.days.length && b.days.length ? { before: a, recent: b } : null
+}
+
+export function tradesIn(trades: LedgerTrade[], period: Period, axis: AxisMode = 'date'): LedgerTrade[] {
+  if (axis === 'session') {
+    const sessions = new Set(period.days)
+    return trades.filter(t => sessions.has(t.session_id))
+  }
+  return trades.filter(t => t.date >= period.start && t.date <= period.end)
+}
 
 // ── Per-day series ───────────────────────────────────────────────────────────
 
@@ -83,10 +135,10 @@ export function metricOver(trades: LedgerTrade[], metric: SeriesMetric, unit: Un
 export interface DayPoint { date: string; value: number | null; trades: number }
 
 /** One habit's metric for every trading day; counts/sums are 0 and averages are gaps on days without the habit. */
-export function daySeries(trades: LedgerTrade[], days: string[], questionId: string, metric: SeriesMetric, unit: Unit, mode: StatMode): DayPoint[] {
+export function daySeries(trades: LedgerTrade[], days: string[], questionId: string, metric: SeriesMetric, unit: Unit, mode: StatMode, axis: AxisMode = 'date'): DayPoint[] {
   const own = trades.filter(t => hasQuestion(t, questionId))
   return days.map(date => {
-    const rows = own.filter(t => t.date === date)
+    const rows = own.filter(t => bucketKey(t, axis) === date)
     if (!rows.length) return { date, trades: 0, value: SERIES_METRICS[metric].empty === 'zero' ? 0 : null }
     return { date, trades: rows.length, value: metricOver(rows, metric, unit, mode) }
   })
@@ -154,9 +206,9 @@ function direction(before: number | null, recent: number | null, higherIsBetter:
  * more is better, for a mixed habit they do not count. Improving: total ≥ +1 and loss not worse; worse: total ≤ −1 and
  * loss not better; mixed: signals disagree; same: nothing moved.
  */
-export function compareHabit(trades: LedgerTrade[], questionId: string, before: Period, recent: Period, unit: Unit, mode: StatMode, verdict: Verdict): HabitComparison {
+export function compareHabit(trades: LedgerTrade[], questionId: string, before: Period, recent: Period, unit: Unit, mode: StatMode, verdict: Verdict, axis: AxisMode = 'date'): HabitComparison {
   const own = trades.filter(t => hasQuestion(t, questionId))
-  const rowsBefore = tradesIn(own, before), rowsRecent = tradesIn(own, recent)
+  const rowsBefore = tradesIn(own, before, axis), rowsRecent = tradesIn(own, recent, axis)
   const cells = {} as Record<CompareMetric, CompareCell>
   for (const metric of COMPARE_METRICS) {
     const a = value(metric, rowsBefore, before, unit, mode), b = value(metric, rowsRecent, recent, unit, mode)
@@ -201,9 +253,9 @@ export interface DaysWithWithout {
 }
 
 /** Whether days on which a habit occurred ended better or worse than the other days (net % of all that day's trades, or ₹). */
-export function daysWithWithout(trades: LedgerTrade[], questionId: string, unit: Unit): DaysWithWithout {
+export function daysWithWithout(trades: LedgerTrade[], questionId: string, unit: Unit, axis: AxisMode = 'date'): DaysWithWithout {
   const byDay = new Map<string, LedgerTrade[]>()
-  for (const trade of trades) byDay.set(trade.date, [...(byDay.get(trade.date) ?? []), trade])
+  for (const trade of trades) byDay.set(bucketKey(trade, axis), [...(byDay.get(bucketKey(trade, axis)) ?? []), trade])
   const withHabit: number[] = [], without: number[] = []
   for (const rows of byDay.values()) {
     const net = metricOver(rows, 'net', unit, 'mean')

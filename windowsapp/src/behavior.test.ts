@@ -110,6 +110,9 @@ describe('behavior transports', () => {
     expect(path).toBe('behavior/habit-ledger?start_date=2026-10-01&symbol=NIFTY') // empty filters are dropped
     expect(validAnalysisPath(path, method)).toBe(true)
     expect(signal).toBeInstanceOf(AbortSignal)
+    await performance.getHabitLedger!({ created_from: '2026-10-13', created_to: '2026-10-14', start_date: '' }, controller.signal)
+    expect(request.mock.calls[1][0]).toBe('behavior/habit-ledger?created_from=2026-10-13&created_to=2026-10-14') // Run-on range is passed through
+    expect(validAnalysisPath(request.mock.calls[1][0], 'GET')).toBe(true)
   })
   it('desktop trading adapter uses the in-session routes', async () => {
     const request = vi.fn().mockImplementation(async (path: string) => path.endsWith('behavior-marks') ? { marks: [] } : path.startsWith('behavior/questions?') ? { questions: [] } : {})

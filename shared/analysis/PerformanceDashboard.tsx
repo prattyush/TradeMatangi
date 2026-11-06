@@ -450,6 +450,14 @@ export default function PerformanceDashboard(props: Props) {
   );
   const field = (name: string, value: string) =>
     setFilters((f) => ({ ...f, [name]: value }));
+  // "Run on" selects sessions by the day they were run, which is unrelated to the replayed market date: choosing a
+  // day clears the (default last-30-days) market-date range so replays of older dates are not silently filtered out.
+  const runOn = (name: "created_from" | "created_to", value: string) =>
+    setFilters((f) => ({
+      ...f,
+      [name]: value,
+      ...(value ? { start_date: "", end_date: "" } : {}),
+    }));
   const tradesPanel = (
     <section className="pa-card">
       <div className="pa-card-title">
@@ -644,6 +652,24 @@ export default function PerformanceDashboard(props: Props) {
             type="date"
             value={filters.end_date}
             onChange={(e) => field("end_date", e.target.value)}
+          />
+        </label>
+        <label title="Pick sessions by the day you ran them (replay and stepwise sessions can replay any older market date). Choosing a day clears the market-date range.">
+          Run on: from
+          <input
+            type="date"
+            aria-label="Session run on, from"
+            value={filters.created_from ?? ""}
+            onChange={(e) => runOn("created_from", e.target.value)}
+          />
+        </label>
+        <label>
+          to
+          <input
+            type="date"
+            aria-label="Session run on, through"
+            value={filters.created_to ?? ""}
+            onChange={(e) => runOn("created_to", e.target.value)}
           />
         </label>
         <label>

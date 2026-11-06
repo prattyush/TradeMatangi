@@ -149,7 +149,7 @@ export default function HabitDeepDive({ trades, overview, unit, mode, habitId, o
                 const result = unit === 'pct' ? t.pnl_pct : t.net_pnl
                 return (
                   <tr key={t.cycle_id}>
-                    <th scope="row">{t.date} {istTime(t.entry_time)}</th>
+                    <th scope="row" title={t.created_date ? `Session run on ${t.created_date}` : undefined}>{t.date} {istTime(t.entry_time)}</th>
                     <td>{[t.symbol, t.strike, t.right].filter(Boolean).join(' ')}</td>
                     <td className={result == null || result === 0 ? '' : result > 0 ? 'positive' : 'negative'}>{fmtSigned(result, unit)}</td>
                     <td>{fmtPct(t.capital_pct, 1)}</td><td>{fmtPct(t.risk_pct, 2)}</td><td>{t.bars ?? '—'}</td><td>{fmtDuration(t.holding_seconds)}</td><td>{t.entries}</td><td>{t.exits}</td>

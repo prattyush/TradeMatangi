@@ -32,6 +32,9 @@ Tick each item; note the session type, client and anything odd.
 - [ ] Habits totals equal the Stats overview (Net P&L, trades) for the same filters.
 - [ ] The verdict chip (Costly / Rewarding / Mixed / Low sample) agrees with your own reading of at least two habits.
 - [ ] Trends and Compare show the trend you expect over the last 5–10 days; clicking a point opens the right trade.
+- [ ] Run several replay/stepwise sessions in one day (different replayed dates). Stats → "Run on" today shows only them; Habits → Trends (Sessions) shows one evenly spaced point per session in the order run, `#n` ticks, hover says when it ran and the market day replayed; Market dates mode still merges by replayed date.
+- [ ] Compare → Custom with "Run on" ranges selects the right sessions; "Last N sessions vs before" needs more than N sessions.
+- [ ] Same checks in the rebuilt Windows app (no Rust change, the shared component carries it). Sessions created before 2026-10-01 are not supported by this filter.
 - [ ] Time to load Habits on your full history is acceptable (benchmark: about the same as opening Stats).
 
 ## E. Phone / webapp

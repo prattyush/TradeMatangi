@@ -8,6 +8,7 @@ import HabitDeepDive from './HabitDeepDive'
 import HabitScorecard, { type ColumnSet } from './HabitScorecard'
 import HabitTrends from './HabitTrends'
 import { fmtSigned } from './format'
+import type { AxisMode } from './habitSeries'
 import { summarize, worstFirst, type StatMode, type Unit } from './habitStats'
 import type { HabitLedger } from './types'
 import './habits.css'
@@ -47,6 +48,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
   const [mode, setMode] = useState<StatMode>('mean')
   const [unit, setUnit] = useState<Unit>('pct')
   const [columns, setColumns] = useState<ColumnSet>('results')
+  const [axis, setAxis] = useState<AxisMode>('session')
   const [section, setSection] = useState<Section>('Scorecard')
   const [deepHabit, setDeepHabit] = useState<string | null>(null)
   const [managing, setManaging] = useState(false)
@@ -88,6 +90,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
           <Segmented label="Habit type" value={kind} onChange={setKind} options={[['all', 'All'], ['entry', 'Entry'], ['exit', 'Exit']]} />
           <Segmented label="Average" value={mode} onChange={setMode} options={[['mean', 'Mean'], ['median', 'Median']]} />
           <Segmented label="Unit" value={unit} onChange={setUnit} options={[['pct', '% of capital'], ['money', '₹']]} />
+          {(section === 'Trends' || section === 'Compare') && <Segmented label="Across" value={axis} onChange={setAxis} options={[['session', 'Sessions (order run)'], ['date', 'Market dates']]} />}
           {section === 'Scorecard' && <Segmented label="Columns" value={columns} onChange={setColumns} options={[['results', 'Results'], ['size', 'Size & timing']]} />}
           <label className="hb-check"><input type="checkbox" checked={includeArchived} onChange={event => setIncludeArchived(event.target.checked)} /> Include archived</label>
         </div>
@@ -131,12 +134,12 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
               <nav className="hb-sections" aria-label="Habits sections">
                 {(['Scorecard', 'Trends', 'Compare', 'Deep dive'] as Section[]).map(id => (
                   <button key={id} type="button" aria-pressed={section === id} className={section === id ? 'active' : ''} onClick={() => setSection(id)}>
-                    {id === 'Trends' ? 'Trends across days' : id === 'Compare' ? 'Compare periods' : id}
+                    {id === 'Trends' ? (axis === 'session' ? 'Trends across sessions' : 'Trends across days') : id === 'Compare' ? 'Compare periods' : id}
                   </button>
                 ))}
               </nav>
-              {section === 'Trends' && <HabitTrends trades={ledger.trades} overview={overview} unit={unit} mode={mode} onOpenTrade={onOpenTrade} />}
-              {section === 'Compare' && <HabitCompare trades={ledger.trades} overview={overview} unit={unit} mode={mode} />}
+              {section === 'Trends' && <HabitTrends trades={ledger.trades} overview={overview} unit={unit} mode={mode} axis={axis} onOpenTrade={onOpenTrade} />}
+              {section === 'Compare' && <HabitCompare trades={ledger.trades} overview={overview} unit={unit} mode={mode} axis={axis} />}
               {section === 'Deep dive' && <HabitDeepDive trades={ledger.trades} overview={overview} unit={unit} mode={mode} habitId={deepHabit ?? ordered[0]?.question_id ?? null} onSelectHabit={setDeepHabit} onOpenTrade={onOpenTrade} />}
               {section === 'Scorecard' && (
                 <>

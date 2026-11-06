@@ -8,6 +8,11 @@ export interface LedgerTrade {
   cycle_id: string
   session_id: string
   date: string
+  /** When the session was run (UTC epoch ms) and that IST day; absent/null for sessions without a wall-clock creation time. */
+  created_at?: number | null
+  created_date?: string | null
+  /** 0-based position of the trade's session in the order the sessions were run. */
+  session_seq?: number
   entry_time: number
   exit_time: number | null
   symbol: string
