@@ -918,9 +918,20 @@ def _side_open_risk(session, right: str) -> str | None:
     orders, P&L and EOD auto-close would silently die. Block instead.
     """
     from app.services import order_service, strategy_service, trading as trading_service
-    position = trading_service.get_position(session.session_id, session.symbol, right=right)
-    if position.side != "FLAT" and position.quantity > 0:
-        return f"Close the open {right} position before re-selecting its strike"
+    # Check every contract on this side on its own. Netting the whole side hides two open contracts at
+    # different strikes (e.g. long 24000 PE + short 24100 PE reads as flat) although both still need their ticks.
+    contracts = {(trade.strike if trade.strike is None else strike_number(trade.strike), trade.expiry)
+                 for trade in trading_service.get_trades(session.session_id)
+                 if trade.symbol == session.symbol and trade.right == right}
+    contracts |= {(item.get("strike") if item.get("strike") is None else strike_number(item["strike"]), item.get("expiry"))
+                  for item in (getattr(session, "broker_positions", None) or [])
+                  if item.get("right") == right}
+    for strike, expiry in sorted(contracts, key=lambda c: (c[0] is None, c[0] or 0, c[1] or "")):
+        position = trading_service.get_position(session.session_id, session.symbol, right=right,
+                                                strike=strike, expiry=expiry, exact_contract=True)
+        if position.side != "FLAT" and position.quantity > 0:
+            label = f"{right} {strike}" if strike is not None else right
+            return f"Close the open {label} position before re-selecting its strike"
     for order in order_service.get_open_orders(session.session_id):
         if (order.right or "").upper() == right:
             return f"Cancel the open {right} order(s) before re-selecting its strike"
