@@ -26,3 +26,33 @@ test('no start rule uses current settings', () => {
     buildReselectBody('PE', null, { ...fb, storedMode: 'threshold' }),
     { right: 'PE', mode: 'max_price', max_price: 45 })
 })
+
+import { reselectOutcome } from './strikeRule.ts'
+
+const current = { ce: 24300, pe: 24100 }
+
+test('an unchanged strike only shows a notice and leaves the layout alone', () => {
+  const outcome = reselectOutcome({ strike: 24300, changed: false }, 'CE', current, false)
+  assert.deepEqual(outcome, { notice: 'Strike 24300 is still the best match', ce: 24300, pe: 24100, skipKey: null })
+})
+
+test('a changed CE strike moves only CE and tells the layout effect to skip that exact change', () => {
+  assert.deepEqual(reselectOutcome({ strike: 24500, changed: true }, 'CE', current, false),
+    { notice: null, ce: 24500, pe: 24100, skipKey: '24500:24100' })
+})
+
+test('a changed PE strike moves only PE', () => {
+  assert.deepEqual(reselectOutcome({ strike: 23900, changed: true }, 'PE', current, false),
+    { notice: null, ce: 24300, pe: 23900, skipKey: '24300:23900' })
+})
+
+test('paper options sessions never set a skip key (their layout effect already returns early)', () => {
+  assert.equal(reselectOutcome({ strike: 24500, changed: true }, 'CE', current, true).skipKey, null)
+})
+
+test('a side without a known strike keeps its unknown value instead of inventing one', () => {
+  const outcome = reselectOutcome({ strike: 24500, changed: true }, 'CE', { ce: null, pe: undefined }, false)
+  assert.equal(outcome.ce, 24500)
+  assert.equal(outcome.pe, undefined)
+  assert.equal(outcome.skipKey, '24500:undefined')   // matches the template the App effect compares against
+})
