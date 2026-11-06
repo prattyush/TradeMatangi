@@ -194,6 +194,54 @@ def test_open_position_on_the_old_strike_blocks_even_after_the_chart_moved_on():
     assert route._side_open_risk(make_session(strike_pe=23900), "CE") is None
 
 
+# ── The guard looks at each contract on the side, not the side's net position ─
+
+def test_two_open_contracts_that_net_to_zero_still_block_the_side():
+    # Long 24000 PE + short 24100 PE nets to FLAT per right, but both contracts are open.
+    add_trade("PE", 24000, TradeSide.BUY)
+    add_trade("PE", 24100, TradeSide.SELL)
+    assert trading_service.get_position(SESSION, "NIFTY", right="PE").side == "FLAT"
+    reason = route._side_open_risk(make_session(), "PE")
+    assert reason and "position" in reason and "24000" in reason
+    assert route._side_open_risk(make_session(), "CE") is None
+
+
+def test_a_closed_contract_beside_an_open_one_blocks_and_all_closed_does_not():
+    add_trade("PE", 24000, TradeSide.BUY)
+    add_trade("PE", 24000, TradeSide.SELL)   # 24000 closed
+    assert route._side_open_risk(make_session(), "PE") is None
+    add_trade("PE", 24100, TradeSide.BUY)    # 24100 open
+    assert "24100" in route._side_open_risk(make_session(), "PE")
+
+
+def test_same_strike_different_expiry_are_separate_contracts():
+    add_trade("PE", 24000, TradeSide.BUY)
+    trading_service._trades[SESSION].append(
+        Trade(user_id=USER, symbol="NIFTY", side=TradeSide.SELL, quantity=65, price=20, timestamp=101,
+              session_id=SESSION, instrument_type="options", right="PE", strike=24000,
+              expiry="2026-11-12", session_type="sim"))
+    assert route._side_open_risk(make_session(), "PE") is not None
+
+
+def test_broker_only_positions_on_two_strikes_block_the_side():
+    session = make_session(session_type="real", broker_positions=[
+        {"right": "PE", "strike": 24000, "expiry": EXPIRY, "side": "LONG", "quantity": 65, "avg_entry_price": 20},
+        {"right": "PE", "strike": 24100, "expiry": EXPIRY, "side": "SHORT", "quantity": 65, "avg_entry_price": 25},
+    ])
+    with patch.object(route.sim_svc, "get_session", return_value=session):
+        assert route._side_open_risk(session, "PE") is not None
+    assert route._side_open_risk(session, "CE") is None
+
+
+@pytest.mark.asyncio
+async def test_reselect_endpoint_refuses_when_two_contracts_net_flat():
+    add_trade("PE", 24000, TradeSide.BUY)
+    add_trade("PE", 24100, TradeSide.SELL)
+    with pytest.raises(HTTPException) as exc:
+        await call(make_session(), right="PE", mode="otm", otm_offset=6)
+    assert exc.value.status_code == 409
+
+
 # ── A failed live-feed switch must not leave the session on the new strike ───
 
 def feed_session(session_type="real", **over):
