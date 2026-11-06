@@ -138,8 +138,10 @@ def db(p20_database, monkeypatch):
 DAY = 1_791_447_300  # an IST-as-UTC epoch inside a trading day
 
 
-def add_session(db, sid, date, user=USER, symbol="NIFTY", session_type="paper", round_trips=((100, 110), (110, 105)), open_leg=False):
+def add_session(db, sid, date, user=USER, symbol="NIFTY", session_type="paper", round_trips=((100, 110), (110, 105)), open_leg=False, created_at=None):
     session = dict(session_id=sid, user_id=user, symbol=symbol, date=date, session_capital=Decimal("10000"), session_type=session_type, instrument_type="equity")
+    if created_at is not None:
+        session["created_at"] = Decimal(created_at)
     db.Table("Sessions").put_item(Item=session)
     tick, serial = DAY, 0
     for buy, sell in round_trips:
@@ -199,6 +201,78 @@ def test_filters_scope_both_trades_and_marks(db):
     assert {t["session_id"] for t in by_symbol["trades"]} == {"s1", "s2"}
     assert by_symbol["coverage"]["marks"] == 2 and by_symbol["coverage"]["unmatched_marks"] == 0, "marks of other symbols are out of scope, not unmatched"
     assert ledger.load_ledger(USER, {"session_type": "real"})["trades"] == []
+
+
+# ── Run-on (session created_at) filter and session order ─────────────────────
+
+def utc_ms(text):
+    """UTC epoch milliseconds for an ISO instant, e.g. ``2026-10-12T20:00:00+00:00``."""
+    from datetime import datetime
+
+    return int(datetime.fromisoformat(text).timestamp() * 1000)
+
+
+def test_run_on_filter_selects_sessions_by_the_ist_day_they_were_run(db):
+    # Replayed dates are unrelated to when the sessions were run; 20:00 UTC on 12 Oct is already 13 Oct in IST.
+    add_session(db, "old", "2026-01-05", created_at=utc_ms("2026-10-11T05:00:00+00:00"))
+    add_session(db, "late", "2026-01-06", created_at=utc_ms("2026-10-12T20:00:00+00:00"))
+    add_session(db, "new", "2026-01-07", created_at=utc_ms("2026-10-13T05:00:00+00:00"))
+    add_session(db, "legacy", "2026-01-08")  # no created_at: never matches a Run-on range
+    assert {t["session_id"] for t in ledger.load_ledger(USER, {"created_from": "2026-10-13", "created_to": "2026-10-13"})["trades"]} == {"late", "new"}
+    assert {t["session_id"] for t in ledger.load_ledger(USER, {"created_to": "2026-10-12"})["trades"]} == {"old"}
+    assert {t["session_id"] for t in ledger.load_ledger(USER, {"created_from": "2026-10-12"})["trades"]} == {"late", "new"}
+    assert {t["session_id"] for t in ledger.load_ledger(USER, {})["trades"]} == {"old", "late", "new", "legacy"}
+    # The Stats overview applies the same predicate, so Performance and Habits still reconcile.
+    cycles = perf.load_cycles(USER, created_from="2026-10-13", created_to="2026-10-13")
+    assert {c["session_id"] for c in cycles} == {"late", "new"}
+
+
+def test_run_on_filter_scopes_marks_with_their_sessions(db):
+    inside = add_session(db, "in", "2026-01-05", created_at=utc_ms("2026-10-13T05:00:00+00:00"))
+    outside = add_session(db, "out", "2026-01-05", created_at=utc_ms("2026-10-01T05:00:00+00:00"))
+    qa = question("entry", "Chased")
+    bsvc.set_marks(USER, inside, 0, {qa: True})
+    bsvc.set_marks(USER, outside, 0, {qa: True})
+    result = ledger.load_ledger(USER, {"created_from": "2026-10-13"})
+    assert {t["session_id"] for t in result["trades"]} == {"in"}
+    assert result["coverage"]["marks"] == 1 and result["coverage"]["unmatched_marks"] == 0
+
+
+def test_ledger_is_in_the_order_sessions_were_run_not_the_replayed_date(db):
+    # Two sessions on the same replayed day, then one replayed from an earlier date but run last.
+    add_session(db, "first", "2026-03-10", created_at=utc_ms("2026-10-13T04:00:00+00:00"))
+    add_session(db, "second", "2026-03-10", created_at=utc_ms("2026-10-13T06:00:00+00:00"))
+    add_session(db, "third", "2026-02-01", created_at=utc_ms("2026-10-14T04:00:00+00:00"))
+    trades = ledger.load_ledger(USER, {})["trades"]
+    assert [t["session_id"] for t in trades] == ["first", "first", "second", "second", "third", "third"]
+    assert [t["session_seq"] for t in trades] == [0, 0, 1, 1, 2, 2]
+    assert trades[0]["created_date"] == "2026-10-13" and trades[-1]["created_date"] == "2026-10-14"
+
+
+def test_run_on_range_validation_and_desktop_passthrough(db):
+    add_session(db, "s1", "2026-01-05", created_at=utc_ms("2026-10-13T05:00:00+00:00"))
+    add_session(db, "s2", "2026-01-05", created_at=utc_ms("2026-10-20T05:00:00+00:00"))
+    client = TestClient(app)
+    headers = {"X-User-Id": USER}
+    assert client.get("/api/behavior/habit-ledger?created_from=2026-10-20&created_to=2026-10-01", headers=headers).status_code == 422
+    assert client.get("/api/analysis/performance?created_from=2026-10-20&created_to=2026-10-01", headers=headers).status_code == 422
+    body = client.get("/api/behavior/habit-ledger?created_from=2026-10-13&created_to=2026-10-14", headers=headers).json()
+    assert {t["session_id"] for t in body["trades"]} == {"s1"}
+    app.dependency_overrides[desktop_analysis.get_analysis_user_id] = lambda: USER
+    try:
+        desktop = client.get("/api/desktop/v1/analysis/behavior/habit-ledger?created_from=2026-10-19")
+        assert desktop.status_code == 200, desktop.text
+        assert {t["session_id"] for t in desktop.json()["trades"]} == {"s2"}
+        report = client.get("/api/desktop/v1/analysis/performance?created_from=2026-10-19")
+        assert report.status_code == 200 and report.json()["summary"]["count"] == 2
+    finally:
+        app.dependency_overrides.pop(desktop_analysis.get_analysis_user_id, None)
+
+
+def test_created_date_ist_handles_missing_and_boundary_values():
+    assert perf.created_date_ist(None) is None and perf.created_date_ist(0) is None and perf.created_date_ist("bad") is None
+    assert perf.created_date_ist(utc_ms("2026-10-12T18:29:59+00:00")) == "2026-10-12"
+    assert perf.created_date_ist(utc_ms("2026-10-12T18:30:00+00:00")) == "2026-10-13"
 
 
 def test_open_trades_unknown_round_trips_and_other_users_are_handled(db):

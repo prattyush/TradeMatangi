@@ -19,6 +19,8 @@ import logging
 import math
 from collections import defaultdict
 
+from app.services.performance_service import created_date_ist
+
 logger = logging.getLogger(__name__)
 
 MAX_ROWS = 20_000
@@ -87,6 +89,9 @@ def trade_row(cycle: dict, habits: list[str] | None = None) -> dict:
         "cycle_id": cycle["cycle_id"],
         "session_id": cycle["session_id"],
         "date": cycle.get("date", ""),
+        "created_at": int(cycle["created_at"]) if cycle.get("created_at") else None,
+        "created_date": created_date_ist(cycle.get("created_at")),
+        "session_seq": 0,
         "entry_time": int(cycle["entry_time"]),
         "exit_time": int(cycle["exit_time"]) if cycle.get("exit_time") is not None else None,
         "symbol": cycle.get("symbol", ""),
@@ -141,8 +146,15 @@ def build_ledger(cycles: list[dict], marks: list[dict], sessions: dict[str, dict
         else:
             habits[(owner, trip)].add(str(mark["question_id"]))
             marks_used += 1
-    closed = sorted((c for c in own if c.get("state") == "closed"), key=lambda c: (c.get("date", ""), c["entry_time"], c["cycle_id"]))
+    # Session order = the order the sessions were run (wall clock), not the replayed market date.
+    closed = sorted(
+        (c for c in own if c.get("state") == "closed"),
+        key=lambda c: (c.get("created_at") or 0, c.get("date", ""), c["session_id"], c["entry_time"], c["cycle_id"]),
+    )
     rows = [trade_row(c, list(habits.get((c["session_id"], int(c["index"])), ()))) for c in closed]
+    ordinals: dict[str, int] = {}
+    for row in rows:
+        row["session_seq"] = ordinals.setdefault(row["session_id"], len(ordinals))
     truncated = len(rows) > max_rows
     if truncated:
         rows = rows[-max_rows:]  # keep the most recent trades
@@ -200,5 +212,12 @@ def load_ledger(user_id: str, criteria: dict) -> dict:
         if behavior_service._matches(row, criteria.get("symbol"), criteria.get("session_type"), criteria.get("instrument_type"))
     ]
     sessions = _fetch_sessions({str(row["session_id"]) for row in marks})
+    if criteria.get("created_from") or criteria.get("created_to"):
+        # Marks are read by market date; keep only those of sessions that were run inside the Run-on range.
+        def run_inside(mark: dict) -> bool:
+            day = performance_service.created_date_ist((sessions.get(str(mark["session_id"])) or {}).get("created_at"))
+            return day is not None and (not criteria.get("created_from") or day >= criteria["created_from"]) and (not criteria.get("created_to") or day <= criteria["created_to"])
+
+        marks = [row for row in marks if run_inside(row)]
     questions = behavior_service.list_questions(user_id, include_archived=True)
     return build_ledger(cycles, marks, sessions, questions)

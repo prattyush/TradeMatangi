@@ -89,7 +89,8 @@ Known v1 limits: marks of two linked real sessions for the same day are counted 
 | 7b | Habits: stats engine + scorecard | Merged (PR #759) — §10.8 |
 | 7c | Habits: trends across days + period comparison | Merged (PR #760) — §10.9 |
 | 7d | Habits: single-habit deep dive + polish | Merged (PR #761) — §10.10, glossary §10.11 |
-| 8 | Hardening and close-out | Implemented (this PR) — §11 |
+| 8 | Hardening and close-out | Merged (PR #762) — §11 |
+| 9 | Stats "Run on" filter + Habits session axis | Implemented (this PR) — §12 |
 
 Details, acceptance criteria and the verification matrix are in [spec-phase23-implementation-plan.md](spec-phase23-implementation-plan.md).
 
@@ -223,8 +224,8 @@ Behavior questions now appear in the labels you fill in **while trading**: repla
 **Goal.** Let the user see *which habit is most destructive and which is rewarding* and *whether each habit is improving across days* — including cases such as "I still took the bad habit but with a smaller capital %" or "I exited at a loss, but within the same bar".
 
 ### 10.1 Data: a trade ledger from the backend, statistics in TypeScript
-- `GET /api/behavior/habit-ledger` takes the same filter query as `/api/analysis/performance` (the `performance.filters()` dependency: dates, symbol, instrument/session type, client, direction, methods, tags…). It loads the user's cycles with `performance_service.load_cycles` (so every filter, real-day alias de-duplication and sharing rules match the Stats overview), keeps **own, closed, intraday** cycles, joins the user's marks and returns **one compact row per closed trade** plus the questions (incl. archived) and coverage counts:
-  - Row: `cycle_id, session_id, date, entry_time, symbol, right, strike, direction, net_pnl, pnl_pct, capital_pct, risk_pct, entries, exits, holding_seconds, bars, r_multiple, habits:[question_id…]`.
+- `GET /api/behavior/habit-ledger` takes the same filter query as `/api/analysis/performance` (the `performance.filters()` dependency: dates, **Run-on dates (§12)**, symbol, instrument/session type, client, direction, methods, tags…). It loads the user's cycles with `performance_service.load_cycles` (so every filter, real-day alias de-duplication and sharing rules match the Stats overview), keeps **own, closed, intraday** cycles, joins the user's marks and returns **one compact row per closed trade** plus the questions (incl. archived) and coverage counts:
+  - Row: `cycle_id, session_id, date, created_at, created_date, session_seq, entry_time, symbol, right, strike, direction, net_pnl, pnl_pct, capital_pct, risk_pct, entries, exits, holding_seconds, bars, r_multiple, habits:[question_id…]`.
   - Coverage: `closed_trades, marked_trades, marks, unmatched_marks, open_marked_trades, trades_without_capital, trades_without_bars, truncated` (row cap 20,000).
 - All statistics (summaries, baseline, per-day series, buckets, period comparison, verdicts) are computed client-side by one pure module, `shared/analysis/habits/habitStats.ts`, so any slice (two periods, kind filter, mean vs median) needs no extra request and every number reconciles with the same rows.
 - **Join.** A mark is `(session_id, round_trip_index)`. For sim/paper/stepwise/real intraday sessions `round_trip_index == cycle["index"]` (`build_cycles` numbers a cycle when it opens — the same number labels use and the website now assigns). Swing (keyed by `label_index`) is out of scope. Linked real-day aliases: a mark's session is mapped to its book (`broker_projection_id or session_id`) and joined on `(book_id, index)`; duplicate marks on aliases collapse to one `(book, round_trip_index, question_id)`; marks whose trade cannot be found are **reported as unmatched**, never dropped silently. Marks are not remapped by the real-book restage, so they can drift after a re-sync — unmatched counts make that visible. Only the user's own sessions are used (a viewer has none of the owner's marks). Open cycles are excluded from P&L statistics and counted in coverage.
@@ -382,8 +383,8 @@ The Habits tab now has three sections (**Scorecard | Trends across days | Compar
 
 - Marks are keyed `(session_id, round_trip_index)`; if a real broker book is re-synced and trips renumber, existing marks can point at a different trade. Habits reports these as unmatched marks where the trade no longer exists but cannot detect a shifted match.
 - Website in-session numbering tracks one open trip per leg (equity, CE, PE). Two open strikes of the same right share one leg.
-- Swing portfolios are out of scope (labels there use `label_index`).
-- `GET /api/behavior/stats` and `/marks/by-question` remain available but are not used by the UI (Habits uses the ledger).
+- Swing portfolios are out of scope (labels there use `label_index`); the Run-on filter (§12) is not applied to them.
+- `GET /api/behavior/stats` and `/marks/by-question` remain available but are not used by the UI (Habits uses the ledger); they do not support the Run-on filter (§12).
 - No price-path statistics (time in profit, best price reached); that behavior is tracked by manual marking.
 
 ### 11.5 Porting to preprod / main
@@ -399,6 +400,35 @@ Real-trading-relevant items to test there: desktop real-session label state, rea
 ### 11.6 Manual acceptance
 
 See [phase23-manual-acceptance.md](phase23-manual-acceptance.md).
+
+## 12. Stats "Run on" filter and Habits session axis (Sprint 9)
+
+**Why.** Replay and stepwise practice sessions replay arbitrary older market days, several per day. The Stats date range and the Habits "across days" chart key on the replayed *market date*, so they could not answer "am I improving session after session / day after day of practice?" — same-day sessions merged and the order followed the replayed date, not the order the sessions were run.
+
+### 12.1 Decisions
+
+| Topic | Decision |
+|---|---|
+| Field | `created_at` on the Sessions record: true UTC epoch milliseconds, set once in `create_session` for every mode (sim/replay, stepwise, paper, real, website and desktop). It has existed since 2026-06-05. |
+| Supported range | **Sessions created on or after 2026-10-01.** No backfill and no fallback to the market date for older sessions (user decision). A session without `created_at` (e.g. a swing child) sorts first and is excluded whenever a Run-on range is set. |
+| Day boundary | The run day is the **IST** calendar day of `created_at` (`performance_service.created_date_ist`; 18:30 UTC is already the next IST day). Candle times use the IST-as-UTC trick; `created_at` does not. |
+| Paper / real | They cannot be created for a non-today date, so their run day equals their market date; the same code path applies unchanged. |
+| Scope | Run-on filter: Performance (Stats overview, cycles, detail) and the Habits ledger, because both use `performance.filters()` → `load_cycles`. Habits **Trends** and **Compare** get the session axis. Not covered: `/behavior/stats`, `/marks/by-question`, `/labels/stats` (unused by the UI), Performance "Daily rhythm" / day-path charts (stay on market dates), swing. |
+
+### 12.2 Backend
+- `GET /api/analysis/performance*` and `GET /api/behavior/habit-ledger` accept `created_from` and `created_to` (`YYYY-MM-DD`, inclusive, IST run day); `created_from > created_to` is 422. Both are in the shared `filters()`, so the desktop proxy forwards them with no allowlist change (allowlists are path-only).
+- `build_cycles` carries `created_at` (ms, 0 when absent) on every cycle. `load_cycles` skips sessions outside the Run-on range (not applied to swing).
+- Habit ledger rows gain `created_at`, `created_date` (IST ISO or null) and `session_seq`. Rows are ordered by `(created_at, date, session_id, entry_time, cycle_id)`; `session_seq` is the 0-based position of the owner session in that order. Marks are read by market date, so with a Run-on range the ledger also drops marks whose session was run outside it (otherwise they would count as unmatched).
+
+### 12.3 UI (shared by website, webapp and desktop)
+- Stats filter bar: **Run on: from / to** next to From / Through. Choosing a Run-on day clears the (default last-30-days) market-date range, otherwise a replay of an older date would be filtered out silently.
+- Habits → Trends and Compare: segmented **Across** control — **Sessions (order run)** (default) or **Market dates**. Session axis: one evenly spaced point per session labelled `#n`; hover/keyboard readout says when it was run and which market day it replayed. The click-through lists that session's trades. Compare presets become "last N sessions vs before"; custom ranges select sessions by the day they were run; "Per day" and loss-per-day are per session. Market-dates mode is unchanged.
+- Deep dive keeps market-date weekday buckets; its trade rows show the run day as a tooltip.
+
+### 12.4 Tests
+- Results: backend 2887 passed + the same 3 baseline swing failures (§4); windowsapp vitest 389 passed; `tsc --noEmit` clean for frontend and windowsapp. No Rust change, so `cargo test` stays at 23.
+- `backend/tests/test_habit_ledger.py` (+5): IST-day filter incl. boundary and missing `created_at`, marks scoped with sessions, ordering by run time across same-day and older-replay sessions with `session_seq`, 422 and desktop pass-through, `created_date_ist`.
+- `windowsapp/src/habitSeries.test.ts` (+5): session buckets and ordering, per-session series, labels, session-mode periods / custom ranges / compare, days-with-without by session; `behavior.test.ts`: Run-on params reach the ledger route.
 
 ## Appendix — original requirement text (free hand, as written)
 

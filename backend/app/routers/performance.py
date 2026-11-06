@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api/analysis/performance", tags=["performance"])
 def filters(
     start_date: date | None = None,
     end_date: date | None = None,
+    created_from: date | None = None,
+    created_to: date | None = None,
     trading_style: Literal["intraday","swing"] | None = None,
     portfolio_id: str | None = None,
     symbol: str | None = None,
@@ -35,12 +37,16 @@ def filters(
 ):
     if start_date and end_date and start_date > end_date:
         raise HTTPException(422, "Start date must not follow end date")
+    if created_from and created_to and created_from > created_to:
+        raise HTTPException(422, "Run-on start date must not follow its end date")
     return dict(
         trading_style=trading_style,
         portfolio_id=portfolio_id,
         include_shared=include_shared,
         start_date=start_date.isoformat() if start_date else None,
         end_date=end_date.isoformat() if end_date else None,
+        created_from=created_from.isoformat() if created_from else None,
+        created_to=created_to.isoformat() if created_to else None,
         symbol=symbol,
         session_type=session_type,
         instrument_type=instrument_type,

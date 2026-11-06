@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { fmtNumber, fmtPct, fmtSigned } from './format'
 import {
-  COMPARE_METRICS, compareHabit, customPeriods, daysWithWithout, lastPeriods, tradingDays,
-  type CompareCell, type CompareMetric, type Flag, type HabitComparison, type Period,
+  COMPARE_METRICS, compareHabit, customPeriods, customSessionPeriods, daysWithWithout, lastPeriods, tradingDays,
+  type AxisMode, type CompareCell, type CompareMetric, type Flag, type HabitComparison, type Period,
 } from './habitSeries'
 import type { HabitsOverview, StatMode, Unit } from './habitStats'
 import type { LedgerTrade } from './types'
@@ -10,10 +10,10 @@ import type { LedgerTrade } from './types'
 const FLAG_LABEL: Record<Flag, string> = { improving: 'Improving', worse: 'Worse', mixed: 'Mixed', same: 'Same', too_few: 'Too few trades' }
 const PRESETS = [5, 10, 20] as const
 
-interface Props { trades: LedgerTrade[]; overview: HabitsOverview; unit: Unit; mode: StatMode }
+interface Props { trades: LedgerTrade[]; overview: HabitsOverview; unit: Unit; mode: StatMode; axis?: AxisMode }
 
 const COLUMN: Record<CompareMetric, { label: (unit: Unit) => string; title: string; show: (n: number | null, unit: Unit) => string; delta: (n: number, unit: Unit) => string }> = {
-  per_day: { label: () => 'Per day', title: 'Trades with the habit per trading day in the period', show: n => (n == null ? '—' : n.toFixed(2)), delta: n => `${n > 0 ? '+' : ''}${n.toFixed(2)}` },
+  per_day: { label: () => 'Per day', title: 'Trades with the habit per trading day (per session on the session axis) in the period', show: n => (n == null ? '—' : n.toFixed(2)), delta: n => `${n > 0 ? '+' : ''}${n.toFixed(2)}` },
   net: { label: u => (u === 'pct' ? 'Net %' : 'Net ₹'), title: 'Profit and loss of the habit’s trades added together', show: (n, u) => fmtSigned(n, u), delta: (n, u) => fmtSigned(n, u) },
   loss: { label: u => (u === 'pct' ? 'Loss %' : 'Loss ₹'), title: 'Total of the losing trades', show: (n, u) => fmtSigned(n, u), delta: (n, u) => fmtSigned(n, u) },
   capital: { label: () => 'Capital %', title: 'Capital deployed on a typical habit trade', show: n => fmtPct(n, 1), delta: n => `${n > 0 ? '+' : ''}${n.toFixed(1)} pts` },
@@ -34,31 +34,35 @@ function Cell({ metric, cell, unit }: { metric: CompareMetric; cell: CompareCell
   )
 }
 
-const range = (period: Period) => `${period.start} – ${period.end} (${period.days.length} day${period.days.length === 1 ? '' : 's'})`
+const range = (period: Period, noun: string) => `${period.start} – ${period.end} (${period.days.length} ${noun}${period.days.length === 1 ? '' : 's'})`
 
 /** Two periods side by side per habit (Before → Recent) with an improving / same / worse flag. */
-export default function HabitCompare({ trades, overview, unit, mode }: Props) {
-  const days = useMemo(() => tradingDays(trades), [trades])
+export default function HabitCompare({ trades, overview, unit, mode, axis = 'date' }: Props) {
+  const noun = axis === 'session' ? 'session' : 'day'
+  const days = useMemo(() => tradingDays(trades, axis), [trades, axis])
+  // Custom ranges are always calendar days: market dates, or the day the sessions were run on the session axis.
+  const calendar = useMemo(() => [...new Set(trades.map(t => (axis === 'session' ? t.created_date ?? t.date : t.date)))].sort(), [trades, axis])
   const [preset, setPreset] = useState<number | 'custom'>(10)
   const [custom, setCustom] = useState({ beforeStart: '', beforeEnd: '', recentStart: '', recentEnd: '' })
   const periods = useMemo(() => {
     if (preset !== 'custom') return lastPeriods(days, preset)
     const { beforeStart, beforeEnd, recentStart, recentEnd } = custom
-    return beforeStart && beforeEnd && recentStart && recentEnd ? customPeriods(days, [beforeStart, beforeEnd], [recentStart, recentEnd]) : null
-  }, [days, preset, custom])
+    if (!(beforeStart && beforeEnd && recentStart && recentEnd)) return null
+    return axis === 'session' ? customSessionPeriods(trades, [beforeStart, beforeEnd], [recentStart, recentEnd]) : customPeriods(days, [beforeStart, beforeEnd], [recentStart, recentEnd])
+  }, [days, preset, custom, axis, trades])
   const rows = useMemo(() => periods
-    ? overview.habits.map(h => ({ h, result: compareHabit(trades, h.question_id, periods.before, periods.recent, unit, mode, h.verdict) as HabitComparison }))
+    ? overview.habits.map(h => ({ h, result: compareHabit(trades, h.question_id, periods.before, periods.recent, unit, mode, h.verdict, axis) as HabitComparison }))
         .filter(({ result }) => result.trades.before + result.trades.recent > 0)
-    : [], [periods, overview.habits, trades, unit, mode])
+    : [], [periods, overview.habits, trades, unit, mode, axis])
   const choosePreset = (value: number | 'custom') => {
-    if (value === 'custom' && !custom.beforeStart && days.length > 1) {
-      const half = Math.floor(days.length / 2)
-      setCustom({ beforeStart: days[0], beforeEnd: days[half - 1], recentStart: days[half], recentEnd: days[days.length - 1] })
+    if (value === 'custom' && !custom.beforeStart && calendar.length > 1) {
+      const half = Math.floor(calendar.length / 2)
+      setCustom({ beforeStart: calendar[0], beforeEnd: calendar[half - 1], recentStart: calendar[half], recentEnd: calendar[calendar.length - 1] })
     }
     setPreset(value)
   }
   const dateField = (key: keyof typeof custom, label: string) => (
-    <label className="hb-field">{label}<input type="date" value={custom[key]} min={days[0]} max={days[days.length - 1]} onChange={event => setCustom(current => ({ ...current, [key]: event.target.value }))} /></label>
+    <label className="hb-field">{label}<input type="date" value={custom[key]} min={calendar[0]} max={calendar[calendar.length - 1]} onChange={event => setCustom(current => ({ ...current, [key]: event.target.value }))} /></label>
   )
   return (
     <>
@@ -71,20 +75,21 @@ export default function HabitCompare({ trades, overview, unit, mode }: Props) {
         </div>
         <div className="hb-controls">
           <div className="hb-segmented" role="group" aria-label="Period length">
-            {PRESETS.map(n => <button key={n} type="button" aria-pressed={preset === n} onClick={() => choosePreset(n)}>Last {n} days vs before</button>)}
+            {PRESETS.map(n => <button key={n} type="button" aria-pressed={preset === n} onClick={() => choosePreset(n)}>Last {n} {noun}s vs before</button>)}
             <button type="button" aria-pressed={preset === 'custom'} onClick={() => choosePreset('custom')}>Custom</button>
           </div>
         </div>
+        {preset === 'custom' && axis === 'session' && <p className="pa-footnote">Ranges select sessions by the day you ran them.</p>}
         {preset === 'custom' && (
           <div className="hb-controls">{dateField('beforeStart', 'Before: from')}{dateField('beforeEnd', 'to')}{dateField('recentStart', 'Recent: from')}{dateField('recentEnd', 'to')}</div>
         )}
         {!periods ? (
           <p className="pa-muted" role="status">
-            {preset === 'custom' ? 'Pick two date ranges that each contain trading days.' : `Needs more than ${preset} trading days of history to compare the last ${preset} with the ${preset} before (${days.length} in this selection).`}
+            {preset === 'custom' ? `Pick two date ranges that each contain ${axis === 'session' ? 'sessions you ran' : 'trading days'}.` : `Needs more than ${preset} trading ${noun}s of history to compare the last ${preset} with the ${preset} before (${days.length} in this selection).`}
           </p>
         ) : (
           <>
-            <p className="hb-periods"><span><b>Before</b> {range(periods.before)}</span><span><b>Recent</b> {range(periods.recent)}</span></p>
+            <p className="hb-periods"><span><b>Before</b> {range(periods.before, noun)}</span><span><b>Recent</b> {range(periods.recent, noun)}</span></p>
             {rows.length === 0 ? <p className="pa-muted">None of these habits occurred in either period.</p> : (
               <div className="pa-table-wrap">
                 <table className="hb-table hb-compare">
@@ -115,20 +120,20 @@ export default function HabitCompare({ trades, overview, unit, mode }: Props) {
             <p className="pa-footnote">
               Colours judge results (net, loss) and, for a Costly or Rewarding habit, how often it happens; capital, bars and orders stay neutral — read them with the arrow.
               Trend needs 3 trades in each period; a change under 10% counts as unchanged. For a Costly habit, less loss, less often and less capital count as better; for a Rewarding habit, more often and more capital do; a Mixed habit is judged by loss alone.
-              Per-day figures use the trading days in each period; typical values follow the Mean / Median switch.
+              Per-day figures use the trading {noun}s in each period; typical values follow the Mean / Median switch.
             </p>
           </>
         )}
       </section>
       <section className="pa-card">
-        <div className="pa-card-title"><div><h3>Days with vs without the habit</h3><p>How the whole day ended (all trades that day) when the habit did and did not occur, in the current filters.</p></div></div>
+        <div className="pa-card-title"><div><h3>{axis === 'session' ? 'Sessions' : 'Days'} with vs without the habit</h3><p>How the whole {noun} ended (all trades that {noun}) when the habit did and did not occur, in the current filters.</p></div></div>
         <div className="pa-table-wrap">
           <table className="hb-table">
             <caption className="hb-visually-hidden">How the day ended with and without each habit</caption>
-            <thead><tr><th scope="col" className="hb-sticky">Habit</th><th scope="col">Days with</th><th scope="col">{unit === 'pct' ? 'Avg day net %' : 'Avg day net ₹'}</th><th scope="col">Days without</th><th scope="col">{unit === 'pct' ? 'Avg day net %' : 'Avg day net ₹'}</th><th scope="col">Difference</th></tr></thead>
+            <thead><tr><th scope="col" className="hb-sticky">Habit</th><th scope="col">{axis === 'session' ? 'Sessions' : 'Days'} with</th><th scope="col">{unit === 'pct' ? `Avg ${noun} net %` : `Avg ${noun} net ₹`}</th><th scope="col">{axis === 'session' ? 'Sessions' : 'Days'} without</th><th scope="col">{unit === 'pct' ? `Avg ${noun} net %` : `Avg ${noun} net ₹`}</th><th scope="col">Difference</th></tr></thead>
             <tbody>
               {overview.habits.map(h => {
-                const r = daysWithWithout(trades, h.question_id, unit)
+                const r = daysWithWithout(trades, h.question_id, unit, axis)
                 const show = (n: number | null) => fmtSigned(n, unit)
                 const tone = r.difference == null ? '' : r.difference >= 0 ? 'positive' : 'negative'
                 return (
