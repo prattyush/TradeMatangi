@@ -1,3 +1,5 @@
+mod video;
+
 use futures_util::StreamExt;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -2089,10 +2091,192 @@ async fn start_sse_subscription(
     Ok(())
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// Trading Video Maker (Phase 24): local ffmpeg jobs, file pickers.
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FfmpegStatus {
+    available: bool,
+    path: Option<String>,
+    version: Option<String>,
+}
+
+#[tauri::command]
+async fn ffmpeg_status() -> Result<FfmpegStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| match video::resolve_ffmpeg() {
+        Some((path, version)) => FfmpegStatus { available: true, path: Some(path.to_string_lossy().into_owned()), version: Some(version) },
+        None => FfmpegStatus { available: false, path: None, version: None },
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PickedRecording {
+    video_path: String,
+    /// Contents of `<video name>.rec.json` when it sits beside the video.
+    meta_json: Option<String>,
+}
+
+const MAX_META_BYTES: u64 = 50 * 1024 * 1024;
+
+fn read_small_text(path: &std::path::Path) -> Result<String, String> {
+    let size = std::fs::metadata(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?.len();
+    if size > MAX_META_BYTES {
+        return Err("That file is too large to be recording metadata.".into());
+    }
+    std::fs::read_to_string(path).map_err(|e| format!("Could not read {}: {e}", path.display()))
+}
+
+#[tauri::command]
+async fn pick_recording() -> Result<Option<PickedRecording>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Some(video) = rfd::FileDialog::new().set_title("Choose a screen recording").add_filter("Screen recording", &["webm"]).pick_file() else {
+            return Ok(None);
+        };
+        let meta_path = video.with_extension("rec.json");
+        let meta_json = if meta_path.is_file() { read_small_text(&meta_path).ok() } else { None };
+        Ok(Some(PickedRecording { video_path: video.to_string_lossy().into_owned(), meta_json }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn pick_meta_file() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Some(file) = rfd::FileDialog::new().set_title("Choose the recording's .rec.json file").add_filter("Recording metadata", &["json"]).pick_file() else {
+            return Ok(None);
+        };
+        read_small_text(&file).map(Some)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn pick_output_file(suggested_name: String, folder: Option<String>) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = rfd::FileDialog::new().set_title("Save the finished video").add_filter("MP4 video", &["mp4"]).set_file_name(&suggested_name);
+        if let Some(dir) = folder.filter(|d| std::path::Path::new(d).is_dir()) {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(mut file) = dialog.save_file() else { return Ok(None) };
+        if file.extension().map(|e| !e.eq_ignore_ascii_case("mp4")).unwrap_or(true) {
+            file.set_extension("mp4");
+        }
+        Ok(Some(file.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Writes the chapter description beside the finished video. The path must end in .txt.
+#[tauri::command]
+fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    if !path.to_lowercase().ends_with(".txt") {
+        return Err("Only .txt files can be written.".into());
+    }
+    std::fs::write(&path, contents).map_err(|e| format!("Could not write {path}: {e}"))
+}
+
+#[tauri::command]
+fn reveal_in_folder(path: String) -> Result<(), String> {
+    let file = std::path::Path::new(&path);
+    if !file.exists() {
+        return Err("That file no longer exists.".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        Command::new("explorer.exe").creation_flags(0x08000000).arg(format!("/select,{}", file.display())).spawn().map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let dir = file.parent().unwrap_or(file);
+        open_external_url(&dir.to_string_lossy())?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct VideoEvent {
+    job_id: String,
+    /// "progress" | "done" | "error" | "cancelled"
+    status: String,
+    percent: f64,
+    message: String,
+    output: Option<String>,
+    encoder: Option<String>,
+    kept_sec: Option<f64>,
+}
+
+fn video_event(job_id: &str, status: &str, percent: f64, message: String) -> VideoEvent {
+    VideoEvent { job_id: job_id.to_string(), status: status.to_string(), percent, message, output: None, encoder: None, kept_sec: None }
+}
+
+/// Starts a conversion or cut. Returns the job id at once; progress and the result arrive as
+/// `desktop-video-progress` events. Only one job runs at a time.
+#[tauri::command]
+fn video_job_start(app: tauri::AppHandle, state: tauri::State<'_, video::VideoJobState>, request: video::VideoJobRequest) -> Result<String, String> {
+    video::validate_request(&request)?;
+    let (ffmpeg, _) = video::resolve_ffmpeg().ok_or("ffmpeg was not found. Reinstall the app, or set TRADEMATANGI_FFMPEG to an ffmpeg.exe path.")?;
+    let control = Arc::new(video::JobControl::default());
+    {
+        let mut slot = state.0.lock().map_err(|_| "Video job state is locked".to_string())?;
+        if slot.is_some() {
+            return Err("A video job is already running.".into());
+        }
+        *slot = Some(control.clone());
+    }
+    let job_id = format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+    let slot = state.0.clone();
+    let id = job_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Work beside the output so a large temporary copy lands on the drive the user chose.
+        let work_dir = std::path::Path::new(&request.output).parent().unwrap_or(std::path::Path::new(".")).join(format!(".trade-matangi-work-{id}"));
+        let emit_app = app.clone();
+        let emit_id = id.clone();
+        let outcome = video::run_job(&ffmpeg, &request, &work_dir, &control, &mut |p| {
+            let _ = emit_app.emit("desktop-video-progress", video_event(&emit_id, "progress", p.percent, p.message));
+        });
+        let event = match outcome {
+            Ok(done) => {
+                let mut e = video_event(&id, "done", 100.0, "Finished".into());
+                e.output = Some(done.output);
+                e.encoder = Some(done.encoder);
+                e.kept_sec = Some(done.kept_sec);
+                e
+            }
+            Err(video::RunError::Cancelled) => video_event(&id, "cancelled", 0.0, "Cancelled".into()),
+            Err(video::RunError::Failed(message)) => video_event(&id, "error", 0.0, message),
+        };
+        if let Ok(mut guard) = slot.lock() {
+            *guard = None;
+        }
+        let _ = app.emit("desktop-video-progress", event);
+    });
+    Ok(job_id)
+}
+
+#[tauri::command]
+fn video_job_cancel(state: tauri::State<'_, video::VideoJobState>) -> Result<(), String> {
+    if let Some(control) = state.0.lock().map_err(|_| "Video job state is locked".to_string())?.as_ref() {
+        control.cancel();
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(HostState::default())
+        .manage(video::VideoJobState::default())
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) { schedule_window_close(&webview, window.state::<HostState>().inner().clone()); }
@@ -2137,7 +2321,15 @@ pub fn run() {
             record_desktop_renderer_diagnostic,
             start_desktop_stream,
             stop_desktop_stream,
-            start_sse_subscription
+            start_sse_subscription,
+            ffmpeg_status,
+            pick_recording,
+            pick_meta_file,
+            pick_output_file,
+            write_text_file,
+            reveal_in_folder,
+            video_job_start,
+            video_job_cancel
         ])
         .run(tauri::generate_context!())
         .expect("tauri application error");

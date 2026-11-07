@@ -8,8 +8,8 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 |---|---|---|---|
 | 0 | Docs and plan | dev | Merged (#780) |
 | 1 | Recorder metadata (`.rec.json`) | dev AND preprod (same branch, two PRs) | Merged to both (#781 preprod, #782 dev). Manual check in `docs/recording-metadata.md` pending |
-| 2 | Timeline, cut plan, chapters (pure logic) | dev | Not started |
-| 3 | Rust: ffmpeg job, file picker, packaging | dev | Not started |
+| 2 | Timeline, cut plan, chapters (pure logic) | dev | Merged (#784) |
+| 3 | Rust: ffmpeg job, file picker, packaging | dev | In PR |
 | 4 | Tools menu and Video Maker UI | dev | Not started |
 | 5 | Hardening and acceptance | dev | Not started |
 | 6 | Promote the tool to preprod | on request only | Not started |
@@ -149,3 +149,13 @@ Why first and alone: you need the `.json` on `preprod` before the real-trading t
 
 ## Out of scope
 Uploading to YouTube, a video preview player or editor, older recordings without metadata, and macOS/Linux installers.
+
+## Sprint 3 as built
+
+- `windowsapp/src-tauri/src/video.rs`: finds ffmpeg (env `TRADEMATANGI_FFMPEG`, then `ffmpeg.exe` beside the app, then PATH), builds the arguments, parses `-progress` output, and runs jobs with cancel. The argument builder is in Rust (not TypeScript as first planned) so the renderer cannot pass arbitrary ffmpeg arguments.
+- Cut jobs: (1) remux the webm to mkv without re-encoding (browser webm has no duration or seek index), (2) encode each window separately with a fast accurate seek, (3) join the parts without re-encoding. This keeps memory constant; a single trim+concat filter graph would buffer the gaps between windows.
+- Output: H.264 + AAC (audio only if the recording has audio), constant 30 fps, `+faststart`. Hardware encoders (NVENC, Quick Sync, AMF) are used only if a one-frame test encode succeeds; any encoder failure retries once with x264. The hardware paths are untested on the development machine (no such GPUs there).
+- Commands (`lib.rs`): `ffmpeg_status`, `pick_recording` (also reads `<name>.rec.json` beside it), `pick_meta_file`, `pick_output_file`, `write_text_file` (.txt only), `reveal_in_folder`, `video_job_start`, `video_job_cancel`. Progress and the result arrive as the `desktop-video-progress` event (`status`: progress, done, error, cancelled). One job at a time. Temporary files go beside the output in `.trade-matangi-work-<id>` and are removed afterwards; a failed or cancelled job removes its partial output.
+- Packaging: `scripts/fetch-ffmpeg.py` downloads the pinned GPL "essentials" build (Gyan Doshi, FFmpeg 9.0.2), checks its SHA-256, and installs `src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe` plus the licence (ignored by git). `src-tauri/tauri.ffmpeg.conf.json` adds the sidecar and licence files to the installer and is used only by the CI build, so `cargo test` and `tauri dev` need no binary. `src-tauri/licenses/FFMPEG-NOTICE.txt` gives the licence, build and source links.
+- Tests: 15 new cargo tests (pure builders and parsers, plus four that run a real ffmpeg: cut and join, convert without audio, cancel, not-a-video; skipped when no ffmpeg is installed).
+- Installer size: recorded after the first CI build.

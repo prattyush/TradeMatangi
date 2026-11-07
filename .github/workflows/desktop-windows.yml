@@ -7,6 +7,7 @@ on:
       - 'windowsapp/**'
       - 'shared/**'
       - 'frontend/src/services/**'
+      - 'scripts/fetch-ffmpeg.py'
       - '.github/workflows/desktop-windows.yml'
 
 jobs:
@@ -26,7 +27,17 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
       - run: npm ci
-      - run: npm run tauri build -- --bundles nsis
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Trading Video Maker: bundle the pinned FFmpeg (checked against a SHA-256 in the script).
+      - run: python ../scripts/fetch-ffmpeg.py
+      - run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.ffmpeg.conf.json
+      - name: Check ffmpeg is bundled
+        shell: bash
+        run: |
+          test -f src-tauri/target/release/ffmpeg.exe
+          ls -l src-tauri/target/release/bundle/nsis/*.exe
       - uses: actions/upload-artifact@v4
         with:
           name: TradeMatangi-Charts-Windows-installer
