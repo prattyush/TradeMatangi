@@ -6,6 +6,7 @@ import { completeCycleExport } from "./exportCycles";
 import { useAnalysisError } from "./environment";
 import { useAnalysisEnvironment } from "./environment";
 import { AnalysisChart, OptionsChart } from "./TradeAnalysis";
+import HabitsView from "./habits/HabitsView";
 import type { AnalysisTrade } from "./api";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -30,7 +31,7 @@ interface Props {
   defaultInstrumentType: string;
   defaultSessionType: string;
 }
-type View = "Overview" | "Entries" | "Exits" | "Sizing" | "Behavior";
+type View = "Overview" | "Entries" | "Exits" | "Sizing" | "Behavior" | "Habits";
 const money = (n: number | null | undefined) =>
   n == null
     ? "—"
@@ -449,6 +450,14 @@ export default function PerformanceDashboard(props: Props) {
   );
   const field = (name: string, value: string) =>
     setFilters((f) => ({ ...f, [name]: value }));
+  // "Run on" selects sessions by the day they were run, which is unrelated to the replayed market date: choosing a
+  // day clears the (default last-30-days) market-date range so replays of older dates are not silently filtered out.
+  const runOn = (name: "created_from" | "created_to", value: string) =>
+    setFilters((f) => ({
+      ...f,
+      [name]: value,
+      ...(value ? { start_date: "", end_date: "" } : {}),
+    }));
   const tradesPanel = (
     <section className="pa-card">
       <div className="pa-card-title">
@@ -645,6 +654,24 @@ export default function PerformanceDashboard(props: Props) {
             onChange={(e) => field("end_date", e.target.value)}
           />
         </label>
+        <label title="Pick sessions by the day you ran them (replay and stepwise sessions can replay any older market date). Choosing a day clears the market-date range.">
+          Run on: from
+          <input
+            type="date"
+            aria-label="Session run on, from"
+            value={filters.created_from ?? ""}
+            onChange={(e) => runOn("created_from", e.target.value)}
+          />
+        </label>
+        <label>
+          to
+          <input
+            type="date"
+            aria-label="Session run on, through"
+            value={filters.created_to ?? ""}
+            onChange={(e) => runOn("created_to", e.target.value)}
+          />
+        </label>
         <label>
           Mode
           <select
@@ -822,7 +849,7 @@ export default function PerformanceDashboard(props: Props) {
         </button>
       </div>
       <nav className="pa-tabs" aria-label="Performance sections">
-        {(["Overview", "Entries", "Exits", "Sizing", "Behavior"] as View[]).map(
+        {(["Overview", "Entries", "Exits", "Sizing", "Behavior", "Habits"] as View[]).map(
           (t) => (
             <button
               key={t}
@@ -867,8 +894,9 @@ export default function PerformanceDashboard(props: Props) {
             <button onClick={() => setRefresh((r) => r + 1)}>Retry</button>
           </div>
         )}
-        {loading && !report && <p role="status">Reading your executions…</p>}
-        {report && (
+        {view === "Habits" && <HabitsView filters={filters} refresh={refresh} onOpenTrade={(identity) => void showDetail(identity)} />}
+        {loading && !report && view !== "Habits" && <p role="status">Reading your executions…</p>}
+        {report && view !== "Habits" && (
           <>
             <div className="pa-kpis">
               {[
@@ -1222,7 +1250,7 @@ export default function PerformanceDashboard(props: Props) {
             {view !== "Overview" && tradesPanel}
           </>
         )}
-        {!loading && !error && report && total === 0 && (
+        {!loading && !error && report && view !== "Habits" && total === 0 && (
           <section className="pa-card">
             <h3>A clear view starts with your trades.</h3>
             <p>

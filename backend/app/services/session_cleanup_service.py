@@ -1,7 +1,7 @@
 """
 Session cleanup service — cascade delete all data for a session.
 
-Deletes records from: Trades, Orders, Strategies, TradeLabels, EventSnapshots,
+Deletes records from: Trades, Orders, Strategies, TradeLabels, BehaviorMarks, EventSnapshots,
 AICommands, AIDecisionLog, and the Sessions record itself.
 Also resets the wallet entry for the given user+date.
 """
@@ -84,6 +84,15 @@ def delete_session_cascade(session_id: str, user_id: str, date: str, reset_walle
 
     # TradeLabels (PK: session_id, SK: round_trip_index — stored as N)
     _batch_delete_composite_key("TradeLabels", "session_id", "round_trip_index", session_id)
+
+    # BehaviorMarks (PK: session_id, SK: mark_key). The table is created lazily on the
+    # first mark, so a missing table simply means there is nothing to delete.
+    from botocore.exceptions import ClientError
+    try:
+        _batch_delete_composite_key("BehaviorMarks", "session_id", "mark_key", session_id)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "ResourceNotFoundException":
+            raise
 
     # Fail before removing the root if snapshot cleanup is incomplete.
     from app.services.snapshot_service import delete_snapshots

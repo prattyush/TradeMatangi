@@ -27,7 +27,7 @@ await build({
     resolveDir: root + "/frontend",
     loader: "tsx",
   },
-  alias: { react: root + "/frontend/node_modules/react", "react-dom": root + "/frontend/node_modules/react-dom" },
+  nodePaths: [root + "/frontend/node_modules"], alias: { react: root + "/frontend/node_modules/react", "react-dom": root + "/frontend/node_modules/react-dom" },
   jsx: "automatic",
   bundle: true,
   outfile: dir + "/app.js",

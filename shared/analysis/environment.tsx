@@ -2,16 +2,24 @@ import { createContext, useContext, useEffect, useState, type ComponentType, typ
 import type { OHLCCandle } from './api'
 import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
+import type { HabitLedger } from './habits/types'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
-  'getEntryTags' | 'getExitTags' | 'getHistorical' | 'getPreSession' | 'getOptionsHistorical' |
+  'getEntryTags' | 'getExitTags' | 'getBehaviorQuestions' | 'addBehaviorQuestion' | 'updateBehaviorQuestion' |
+  'archiveBehaviorQuestion' | 'restoreBehaviorQuestion' | 'getBehaviorMarks' | 'saveBehaviorMarks' | 'getHistorical' | 'getPreSession' | 'getOptionsHistorical' |
   'getExpiry' | 'getSnapshots' | 'deleteSnapshots' | 'patternListStrategies' |
   'patternListCategories' | 'patternAddStrategy' | 'patternAddCategory' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'> & {
   getSnapshotCandle?: (sessionId: string, eventId: string, instrument: 'underlying' | 'CE' | 'PE', signal?: AbortSignal) => Promise<{candle: OHLCCandle | null}>
 }
 export interface AnalysisEnvironment {
   swingRequest?: import('../SwingPortfolioPanel').SwingRequest
+  /** Transport for `/api/desktop/v1/*` (persisted KLine drawings, chart settings). Absent => drawing tools stay disabled. */
+  drawingRequest?: (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<unknown>
+  /** Catalogue kind/exchange of an underlying, so Analysis drawings share the trading chart's instrument key. */
+  resolveSymbolInstrument?: (symbol: string) => Promise<{ kind: string; exchange: string } | undefined>
+  /** Scopes locally-stored chart preferences (indicators) to the signed-in account. */
+  accountKey?: string
   api: AnalysisApi
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
@@ -21,6 +29,8 @@ export interface AnalysisEnvironment {
     getPerformance: (filters: PerformanceFilters, signal?: AbortSignal) => Promise<PerformanceReport>
     getPerformanceCycles: (filters: PerformanceFilters, offset?: number, signal?: AbortSignal) => Promise<{ items: PerformanceCycle[]; total: number; next_offset: number | null }>
     getPerformanceDetail: (cycle: Pick<PerformanceCycle, "session_id" | "cycle_id">, enrich?: boolean, signal?: AbortSignal) => Promise<PerformanceCycle>
+    /** Closed own trades with their habits for the dashboard filters (Stats → Habits). */
+    getHabitLedger?: (filters: PerformanceFilters, signal?: AbortSignal) => Promise<HabitLedger>
   }
   // Each adapter implements the existing chart's public props. The heterogeneous
   // snapshot/pattern inputs are normalized inside the desktop renderer boundary.
@@ -31,6 +41,12 @@ export interface AnalysisEnvironment {
   intervalMinutes?: number
   setIntervalMinutes?: (minutes: number) => void
   historicalDays?: number
+  /** Label Trades layout (user setting `analysis_label_view`); absent => one trade at a time. */
+  labelView?: 'one_by_one' | 'all'
+  /** Persists the user's choice; the host owns the settings transport. */
+  onLabelViewChange?: (view: 'one_by_one' | 'all') => void | Promise<unknown>
+  /** User setting `desktop_pnl_display_mode`: Label Trades shows P&L as % of capital or as money. Absent => money. */
+  pnlDisplayMode?: 'currency' | 'percent'
   dataRevision?: number
   onDataChanged?: () => void
   onLabelSavingChange?: (saving: boolean) => void

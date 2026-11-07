@@ -1,0 +1,88 @@
+.settings-help {
+  display: inline-block;
+  position: relative;
+  font-size: 12px;
+  vertical-align: middle;
+}
+.settings-help > button {
+  cursor: help;
+  color: #8b949e;
+  border: 0;
+  background: transparent;
+  padding: 3px 6px;
+}
+.settings-help > [role="tooltip"] {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 100%;
+  width: min(320px, 60vw);
+  padding: 10px;
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #484f58;
+  border-radius: 5px;
+  z-index: 10;
+  font-weight: normal;
+}
+.settings-help:hover > [role="tooltip"],
+.settings-help:focus-within > [role="tooltip"],
+.settings-help.is-open > [role="tooltip"] {
+  display: block;
+}
+.chart-renderer-setting {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+.chart-renderer-setting summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+  cursor: pointer;
+  list-style: none;
+  color: #dce5ef;
+  background: #1b2635;
+  border: 1px solid #334155;
+  border-radius: 5px;
+}
+.swing-pane-bar .chart-renderer-setting summary { width: 28px; height: 28px; }
+.chart-renderer-setting summary::-webkit-details-marker { display: none; }
+.chart-renderer-setting summary:hover { background: #334155; }
+/* Fixed so the pane header's horizontal scroll container cannot clip it. */
+.chart-renderer-panel {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  z-index: 1600;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 14px;
+  color: #c9d1d9;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px #000a;
+}
+.chart-renderer-panel > label { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+
+/* Shared settings-form look (Display tab, Broker section, chart appearance). */
+.settings-block { border-top: 1px solid #21262d; padding-top: 16px; }
+.settings-block-title { font-size: 12px; color: #8b949e; margin-bottom: 10px; font-weight: 600; text-transform: uppercase; }
+.settings-field-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 13px; color: #c9d1d9; }
+.settings-field-row > span:first-child { flex: 0 0 150px; color: #8b949e; font-size: 12px; }
+.settings-control {
+  padding: 5px 8px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  color: #e6edf3; font-size: 12px; min-width: 140px;
+}
+.settings-primary-btn {
+  padding: 5px 14px; background: #1f6feb; border: none; border-radius: 6px;
+  color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.settings-primary-btn:disabled { opacity: .5; cursor: default; }
+.settings-note { display: block; margin: 4px 0 10px; font-size: 11px; color: #6e7681; }
+.settings-status { margin: 8px 0 0; font-size: 12px; color: #8b949e; }

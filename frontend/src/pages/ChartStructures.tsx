@@ -1,3 +1,4 @@
+import { AppWindowControls } from '../../../shared/AppWindowControls'
 /**
  * Chart Structures — Daily Chart Classification Browser (Phase XIII)
  *
@@ -445,7 +446,7 @@ export default function ChartStructures({ onClose }: { onClose: () => void }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div>
-            <div style={{ fontSize: 18, color: '#e6edf3', fontWeight: 600 }}>📊 Chart Structures</div>
+            <div style={{ fontSize: 18, color: '#e6edf3', fontWeight: 600 }}>📊 Chart Structures <AppWindowControls /></div>
           </div>
           <div style={{ display: 'flex', gap: 0 }}>
             {(['broad', 'fine'] as const).map(tab => (

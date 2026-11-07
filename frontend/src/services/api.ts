@@ -1,3 +1,7 @@
+import { rendererAccountKey, rendererPreferenceVersion, publishRenderer } from './websiteChartPreferences'
+import { publishAnalysisRenderer } from './analysisRendererPreference'
+import { publishAnalysisLabelView } from './analysisLabelViewPreference'
+import { publishAnalysisPnlMode } from './analysisPnlModePreference'
 import { isBrokerSnapshot } from '../brokerSnapshot'
 import { requestFetch as fetch } from './requestFetch'
 import { flashError, getNotificationContext, getNotificationScope } from './notifications'
@@ -8,6 +12,20 @@ import { BACKEND_URL, AI_HELPER_URL } from '../config'
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); this.name = 'ApiError' }
+}
+
+/** Behavior endpoints report validation problems in `detail`; surface that text, not just the status. */
+async function behaviorRequest<T>(path: string, method: 'GET' | 'POST', body?: unknown): Promise<T> {
+  const res = await fetch(`${BACKEND_URL}/api/behavior/${path}`, {
+    method,
+    headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ..._authHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null))?.detail
+    throw new Error(typeof detail === 'string' ? detail : `Behavior request failed: ${res.status}`)
+  }
+  return res.json()
 }
 
 export function _authHeaders(): Record<string, string> {
@@ -112,6 +130,8 @@ export interface SymbolInfo {
 
 export interface ConversionResult { order_id: string; state: string; message?: string | null }
 export interface Order {
+  broker_order_id?: string | null
+  kotak_order_id?: string | null
   split_operation?: { operation_id: string; state: string; message?: string } | null
   broker_conversion?: { operation_id?: string; updated_at?: number; state: string; requested_type?: string; message?: string | null } | null
   order_id: string
@@ -137,6 +157,7 @@ export interface Order {
 }
 
 export interface HistoricalDataResponse {
+  as_of_time?: string
   symbol: string
   dates: string[]
   candles: OHLCCandle[]
@@ -165,6 +186,9 @@ export interface SimulationStartRequest {
 }
 
 export interface UserSettingsResponse {
+  website_chart_renderer?: "lightweight" | "kline"
+  website_analysis_chart_renderer?: "lightweight" | "kline"
+  analysis_label_view?: "one_by_one" | "all"
   real_execution_broker?: "kotak" | "kite"
   brokerage_per_order?: number
   strategy_interval_secs?: 120 | 180 | 300
@@ -182,6 +206,10 @@ export interface UserSettingsResponse {
   stoploss_limit_gap_pct?: number
   desktop_order_size_mode?: 'quantity' | 'funds_ratio' | 'risk_ratio'
   desktop_pnl_display_mode?: 'currency' | 'percent'
+  pnl_target_levels?: string
+  candle_alert_enabled?: boolean
+  candle_alert_interval_min?: number
+  candle_alert_seconds_before?: number
   funds_ratio_l_pct?: number
   funds_ratio_m_pct?: number
   funds_ratio_h_pct?: number
@@ -210,6 +238,10 @@ export interface UserSettingsResponse {
 // ── Strategy types ──────────────────────────────────────────────────────────
 
 export interface StrategyResponse {
+  price?: number | null
+  strike?: number | null
+  expiry?: string | null
+  contract_key?: string | null
   strategy_id: string
   strategy_type: string
   symbol: string
@@ -222,6 +254,8 @@ export interface StrategyResponse {
 }
 
 export interface StartStrategyRequest {
+  strike?: number
+  expiry?: string
   session_id: string
   strategy_type: 'AutoStop' | 'BreakEven' | 'AggressiveStoploss' | 'TargetProfit' | 'LockProfit' | 'UnderlyingTargetProfit' | 'UnderlyingStoploss'
   right?: 'CE' | 'PE' | null
@@ -503,7 +537,24 @@ export interface RoundTrip {
   entry_trades: RoundTripTrade[]
   exit_trades: RoundTripTrade[]
   pnl: number
+  /** Net P&L as % of the session capital; null when capital is unknown. */
+  pnl_pct?: number | null
+  /** Most capital in use at any one moment of the round trip, % of the session capital. */
+  max_capital_pct?: number | null
 }
+
+export type BehaviorKind = 'entry' | 'exit'
+export interface BehaviorQuestion {
+  question_id: string
+  kind: BehaviorKind
+  text: string
+  status: 'active' | 'archived'
+  sort_order: number
+  created_at: string
+  archived_at: string | null
+}
+/** One "yes": this round trip showed the behavior. */
+export interface BehaviorMark { round_trip_index: number; question_id: string; kind: string }
 
 export interface TradeLabel {
   analytics_cycle_id?:string;
@@ -722,6 +773,7 @@ export interface GuardRailSettings {
   guardrail_ban_min_trades: number
   guardrail_ban_enabled: boolean
   guardrail_ban_halfway_alert_enabled?: boolean
+  guardrail_maxsize_alert_enabled?: boolean
   high_tier_pnl_threshold_pct?: number
   guardrail_cooldown_enabled: boolean
   guardrail_maxsize_enabled: boolean
@@ -943,6 +995,7 @@ const api = {
     historicalDays?: number,
     forceRefresh = false,
     historyMode: 'live' | 'replay' = 'replay',
+    asOfTime?: string,
   ): Promise<HistoricalDataResponse> {
     let url = `${BACKEND_URL}/api/data/options-historical`
       + `?symbol=${encodeURIComponent(symbol)}`
@@ -953,10 +1006,14 @@ const api = {
     if (intervalMinutes) url += `&interval_minutes=${intervalMinutes}`
     if (historicalDays) url += `&historical_days=${historicalDays}`
     if (forceRefresh) url += '&force_refresh=true'
+    const normalizedCutoff=asOfTime?.length===5?`${asOfTime}:00`:asOfTime
+    if(normalizedCutoff)url+=`&as_of_time=${encodeURIComponent(normalizedCutoff)}`
     url += `&history_mode=${historyMode}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Options historical data fetch failed: ${res.status}`)
-    return res.json()
+    const data:HistoricalDataResponse=await res.json()
+    if(normalizedCutoff&&data.as_of_time!==normalizedCutoff)throw new Error('Backend cannot confirm replay-safe option history; update the backend or use Lightweight.')
+    return data
   },
 
   async getPreSession(symbol: string, tradingDate: string, startTime: string, intervalMinutes?: number, forceRefresh = false, historyMode: 'live' | 'replay' = 'replay'): Promise<OHLCCandle[]> {
@@ -1291,7 +1348,7 @@ const api = {
     })
     if (!res.ok) {
       const error = await res.json().catch(() => ({}))
-      throw new Error(typeof error.detail === 'string' ? error.detail : `Update order failed: ${res.status}`)
+      throw new ApiError(typeof error.detail === 'string' ? error.detail : `Update order failed: ${res.status}`, res.status)
     }
     return res.json()
     })
@@ -1586,6 +1643,30 @@ const api = {
     return res.json()
   },
 
+  // ── Behavior questions & marks (Phase 23) ──────────────────────────────────
+
+  async getBehaviorQuestions(includeArchived = false): Promise<BehaviorQuestion[]> {
+    return (await behaviorRequest<{ questions: BehaviorQuestion[] }>(`questions?include_archived=${includeArchived}`, 'GET')).questions
+  },
+  addBehaviorQuestion(text: string, kind: BehaviorKind): Promise<BehaviorQuestion> {
+    return behaviorRequest('questions', 'POST', { text, kind })
+  },
+  updateBehaviorQuestion(questionId: string, text: string): Promise<BehaviorQuestion> {
+    return behaviorRequest(`questions/${encodeURIComponent(questionId)}/update`, 'POST', { text })
+  },
+  archiveBehaviorQuestion(questionId: string): Promise<BehaviorQuestion> {
+    return behaviorRequest(`questions/${encodeURIComponent(questionId)}/archive`, 'POST', {})
+  },
+  restoreBehaviorQuestion(questionId: string): Promise<BehaviorQuestion> {
+    return behaviorRequest(`questions/${encodeURIComponent(questionId)}/restore`, 'POST', {})
+  },
+  async getBehaviorMarks(sessionId: string): Promise<BehaviorMark[]> {
+    return (await behaviorRequest<{ marks: BehaviorMark[] }>(`marks?session_id=${encodeURIComponent(sessionId)}`, 'GET')).marks
+  },
+  async saveBehaviorMarks(sessionId: string, roundTripIndex: number, answers: Record<string, boolean>): Promise<BehaviorMark[]> {
+    return (await behaviorRequest<{ marks: BehaviorMark[] }>('marks', 'POST', { session_id: sessionId, round_trip_index: roundTripIndex, answers })).marks
+  },
+
   async getEntryTags(): Promise<string[]> {
     const res = await fetch(`${BACKEND_URL}/api/analysis/entry-tags`, {
       headers: _authHeaders(),
@@ -1712,6 +1793,8 @@ const api = {
   // ── User Settings ──────────────────────────────────────────────────────────
 
   async getUserSettings(importBrowserPreferences = false): Promise<UserSettingsResponse> {
+    const rendererOwner=rendererAccountKey()
+    const rendererVersion=rendererPreferenceVersion(rendererOwner)
     const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
       headers: _authHeaders(),
     })
@@ -1741,10 +1824,16 @@ const api = {
     // Cache only explicitly configured values; a default must not become a legacy override.
     if (settings.target_deviation_configured) localStorage.setItem('targetDeviationPct', String((settings.target_deviation_pct ?? 0.01) * 100))
     window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: settings }))
+    const renderer=publishRenderer(settings.website_chart_renderer,rendererOwner,rendererVersion)
+    if(renderer!==undefined&&renderer!==(settings.website_chart_renderer??'lightweight'))settings={...settings,website_chart_renderer:renderer}
+    publishAnalysisRenderer(settings.website_analysis_chart_renderer,rendererOwner)
+    publishAnalysisLabelView(settings.analysis_label_view)
+    publishAnalysisPnlMode(settings.desktop_pnl_display_mode)
     return settings
   },
 
   async updateUserSettings(settings: Partial<UserSettingsResponse>): Promise<UserSettingsResponse> {
+    const rendererOwner=rendererAccountKey()
     const res = await fetch(`${BACKEND_URL}/api/users/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
@@ -1752,7 +1841,14 @@ const api = {
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) throw new Error(data?.detail || `Update user settings failed: ${res.status}`)
+    if(settings.website_chart_renderer!==undefined&&data?.website_chart_renderer!==settings.website_chart_renderer)throw new Error('Backend did not confirm the chart renderer setting; update the backend before selecting KLine.')
+    if(settings.website_analysis_chart_renderer!==undefined&&data?.website_analysis_chart_renderer!==settings.website_analysis_chart_renderer)throw new Error('Backend did not confirm the Analysis chart renderer setting; update the backend before selecting KLine.')
     cacheSharedSettings(data, localStorage)
+    publishRenderer(data.website_chart_renderer,rendererOwner)
+    publishAnalysisRenderer(data.website_analysis_chart_renderer,rendererOwner)
+    publishAnalysisLabelView(data.analysis_label_view)
+    publishAnalysisPnlMode(data.desktop_pnl_display_mode)
+    window.dispatchEvent(new CustomEvent("execution-gap-settings", { detail: data }))
     return data
   },
 
@@ -2397,7 +2493,7 @@ const notifiedApi: typeof api = new Proxy(api, {
         const expectedMissing = ['patternGetChartByDate', 'getActiveSimulation'].includes(String(property)) &&
           ((error instanceof ApiError && error.status === 404) || /(?:^|\D)404(?:\D|$)/.test(message))
         const name = String(property)
-        const source = /wallet/i.test(name) ? 'Wallet' : /settings/i.test(name) ? 'Settings' : /kotak/i.test(name) ? 'Kotak' : /order|buy|sell|square|flatten/i.test(name) ? 'Orders' : /simulation|session|group/i.test(name) ? 'Sessions' : /histor|preSession|expiry|strike|indicator|chart/i.test(name) ? 'Charts' : /pattern|analysis|label/i.test(name) ? 'Analysis' : 'Website request'
+        const source = /wallet/i.test(name) ? 'Wallet' : /settings/i.test(name) ? 'Settings' : /kotak/i.test(name) ? 'Kotak' : /order|buy|sell|square|flatten/i.test(name) ? 'Orders' : /simulation|session|group/i.test(name) ? 'Sessions' : /histor|preSession|expiry|strike|indicator|chart/i.test(name) ? 'Charts' : /behavior/i.test(name) ? 'Behavior' : /pattern|analysis|label/i.test(name) ? 'Analysis' : 'Website request'
         if (!expectedMissing && scope === getNotificationScope()) flashError(error, source, requestContext)
         throw error
       }

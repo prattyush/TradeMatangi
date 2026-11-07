@@ -436,6 +436,9 @@ class WalletResetRequest(ContractModel):
 # ── User Settings ─────────────────────────────────────────────────────────────
 
 class UserSettingsResponse(ContractModel):
+    website_chart_renderer: Literal["lightweight", "kline"] = "lightweight"
+    website_analysis_chart_renderer: Literal["lightweight", "kline"] = "lightweight"
+    analysis_label_view: Literal["one_by_one", "all"] = "one_by_one"
     real_execution_broker: Literal["kotak", "kite"] = "kotak"
     brokerage_per_order: float = 1.0
     strategy_interval_secs: Literal[120, 180, 300] = 180
@@ -473,6 +476,10 @@ class UserSettingsResponse(ContractModel):
     desktop_hide_chart_labels: bool = False
     desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] = "quantity"
     desktop_pnl_display_mode: Literal["currency", "percent"] = "currency"
+    pnl_target_levels: str = ""
+    candle_alert_enabled: bool = False
+    candle_alert_interval_min: int = 3
+    candle_alert_seconds_before: int = 15
     desktop_confirm_flatten: bool = True
     context_menu_sl_mode: Literal["longOnly", "both"] = "longOnly"
     target_deviation_pct: float = 0.01
@@ -481,6 +488,9 @@ class UserSettingsResponse(ContractModel):
 
 
 class UserSettingsUpdateRequest(ContractModel):
+    website_chart_renderer: Literal["lightweight", "kline"] | None = None
+    website_analysis_chart_renderer: Literal["lightweight", "kline"] | None = None
+    analysis_label_view: Literal["one_by_one", "all"] | None = None
     real_execution_broker: Literal["kotak", "kite"] | None = None
     brokerage_per_order: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     strategy_interval_secs: Literal[120, 180, 300] | None = None
@@ -518,10 +528,41 @@ class UserSettingsUpdateRequest(ContractModel):
     desktop_hide_chart_labels: bool | None = None
     desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] | None = None
     desktop_pnl_display_mode: Literal["currency", "percent"] | None = None
+    pnl_target_levels: str | None = None
+    candle_alert_enabled: bool | None = None
+    candle_alert_interval_min: Literal[1, 3, 5, 10, 15, 30] | None = None
+    candle_alert_seconds_before: int | None = Field(default=None, ge=1, le=600)
     desktop_confirm_flatten: bool | None = None
     context_menu_sl_mode: Literal["longOnly", "both"] | None = None
     target_deviation_pct: float | None = Field(default=None, ge=0.0, le=0.10, allow_inf_nan=False)
     stoploss_limit_gap_pct: float | None = Field(default=None, ge=0.0, le=0.10, allow_inf_nan=False)
+
+    @field_validator("pnl_target_levels")
+    @classmethod
+    def normalize_pnl_target_levels(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        import math
+        parts = [p.strip() for p in value.split(",") if p.strip()]
+        if len(parts) > 20:
+            raise ValueError("At most 20 target P&L levels are allowed")
+        numbers: list[str] = []
+        for part in parts:
+            try:
+                number = float(part)
+            except ValueError:
+                raise ValueError(f"Target P&L level '{part}' is not a number") from None
+            if not math.isfinite(number) or abs(number) > 1e9:
+                raise ValueError(f"Target P&L level '{part}' is out of range")
+            numbers.append(format(number, "g"))
+        return ",".join(numbers)
+
+    @model_validator(mode="after")
+    def require_alert_before_interval_end(self):
+        if self.candle_alert_interval_min is not None and self.candle_alert_seconds_before is not None:
+            if self.candle_alert_seconds_before >= self.candle_alert_interval_min * 60:
+                raise ValueError("Candle alert seconds must be smaller than the candle interval")
+        return self
 
     @model_validator(mode="after")
     def require_increasing_tiers(self):
@@ -672,6 +713,7 @@ class GuardRailSettingsResponse(ContractModel):
     guardrail_ban_min_trades: int = 5
     guardrail_ban_enabled: bool = False
     guardrail_ban_halfway_alert_enabled: bool = False
+    guardrail_maxsize_alert_enabled: bool = False
     high_tier_pnl_threshold_pct: float = 0.0
     guardrail_cooldown_enabled: bool = False
     guardrail_maxsize_enabled: bool = False
@@ -689,6 +731,7 @@ class GuardRailSettingsUpdateRequest(ContractModel):
     guardrail_ban_min_trades: int | None = Field(default=None, ge=1, le=100)
     guardrail_ban_enabled: bool | None = None
     guardrail_ban_halfway_alert_enabled: bool | None = None
+    guardrail_maxsize_alert_enabled: bool | None = None
     high_tier_pnl_threshold_pct: float | None = Field(default=None, ge=-100.0, le=100.0)
     guardrail_cooldown_enabled: bool | None = None
     guardrail_maxsize_enabled: bool | None = None

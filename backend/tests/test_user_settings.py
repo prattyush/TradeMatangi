@@ -283,3 +283,99 @@ def test_old_clients_cannot_disable_protection_or_reset_the_delay():
     assert result["entry_auto_sl_enabled"] is True
     assert result["entry_auto_sl_delay_sec"] == 7
     table.update_item.assert_not_called()
+
+
+class TestWebsiteChartRenderer:
+    def test_old_settings_default_to_lightweight(self):
+        mock_resource, _ = _mock_db({"user_id": "user-123", "historical_days": 4})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            assert svc.get_settings("user-123")["website_chart_renderer"] == "lightweight"
+
+    def test_renderer_only_update_does_not_request_broker_switch(self):
+        with patch("app.services.user_settings_service.update_settings", return_value={"website_chart_renderer": "kline"}) as update:
+            response = client.put("/api/users/settings", json={"website_chart_renderer": "kline"})
+        assert response.status_code == 200
+        assert response.json()["website_chart_renderer"] == "kline"
+        update.assert_called_once_with(FIXED_USER_ID, {"website_chart_renderer": "kline"})
+
+    @pytest.mark.parametrize("renderer", ["unknown", "KLine", "", 123])
+    def test_invalid_renderer_rejected(self, renderer):
+        with patch("app.services.user_settings_service.update_settings") as update:
+            assert client.put("/api/users/settings", json={"website_chart_renderer": renderer}).status_code == 422
+        update.assert_not_called()
+
+
+class TestWebsiteAnalysisChartRenderer:
+    """Analysis & Patterns renderer is independent of the trading chart renderer."""
+
+    def test_old_settings_default_to_lightweight(self):
+        mock_resource, _ = _mock_db({"user_id": "user-123", "website_chart_renderer": "kline"})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            settings = svc.get_settings("user-123")
+        assert settings["website_analysis_chart_renderer"] == "lightweight"
+        assert settings["website_chart_renderer"] == "kline"
+
+    def test_update_only_changes_analysis_renderer(self):
+        with patch("app.services.user_settings_service.update_settings", return_value={"website_analysis_chart_renderer": "kline"}) as update:
+            response = client.put("/api/users/settings", json={"website_analysis_chart_renderer": "kline"})
+        assert response.status_code == 200
+        assert response.json()["website_analysis_chart_renderer"] == "kline"
+        update.assert_called_once_with(FIXED_USER_ID, {"website_analysis_chart_renderer": "kline"})
+
+    @pytest.mark.parametrize("renderer", ["unknown", "KLine", "", 123])
+    def test_invalid_renderer_rejected(self, renderer):
+        with patch("app.services.user_settings_service.update_settings") as update:
+            assert client.put("/api/users/settings", json={"website_analysis_chart_renderer": renderer}).status_code == 422
+        update.assert_not_called()
+
+
+class TestTargetLevelsAndCandleAlertSettings:
+    def test_defaults(self):
+        assert svc.DEFAULT_SETTINGS["pnl_target_levels"] == ""
+        assert svc.DEFAULT_SETTINGS["candle_alert_enabled"] is False
+        assert svc.DEFAULT_SETTINGS["candle_alert_interval_min"] == 3
+        assert svc.DEFAULT_SETTINGS["candle_alert_seconds_before"] == 15
+
+    def test_old_records_get_defaults(self):
+        mock_resource, _ = _mock_db({"user_id": "user-123", "historical_days": 4})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            settings = svc.get_settings("user-123")
+        assert settings["pnl_target_levels"] == ""
+        assert settings["candle_alert_enabled"] is False
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("0,3,6,10,15,18", "0,3,6,10,15,18"),
+        (" 0 , 3.5 ,, -2 ", "0,3.5,-2"),
+        ("", ""),
+    ])
+    def test_target_levels_are_normalized(self, raw, expected):
+        with patch("app.services.user_settings_service.update_settings", return_value={"pnl_target_levels": expected}) as update:
+            response = client.put("/api/users/settings", json={"pnl_target_levels": raw})
+        assert response.status_code == 200
+        update.assert_called_once_with(FIXED_USER_ID, {"pnl_target_levels": expected})
+
+    @pytest.mark.parametrize("raw", ["a,b", "1,nan", "1,inf", "1e12", ",".join(["1"] * 21)])
+    def test_invalid_target_levels_rejected(self, raw):
+        with patch("app.services.user_settings_service.update_settings") as update:
+            assert client.put("/api/users/settings", json={"pnl_target_levels": raw}).status_code == 422
+        update.assert_not_called()
+
+    def test_candle_alert_update(self):
+        body = {"candle_alert_enabled": True, "candle_alert_interval_min": 3, "candle_alert_seconds_before": 15}
+        with patch("app.services.user_settings_service.update_settings", return_value=body) as update:
+            response = client.put("/api/users/settings", json=body)
+        assert response.status_code == 200
+        assert response.json()["candle_alert_seconds_before"] == 15
+        update.assert_called_once_with(FIXED_USER_ID, body)
+
+    @pytest.mark.parametrize("body", [
+        {"candle_alert_interval_min": 4},
+        {"candle_alert_seconds_before": 0},
+        {"candle_alert_seconds_before": 601},
+        {"candle_alert_interval_min": 1, "candle_alert_seconds_before": 60},
+        {"candle_alert_interval_min": 3, "candle_alert_seconds_before": 200},
+    ])
+    def test_invalid_candle_alert_rejected(self, body):
+        with patch("app.services.user_settings_service.update_settings") as update:
+            assert client.put("/api/users/settings", json=body).status_code == 422
+        update.assert_not_called()

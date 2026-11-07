@@ -3,6 +3,7 @@ import type { SizingMode, FundsRatios, RiskRatios, QuantityTiers } from './Setti
 
 export type EntryOrderType = 'MARKET' | 'AUTO_STOP' | 'AUTO_STOP_LIMIT' | 'TARGET' | 'LIMIT' | 'TARGET_PERCENT'
 export interface EntryTicket {
+  sessionId?: string; paneId?: number; symbol?: string
   x: number; y: number; price: number; right?: 'CE' | 'PE'; strike?: number; expiry?: string
   side: 'BUY' | 'SELL' | null
   orderType?: EntryOrderType
@@ -43,10 +44,12 @@ export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ tic
       const next = { left: Math.max(8, Math.min(ticket.x + 10, window.innerWidth - bounds.width - 8)), top: Math.max(8, Math.min(ticket.y + 10, window.innerHeight - bounds.height - 8)) }
       setPosition(previous => previous.left === next.left && previous.top === next.top ? previous : next)
     }
-    place(); const observer = new ResizeObserver(place)
+    let frame: number | undefined
+    const schedule = () => { if(frame!==undefined)cancelAnimationFrame(frame); frame=requestAnimationFrame(()=>{frame=undefined;place()}) }
+    place(); const observer = new ResizeObserver(schedule)
     if (root.current) observer.observe(root.current)
-    window.addEventListener('resize', place)
-    return () => { observer.disconnect(); window.removeEventListener('resize', place) }
+    window.addEventListener('resize', schedule)
+    return () => { observer.disconnect(); if(frame!==undefined)cancelAnimationFrame(frame); window.removeEventListener('resize', schedule) }
   }, [ticket.x, ticket.y])
   const submit = (next: EntryTicket, key: string) => {
     if (!next.side || !next.orderType || submitted.current) return
@@ -63,6 +66,7 @@ export default forwardRef<HTMLDivElement, Props>(function ChartEntryTicket({ tic
     : { width: '100%', padding: '5px 6px', minHeight: 25, background: active ? '#1f3a5f' : '#21262d', color: active ? '#79c0ff' : '#e6edf3', border: `1px solid ${active ? '#388bfd' : '#30363d'}`, borderRadius: 4, cursor: 'pointer', fontSize: 10 }
   return <div ref={element => { root.current = element; if (typeof ref === 'function') ref(element); else if (ref) ref.current = element }} role="dialog" aria-modal="false" aria-label="Chart entry ticket" style={{ position: 'fixed', ...position, zIndex: 10002, width: 'min(260px, calc(100vw - 16px))', maxHeight: 'calc(100dvh - 16px)', overflowY: 'auto', boxSizing: 'border-box', background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: 9, boxShadow: '0 8px 24px #0006', color: '#e6edf3', fontSize: 10 }}>
     <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}><strong style={{ fontSize: 11 }}>Use as SL · {ticket.side ?? 'Choose direction'}</strong><button aria-label="Close order ticket" onClick={onClose} style={{ border: 0, background: 'transparent', color: '#8b949e', cursor: 'pointer' }}>×</button></header>
+    <div style={{marginBottom:5}}>{ticket.symbol} {ticket.strike} {ticket.right} {ticket.expiry}</div>
     <div style={{ color: '#8b949e', marginBottom: 7 }}>SL ₹{ticket.price.toFixed(2)}</div>
     {chooseDirection && <div role="group" aria-label="Entry direction" style={{ display: 'flex', gap: 5, marginBottom: 7 }}>{(['BUY', 'SELL'] as const).map(side => <button key={side} aria-pressed={ticket.side === side} style={buttonStyle(ticket.side === side)} onClick={() => { setSizeKey(null); onChange({ ...ticket, side }) }}>{side === 'BUY' ? 'Buy' : 'Sell'}</button>)}</div>}
     <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 8 }}>

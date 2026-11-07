@@ -3,6 +3,19 @@ import type { Candle } from './contracts'
 export const RECENT_LIVE_TICK_SECONDS = 15 * 60
 
 export const appendLiveTick = (ticks: Candle[], tick: Candle): Candle[] => {
+  const existing = ticks.find(item => item.timestamp === tick.timestamp)
+  // A duplicate/heartbeat tick that doesn't change the existing second's OHLCV
+  // is the common steady-state case; keep the array reference stable so
+  // downstream memoization doesn't redo work for it.
+  if (
+    existing &&
+    existing.open === tick.open &&
+    existing.high === tick.high &&
+    existing.low === tick.low &&
+    existing.close === tick.close &&
+    (existing.volume ?? 0) === (tick.volume ?? 0)
+  )
+    return ticks
   const byTimestamp = new Map(ticks.map(item => [item.timestamp, item]))
   byTimestamp.set(tick.timestamp, tick)
   return [...byTimestamp.values()].sort((left, right) => left.timestamp - right.timestamp)

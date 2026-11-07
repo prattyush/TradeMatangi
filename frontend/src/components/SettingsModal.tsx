@@ -1,8 +1,17 @@
+import WebsiteChartAppearanceSettings from './WebsiteChartAppearanceSettings'
+import SettingHelp from './SettingHelp'
+import { cachedTradingDisplaySettings, publishTradingDisplaySettings } from '../hooks/useTradingDisplaySettings'
+import { parsePnlTargets } from '../indicators/positionPnlLevels'
+import { unlockAlertAudio, playAlertBeep } from '../../../shared/alertSound'
+import { CANDLE_ALERT_INTERVALS } from '../../../shared/candleAlert'
+import { useWebsiteChartRenderer } from '../hooks/useWebsiteChartRenderer'
+import { useAnalysisChartRenderer } from '../hooks/useAnalysisChartRenderer'
 import DisplaySettings from './DisplaySettings'
 import RealBrokerRestrictionSetting from '../../../shared/RealBrokerRestrictionSetting'
 import FuturesRiskSettings from "./FuturesRiskSettings"
 import RealSessionList, { type RealBookRequest } from '../../../shared/RealSessionList'
 import { NIFTY_PREMIUM_PRESETS as THRESHOLD_VALUES_NIFTY, SENSEX_PREMIUM_PRESETS as THRESHOLD_VALUES_SENSEX, withSavedPremium } from '../../../shared/optionPremiumPresets'
+import BehaviorQuestionsManager from '../../../shared/analysis/behavior/BehaviorQuestionsManager'
 import HistorySharingSettings, { type HistorySharingState } from '../../../shared/analysis/HistorySharingSettings'
 import { BACKEND_URL } from '../config'
 import { _authHeaders } from '../services/api'
@@ -336,6 +345,7 @@ export interface GuardRailSettingsLocal {
   maxSizeMode: "percentage" | "value"
   maxSizePct: number
   maxSizeValue: number
+  maxSizeAlertEnabled: boolean
 }
 
 interface Props {
@@ -359,6 +369,8 @@ interface Props {
 }
 
 export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessionActive, onWalletReset, onAttachRealSession, onSizingModeChange, onTargetDeviationChange, onBrokerageChange, onStrategySettingsChange, onHistoricalDaysChange, onPnlPctModeChange, onGuardRailSettingsChange, onAutoStartSnapshotsChange, onStepwiseLabelingPopupChange, onLabelingModeChange, onTradingIndicatorSettingsChange }: Props) {
+  const renderer = useWebsiteChartRenderer()
+  const analysisRenderer = useAnalysisChartRenderer()
   const [open, setOpen] = useState(false)
   const sharingRequest = useCallback(async (method: 'GET'|'PUT', emails?: string[]): Promise<HistorySharingState> => {
     const response = await fetch(`${BACKEND_URL}/api/users/real-history-sharing`, {method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='PUT'?JSON.stringify({emails}):undefined})
@@ -398,6 +410,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   useFlashError(status && !/saved|success|connected|added|updated|deleted|^Streaming source set to:|^Reset to /i.test(status) ? status : null, 'Settings')
 
   const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
+  const [pnlTargetsInput, setPnlTargetsInput] = useState(() => cachedTradingDisplaySettings().pnlTargetLevels)
+  const [candleAlertEnabled, setCandleAlertEnabled] = useState(() => cachedTradingDisplaySettings().candleAlert.enabled)
+  const [candleAlertInterval, setCandleAlertInterval] = useState(() => cachedTradingDisplaySettings().candleAlert.intervalMin)
+  const [candleAlertSecondsInput, setCandleAlertSecondsInput] = useState(() => String(cachedTradingDisplaySettings().candleAlert.secondsBefore))
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
   const [sizingModeSaving, setSizingModeSaving] = useState(false)
   const [sizingMode, setSizingMode] = useState<SizingMode>(loadSizingMode)
@@ -447,6 +463,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
 
   // Trade analysis price source: "options" (CE/PE OHLC) or "underlying" (NIFTY OHLC)
   const [analysisPriceSource, setAnalysisPriceSource] = useState<'options' | 'underlying'>('options')
+  const [analysisLabelView, setAnalysisLabelView] = useState<'one_by_one' | 'all'>('one_by_one')
 
   // Experimental: live pattern detection
   const [experimentalPatternsEnabled, setExperimentalPatternsEnabled] = useState(false)
@@ -464,6 +481,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   // GuardRails settings state
   const [grBanEnabled, setGrBanEnabled] = useState(loadGuardRailBanEnabled)
   const [grBanHalfwayAlertEnabled, setGrBanHalfwayAlertEnabled] = useState(false)
+  const [grMaxSizeAlertEnabled, setGrMaxSizeAlertEnabled] = useState(() => cachedTradingDisplaySettings().maxSize.alertEnabled)
   const [grHighTierThresholdInput, setGrHighTierThresholdInput] = useState('0')
   const [grCooldownEnabled, setGrCooldownEnabled] = useState(loadGuardRailCooldownEnabled)
   const [autoStartSnapshots, setAutoStartSnapshots] = useState(loadAutoStartEventSnapshots)
@@ -591,6 +609,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         if (s.analysis_price_source === 'underlying' || s.analysis_price_source === 'options') {
           setAnalysisPriceSource(s.analysis_price_source)
         }
+        if (s.analysis_label_view === 'one_by_one' || s.analysis_label_view === 'all') {
+          setAnalysisLabelView(s.analysis_label_view)
+        }
         if (s.experimental_patterns_enabled != null) {
           setExperimentalPatternsEnabled(s.experimental_patterns_enabled)
         }
@@ -604,6 +625,11 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         setExecutionBroker(s.real_execution_broker ?? "kotak")
         if (isRealTradingUser || isAdmin) void api.executionBrokerStatus().then(v => { if (active) setRealActiveSession(Boolean(v.active_session_id)) }).catch(() => { if (active) setRealActiveSession(true) })
         setKotakProtectionEnabled(s.kotak_automated_protection_enabled ?? true)
+        setPnlTargetsInput(s.pnl_target_levels ?? '')
+        setCandleAlertEnabled(s.candle_alert_enabled ?? false)
+        setCandleAlertInterval(s.candle_alert_interval_min ?? 3)
+        setCandleAlertSecondsInput(String(s.candle_alert_seconds_before ?? 15))
+        publishTradingDisplaySettings(s)
         if (s.entry_auto_sl_delay_sec != null) {
           setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
           localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(s.entry_auto_sl_delay_sec))
@@ -661,6 +687,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
           setGrBanEnabled(s.guardrail_ban_enabled)
           setGrBanHalfwayAlertEnabled(s.guardrail_ban_halfway_alert_enabled ?? false)
+          setGrMaxSizeAlertEnabled(s.guardrail_maxsize_alert_enabled ?? false)
+          publishTradingDisplaySettings(s)
           setGrHighTierThresholdInput(String(s.high_tier_pnl_threshold_pct ?? 0))
           setGrCooldownEnabled(s.guardrail_cooldown_enabled)
           localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
@@ -680,7 +708,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
           localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
         }
-        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0 })
+        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0, maxSizeAlertEnabled: guardrails.guardrail_maxsize_alert_enabled ?? false })
         if (tokens) { setIciciMasked(tokens.icici_session); setKiteMasked(tokens.kite_access); setFyersAccessMasked(tokens.fyers_access); setFyersRefreshMasked(tokens.fyers_refresh) }
         if (stream) setStreamSource(stream.source)
         if (history) { setHistoricalSource(history.source); setHistoricalFallback(history.allow_fallback) }
@@ -906,6 +934,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         high_tier_pnl_threshold_pct: highTierPnlThresholdPct,
         guardrail_cooldown_enabled: grCooldownEnabled,
         guardrail_maxsize_enabled: grMaxSizeEnabled,
+        guardrail_maxsize_alert_enabled: grMaxSizeAlertEnabled,
         guardrail_maxsize_mode: grMaxSizeMode,
         guardrail_maxsize_pct: maxSizePct,
         guardrail_maxsize_value: maxSizeValue,
@@ -922,7 +951,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, grMaxSizeMode)
       localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(maxSizePct))
       localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(maxSizeValue))
-      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, highTierPnlThresholdPct, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue })
+      onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, highTierPnlThresholdPct, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue, maxSizeAlertEnabled: grMaxSizeAlertEnabled })
+      publishTradingDisplaySettings({ guardrail_maxsize_enabled: grMaxSizeEnabled, guardrail_maxsize_alert_enabled: grMaxSizeAlertEnabled, guardrail_maxsize_mode: grMaxSizeMode, guardrail_maxsize_pct: maxSizePct, guardrail_maxsize_value: maxSizeValue })
       setStatus('GuardRail settings saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -1073,7 +1103,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         >
           <div role="dialog" aria-modal="true" aria-label="Settings" style={{
             background: '#161b22', border: '1px solid #30363d', borderRadius: 10,
-            padding: 24, width: 'min(760px, 94vw)', display: 'flex', flexDirection: 'column', gap: 16,
+            padding: 24, width: 'min(960px, calc(100vw - 32px))', display: 'flex', flexDirection: 'column', gap: 16,
             height: 'min(720px, 90vh)', boxSizing: 'border-box',
           }}>
             {/* Header */}
@@ -1130,12 +1160,120 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {settingsLoadFailed && <button onClick={() => setLoadAttempt(value => value + 1)}>Retry loading settings</button>}
             <fieldset disabled={settingsLoading || settingsLoadFailed || preferenceSaving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
-            {/* ── Display tab content ── */}
-            {activeTab === 'display' && <DisplaySettings />}
+            {/* ── Display tab content (chart appearance) ── */}
+            {activeTab === 'display' && <>
+              <div>
+                <div className="settings-block-title">Chart renderer</div>
+                <label className="settings-field-row">
+                  <span>Trading chart</span>
+                  <select className="settings-control" aria-label="Website trading chart renderer" value={renderer}
+                    onChange={event => void savePreference({ website_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
+                    <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
+                  </select>
+                  <SettingHelp text={"Applies to website Day and Swing charts. Your session keeps running. Choose Lightweight here if KLine fails."} />
+                </label>
+                <label className="settings-field-row">
+                  <span>Analysis &amp; Patterns chart</span>
+                  <select className="settings-control" aria-label="Website analysis chart renderer" value={analysisRenderer}
+                    onChange={event => void savePreference({ website_analysis_chart_renderer: event.target.value as 'lightweight' | 'kline' }, () => {})}>
+                    <option value="lightweight">Lightweight</option><option value="kline">KLine</option>
+                  </select>
+                  <SettingHelp text={"Chart used in Trade Analysis and the Trade-vs-Pattern view. KLine adds more drawing tools and indicators, and its drawings are saved to your account and shared with the KLine trading chart. Lightweight uses the same tools as the Lightweight trading chart. Independent of the trading chart setting."} />
+                </label>
+              </div>
+
+              <div>
+                <div className="settings-block-title">Target P&amp;L levels indicator</div>
+                <label className="settings-field-row">
+                  <span>Target P&amp;L values</span>
+                  <input className="settings-control" aria-label="Target P&L values" placeholder="0,3,6,10,15,18" value={pnlTargetsInput}
+                    onChange={event => setPnlTargetsInput(event.target.value)}
+                    onBlur={() => {
+                      const normalized = parsePnlTargets(pnlTargetsInput).join(',')
+                      if (normalized === cachedTradingDisplaySettings().pnlTargetLevels) { setPnlTargetsInput(normalized); return }
+                      void savePreference({ pnl_target_levels: normalized }, () => { setPnlTargetsInput(normalized); publishTradingDisplaySettings({ pnl_target_levels: normalized }) })
+                    }} />
+                  <SettingHelp text={"Comma-separated numbers, e.g. 0,3,6,10,15,18. With P&L display in % of Capital they are percentages of session capital; with Monetary they are rupee amounts. Turn on Indicators → Target P&L levels on a chart: each line marks the price where exiting the whole position would make the day's total P&L (booked trades plus this position, after exit charges) equal that value. Lines show only while a position is open and never rescale the chart."} />
+                </label>
+              </div>
+
+            <WebsiteChartAppearanceSettings />
+
+            {/* Rectangle drawing fill (shared drawingFillColor/Opacity) */}
+            <DisplaySettings />
+
+            {/* Trading Chart Indicators */}
+            <div className="settings-block">
+              <div className="settings-block-title">
+                Trading chart indicators
+              </div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
+                  {(['normalized', 'raw'] as RocRatioMode[]).map(mode => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        void savePreference({ trading_roc_ratio_mode: mode }, () => {
+                          setTradingRocRatioMode(mode)
+                          localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
+                          onTradingIndicatorSettingsChange?.(mode)
+                        })
+                      }}
+                      style={{
+                        padding: '5px 12px', fontSize: 12, fontWeight: 600,
+                        border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                        background: tradingRocRatioMode === mode ? '#1f3a5f' : '#161b22',
+                        color: tradingRocRatioMode === mode ? '#79c0ff' : '#484f58',
+                      }}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <SettingHelp text={"Selected ratio indicators share a compact band below each trading chart"} />
+            </div>
+
+            </> /* end Display tab */}
+
+            {activeTab === 'sharing' && <>
+            {[
+              { title: 'Pattern sharing', value: patternShareEmails, set: setPatternShareEmails, key: 'pattern_share_emails', done: 'Pattern sharing saved', fail: 'Failed to save pattern sharing', note: 'Shared users must already have a TradeMatangi account.' },
+              { title: 'Fine structure sharing', value: fineStructureShareEmails, set: setFineStructureShareEmails, key: 'fine_structure_share_emails', done: 'Fine structure sharing saved', fail: 'Failed to save fine structure sharing', note: 'Shared users can view and search your definitions and flows (read-only).' },
+            ].map(block => (
+              <div key={block.key} className="settings-block">
+                <div className="settings-block-title">{block.title}</div>
+                <textarea
+                  className="settings-control"
+                  aria-label={`${block.title} emails`}
+                  value={block.value}
+                  onChange={e => block.set(e.target.value)}
+                  placeholder="Comma-separated email addresses"
+                  rows={3}
+                  style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', minHeight: 72, padding: '8px 10px', fontSize: 13, lineHeight: 1.4 }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  <button
+                    className="settings-primary-btn"
+                    onClick={() => {
+                      api.updateUserSettings({ [block.key]: block.value }).then(() => {
+                        setStatus(block.done)
+                        setTimeout(() => setStatus(null), 2000)
+                      }).catch((e: unknown) => {
+                        setStatus(e instanceof Error ? e.message : block.fail)
+                        setTimeout(() => setStatus(null), 2500)
+                      })
+                    }}
+                  >Save</button>
+                  <span style={{ fontSize: 11, color: '#6e7681' }}>{block.note}</span>
+                </div>
+              </div>
+            ))}
+            </> /* end Sharing tab (preference-backed part) */}
+
 
             {/* ── General tab content ── */}
             {activeTab === 'general' && <>
-
             {/* P&L Display Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>P&L DISPLAY MODE</div>
@@ -1155,9 +1293,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </button>
                 ))}
               </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Pos P&L and Session P&L show % of session capital when enabled
-              </div>
+              <SettingHelp text={"Pos P&L and Session P&L show % of session capital when enabled"} />
             </div>
 
             {/* Historical Days */}
@@ -1199,43 +1335,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   Save
                 </button>
               </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Prior trading days of chart context loaded at session start
-              </div>
-            </div>
-
-            {/* Trading Chart Indicators */}
-            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                TRADING CHART INDICATORS
-              </div>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d' }}>
-                  {(['normalized', 'raw'] as RocRatioMode[]).map(mode => (
-                    <button
-                      key={mode}
-                      onClick={() => {
-                        void savePreference({ trading_roc_ratio_mode: mode }, () => {
-                          setTradingRocRatioMode(mode)
-                          localStorage.setItem(TRADING_ROC_RATIO_MODE_KEY, mode)
-                          onTradingIndicatorSettingsChange?.(mode)
-                        })
-                      }}
-                      style={{
-                        padding: '5px 12px', fontSize: 12, fontWeight: 600,
-                        border: 'none', cursor: 'pointer', textTransform: 'capitalize',
-                        background: tradingRocRatioMode === mode ? '#1f3a5f' : '#161b22',
-                        color: tradingRocRatioMode === mode ? '#79c0ff' : '#484f58',
-                      }}
-                    >
-                      {mode}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                Selected ratio indicators share a compact band below each trading chart
-              </div>
+              <SettingHelp text={"Prior trading days of chart context loaded at session start"} />
             </div>
 
             {/* Override Previous Sessions */}
@@ -1268,9 +1368,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: '#e6edf3' }}>Prompt to override on duplicate session</div>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-                    When starting a session, checks for previous data with the same symbol, date, session, and instrument type
-                  </div>
+                  <SettingHelp text={"When starting a session, checks for previous data with the same symbol, date, session, and instrument type"} />
                 </div>
               </label>
             </div>
@@ -1334,32 +1432,32 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {/* Broker connection (for real trading users) */}
             {(isRealTradingUser || isAdmin) && (
               <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>BROKER</div>
-                <label>Real execution broker <select value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
-                {realActiveSession && <p style={{ fontSize: 12 }}>Changing the default broker affects new sessions. Existing sessions keep their broker.</p>}
+                <div className="settings-block-title">Broker</div>
+                <label className="settings-field-row"><span>Real execution broker</span><select className="settings-control" value={executionBroker} disabled={settingsLoading || settingsLoadFailed || preferenceSaving} onChange={event => { const broker = event.target.value as 'kotak' | 'kite'; void savePreference({ real_execution_broker: broker }, () => setExecutionBroker(broker)) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
+                {realActiveSession && <small className="settings-note">Changing the default broker affects new sessions. Existing sessions keep their broker.</small>}
                 <RealSessionList key={executionBroker} request={realBookRequest} onAttach={onAttachRealSession ? id => { void onAttachRealSession(id).catch(reason => window.alert(String(reason))) } : undefined} />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 13, color: '#e6edf3' }}>Kotak Neo</span>
+                <div className="settings-field-row">
+                  <span>Kotak Neo</span>
                   {kotakAuthenticated === null ? (
                     <span style={{ fontSize: 12, color: '#484f58' }}>checking…</span>
                   ) : kotakAuthenticated ? (
                     <span style={{
                       fontSize: 12, color: '#3fb950',
                       background: 'rgba(63,185,80,0.1)', border: '1px solid rgba(63,185,80,0.3)',
-                      borderRadius: 4, padding: '2px 8px',
+                      borderRadius: 12, padding: '3px 10px',
                     }}>Connected</span>
                   ) : (
                     <>
                       <span style={{
                         fontSize: 12, color: '#f85149',
                         background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
-                        borderRadius: 4, padding: '2px 8px',
+                        borderRadius: 12, padding: '3px 10px',
                       }}>Not connected</span>
                       <button
                         onClick={() => setShowKotakTOTP(true)}
                         style={{
-                          padding: '4px 12px', background: '#d4a017', border: 'none',
-                          borderRadius: 6, color: '#0d1117', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                          padding: '5px 14px', background: '#1f6feb', border: 'none',
+                          borderRadius: 6, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                         }}
                       >Connect</button>
                     </>
@@ -1725,6 +1823,48 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                 </div>
               </div>
             </div>
+            {/* Candle-close sound alert */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                CANDLE-CLOSE SOUND ALERT
+                <SettingHelp text={"Plays a short beep this many seconds before each candle of the chosen interval closes, e.g. 3 min and 15 s beeps at 09:26:45. Works in Replay, Paper and Real sessions (not Stepwise). Replay follows the session clock, so it fires at the same market time at any speed."} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11, color: '#8b949e' }}>
+                  <input type="checkbox" checked={candleAlertEnabled} onChange={e => {
+                    const enabled = e.target.checked
+                    unlockAlertAudio()
+                    void savePreference({ candle_alert_enabled: enabled }, () => { setCandleAlertEnabled(enabled); publishTradingDisplaySettings({ candle_alert_enabled: enabled }) })
+                  }} />
+                  Enabled
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#8b949e' }}>
+                  Candle
+                  <select aria-label="Alert candle interval" value={candleAlertInterval} style={{ background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '3px 6px', fontSize: 12 }}
+                    onChange={e => {
+                      const interval = Number(e.target.value)
+                      const seconds = Number(candleAlertSecondsInput)
+                      if (!(seconds >= 1 && seconds < interval * 60)) { setStatus('Alert seconds must be at least 1 and less than the candle interval'); return }
+                      void savePreference({ candle_alert_interval_min: interval, candle_alert_seconds_before: seconds }, () => { setCandleAlertInterval(interval); publishTradingDisplaySettings({ candle_alert_interval_min: interval, candle_alert_seconds_before: seconds }) })
+                    }}>
+                    {CANDLE_ALERT_INTERVALS.map(minutes => <option key={minutes} value={minutes}>{minutes} min</option>)}
+                  </select>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#8b949e' }}>
+                  Seconds before
+                  <input aria-label="Alert seconds before candle end" type="number" min={1} max={600} value={candleAlertSecondsInput}
+                    onChange={e => setCandleAlertSecondsInput(e.target.value)}
+                    onBlur={() => {
+                      const seconds = Math.floor(Number(candleAlertSecondsInput))
+                      if (!(seconds >= 1 && seconds < candleAlertInterval * 60)) { setStatus('Alert seconds must be at least 1 and less than the candle interval'); return }
+                      void savePreference({ candle_alert_interval_min: candleAlertInterval, candle_alert_seconds_before: seconds }, () => { setCandleAlertSecondsInput(String(seconds)); publishTradingDisplaySettings({ candle_alert_interval_min: candleAlertInterval, candle_alert_seconds_before: seconds }) })
+                    }}
+                    style={{ width: 60, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '3px 6px', fontSize: 12, textAlign: 'center' }} />
+                </label>
+                <button type="button" onClick={() => { unlockAlertAudio(); if (!playAlertBeep()) setStatus('Sound is not available in this browser') }}
+                  style={{ background: '#21262d', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '3px 10px', fontSize: 11, cursor: 'pointer' }}>Test sound</button>
+              </div>
+            </div>
             {/* Right-Click SL Direction */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
@@ -1778,9 +1918,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     Auto-start event capture on session start
                   </label>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                    When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)
-                  </div>
+                  <SettingHelp text={"When enabled, event snapshots automatically begin when you start any session (sim, paper, or real)"} />
                 </div>
 
                 {/* Trade Labeling Mode (per session type) */}
@@ -1861,6 +1999,43 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </div>
                 </div>
 
+                {/* Label Trades view */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>LABEL TRADES VIEW</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    {([['one_by_one', 'One trade at a time'], ['all', 'All trades together']] as const).map(([view, text]) => (
+                      <button
+                        key={view}
+                        onClick={() => {
+                          void savePreference({ analysis_label_view: view }, () => {
+                            setAnalysisLabelView(view)
+                          })
+                        }}
+                        style={{
+                          padding: '5px 14px',
+                          background: analysisLabelView === view ? '#1f6feb' : '#21262d',
+                          border: `1px solid ${analysisLabelView === view ? '#1f6feb' : '#30363d'}`,
+                          borderRadius: 6, color: '#e6edf3', cursor: 'pointer', fontSize: 12,
+                        }}
+                      >
+                        {text}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#484f58' }}>
+                    Analysis → Label Trades: step through round trips with Prev/Next (changes save automatically), or list every trade with a Save button
+                  </div>
+                </div>
+
+                {/* Behavior questions */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 6, fontWeight: 600 }}>BEHAVIOR QUESTIONS</div>
+                  <div style={{ fontSize: 11, color: '#484f58', marginBottom: 10 }}>
+                    Yes/no questions you answer per trade — entry questions when you label an entry, exit questions when you label a closed trade. Archive a question to stop asking it; its past answers stay in your stats.
+                  </div>
+                  <BehaviorQuestionsManager api={api} />
+                </div>
+
                 {/* Experimental Features */}
                 <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
                   <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
@@ -1890,99 +2065,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     </div>
                     <div>
                       <div style={{ fontSize: 12, color: '#e6edf3' }}>Live pattern detection</div>
-                      <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-                        Detects chart patterns and behavioral signals in real-time during sessions
-                      </div>
+                      <SettingHelp text={"Detects chart patterns and behavioral signals in real-time during sessions"} />
                     </div>
                   </label>
-                </div>
-
-                {/* Pattern Sharing */}
-                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                    PATTERN SHARING
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <textarea
-                      value={patternShareEmails}
-                      onChange={e => setPatternShareEmails(e.target.value)}
-                      placeholder="Comma-separated email addresses"
-                      rows={3}
-                      style={{
-                        width: '100%', resize: 'vertical', minHeight: 72,
-                        padding: '8px 10px', background: '#0d1117',
-                        border: '1px solid #30363d', borderRadius: 6,
-                        color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
-                      }}
-                    />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => {
-                          api.updateUserSettings({ pattern_share_emails: patternShareEmails }).then(() => {
-                            setStatus('Pattern sharing saved')
-                            setTimeout(() => setStatus(null), 2000)
-                          }).catch((e: unknown) => {
-                            setStatus(e instanceof Error ? e.message : 'Failed to save pattern sharing')
-                            setTimeout(() => setStatus(null), 2500)
-                          })
-                        }}
-                        style={{
-                          padding: '5px 14px', background: '#1f6feb',
-                          border: 'none', borderRadius: 6, color: '#fff',
-                          cursor: 'pointer', fontSize: 12,
-                        }}
-                      >
-                        Save
-                      </button>
-                      <span style={{ fontSize: 11, color: '#484f58' }}>
-                        Shared users must already have a TradeMatangi account.
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Fine Structure Sharing */}
-                <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>
-                    FINE STRUCTURE SHARING
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <textarea
-                      value={fineStructureShareEmails}
-                      onChange={e => setFineStructureShareEmails(e.target.value)}
-                      placeholder="Comma-separated email addresses"
-                      rows={3}
-                      style={{
-                        width: '100%', resize: 'vertical', minHeight: 72,
-                        padding: '8px 10px', background: '#0d1117',
-                        border: '1px solid #30363d', borderRadius: 6,
-                        color: '#e6edf3', fontSize: 13, lineHeight: 1.4,
-                      }}
-                    />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => {
-                          api.updateUserSettings({ fine_structure_share_emails: fineStructureShareEmails }).then(() => {
-                            setStatus('Fine structure sharing saved')
-                            setTimeout(() => setStatus(null), 2000)
-                          }).catch((e: unknown) => {
-                            setStatus(e instanceof Error ? e.message : 'Failed to save fine structure sharing')
-                            setTimeout(() => setStatus(null), 2500)
-                          })
-                        }}
-                        style={{
-                          padding: '5px 14px', background: '#1f6feb',
-                          border: 'none', borderRadius: 6, color: '#fff',
-                          cursor: 'pointer', fontSize: 12,
-                        }}
-                      >
-                        Save
-                      </button>
-                      <span style={{ fontSize: 11, color: '#484f58' }}>
-                        Shared users can view and search your definitions and flows (read-only).
-                      </span>
-                    </div>
-                  </div>
                 </div>
 
                 {status && (
@@ -2109,9 +2194,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     <span style={{ fontSize: 12, color: '#8b949e' }}>ticks (1–5)</span>
                   </div>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                    Extra ticks past target price before limit order triggers (each tick = ₹0.05)
-                  </div>
+                  <SettingHelp text={"Extra ticks past target price before limit order triggers (each tick = \u20b90.05)"} />
                 </div>
 
                 {/* Aggressive SL: only in profit */}
@@ -2126,9 +2209,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                     />
                     <span style={{ fontSize: 12, color: '#e6edf3' }}>Only update SL when in profit</span>
                   </label>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                    Skip SL shift when bar closes below avg entry price
-                  </div>
+                  <SettingHelp text={"Skip SL shift when bar closes below avg entry price"} />
                 </div>
 
                 {/* Save button for all strategy settings */}
@@ -2294,6 +2375,15 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                         style={{ cursor: 'pointer' }}
                       />
                       <span style={{ fontSize: 11, color: '#8b949e' }}>Enabled</span>
+                    </label>
+                    <label title="Turn the top bar orange once capital in use reaches 50% of MAX SIZE. Red BAN alerts take priority." style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={grMaxSizeAlertEnabled}
+                        onChange={e => setGrMaxSizeAlertEnabled(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: 10, color: '#8b949e' }}>Alert at 50%</span>
                     </label>
                   </div>
                   <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
@@ -2485,10 +2575,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                         onChange={e => void saveHistoricalSource(historicalSource, e.target.checked)} />
                       Allow historical provider fallback
                     </label>
-                    <span
-                      title="Paper/real history uses this provider independently of live streaming. Previous days reuse complete Breeze caches first. Today keeps providers separate. Replay and stepwise always use Breeze."
-                      style={{ color: '#8b949e', cursor: 'help', fontSize: 12 }}
-                    >ⓘ</span>
+                    <SettingHelp text={"Paper/real history uses this provider independently of live streaming. Previous days reuse complete Breeze caches first. Today keeps providers separate. Replay and stepwise always use Breeze."} />
                   </div>
                 </div>
 
@@ -2526,11 +2613,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       </button>
                     ))}
                   </div>
-                  <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-                    Applies to all new paper and real sessions.
-                    Fyers supports NSE/BSE equities, indices, and F&O. Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token.
-                    Falls back to the next available source if the selected one is unavailable.
-                  </div>
+                  <SettingHelp text={"Applies to all new paper and real sessions. Fyers supports NSE/BSE equities, indices, and F&O. Kotak Neo requires TOTP login. Breeze requires a valid ICICI Direct session token. Falls back to the next available source if the selected one is unavailable."} />
 
                   {/* Show Kotak connection status inline when Kotak is selected */}
                   {streamSource === 'kotak' && (
