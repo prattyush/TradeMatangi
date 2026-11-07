@@ -251,6 +251,8 @@ export interface StrategyResponse {
   target_profit_value?: number | null
   target_profit_size?: 'full' | 'half'
   target_profit_is_pct?: boolean
+  /** AutoStop only: older waiting AutoStops on the same contract that this start replaced. */
+  replaced_strategy_ids?: string[]
 }
 
 export interface StartStrategyRequest {
