@@ -105,6 +105,11 @@
   position, order or strategy, because the old contract stops receiving ticks. If the live-feed switch itself fails, the server restores the previous strike and price and answers 502 (managed feed: real and website-paper sessions), so the session never stays on a contract that has no ticks; the pane keeps its old strike. The
   App's workspace-reset effect is skipped for the resulting strike change
   (`skipWorkspaceResetKeyRef`, decided by `reselectOutcome` in `strikeRule.ts`) so the user's pane layout is not rebuilt.
+- Adding a CE/PE pane at another strike (and the paper-resume workspace restore) calls
+  `PUT /api/simulation/{id}/update-pane-strike`, which the server refuses (409) when the swap would strand
+  an open position, order or strategy. `api.updatePaneStrike` surfaces the server's reason; add-pane then
+  removes the pane it just added and restore keeps loading the workspace, both via
+  `paneStrikeErrorMessage` in `strikeRule.ts` and the header error.
 - Rectangle drawing (`indicators/rectanglePrimitive.ts`) is an `ISeriesPrimitive` that
   resolves pixel coordinates inside `draw()`; a corner time absent from the loaded
   candles (e.g. past the last bar) is extrapolated from bar spacing, never dropped.

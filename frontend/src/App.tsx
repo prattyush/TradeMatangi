@@ -41,7 +41,7 @@ import { useSnapshot } from './hooks/useSnapshot'
 import api, { ApiError, OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/optionsRoc'
 import { selectPaperResumePanes } from './paperResume'
-import { buildReselectBody, reselectOutcome, type StrikeRule } from './strikeRule'
+import { buildReselectBody, paneStrikeErrorMessage, reselectOutcome, type StrikeRule } from './strikeRule'
 import ConfirmModal from './components/ConfirmModal'
 import { isBrokerSnapshot, brokerSnapshotSessionId } from './brokerSnapshot'
 
@@ -764,7 +764,7 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
             await api.updatePaneStrike(sessionId, right, target.strike)
             if (!cancelled) sim.updateSessionStrike(right, target.strike)
           } catch (error) {
-            if (!cancelled) setBrokerError(`Could not restore live ${right} contract: ${String(error)}`)
+            if (!cancelled) setBrokerError(paneStrikeErrorMessage(error, right, 'restore'))
           }
         }
       }
@@ -1013,7 +1013,12 @@ function AppInner({ authUser, onLogout, setAuthUser, onOpenMessages }: { onOpenM
             // so the Chart re-fetches historical candles for the new strike.
             setPanes(p => p.map(x => x.id === newPane.id ? { ...x, reloadKey: (x.reloadKey ?? 0) + 1 } : x))
           })
-          .catch((err: unknown) => console.error('Failed to update streaming strike:', err))
+          .catch((err: unknown) => {
+            console.error('Failed to update streaming strike:', err)
+            // The session kept its previous strike, so a pane for the new contract would show no live ticks.
+            setPanes(p => p.filter(x => x.id !== newPane.id))
+            setBrokerError(paneStrikeErrorMessage(err, right, 'add'))
+          })
       }
     } else {
       setPanes(p => [...p, makeEquityPane(addInterval)])
