@@ -276,6 +276,34 @@ def cancel_persisted_for_session(session_id: str) -> int:
     return count
 
 
+def cancel_replaced_autostops(session_id: str, new: StrategyInstance) -> list[str]:
+    """One waiting AutoStop per contract and direction: a newer AutoStop replaces the older one.
+
+    AutoStop is a one-shot entry that places its order at the next bar close, so two waiting
+    instances on the same contract would place two entries (a doubled position). Only RUNNING
+    (not yet fired) instances are cancelled; one that already placed its order is COMPLETED and
+    is left alone. AS and ASL share the slot because both are the same kind of bar-close entry.
+    Returns the cancelled strategy ids.
+    """
+    if new.strategy_type != "AutoStop":
+        return []
+
+    def slot(strategy: StrategyInstance):
+        m = strategy.metadata
+        return (strategy.right, strike_number(m.get("desktop_strike")), m.get("desktop_expiry"), m.get("direction", "BUY"))
+
+    wanted = slot(new)
+    replaced: list[str] = []
+    for old in list(_registry.get(session_id, [])):
+        if (old.strategy_id != new.strategy_id and old.strategy_type == "AutoStop"
+                and old.status == StrategyStatus.RUNNING and slot(old) == wanted):
+            if cancel_strategy(session_id, old.strategy_id):
+                replaced.append(old.strategy_id)
+    if replaced:
+        logger.info("autostop_replaced session=%s new=%s replaced=%s", session_id, new.strategy_id, replaced)
+    return replaced
+
+
 def cancel_strategy(session_id: str, strategy_id: str) -> bool:
     """Cancel a single strategy by ID. Returns True if found and cancelled."""
     for s in _registry.get(session_id, []):

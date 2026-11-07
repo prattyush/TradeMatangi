@@ -253,3 +253,5 @@ windows retain their original instructions after amendment. Combined price/quant
 entry amendments reserve the final amount once. Cancel means cancel the pending
 order, never delete executions or flatten a position. Keep Day quantity rules
 separate from portfolio-scoped Swing amendments.
+
+- **AutoStop is one waiting instance per contract and direction.** `strategy_service.cancel_replaced_autostops` (called from `routers/strategies.start_strategy`, which desktop also uses) cancels older RUNNING AutoStops with the same right, strike, expiry and direction when a new one starts; AS and ASL share the slot. A fired (COMPLETED) AutoStop is never touched. The start response lists `replaced_strategy_ids` so clients can drop them.

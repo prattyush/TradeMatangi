@@ -1036,3 +1036,106 @@ class TestAutoStopLimit:
         assert StartStrategyRequest(session_id=SESSION, strategy_type='AutoStop').autostop_order_type == 'TARGET'
         with pytest.raises(ValidationError):
             StartStrategyRequest(session_id=SESSION, strategy_type='AutoStop', autostop_order_type='MARKET')
+
+
+# ── AutoStop: one waiting AutoStop per contract and direction ───────────────
+
+class TestAutoStopReplacement:
+    def _start(self, session=None, *, mode='TARGET', right=None, strike=None, expiry=None, direction='BUY', quantity=1):
+        from app.models.schemas import StartStrategyRequest
+        from app.routers.strategies import start_strategy
+        session = session or _session()
+        kwargs = dict(session_id=SESSION, strategy_type='AutoStop', quantity=quantity, autostop_order_type=mode, direction=direction)
+        if right:
+            kwargs.update(right=right, strike=strike, expiry=expiry)
+        with patch('app.routers.strategies.sim_svc.get_session', return_value=session):
+            return start_strategy(StartStrategyRequest(**kwargs), user_id=USER_ID)
+
+    def _opts(self):
+        session = _session()
+        session.instrument_type = 'options'
+        session.session_type = 'sim'
+        session.strike_ce = 24000
+        session.strike_pe = 24000
+        session.expiry = '2026-11-24'
+        return session
+
+    def test_second_equity_autostop_replaces_the_first(self):
+        first = self._start()
+        second = self._start(quantity=2)
+        assert second.replaced_strategy_ids == [first.strategy_id]
+        running = svc.list_running(SESSION)
+        assert [s.strategy_id for s in running] == [second.strategy_id]
+        assert running[0].metadata['quantity'] == 2
+        assert first.replaced_strategy_ids == []
+
+    def test_only_one_entry_order_is_placed_after_two_starts(self):
+        session = _session()
+        self._start(session)
+        self._start(session)
+        svc.on_tick(session, _tick(T0, h=120.0, c=108.0), None)
+        svc.on_tick(session, _tick(T1), None)
+        orders = [o for o in order_service.get_open_orders(SESSION) if o.order_type == OrderType.TARGET]
+        assert len(orders) == 1
+
+    def test_same_contract_replaces_and_other_strike_right_expiry_do_not(self):
+        session = self._opts()
+        base = self._start(session, right='CE', strike=24000, expiry='2026-11-24')
+        other_strike = self._start(session, right='CE', strike=24100, expiry='2026-11-24')
+        other_right = self._start(session, right='PE', strike=24000, expiry='2026-11-24')
+        other_expiry = self._start(session, right='CE', strike=24000, expiry='2026-12-01')
+        assert other_strike.replaced_strategy_ids == [] and other_right.replaced_strategy_ids == [] and other_expiry.replaced_strategy_ids == []
+        assert len(svc.list_running(SESSION)) == 4
+        again = self._start(session, right='CE', strike=24000, expiry='2026-11-24')
+        assert again.replaced_strategy_ids == [base.strategy_id]
+        assert len(svc.list_running(SESSION)) == 4
+
+    def test_numeric_strike_forms_match(self):
+        session = self._opts()
+        first = self._start(session, right='CE', strike=24000, expiry='2026-11-24')
+        second = self._start(session, right='CE', strike=24000.0, expiry='2026-11-24')
+        assert second.replaced_strategy_ids == [first.strategy_id]
+
+    def test_auto_stop_limit_replaces_auto_stop_on_the_same_contract(self):
+        session = self._opts()
+        first = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='TARGET')
+        second = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='LIMIT')
+        assert second.replaced_strategy_ids == [first.strategy_id]
+        assert svc.list_running(SESSION)[0].metadata['autostop_order_type'] == 'LIMIT'
+
+    def test_equity_buy_and_sell_autostops_coexist(self):
+        buy = self._start(direction='BUY')
+        sell = self._start(direction='SELL')
+        assert sell.replaced_strategy_ids == []
+        assert {s.strategy_id for s in svc.list_running(SESSION)} == {buy.strategy_id, sell.strategy_id}
+
+    def test_a_fired_autostop_is_not_touched_and_the_new_one_still_starts(self):
+        session = _session()
+        first = self._start(session)
+        svc.on_tick(session, _tick(T0, h=120.0, c=108.0), None)
+        svc.on_tick(session, _tick(T1), None)
+        assert first.strategy_id not in [s.strategy_id for s in svc.list_running(SESSION)]
+        assert [o for o in order_service.get_open_orders(SESSION) if o.order_type == OrderType.TARGET]
+        second = self._start(session)
+        assert second.replaced_strategy_ids == []
+        assert [s.strategy_id for s in svc.list_running(SESSION)] == [second.strategy_id]
+
+    def test_other_strategy_types_are_never_replaced(self):
+        session = _session()
+        a = svc.start_strategy(session, 'BreakEven', None, {'direction': 'BUY'})
+        b = svc.start_strategy(session, 'BreakEven', None, {'direction': 'BUY'})
+        assert svc.cancel_replaced_autostops(SESSION, b) == []
+        assert len(svc.list_running(SESSION)) == 2 and a.status == StrategyStatus.RUNNING
+        auto = self._start(session)
+        assert auto.replaced_strategy_ids == []
+        assert len(svc.list_running(SESSION)) == 3
+
+    def test_another_session_is_unaffected(self):
+        other = MockSession(session_id='other-session')
+        try:
+            svc.start_strategy(other, 'AutoStop', None, {'direction': 'BUY', 'quantity': 1})
+            mine = self._start()
+            assert mine.replaced_strategy_ids == []
+            assert len(svc.list_running('other-session')) == 1
+        finally:
+            svc._registry.pop('other-session', None)

@@ -2292,10 +2292,11 @@ function ScreenController(props: ScreenControllerProps) {
       if ('risk_pct' in sizing) body.risk_ratio_pct = Number(sizing.risk_pct) / 100
       else Object.assign(body, sizing)
     }
-    await desktopTradingRequest(`${trading.session.session_id}/strategies/start`, 'POST', body)
+    const started = await desktopTradingRequest<{ replaced_strategy_ids?: string[] }>(`${trading.session.session_id}/strategies/start`, 'POST', body)
     setTrading(await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET'))
     clearTradingError()
-    setTradingNotice(`${strategyType === 'AutoStop' ? (ticket?.orderType === 'AUTO_STOP_LIMIT' ? 'Auto stop limit' : 'Auto stop') : strategyType.replace(/([A-Z])/g, ' $1').trim()} started.`)
+    const replacedNote = started?.replaced_strategy_ids?.length ? ' It replaced the earlier Auto stop on this contract.' : ''
+    setTradingNotice(`${strategyType === 'AutoStop' ? (ticket?.orderType === 'AUTO_STOP_LIMIT' ? 'Auto stop limit' : 'Auto stop') : strategyType.replace(/([A-Z])/g, ' $1').trim()} started.${replacedNote}`)
   }
   const placeTicketOrder = async (ticket: TradeTicket, entryPrice?: number) => {
     if (!trading || !ticket.sizeKey || !ticket.orderType || !ticket.settings) return
