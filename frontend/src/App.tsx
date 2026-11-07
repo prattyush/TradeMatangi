@@ -1680,6 +1680,14 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   }, [panes, pricePickOrigin, missingSlPick, sim.sessionId, sim.refreshOpenOrders, pricePickOrderId, tpPickActive, utpPickActive, lpPickActive, contextMenuOrderPick, targetDeviationPct, sim.placeOrder, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry])
 
   // ── Strategy callbacks ────────────────────────────────────────────────────────
+  // Show a newly started strategy in the left panel (and drop any older AutoStop it replaced).
+  // Used by the panel's Start buttons and by the chart right-click AS / ASL entries.
+  const addStartedStrategy = useCallback((resp: StrategyResponse) => {
+    strategySyncVersionRef.current++
+    const replaced = new Set(resp.replaced_strategy_ids ?? [])
+    setRunningStrategies(prev => [...prev.filter(s => !replaced.has(s.strategy_id) && s.strategy_id !== resp.strategy_id), resp])
+  }, [])
+
   const handleStartStrategy = useCallback(async (
     strategyType: StartStrategyRequest['strategy_type'],
     right: 'CE' | 'PE' | null,
@@ -1709,9 +1717,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       underlying_sl_price: opts.underlyingSlPrice as number | undefined,
       underlying_stoploss_size: opts.underlyingStoplossSize as 'full' | 'half' | undefined,
     })
-    setRunningStrategies(prev => [...prev, resp])
-    strategySyncVersionRef.current++
-  }, [sim.sessionId, autostopTriggerType, autostopDeviationPct, breakevenMode, targetProfitBufferTicks, aggrSlOnlyInProfit])
+    addStartedStrategy(resp)
+  }, [sim.sessionId, autostopTriggerType, autostopDeviationPct, breakevenMode, targetProfitBufferTicks, aggrSlOnlyInProfit, addStartedStrategy])
 
   const handleCancelAllStrategies = useCallback(async () => {
     if (!sim.sessionId) return
@@ -1803,12 +1810,12 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         risk_ratio_pct: riskRatioPct != null ? riskRatioPct / 100 : undefined,
         funds_ratio_pct: fundsRatioPct,
         quantity: quantity ?? undefined,
-      }).catch(error => setBrokerError(String(error)))
+      }).then(addStartedStrategy).catch(error => setBrokerError(String(error)))
     } else {
       setContextMenuOrderPick({ sessionId: sim.sessionId, paneId: ticket.paneId, side: ticket.side, orderType: ticket.orderType, slPrice: ticket.price, quantity, fundsRatioPct, riskRatioPct, targetProfitPct, right: ticket.right, strike: ticket.strike, expiry: ticket.expiry })
     }
     setContextMenuEntryTicket(null)
-  }, [instrumentType, sim.sessionInstrumentType, sim.sessionId, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, targetDeviationPct, autostopTriggerType, autostopDeviationPct])
+  }, [instrumentType, sim.sessionInstrumentType, sim.sessionId, sim.sessionType, sim.sessionStrikeCE, sim.sessionStrikePE, sim.sessionExpiry, sim.currentPrice, sim.currentPriceCE, sim.currentPricePE, sim.placeOrder, targetDeviationPct, autostopTriggerType, autostopDeviationPct, addStartedStrategy])
 
   // ── Context menu handler ───────────────────────────────────────────────────
   const handleChartContextMenu = useCallback((price: number, screenX: number, screenY: number, _ctx: {

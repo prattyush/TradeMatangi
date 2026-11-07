@@ -671,6 +671,8 @@ class StrategyResponse(ContractModel):
     strike: int | float | None = None
     expiry: str | None = None
     contract_key: str | None = None
+    # AutoStop only: older waiting AutoStops on the same contract that this one replaced.
+    replaced_strategy_ids: list[str] = []
 
 
 class CancelAllStrategiesRequest(ContractModel):
