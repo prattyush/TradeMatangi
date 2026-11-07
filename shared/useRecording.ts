@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { RecordingMetaRecorder, metaFileName, type RecordingClock, type RecordingSource } from './recordingMeta'
 
 export type RecordingState = 'idle' | 'requesting' | 'recording' | 'paused'
 
@@ -15,7 +16,13 @@ function pickMimeType(): string {
   return ''
 }
 
-export function useRecording() {
+const SAMPLE_INTERVAL_MS = 1000
+
+/**
+ * `clock` (optional) reports the sessions on screen so a `<video>.rec.json` file can be saved
+ * beside the video. It is read through a ref, so it may change on every render.
+ */
+export function useRecording(clock?: RecordingClock, source: RecordingSource = 'website') {
   const [recordingState, setRecordingState] = useState<RecordingState>('idle')
   const [recordingError, setRecordingError] = useState<string | null>(null)
 
@@ -23,6 +30,24 @@ export function useRecording() {
   const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const filenameRef = useRef<string>('TradeMatangi_recording.webm')
+  const clockRef = useRef<RecordingClock | undefined>(clock)
+  clockRef.current = clock
+  const metaRef = useRef<RecordingMetaRecorder | null>(null)
+  const samplerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopSampler = useCallback(() => {
+    if (samplerRef.current !== null) clearInterval(samplerRef.current)
+    samplerRef.current = null
+  }, [])
+
+  /** Metadata must never break recording: every call into it is guarded. */
+  const withMeta = useCallback((fn: (meta: RecordingMetaRecorder) => void) => {
+    try {
+      if (metaRef.current) fn(metaRef.current)
+    } catch {
+      // ignore
+    }
+  }, [])
 
   const triggerDownload = useCallback((chunks: Blob[], mimeType: string, filename: string) => {
     const blob = new Blob(chunks, { type: mimeType || 'video/webm' })
@@ -35,6 +60,20 @@ export function useRecording() {
     document.body.removeChild(a)
     setTimeout(() => URL.revokeObjectURL(url), 10_000)
   }, [])
+
+  const downloadMeta = useCallback((videoFilename: string) => {
+    const meta = metaRef.current
+    metaRef.current = null
+    if (!meta) return
+    try {
+      meta.stop()
+      const blob = new Blob([JSON.stringify(meta.toJSON())], { type: 'application/json' })
+      // Slight delay so the browser treats this as a separate download from the video.
+      setTimeout(() => triggerDownload([blob], 'application/json', metaFileName(videoFilename)), 400)
+    } catch {
+      // The video has already been saved; a missing metadata file is the only effect.
+    }
+  }, [triggerDownload])
 
   const stopRecording = useCallback(() => {
     const recorder = recorderRef.current
@@ -96,7 +135,9 @@ export function useRecording() {
       streamRef.current?.getTracks().forEach(t => t.stop())
       streamRef.current = null
       recorderRef.current = null
+      stopSampler()
       triggerDownload(chunksRef.current, mimeType, filenameRef.current)
+      downloadMeta(filenameRef.current)
       chunksRef.current = []
       setRecordingState('idle')
     }
@@ -112,25 +153,39 @@ export function useRecording() {
 
     recorder.start(1000) // collect data every second
     setRecordingState('recording')
-  }, [triggerDownload])
+
+    try {
+      const meta = new RecordingMetaRecorder({ source, videoFile: filename })
+      meta.start()
+      metaRef.current = meta
+      meta.sample(clockRef.current)
+      stopSampler()
+      samplerRef.current = setInterval(() => withMeta(m => m.sample(clockRef.current)), SAMPLE_INTERVAL_MS)
+    } catch {
+      metaRef.current = null
+    }
+  }, [triggerDownload, downloadMeta, stopSampler, withMeta, source])
 
   const pauseRecording = useCallback(() => {
     if (recorderRef.current?.state === 'recording') {
       recorderRef.current.pause()
+      withMeta(m => m.pause())
       setRecordingState('paused')
     }
-  }, [])
+  }, [withMeta])
 
   const resumeRecording = useCallback(() => {
     if (recorderRef.current?.state === 'paused') {
       recorderRef.current.resume()
+      withMeta(m => m.resume())
       setRecordingState('recording')
     }
-  }, [])
+  }, [withMeta])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (samplerRef.current !== null) clearInterval(samplerRef.current)
       const recorder = recorderRef.current
       if (recorder && recorder.state !== 'inactive') {
         recorder.stop()
