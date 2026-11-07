@@ -290,6 +290,18 @@ pub enum RunError {
     Failed(String),
 }
 
+/// Plain-language explanation for the ffmpeg failures people actually hit, or None for the rest.
+pub fn friendly_error(stderr: &str) -> Option<String> {
+    let t = stderr.to_lowercase();
+    let reasons: [(&[&str], &str); 4] = [
+        (&["no space left", "not enough space", "disk full"], "The disk is full. Free some space or choose another folder, then try again."),
+        (&["permission denied", "access is denied", "read-only file system"], "The app cannot write to that folder. Choose another folder."),
+        (&["no such file or directory", "could not find", "the system cannot find"], "ffmpeg could not find the recording or the output folder. Check that the files were not moved."),
+        (&["invalid data found", "moov atom not found", "end of file"], "The recording file looks damaged or incomplete."),
+    ];
+    reasons.iter().find(|(needles, _)| needles.iter().any(|n| t.contains(n))).map(|(_, text)| text.to_string())
+}
+
 fn last_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
@@ -342,7 +354,10 @@ pub fn run_ffmpeg(ffmpeg: &Path, args: &[String], control: &JobControl, on_out_t
     }
     match status {
         Some(Ok(st)) if st.success() => Ok(()),
-        Some(Ok(st)) => Err(RunError::Failed(format!("ffmpeg stopped with {st}.\n{}", last_lines(&stderr_text, 6)))),
+        Some(Ok(st)) => Err(RunError::Failed(match friendly_error(&stderr_text) {
+            Some(reason) => format!("{reason}\n\nDetails: {}", last_lines(&stderr_text, 2)),
+            None => format!("ffmpeg stopped with {st}.\n{}", last_lines(&stderr_text, 6)),
+        })),
         Some(Err(e)) => Err(RunError::Failed(format!("ffmpeg could not be waited on: {e}"))),
         None => Err(RunError::Failed("ffmpeg did not start".into())),
     }
@@ -443,6 +458,14 @@ pub fn validate_request(req: &VideoJobRequest) -> Result<(), String> {
     if !req.output.to_lowercase().ends_with(".mp4") {
         return Err("The output file must end in .mp4.".into());
     }
+    if let Some(parent) = Path::new(&req.output).parent().filter(|p| !p.as_os_str().is_empty()) {
+        if !parent.is_dir() {
+            return Err("The folder for the output file does not exist.".into());
+        }
+    }
+    if !Path::new(&req.input).is_file() {
+        return Err("The recording file was not found. Choose it again.".into());
+    }
     for w in &req.windows {
         if !(w.start_sec.is_finite() && w.end_sec.is_finite()) || w.start_sec < 0.0 || w.end_sec <= w.start_sec {
             return Err("A cut window has an invalid start or end.".into());
@@ -462,6 +485,25 @@ fn percent(done: f64, total: f64) -> f64 {
     }
 }
 
+pub const WORK_DIR_PREFIX: &str = ".trade-matangi-work-";
+
+/// Removes working folders left behind by a crash or a forced quit (older than `max_age`).
+pub fn remove_stale_work_dirs(folder: &Path, max_age: std::time::Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(folder) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with(WORK_DIR_PREFIX) || !entry.path().is_dir() {
+            continue;
+        }
+        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|age| age >= max_age).unwrap_or(false);
+        if old && std::fs::remove_dir_all(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// Runs a job to completion. Temporary files live in `work_dir`, which is removed before returning.
 pub fn run_job(
     ffmpeg: &Path,
@@ -471,6 +513,9 @@ pub fn run_job(
     on_progress: &mut dyn FnMut(Progress),
 ) -> Result<JobResult, RunError> {
     validate_request(req).map_err(RunError::Failed)?;
+    if let Some(folder) = Path::new(&req.output).parent().filter(|p| !p.as_os_str().is_empty()) {
+        remove_stale_work_dirs(folder, std::time::Duration::from_secs(24 * 3600));
+    }
     let outcome = run_job_inner(ffmpeg, req, work_dir, control, on_progress);
     let _ = std::fs::remove_dir_all(work_dir);
     if matches!(outcome, Err(_)) {
@@ -675,14 +720,25 @@ mod tests {
 
     #[test]
     fn request_validation() {
-        let ok = VideoJobRequest { input: "a.webm".into(), output: "b.mp4".into(), windows: vec![CutWindowReq { start_sec: 1.0, end_sec: 5.0 }], total_sec: None, crf: 23, prefer_hardware: false };
+        let dir = temp_dir("validate");
+        let input = dir.join("a.webm");
+        std::fs::write(&input, b"x").unwrap();
+        let input = input.to_string_lossy().into_owned();
+        let output = dir.join("b.mp4").to_string_lossy().into_owned();
+        let ok = VideoJobRequest { input: input.clone(), output: output.clone(), windows: vec![CutWindowReq { start_sec: 1.0, end_sec: 5.0 }], total_sec: None, crf: 23, prefer_hardware: false };
         assert!(validate_request(&ok).is_ok());
         let mut bad = ok.clone();
-        bad.output = "b.mkv".into();
+        bad.output = dir.join("b.mkv").to_string_lossy().into_owned();
         assert!(validate_request(&bad).unwrap_err().contains(".mp4"));
         let mut same = ok.clone();
-        same.output = "a.webm".into();
+        same.output = input.clone();
         assert!(validate_request(&same).is_err());
+        let mut no_folder = ok.clone();
+        no_folder.output = dir.join("missing").join("b.mp4").to_string_lossy().into_owned();
+        assert!(validate_request(&no_folder).unwrap_err().contains("folder"));
+        let mut no_input = ok.clone();
+        no_input.input = dir.join("nope.webm").to_string_lossy().into_owned();
+        assert!(validate_request(&no_input).unwrap_err().contains("not found"));
         let mut window = ok.clone();
         window.windows = vec![CutWindowReq { start_sec: 5.0, end_sec: 5.0 }];
         assert!(validate_request(&window).is_err());
@@ -692,6 +748,32 @@ mod tests {
         let mut empty = ok;
         empty.input = " ".into();
         assert!(validate_request(&empty).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn friendly_errors_for_common_failures() {
+        assert!(friendly_error("av_interleaved_write_frame(): No space left on device").unwrap().contains("disk is full"));
+        assert!(friendly_error("Error opening output: Permission denied").unwrap().contains("cannot write"));
+        assert!(friendly_error("x.webm: No such file or directory").unwrap().contains("could not find"));
+        assert!(friendly_error("Invalid data found when processing input").unwrap().contains("damaged"));
+        assert_eq!(friendly_error("something unexpected"), None);
+    }
+
+    #[test]
+    fn stale_work_folders_are_removed_but_recent_and_other_ones_are_kept() {
+        let dir = std::env::temp_dir().join(format!("tm-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(format!("{WORK_DIR_PREFIX}old"))).unwrap();
+        std::fs::create_dir_all(dir.join("other-folder")).unwrap();
+        std::fs::write(dir.join(format!("{WORK_DIR_PREFIX}file")), b"x").unwrap();
+        // Nothing is older than a day, so nothing goes.
+        assert_eq!(remove_stale_work_dirs(&dir, std::time::Duration::from_secs(86_400)), 0);
+        // Everything is older than zero seconds: only the matching folder goes.
+        assert_eq!(remove_stale_work_dirs(&dir, std::time::Duration::from_secs(0)), 1);
+        assert!(dir.join("other-folder").exists());
+        assert!(dir.join(format!("{WORK_DIR_PREFIX}file")).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -749,6 +831,51 @@ mod tests {
             crf: 28,
             prefer_hardware: false,
         }
+    }
+
+    /// Timing check on a longer 1080p recording. Run on demand:
+    /// `TM_PERF_SECONDS=600 cargo test --lib perf_long_recording -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn perf_long_recording() {
+        let Some(ffmpeg) = ffmpeg_or_skip() else { return };
+        let seconds: f64 = std::env::var("TM_PERF_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(300.0);
+        let dir = temp_dir("perf");
+        let input = dir.join("long.webm");
+        let started = std::time::Instant::now();
+        let status = base_command(&ffmpeg)
+            .args(["-hide_banner", "-y", "-f", "lavfi", "-i", &format!("testsrc2=size=1920x1080:rate=30:duration={seconds}"), "-f", "lavfi", "-i", &format!("sine=frequency=440:duration={seconds}")])
+            .args(["-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "3M", "-c:a", "libopus", "-f", "webm", "pipe:1"])
+            .stdout(std::fs::File::create(&input).unwrap())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        eprintln!("made a {seconds}s 1080p webm ({} MB) in {:.1}s", std::fs::metadata(&input).unwrap().len() / (1 << 20), started.elapsed().as_secs_f64());
+        // Three windows of 10% of the recording each.
+        let w = seconds / 10.0;
+        let windows = vec![(seconds * 0.1, seconds * 0.1 + w), (seconds * 0.4, seconds * 0.4 + w), (seconds * 0.7, seconds * 0.7 + w)];
+        let req = request(&input.to_string_lossy(), &dir, windows);
+        let started = std::time::Instant::now();
+        let mut last = 0.0;
+        let mut monotonic = true;
+        let result = run_job(&ffmpeg, &req, &dir.join("work"), &JobControl::default(), &mut |p| {
+            monotonic &= p.percent + 1e-9 >= last;
+            last = p.percent;
+        })
+        .expect("job failed");
+        let took = started.elapsed().as_secs_f64();
+        let kept = seconds * 0.3;
+        eprintln!("cut {kept:.0}s of {seconds:.0}s in {took:.1}s ({:.1}x real time on the kept part); progress monotonic: {monotonic}", kept / took);
+        let dur = media_duration(&ffmpeg, &result.output).unwrap();
+        assert!((dur - kept).abs() < 1.0, "expected about {kept}s, got {dur}");
+        let started = std::time::Instant::now();
+        let mut whole = request(&input.to_string_lossy(), &dir, vec![]);
+        whole.output = dir.join("whole.mp4").to_string_lossy().into_owned();
+        whole.total_sec = Some(seconds);
+        run_job(&ffmpeg, &whole, &dir.join("work2"), &JobControl::default(), &mut |_| {}).expect("convert failed");
+        eprintln!("converted the whole {seconds:.0}s in {:.1}s ({:.1}x real time)", started.elapsed().as_secs_f64(), seconds / started.elapsed().as_secs_f64());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
