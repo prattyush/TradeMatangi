@@ -1038,9 +1038,10 @@ class TestAutoStopLimit:
             StartStrategyRequest(session_id=SESSION, strategy_type='AutoStop', autostop_order_type='MARKET')
 
 
-# ── AutoStop: one waiting AutoStop per contract and direction ───────────────
+# ── AutoStop: one waiting AutoStop per contract, direction and entry type ───
 
 class TestAutoStopReplacement:
+    # Slot = contract + direction + entry type (AS = TARGET, ASL = LIMIT).
     def _start(self, session=None, *, mode='TARGET', right=None, strike=None, expiry=None, direction='BUY', quantity=1):
         from app.models.schemas import StartStrategyRequest
         from app.routers.strategies import start_strategy
@@ -1096,12 +1097,22 @@ class TestAutoStopReplacement:
         second = self._start(session, right='CE', strike=24000.0, expiry='2026-11-24')
         assert second.replaced_strategy_ids == [first.strategy_id]
 
-    def test_auto_stop_limit_replaces_auto_stop_on_the_same_contract(self):
+    def test_auto_stop_and_auto_stop_limit_coexist_on_the_same_contract(self):
         session = self._opts()
-        first = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='TARGET')
-        second = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='LIMIT')
-        assert second.replaced_strategy_ids == [first.strategy_id]
-        assert svc.list_running(SESSION)[0].metadata['autostop_order_type'] == 'LIMIT'
+        stop = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='TARGET')
+        limit = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='LIMIT')
+        assert stop.replaced_strategy_ids == [] and limit.replaced_strategy_ids == []
+        assert {s.strategy_id for s in svc.list_running(SESSION)} == {stop.strategy_id, limit.strategy_id}
+
+    def test_each_entry_type_replaces_only_its_own_kind(self):
+        session = self._opts()
+        stop = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='TARGET')
+        limit = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='LIMIT')
+        stop2 = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='TARGET', quantity=2)
+        limit2 = self._start(session, right='PE', strike=24000, expiry='2026-11-24', mode='LIMIT', quantity=3)
+        assert stop2.replaced_strategy_ids == [stop.strategy_id]
+        assert limit2.replaced_strategy_ids == [limit.strategy_id]
+        assert {s.strategy_id for s in svc.list_running(SESSION)} == {stop2.strategy_id, limit2.strategy_id}
 
     def test_equity_buy_and_sell_autostops_coexist(self):
         buy = self._start(direction='BUY')

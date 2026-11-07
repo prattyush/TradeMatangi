@@ -2295,7 +2295,7 @@ function ScreenController(props: ScreenControllerProps) {
     const started = await desktopTradingRequest<{ replaced_strategy_ids?: string[] }>(`${trading.session.session_id}/strategies/start`, 'POST', body)
     setTrading(await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET'))
     clearTradingError()
-    const replacedNote = started?.replaced_strategy_ids?.length ? ' It replaced the earlier Auto stop on this contract.' : ''
+    const replacedNote = started?.replaced_strategy_ids?.length ? ' It replaced the earlier one of the same kind on this contract.' : ''
     setTradingNotice(`${strategyType === 'AutoStop' ? (ticket?.orderType === 'AUTO_STOP_LIMIT' ? 'Auto stop limit' : 'Auto stop') : strategyType.replace(/([A-Z])/g, ' $1').trim()} started.${replacedNote}`)
   }
   const placeTicketOrder = async (ticket: TradeTicket, entryPrice?: number) => {

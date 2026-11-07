@@ -292,10 +292,10 @@ def test_desktop_second_autostop_on_a_contract_replaces_the_first(no_db):
                           "right": "CE", "contract_key": f"NIFTY:{session.expiry}:{strike}:CE"} for strike in (24100, 24200)}
     session.desktop_contracts.extend(contracts.values())
 
-    def start(strike, quantity=65):
+    def start(strike, quantity=65, mode="TARGET"):
         request = desktop_trading.DesktopStartStrategyRequest(
             session_id=session.session_id, strategy_type=StrategyType.AUTO_STOP,
-            right="CE", strike=strike, expiry=session.expiry, quantity=quantity, autostop_order_type="TARGET",
+            right="CE", strike=strike, expiry=session.expiry, quantity=quantity, autostop_order_type=mode,
         )
         return asyncio.run(desktop_trading.start_strategy(session.session_id, request, user_id=session.user_id))
 
@@ -303,11 +303,12 @@ def test_desktop_second_autostop_on_a_contract_replaces_the_first(no_db):
         with patch("app.services.strategy_service._write_strategy_to_db"):
             first = start(24100)
             other_strike = start(24200)
+            limit = start(24100, mode="LIMIT")
             second = start(24100, quantity=130)
-        assert first.replaced_strategy_ids == [] and other_strike.replaced_strategy_ids == []
+        assert first.replaced_strategy_ids == [] and other_strike.replaced_strategy_ids == [] and limit.replaced_strategy_ids == []
         assert second.replaced_strategy_ids == [first.strategy_id]
         running = {item.strategy_id: item for item in strategy_service.list_running(session.session_id)}
-        assert set(running) == {other_strike.strategy_id, second.strategy_id}
+        assert set(running) == {other_strike.strategy_id, limit.strategy_id, second.strategy_id}
         assert running[second.strategy_id].metadata["quantity"] == 130
     finally:
         strategy_service._registry.pop(session.session_id, None)
