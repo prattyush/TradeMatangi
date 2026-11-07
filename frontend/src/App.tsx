@@ -51,6 +51,7 @@ import { useSimulation, InstrumentConfig } from './hooks/useSimulation'
 import { useMultiSSE } from './hooks/useSSE'
 import { activeSessionSubscriptions } from './services/sessionSubscriptions'
 import { useRecording } from './hooks/useRecording'
+import { websiteRecordingSessions } from '../../shared/recordingClocks'
 import { useSnapshot } from './hooks/useSnapshot'
 import api, { ApiError, OHLCCandle } from './services/api'
 import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/optionsRoc'
@@ -234,7 +235,14 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   const [workspaceRestoreError, setWorkspaceRestoreError] = useState<string | null>(null)
   const [workspaceRestoreAttempt, setWorkspaceRestoreAttempt] = useState(0)
   const workspaceReadySessionRef = useRef<string | null>(null)
-  const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording()
+  // Clock for the `.rec.json` saved beside each recording. Read through a ref inside the hook.
+  const recordingClock = useCallback(() => websiteRecordingSessions({
+    sessionId: sim.sessionId, sessionState: sim.sessionState, sessionType: sim.sessionType,
+    symbol: sim.symbol, date: sim.date,
+    tickTimes: [sim.latestEquityTick?.time, sim.latestCETick?.time, sim.latestPETick?.time],
+    candleSeconds: stratIntervalSecsRef.current, speed: sim.group?.speed, stepwise: sim.stepwise,
+  }), [sim.sessionId, sim.sessionState, sim.sessionType, sim.symbol, sim.date, sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.group?.speed, sim.stepwise])
+  const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording(recordingClock, 'website')
   const simRef = useRef(sim)
   const { snapshotActive, startSnapshots, stopSnapshots, captureSnapshot, notifyCommit } = useSnapshot(simRef)
   // Keep simRef in sync with latest sim state for useSnapshot; tell it a commit has landed so
@@ -262,6 +270,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   }, [authUser.userId])
   const [brokeragePerOrder, setBrokeragePerOrder] = useState(loadBrokeragePerOrder)
   const [stratIntervalSecs, setStratIntervalSecs] = useState(loadStrategyIntervalSecs)
+  const stratIntervalSecsRef = useRef(stratIntervalSecs)
+  stratIntervalSecsRef.current = stratIntervalSecs
   const [autostopTriggerType, setAutostopTriggerType] = useState(loadAutostopTriggerType)
   const [autostopDeviationPct, setAutostopDeviationPct] = useState(loadAutostopDeviationPct)
   const [breakevenMode, setBreakevenMode] = useState(loadBreakevenMode)

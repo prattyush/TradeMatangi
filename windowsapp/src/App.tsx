@@ -21,6 +21,7 @@ import { SymbolSearch } from '../../shared/SymbolSearch'
 import { mergeRealTradingDayStatus } from "../../frontend/src/services/realTradingDayState"
 import type { RealTradingDayStatus } from "../../frontend/src/services/api"
 import { useRecording } from "../../shared/useRecording"
+import { desktopRecordingSessions } from "../../shared/recordingClocks"
 import { requiredContracts, primaryLinkedScreen } from "./sessionContracts"
 import { premiumPresetsFor } from '../../shared/optionPremiumPresets'
 import { BoundedHistoryCache, mergeHistory, oldestDate, type UnderlyingHistoryPage } from './historyPaging'
@@ -834,7 +835,15 @@ function ScreenController(props: ScreenControllerProps) {
     if(!props.assignedId&&props.selectedId===activeScreenId&&Number.isInteger(days)&&days>=0&&days<=5)props.onAnalysisContextDays(days)
   },[sharedPreferences,props.assignedId,props.selectedId,activeScreenId,props.onAnalysisContextDays])
   const [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [loginError, setLoginError] = useState(''), [mode, setMode] = useState<DesktopMode>(initial?.mode ?? 'Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState(initial?.run_date ?? screens.find(screen => screen.id === activeScreenId)?.tiles[0]?.tradingDate ?? paperMarketDate()), [runStartTime, setRunStartTime] = useState(initial?.start_time ?? '09:15'), [replaySpeed, setReplaySpeed] = useState(initial?.speed ?? '1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
-  const { recordingState, recordingError, startRecording, stopRecording, pauseRecording, resumeRecording } = useRecording()
+  // Clock for the `.rec.json` saved beside each recording. A plain closure: the hook reads it through a
+  // ref when it samples, so it always sees the current screen state (declared further down).
+  const { recordingState, recordingError, startRecording, stopRecording, pauseRecording, resumeRecording } = useRecording(() => {
+    const intervals = activeScreen.tiles.map(tile => Number(tile.interval) * 60).filter(value => Number.isFinite(value) && value > 0)
+    return desktopRecordingSessions({
+      session: trading?.session, mode, nowMs: Date.now(), candleSeconds: intervals.length ? Math.min(...intervals) : undefined,
+      replayCursor: replay && replay.state !== 'stopped' ? replay.cursor : null, sessionTime: trading?.current_time,
+    })
+  }, 'desktop')
   const [snapshotsActive, setSnapshotsActive] = useState(false)
   const snapshotsActiveRef = useRef(false)
   snapshotsActiveRef.current = snapshotsActive
