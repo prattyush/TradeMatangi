@@ -6,8 +6,8 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 
 | Sprint | Scope | Branch target | Status |
 |---|---|---|---|
-| 0 | Docs and plan | dev | In PR |
-| 1 | Recorder metadata (`.rec.json`) | dev AND preprod (same branch, two PRs) | Not started |
+| 0 | Docs and plan | dev | Merged (#780) |
+| 1 | Recorder metadata (`.rec.json`) | dev AND preprod (same branch, two PRs) | Merged to both (#781 preprod, #782 dev). Manual check in `docs/recording-metadata.md` pending |
 | 2 | Timeline, cut plan, chapters (pure logic) | dev | Not started |
 | 3 | Rust: ffmpeg job, file picker, packaging | dev | Not started |
 | 4 | Tools menu and Video Maker UI | dev | Not started |
