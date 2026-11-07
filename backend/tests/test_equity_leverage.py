@@ -434,6 +434,63 @@ def test_failed_paper_subscription_does_not_register_contract(monkeypatch):
     assert session.strike_ce is None
 
 
+def _attach_with_hub(monkeypatch, adapter, session_type="paper"):
+    """Run the real attach_contract + feed subscription against a fake market-data hub."""
+    from app.services import market_data
+    session = _equity_session()
+    session.session_type = session_type
+    session.paper_stream_source = "kite"
+    monkeypatch.setattr(desktop_trading.simulation_router, "_ensure_options_data", lambda *args: None)
+    hub = market_data.MarketDataHub(adapter)
+    monkeypatch.setattr(market_data, "get_hub", lambda: hub)
+    contract = desktop_trading.AttachContractRequest(symbol=session.symbol, right="CE", strike=400, expiry="2026-05-07")
+    return session, contract
+
+
+@pytest.mark.parametrize("session_type", ["paper", "real"])
+def test_desktop_attach_reports_feed_failure_and_registers_nothing(monkeypatch, session_type):
+    from fastapi import HTTPException
+    class Adapter:
+        async def open(self, selected, instrument, delivery, loop):
+            raise RuntimeError("feed down")
+    session, contract = _attach_with_hub(monkeypatch, Adapter(), session_type)
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(desktop_trading.attach_contract(SESSION, contract, USER))
+    assert caught.value.status_code == 503
+    assert not session.desktop_contracts
+    assert session.strike_ce is None
+    assert session.desktop_option_subscriptions == {}
+
+
+def test_desktop_attach_registers_contract_once_feed_is_live(monkeypatch):
+    provider = Mock()
+    class Adapter:
+        async def open(self, selected, instrument, delivery, loop):
+            return provider.stop
+    session, contract = _attach_with_hub(monkeypatch, Adapter())
+    async def run():
+        await desktop_trading.attach_contract(SESSION, contract, USER)
+        return dict(session.desktop_option_subscriptions)
+    subscriptions = asyncio.run(run())
+    assert session.desktop_contracts[0]["strike"] == 400
+    assert session.strike_ce == 400
+    assert [entry[0] for entry in subscriptions.values()] == ["hub"]
+
+
+def test_desktop_attach_times_out_a_hung_feed_without_registering(monkeypatch):
+    from fastapi import HTTPException
+    monkeypatch.setattr(desktop_trading, "CONTRACT_SUBSCRIBE_TIMEOUT", 0.05)
+    class Adapter:
+        async def open(self, selected, instrument, delivery, loop):
+            await asyncio.sleep(30)
+    session, contract = _attach_with_hub(monkeypatch, Adapter())
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(desktop_trading.attach_contract(SESSION, contract, USER))
+    assert caught.value.status_code == 503
+    assert not session.desktop_contracts
+    assert session.desktop_option_subscriptions == {}
+
+
 @pytest.mark.parametrize("maxsize_mode", ["percentage", "value"])
 @pytest.mark.parametrize("mode", ["sim", "stepwise", "paper"])
 @pytest.mark.parametrize("side", [TradeSide.BUY, TradeSide.SELL])

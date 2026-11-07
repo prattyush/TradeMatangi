@@ -3,6 +3,14 @@
 This document has the bugs which are found while testing. They are divided at Phase wise.
 Look at each of the bugs, fix them and then mark them resolved as well if approved manually. Do get manual approval against each bug to resolve it.
 
+## Real Trading (website) — Open Issues
+
+**[OPEN — HIGH PRIORITY]** `update-pane-strike` swaps a side's strike with no open-risk guard (found 2026-11-06).
+- **Symptom / risk**: `PUT /api/simulation/{id}/update-pane-strike` (called when a CE/PE pane is added at a different strike while a session runs, `frontend/src/App.tsx` add-pane, and when a saved workspace layout is restored) runs the same `_apply_session_strike` swap as the ⟳ Strike button but skips `_side_open_risk`. With an open position, order or strategy on that side, the session moves to the new strike, ticks stop for the old contract and its stoploss / limit orders / P&L / EOD auto-close silently stop being tracked. This is also the only way to end up with two open contracts on one side.
+- **Why it was left out of the preprod fix**: guarding it changes add-pane and workspace-restore behaviour in real trading (a wrongly computed "open" state would make the add/restore fail, and the frontend only `console.error`s that), so it was not put on `preprod`. Plan: implement on `dev`, with the guard failing closed only for the strike swap (never for orders/exits), a visible error in the UI instead of a console log, and tests for add-pane and restore with and without open risk.
+- **Already fixed (preprod PR "per-contract open-risk guard")**: `_side_open_risk` used to net positions per right (long 24000 PE + short 24100 PE read as flat); it now checks every contract on the side (trades and broker positions), so the ⟳ Strike button refuses correctly.
+- **Still not covered**: the guard reads only the app's in-memory positions/orders/strategies (not broker-only state beyond `broker_positions`) and is not atomic with the swap (an order placed between the check and the swap slips through).
+
 ## Desktop Live Diagnostics
 
 ### Open Bugs

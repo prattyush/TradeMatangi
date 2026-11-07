@@ -1,3 +1,4 @@
+import { strikeRuleFromStart, type StrikeRule } from '../strikeRule'
 import { SymbolSearch } from '../../../shared/SymbolSearch'
 import { premiumPresetsFor as thresholdValuesFor, withSavedPremium } from '../../../shared/optionPremiumPresets'
 import { useFlashError } from '../hooks/useFlashError'
@@ -40,6 +41,8 @@ export interface OptionsReadyConfig {
   expiry: string
   atmStrike: number
   underlyingPrice: number
+  /** How the strikes were picked at start; reused by the per-pane Re-select button. */
+  strikeRule?: StrikeRule
 }
 
 const row: CSSProperties = { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }
@@ -250,11 +253,11 @@ export default function SessionControls({
           const strikeMode = (localStorage.getItem('maxPriceMode') ?? 'otm')
           const isIndex = currentSymbol === 'NIFTY' || currentSymbol === 'BSESEN'
           let ceStrike: number, peStrike: number
+          const defaultThreshold = String(thresholdValuesFor(currentSymbol)[0] ?? 50)
+          const thresholdCE = parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? defaultThreshold)
+          const thresholdPE = parseFloat(localStorage.getItem('maxPriceThresholdPE') ?? defaultThreshold)
 
           if (isIndex && strikeMode === 'threshold') {
-            const defaultThreshold = String(thresholdValuesFor(currentSymbol)[0] ?? 50)
-            const thresholdCE = parseFloat(localStorage.getItem('maxPriceThresholdCE') ?? defaultThreshold)
-            const thresholdPE = parseFloat(localStorage.getItem('maxPriceThresholdPE') ?? defaultThreshold)
             const refTime = isLiveSession ? getCurrentIstTime() : startTime
             const [ceRes, peRes] = await Promise.all([
               api.findStrikeByPrice(currentSymbol, currentDate, expiryRes.expiry, 'CE', thresholdCE, refTime, isLiveSession ? 'live' : 'replay'),
@@ -273,6 +276,7 @@ export default function SessionControls({
             expiry: expiryRes.expiry,
             atmStrike,
             underlyingPrice: priceRes.price,
+            strikeRule: strikeRuleFromStart(isIndex, strikeMode, optionsOffset, thresholdCE, thresholdPE),
           }
           onOptionsReady(cfg)
           config = {

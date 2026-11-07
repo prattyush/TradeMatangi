@@ -13,6 +13,7 @@ from app.models.schemas import (
     SimulationStatusResponse,
     SimulationState,
     UpdatePaneStrikeRequest,
+    ReselectStrikeRequest,
     SessionGroupResponse,
     SessionGroupMember,
     RenameSessionGroupMemberRequest,
@@ -800,6 +801,19 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
         raise HTTPException(status_code=400, detail="Session is not an options session")
     if req.right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=400, detail="right must be CE or PE")
+    await _apply_session_strike(session, req.right.upper(), req.strike)
+    return {"session_id": session_id, "right": req.right.upper(), "strike": req.strike}
+
+
+async def _apply_session_strike(session, right: str, strike: int | float) -> None:
+    """Swap the streaming CE/PE strike of a running options session.
+
+    Shared by ``update_pane_strike`` and ``reselect_strike``. Caches the new
+    strike's data, updates the session, and re-subscribes the live feed (rolling
+    back and raising 502 if the website-paper re-subscribe fails).
+    """
+    session_id = session.session_id
+    req = UpdatePaneStrikeRequest(right=right, strike=strike)
 
     # Run blocking data fetch in a thread pool so the event loop (and Phase 3 tick
     # processing) is not frozen while Breeze/parquet I/O happens.
@@ -873,7 +887,20 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
         session.paper_base_contracts[right] = {"strike": req.strike, "expiry": session.expiry}
         sim_svc._upsert_session_to_db(session)
     elif hasattr(getattr(session, "stream_manager", None), "replace_right"):
-        await session.stream_manager.replace_right(req.right.upper())
+        # Managed live feed (real sessions, and paper sessions started on it). `replace_right` subscribes the new
+        # contract before closing the old one, so on failure the old subscription is still live: put the session
+        # back on the old strike instead of leaving it pointing at a contract that has no ticks.
+        try:
+            await session.stream_manager.replace_right(right)
+        except Exception as exc:
+            if right == "CE":
+                session.strike_ce = old_strike
+                session.last_price_ce = old_price
+            else:
+                session.strike_pe = old_strike
+                session.last_price_pe = old_price
+            logger.exception("update_pane_strike: live feed switch failed for %s %s", session_id, right)
+            raise HTTPException(status_code=502, detail="Unable to stream the selected option contract") from exc
     elif session.session_type in ("paper", "real"):
         # Keep non-website subscription behavior unchanged.
         try:
@@ -883,7 +910,106 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
         except Exception as exc:
             logger.warning("update_pane_strike: Kite re-subscribe failed for session %s right=%s: %s", session_id, right, exc)
 
-    return {"session_id": session_id, "right": req.right.upper(), "strike": req.strike}
+
+def _side_open_risk(session, right: str) -> str | None:
+    """Return a human-readable reason if the CE/PE side still has open risk.
+
+    Changing a side's strike stops ticks for the old contract, so its SL/limit
+    orders, P&L and EOD auto-close would silently die. Block instead.
+    """
+    from app.services import order_service, strategy_service, trading as trading_service
+    # Check every contract on this side on its own. Netting the whole side hides two open contracts at
+    # different strikes (e.g. long 24000 PE + short 24100 PE reads as flat) although both still need their ticks.
+    contracts = {(trade.strike if trade.strike is None else strike_number(trade.strike), trade.expiry)
+                 for trade in trading_service.get_trades(session.session_id)
+                 if trade.symbol == session.symbol and trade.right == right}
+    contracts |= {(item.get("strike") if item.get("strike") is None else strike_number(item["strike"]), item.get("expiry"))
+                  for item in (getattr(session, "broker_positions", None) or [])
+                  if item.get("right") == right}
+    for strike, expiry in sorted(contracts, key=lambda c: (c[0] is None, c[0] or 0, c[1] or "")):
+        position = trading_service.get_position(session.session_id, session.symbol, right=right,
+                                                strike=strike, expiry=expiry, exact_contract=True)
+        if position.side != "FLAT" and position.quantity > 0:
+            label = f"{right} {strike}" if strike is not None else right
+            return f"Close the open {label} position before re-selecting its strike"
+    for order in order_service.get_open_orders(session.session_id):
+        if (order.right or "").upper() == right:
+            return f"Cancel the open {right} order(s) before re-selecting its strike"
+    for strategy in strategy_service.list_running(session.session_id):
+        if strategy.right == right:
+            return f"Cancel the running {right} strategy before re-selecting its strike"
+    return None
+
+
+def _reselect_reference(session) -> tuple[str, str, str]:
+    """(history mode, date, HH:MM:SS) for the strike scan: live clock or session clock."""
+    from zoneinfo import ZoneInfo
+    if session.session_type in ("paper", "real"):
+        now = datetime.now(ZoneInfo("Asia/Kolkata"))
+        return session.session_type, now.date().isoformat(), now.strftime("%H:%M:%S")
+    if session.current_time:
+        ref = datetime.fromtimestamp(int(session.current_time), timezone.utc).strftime("%H:%M:%S")
+    else:
+        ref = session.start_time if len(session.start_time) == 8 else f"{session.start_time}:00"
+    return "replay", session.date, ref
+
+
+@router.post("/{session_id}/reselect-strike")
+async def reselect_strike(session_id: str, req: ReselectStrikeRequest, user_id: str = Depends(get_request_user_id)):
+    """Re-select ONE side's strike (CE or PE) at the current time.
+
+    Uses the same rule the user picked at session start (OTM offset or Max Price
+    cap). Refuses (409) while that side has an open position, order or strategy.
+    """
+    session = sim_svc.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Session does not belong to this user")
+    if session.instrument_type != "options" or not session.expiry:
+        raise HTTPException(status_code=400, detail="Session is not an options session")
+    if getattr(session, "trading_style", "intraday") == "swing":
+        raise HTTPException(status_code=409, detail="Strike re-selection is not available for Swing sessions")
+    if session.state not in (SimulationState.RUNNING, SimulationState.PAUSED):
+        raise HTTPException(status_code=409, detail="Session is not running")
+
+    right = req.right
+    reason = _side_open_risk(session, right)
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
+
+    from app.services import options_service
+    old_strike = session.strike_ce if right == "CE" else session.strike_pe
+    if req.mode == "max_price":
+        if session.symbol not in ("NIFTY", "BSESEN"):
+            raise HTTPException(status_code=422, detail="Max Price selection is available for index options only")
+        if not req.max_price:
+            raise HTTPException(status_code=422, detail="Max Price requires a positive premium cap")
+        from app.services.desktop_preparation import prepare
+        from app.services.history_workers import run_history
+        mode, date, ref_time = _reselect_reference(session)
+        pane = {"id": "reselect", "kind": "option", "symbol": session.symbol, "expiry": session.expiry,
+                "right": right, "selection_mode": "max_price", "max_price": req.max_price}
+        try:
+            result = await run_history(prepare, mode, date, ref_time, [pane])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        item = result["panes"][0]
+        if item["availability"] not in ("available", "waiting"):
+            raise HTTPException(status_code=422, detail=item["reason"] or "Could not select a strike")
+        new_strike = strike_number(item["pane"]["strike"])
+    else:
+        underlying = session.last_price if session.last_price and session.last_price > 0 else 0
+        if underlying <= 0:
+            raise HTTPException(status_code=409, detail="No underlying price yet; try again after the next tick")
+        offset = req.otm_offset if right == "CE" else -req.otm_offset
+        new_strike = options_service.get_atm_strike(session.symbol, underlying, offset)
+
+    if old_strike is not None and strike_number(old_strike) == strike_number(new_strike):
+        return {"session_id": session_id, "right": right, "strike": old_strike, "expiry": session.expiry, "changed": False}
+
+    await _apply_session_strike(session, right, new_strike)
+    return {"session_id": session_id, "right": right, "strike": new_strike, "expiry": session.expiry, "changed": True}
 
 
 @router.post("/stop")
