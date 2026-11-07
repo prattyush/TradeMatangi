@@ -14,6 +14,13 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 - **Still open (medium)**: `update_pane_strike` has no user-ownership check (unlike `reselect_strike`, which returns 403 for another user's session); adding one changes the endpoint signature and needs its own small PR. The guard reads only the app's own positions/orders/strategies plus `broker_positions`, not anything that exists only at the broker.
 - **Already fixed earlier (PR #769)**: `_side_open_risk` used to net positions per right (long 24000 PE + short 24100 PE read as flat); it now checks every contract on the side.
 
+**[OPEN — dev only, found 2026-11-07]** The ⟳ Strike button is not available on the KLine renderer (website).
+- `onReselectStrike` is wired only for the Lightweight `Chart.tsx`. When the chart renderer is "kline" (`TradingChartHost` → `WebsiteKLineChart`) there is no ⟳ Strike control, so a KLine user cannot re-select the strike. Not a regression of the #768/#769 fixes (the backend guard is unchanged); it is a feature-parity gap. Real trading on `preprod`/`main` has no KLine renderer. Build only if asked.
+
+**[OPEN — test debt, found 2026-11-07, not caused by recent changes]** Tests failing identically on `preprod`, `main` and `dev`:
+- `frontend/src/services/positionAccounting.test.mjs` "chart and panel share the same net P&L and capital percentage" asserts the pre-`1bf955d` exit-fee constant (`.001333`); `positionAccounting.ts` uses the statutory formula `(0.15 + 1.18 × 0.03563) / 100`. The code matches the backend formula; the test expectation is stale.
+- Backend swing tests (date dependent): `test_swing_api.py::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime.py::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation.py::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]` (a 4th, `test_swing_paper_recovery`, was fixed on `dev` by pinning the clock).
+
 ## Desktop Live Diagnostics
 
 ### Open Bugs

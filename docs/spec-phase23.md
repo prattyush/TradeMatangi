@@ -395,6 +395,8 @@ Phase 23 landed on `dev` as one merge commit per sprint, so there are natural cu
 
 Real-trading-relevant items to test there: desktop real-session label state, real-day alias handling in the Habits ledger, and the live-labeling popups.
 
+**Branch state (2026-11-07):** `preprod` (real-trading fixes #768 strike rollback and desktop attach, #769 per-contract ⟳ Strike guard, #770 `update-pane-strike` guard) was merged into `dev` by a sync PR, so `dev` contains every `preprod`/`main` fix and a dev→preprod merge has no conflicts. The history chain (#730 → revert → #747 → #748) is in `CLAUDE.md`. Promote a pinned snapshot branch, not the moving `dev`.
+
 **Bug fix for `preprod`:** the pause/resume label-tracking reset (§11.2) also exists on `preprod` (`App.tsx` resets on every `running`). By the branch rules it should be fixed on `preprod` first and synced into `dev`; it is currently only fixed on `dev`.
 
 ### 11.6 Manual acceptance
