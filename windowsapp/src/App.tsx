@@ -56,6 +56,7 @@ import { mergeScreenDraft, screenContentKey, type ScreenDraft } from './screenCo
 import { enqueueScreenSave, saveScreenRecord } from './screenSave'
 
 const DesktopAnalysis = lazy(() => import('./DesktopAnalysis'))
+const ToolsView = lazy(() => import('./tools/ToolsView'))
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
 interface Instrument { symbol: string; display_name: string; exchange: string; chart_type?: string; option_eligible: boolean; supported_intervals: number[] }
@@ -526,10 +527,11 @@ export default function App() {
   const [messageHistory, setMessageHistory] = useState<HistoryRequest | null>(null)
   useEffect(() => startPerformanceDiagnostics(), [])
   const assignedId = new URLSearchParams(window.location.search).get('screen_id')
-  const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing'>('Workspace')
+  const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing' | 'Tools'>('Workspace')
   const [analysisPortfolio,setAnalysisPortfolio]=useState<string|undefined>()
   useEffect(()=>{if(assignedId||!('__TAURI_INTERNALS__' in window))return;let cancelled=false;const listener=listen<{portfolioId:string}>('desktop-swing-analysis',event=>{if(!cancelled&&[...navigationGuards.current.values()].every(guard=>guard())){setAnalysisPortfolio(event.payload.portfolioId);setAnalysisVisited(true);setMainTab('Analysis')}});return()=>{cancelled=true;void listener.then(stop=>stop())}},[])
   const [analysisVisited, setAnalysisVisited] = useState(false)
+  const [toolsVisited, setToolsVisited] = useState(false)
   const [analysisContextDays,setAnalysisContextDays] = useState(2)
   const [screens, setScreens] = useState<Screen[]>([newScreen(1)])
   const setDayScreens=useCallback((update:Screen[]|((previous:Screen[])=>Screen[]))=>setScreens(previous=>updateDayScreens(previous,update)),[])
@@ -796,15 +798,15 @@ export default function App() {
     }
   };
   const viewSelector = <>{!assignedId && connection !== 'authentication_required' ? <select
-    className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace and Analysis"
+    className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace, Analysis, Swing and Tools"
     value={mainTab} onChange={event => {
       if(!mayNavigate())return;
-      const view=event.target.value as 'Workspace'|'Analysis'|'Swing'
-      const change=()=>{if(view==='Analysis'){setAnalysisPortfolio(undefined);setAnalysisVisited(true)}setMainTab(view)}
+      const view=event.target.value as 'Workspace'|'Analysis'|'Swing'|'Tools'
+      const change=()=>{if(view==='Analysis'){setAnalysisPortfolio(undefined);setAnalysisVisited(true)}if(view==='Tools')setToolsVisited(true);setMainTab(view)}
       if(mainTab==='Swing'&&view!=='Swing')void bounded(Promise.resolve(saveHandlers.current.get('swing-primary')?.()),SAVE_TIMEOUT_MS).then(change).catch(cause=>setSwingWindowError(String(cause)))
       else change()
     }}
-  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option></select> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
+  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option><option value="Tools">Tools</option></select> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
   if(windowClosing)return null;
   return <div>
     <div className="desktop-messages"><NotificationCenter source="Desktop" request={messageHistory} onRequestChange={setMessageHistory} showLauncher={connection === 'authentication_required' || loadFailed} /></div>
@@ -820,6 +822,7 @@ export default function App() {
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection!=='connected' && <main><p>{connection==='authentication_required'?'Sign in in the main window to reconnect this portfolio.':'Waiting for the backend connection. The portfolio stays attached to its saved book.'}</p><button onClick={()=>void invoke('focus_main_window')}>Main window</button></main>}
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${assignedId}`} navigationControls={<><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button><NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>} request={swingRequest} subscribe={swingSubscribe} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
     {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis onNavigationReady={guard=>registerNavigationGuard("analysis",guard)} initialPortfolioId={analysisPortfolio} viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
+    {!assignedId && toolsVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Tools…</p>}><ToolsView key={`${serverUrl}:${browserToken}`} viewSelector={viewSelector} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} active={mainTab === 'Tools'} /></Suspense>}
   </div>
 }
 

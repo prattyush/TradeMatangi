@@ -9,8 +9,8 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 | 0 | Docs and plan | dev | Merged (#780) |
 | 1 | Recorder metadata (`.rec.json`) | dev AND preprod (same branch, two PRs) | Merged to both (#781 preprod, #782 dev). Manual check in `docs/recording-metadata.md` pending |
 | 2 | Timeline, cut plan, chapters (pure logic) | dev | Merged (#784) |
-| 3 | Rust: ffmpeg job, file picker, packaging | dev | In PR |
-| 4 | Tools menu and Video Maker UI | dev | Not started |
+| 3 | Rust: ffmpeg job, file picker, packaging | dev | Merged (#785). Installer 238 MB vs 211 MB before (+27 MB) |
+| 4 | Tools menu and Video Maker UI | dev | In PR |
 | 5 | Hardening and acceptance | dev | Not started |
 | 6 | Promote the tool to preprod | on request only | Not started |
 
@@ -159,3 +159,12 @@ Uploading to YouTube, a video preview player or editor, older recordings without
 - Packaging: `scripts/fetch-ffmpeg.py` downloads the pinned GPL "essentials" build (Gyan Doshi, FFmpeg 9.0.2), checks its SHA-256, and installs `src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe` plus the licence (ignored by git). `src-tauri/tauri.ffmpeg.conf.json` adds the sidecar and licence files to the installer and is used only by the CI build, so `cargo test` and `tauri dev` need no binary. `src-tauri/licenses/FFMPEG-NOTICE.txt` gives the licence, build and source links.
 - Tests: 15 new cargo tests (pure builders and parsers, plus four that run a real ffmpeg: cut and join, convert without audio, cancel, not-a-video; skipped when no ffmpeg is installed).
 - Installer size: recorded after the first CI build.
+
+## Sprint 4 as built
+
+- `windowsapp/src/tools/ToolsView.tsx`: the Tools view (tool list on the left, tool on the right). Added to the desktop view selector in `App.tsx` as `Tools`, lazy-loaded and kept mounted once visited, main window only, in the same way as Analysis.
+- `windowsapp/src/tools/VideoMaker.tsx`: three steps. (1) Choose the recording (the `.rec.json` beside it is read; if it is missing the user is asked for it). (2) Choose the sessions (or all), the candle interval and an optional shift in seconds; the plan table, the kept-parts bar and the chapter list update as these change. (3) Choose "Cut to my trades" or "Convert the whole recording", where to save, then Make video with progress and Cancel; the result has "Show in folder", and the description (editable, Copy button) is also saved as `<video>_description.txt`.
+- Trades come from the existing `round-trips` analysis route through `createAnalysisApi`, for the session ids stored in the `.rec.json`. If the connected server does not have them, a message names the server.
+- Logic that can be tested without a window is in `windowsapp/src/tools/videoMakerModel.ts` (metadata parsing and checks, plan building, job request, start rules, job-event reducer).
+- No backend change was needed: the candle interval comes from the recording (and can be changed in the screen).
+- Checked in a browser with a mocked desktop backend (layout, flow, progress, description); not yet run in the real Windows app. See `docs/phase24-manual-acceptance.md`.
