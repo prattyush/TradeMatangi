@@ -18,7 +18,8 @@ import { _authHeaders } from '../services/api'
 import { useFlashError } from '../hooks/useFlashError'
 import { clearChartDataCache } from '../services/chartDataCache'
 import { Fragment, useCallback, useState, useEffect, useRef } from 'react'
-import api, { ApiError, type UserSettingsResponse } from '../services/api'
+import api, { ApiError, type GuardRailSettings, type UserSettingsResponse } from '../services/api'
+import { cacheSharedSettings } from '../services/sharedSettings'
 import KotakTOTPModal from './KotakTOTPModal'
 import { RocRatioMode } from '../indicators/optionsRoc'
 
@@ -540,6 +541,179 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   useFlashError(pwStatus && !pwStatus.ok ? pwStatus.msg : null, 'Password')
   const [pwLoading, setPwLoading] = useState(false)
 
+  // Applies the signed-in user's server settings to the UI state and to the localStorage cache that
+  // order panels, start-option rules, sizing and strategy defaults read. Used when the modal opens and once at login.
+  const applyUserSettings = (s: UserSettingsResponse, guardrails: GuardRailSettings) => {
+    setBrokerageInput(String(s.brokerage_per_order ?? 1))
+    onBrokerageChange(s.brokerage_per_order ?? 1)
+    const interval = s.strategy_interval_secs ?? 180
+    const trigger = s.autostop_trigger_type ?? 'bar'
+    const deviation = s.autostop_deviation_pct ?? 1
+    const breakeven = s.breakeven_mode ?? 'shift_sl'
+    const buffer = s.target_profit_buffer_ticks ?? 3
+    const profitOnly = s.aggr_sl_only_in_profit ?? false
+    setStratIntervalSecs(interval); setAutostopTriggerType(trigger); setAutostopDeviationPctInput(String(deviation))
+    setBreakevenMode(breakeven); setTargetProfitBufferTicks(buffer); setAggrSlOnlyInProfit(profitOnly)
+    onStrategySettingsChange(interval, trigger, deviation, breakeven, buffer, profitOnly)
+    setTradingRocRatioMode(s.trading_roc_ratio_mode ?? 'normalized')
+    onTradingIndicatorSettingsChange?.(s.trading_roc_ratio_mode ?? 'normalized')
+    setAutoStartSnapshots(s.auto_start_event_snapshots ?? false)
+    onAutoStartSnapshotsChange?.(s.auto_start_event_snapshots ?? false)
+    const labels = s.trade_labeling_mode_by_type ?? DEFAULT_LABELING_MODE_BY_TYPE
+    setLabelingModeByType(labels); onLabelingModeChange?.(labels)
+    setStepwiseLabelingPopup(labels.stepwise !== 'off'); onStepwiseLabelingPopupChange?.(labels.stepwise !== 'off')
+    onHistoricalDaysChange?.(s.historical_days)
+
+    const targetGap = s.target_deviation_pct ?? 0.01
+    setDeviationInput(String(targetGap * 100))
+    setStoplossGapInput(String((s.stoploss_limit_gap_pct ?? 0.015) * 100))
+    onTargetDeviationChange(targetGap)
+    setHistoricalDays(s.historical_days)
+    localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
+    if (s.desktop_pnl_display_mode === 'currency' || s.desktop_pnl_display_mode === 'percent') {
+      const percentMode = s.desktop_pnl_display_mode === 'percent'
+      setPnlPctMode(percentMode)
+      localStorage.setItem(PNL_PCT_MODE_KEY, String(percentMode))
+      onPnlPctModeChange?.(percentMode)
+    }
+    if (s.desktop_order_size_mode === 'quantity' || s.desktop_order_size_mode === 'funds_ratio' || s.desktop_order_size_mode === 'risk_ratio') {
+      const mode = s.desktop_order_size_mode === 'funds_ratio' ? 'fundsRatio' : s.desktop_order_size_mode === 'risk_ratio' ? 'riskRatio' : 'quantity'
+      setSizingMode(mode)
+      saveSizingMode(mode)
+    }
+    // Sync ratio settings from backend (overrides localStorage if backend has values)
+    if (s.funds_ratio_l_pct != null && s.funds_ratio_m_pct != null && s.funds_ratio_h_pct != null) {
+      const synced = {
+        l: Math.round(s.funds_ratio_l_pct * 100 * 100) / 100,
+        m: Math.round(s.funds_ratio_m_pct * 100 * 100) / 100,
+        h: Math.round(s.funds_ratio_h_pct * 100 * 100) / 100,
+      }
+      setRatios(synced)
+      setRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
+      localStorage.setItem(FUNDS_RATIOS_KEY, JSON.stringify(synced))
+    }
+    if (s.analysis_price_source === 'underlying' || s.analysis_price_source === 'options') {
+      setAnalysisPriceSource(s.analysis_price_source)
+    }
+    if (s.analysis_label_view === 'one_by_one' || s.analysis_label_view === 'all') {
+      setAnalysisLabelView(s.analysis_label_view)
+    }
+    if (s.experimental_patterns_enabled != null) {
+      setExperimentalPatternsEnabled(s.experimental_patterns_enabled)
+    }
+    if (s.pattern_share_emails != null) {
+      setPatternShareEmails(s.pattern_share_emails)
+    }
+    if (s.fine_structure_share_emails != null) {
+      setFineStructureShareEmails(s.fine_structure_share_emails)
+    }
+    // Sync entry auto-stoploss settings
+    setExecutionBroker(s.real_execution_broker ?? "kotak")
+    setKotakProtectionEnabled(s.kotak_automated_protection_enabled ?? true)
+    setPnlTargetsInput(s.pnl_target_levels ?? '')
+    setCandleAlertEnabled(s.candle_alert_enabled ?? false)
+    setCandleAlertInterval(s.candle_alert_interval_min ?? 3)
+    setCandleAlertSecondsInput(String(s.candle_alert_seconds_before ?? 15))
+    publishTradingDisplaySettings(s)
+    if (s.entry_auto_sl_delay_sec != null) {
+      setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
+      localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(s.entry_auto_sl_delay_sec))
+    }
+    if (s.max_price_mode != null) {
+      setMaxPriceMode(s.max_price_mode)
+      localStorage.setItem(MAX_PRICE_MODE_KEY, s.max_price_mode)
+    }
+    if (s.max_price_threshold_ce != null) {
+      setMaxPriceThresholdCE(s.max_price_threshold_ce)
+      localStorage.setItem(MAX_PRICE_THRESHOLD_CE_KEY, String(s.max_price_threshold_ce))
+    }
+    if (s.max_price_threshold_pe != null) {
+      setMaxPriceThresholdPE(s.max_price_threshold_pe)
+      localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(s.max_price_threshold_pe))
+    }
+    if (s.override_session_enabled != null) {
+      setOverrideSessionEnabled(s.override_session_enabled)
+      localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(s.override_session_enabled))
+    }
+    // Sync risk ratio settings from backend
+    if (s.risk_ratio_l_pct != null && s.risk_ratio_m_pct != null && s.risk_ratio_h_pct != null) {
+      const synced = {
+        l: s.risk_ratio_l_pct,
+        m: s.risk_ratio_m_pct,
+        h: s.risk_ratio_h_pct,
+      }
+      setRiskRatios(synced)
+      setRiskRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
+      localStorage.setItem(RISK_RATIOS_KEY, JSON.stringify(synced))
+    }
+    if (s.quantity_l != null && s.quantity_m != null && s.quantity_h != null) {
+      const synced = { l: s.quantity_l, m: s.quantity_m, h: s.quantity_h }
+      setQuantityTiers(synced)
+      setQuantityTierInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
+      localStorage.setItem(QUANTITY_TIERS_KEY, JSON.stringify(synced))
+    }
+    if (s.default_sl_pct != null) {
+      const pct = Math.round(s.default_sl_pct * 100)
+      setDefaultSlPct(pct)
+      setDefaultSlPctInput(String(pct))
+      localStorage.setItem(DEFAULT_SL_PCT_KEY, String(pct))
+    }
+    if (s.context_menu_sl_mode === 'longOnly' || s.context_menu_sl_mode === 'both') {
+      setContextMenuSLMode(s.context_menu_sl_mode)
+      localStorage.setItem(CONTEXT_MENU_SL_MODE_KEY, s.context_menu_sl_mode)
+    }
+    {
+      const s = guardrails
+      setGrBlockBarsInput(String(s.guardrail_block_bars))
+      setGrCooldownBlockBarsInput(String(s.guardrail_cooldown_block_bars))
+      setGrCooldownLossesInput(String(s.guardrail_cooldown_losses))
+      setGrBanCapitalInput(String(s.guardrail_ban_capital_pct))
+      setGrBanLossTradeInput(String(s.guardrail_ban_loss_trade_pct))
+      setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
+      setGrBanEnabled(s.guardrail_ban_enabled)
+      setGrBanHalfwayAlertEnabled(s.guardrail_ban_halfway_alert_enabled ?? false)
+      setGrMaxSizeAlertEnabled(s.guardrail_maxsize_alert_enabled ?? false)
+      publishTradingDisplaySettings(s)
+      setGrHighTierThresholdInput(String(s.high_tier_pnl_threshold_pct ?? 0))
+      setGrCooldownEnabled(s.guardrail_cooldown_enabled)
+      localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
+      localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(s.guardrail_cooldown_block_bars))
+      localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(s.guardrail_cooldown_losses))
+      localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(s.guardrail_ban_capital_pct))
+      localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(s.guardrail_ban_loss_trade_pct))
+      localStorage.setItem(GUARDRAIL_BAN_MIN_TRADES_KEY, String(s.guardrail_ban_min_trades ?? 5))
+      localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(s.guardrail_ban_enabled))
+      localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(s.guardrail_cooldown_enabled))
+      if (s.guardrail_maxsize_enabled !== undefined) setGrMaxSizeEnabled(s.guardrail_maxsize_enabled)
+      if (s.guardrail_maxsize_mode !== undefined) setGrMaxSizeMode(s.guardrail_maxsize_mode)
+      if (s.guardrail_maxsize_pct !== undefined) setGrMaxSizePctInput(String(s.guardrail_maxsize_pct))
+      if (s.guardrail_maxsize_value !== undefined) setGrMaxSizeValueInput(String(s.guardrail_maxsize_value))
+      localStorage.setItem(GUARDRAIL_MAXSIZE_ENABLED_KEY, String(s.guardrail_maxsize_enabled ?? ''))
+      localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, s.guardrail_maxsize_mode ?? '')
+      localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
+      localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
+    }
+    onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0, maxSizeAlertEnabled: guardrails.guardrail_maxsize_alert_enabled ?? false })
+  }
+
+  // At login the modal is closed, so without this the order panels, start-option rule (OTM / max price),
+  // sizing mode and strategy defaults would run on localStorage left by the previous user (or defaults)
+  // until Settings was opened once. Load this user's saved settings now. Browser values are NOT imported here.
+  const openRef = useRef(open)
+  openRef.current = open
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const [s, guardrails] = await Promise.all([api.getUserSettings(), api.getGuardRailSettings()])
+        if (cancelled || openRef.current) return // the open effect loads and applies its own copy
+        cacheSharedSettings(s, localStorage)
+        applyUserSettings(s, guardrails)
+      } catch (error) { console.warn('Could not load saved settings at login', error) }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   useEffect(() => {
     if (!open) {
       setPwOld(''); setPwNew(''); setPwConfirm(''); setPwVisible(false); setPwStatus(null)
@@ -558,157 +732,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
           isRealTradingUser || isAdmin ? api.breezeStatus().catch(error => { if (active) setStatus(`Could not load Breeze status: ${String(error)}`); return null }) : Promise.resolve(null),
         ])
         if (!active) return
-        setBrokerageInput(String(s.brokerage_per_order ?? 1))
-        onBrokerageChange(s.brokerage_per_order ?? 1)
-        const interval = s.strategy_interval_secs ?? 180
-        const trigger = s.autostop_trigger_type ?? 'bar'
-        const deviation = s.autostop_deviation_pct ?? 1
-        const breakeven = s.breakeven_mode ?? 'shift_sl'
-        const buffer = s.target_profit_buffer_ticks ?? 3
-        const profitOnly = s.aggr_sl_only_in_profit ?? false
-        setStratIntervalSecs(interval); setAutostopTriggerType(trigger); setAutostopDeviationPctInput(String(deviation))
-        setBreakevenMode(breakeven); setTargetProfitBufferTicks(buffer); setAggrSlOnlyInProfit(profitOnly)
-        onStrategySettingsChange(interval, trigger, deviation, breakeven, buffer, profitOnly)
-        setTradingRocRatioMode(s.trading_roc_ratio_mode ?? 'normalized')
-        onTradingIndicatorSettingsChange?.(s.trading_roc_ratio_mode ?? 'normalized')
-        setAutoStartSnapshots(s.auto_start_event_snapshots ?? false)
-        onAutoStartSnapshotsChange?.(s.auto_start_event_snapshots ?? false)
-        const labels = s.trade_labeling_mode_by_type ?? DEFAULT_LABELING_MODE_BY_TYPE
-        setLabelingModeByType(labels); onLabelingModeChange?.(labels)
-        setStepwiseLabelingPopup(labels.stepwise !== 'off'); onStepwiseLabelingPopupChange?.(labels.stepwise !== 'off')
-        onHistoricalDaysChange?.(s.historical_days)
-
-        const targetGap = s.target_deviation_pct ?? 0.01
-        setDeviationInput(String(targetGap * 100))
-        setStoplossGapInput(String((s.stoploss_limit_gap_pct ?? 0.015) * 100))
-        onTargetDeviationChange(targetGap)
-        setHistoricalDays(s.historical_days)
-        localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
-        if (s.desktop_pnl_display_mode === 'currency' || s.desktop_pnl_display_mode === 'percent') {
-          const percentMode = s.desktop_pnl_display_mode === 'percent'
-          setPnlPctMode(percentMode)
-          localStorage.setItem(PNL_PCT_MODE_KEY, String(percentMode))
-          onPnlPctModeChange?.(percentMode)
-        }
-        if (s.desktop_order_size_mode === 'quantity' || s.desktop_order_size_mode === 'funds_ratio' || s.desktop_order_size_mode === 'risk_ratio') {
-          const mode = s.desktop_order_size_mode === 'funds_ratio' ? 'fundsRatio' : s.desktop_order_size_mode === 'risk_ratio' ? 'riskRatio' : 'quantity'
-          setSizingMode(mode)
-          saveSizingMode(mode)
-        }
-        // Sync ratio settings from backend (overrides localStorage if backend has values)
-        if (s.funds_ratio_l_pct != null && s.funds_ratio_m_pct != null && s.funds_ratio_h_pct != null) {
-          const synced = {
-            l: Math.round(s.funds_ratio_l_pct * 100 * 100) / 100,
-            m: Math.round(s.funds_ratio_m_pct * 100 * 100) / 100,
-            h: Math.round(s.funds_ratio_h_pct * 100 * 100) / 100,
-          }
-          setRatios(synced)
-          setRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
-          localStorage.setItem(FUNDS_RATIOS_KEY, JSON.stringify(synced))
-        }
-        if (s.analysis_price_source === 'underlying' || s.analysis_price_source === 'options') {
-          setAnalysisPriceSource(s.analysis_price_source)
-        }
-        if (s.analysis_label_view === 'one_by_one' || s.analysis_label_view === 'all') {
-          setAnalysisLabelView(s.analysis_label_view)
-        }
-        if (s.experimental_patterns_enabled != null) {
-          setExperimentalPatternsEnabled(s.experimental_patterns_enabled)
-        }
-        if (s.pattern_share_emails != null) {
-          setPatternShareEmails(s.pattern_share_emails)
-        }
-        if (s.fine_structure_share_emails != null) {
-          setFineStructureShareEmails(s.fine_structure_share_emails)
-        }
-        // Sync entry auto-stoploss settings
-        setExecutionBroker(s.real_execution_broker ?? "kotak")
+        applyUserSettings(s, guardrails)
         if (isRealTradingUser || isAdmin) void api.executionBrokerStatus().then(v => { if (active) setRealActiveSession(Boolean(v.active_session_id)) }).catch(() => { if (active) setRealActiveSession(true) })
-        setKotakProtectionEnabled(s.kotak_automated_protection_enabled ?? true)
-        setPnlTargetsInput(s.pnl_target_levels ?? '')
-        setCandleAlertEnabled(s.candle_alert_enabled ?? false)
-        setCandleAlertInterval(s.candle_alert_interval_min ?? 3)
-        setCandleAlertSecondsInput(String(s.candle_alert_seconds_before ?? 15))
-        publishTradingDisplaySettings(s)
-        if (s.entry_auto_sl_delay_sec != null) {
-          setEntryAutoSlDelay(s.entry_auto_sl_delay_sec)
-          localStorage.setItem(ENTRY_AUTO_SL_DELAY_KEY, String(s.entry_auto_sl_delay_sec))
-        }
-        if (s.max_price_mode != null) {
-          setMaxPriceMode(s.max_price_mode)
-          localStorage.setItem(MAX_PRICE_MODE_KEY, s.max_price_mode)
-        }
-        if (s.max_price_threshold_ce != null) {
-          setMaxPriceThresholdCE(s.max_price_threshold_ce)
-          localStorage.setItem(MAX_PRICE_THRESHOLD_CE_KEY, String(s.max_price_threshold_ce))
-        }
-        if (s.max_price_threshold_pe != null) {
-          setMaxPriceThresholdPE(s.max_price_threshold_pe)
-          localStorage.setItem(MAX_PRICE_THRESHOLD_PE_KEY, String(s.max_price_threshold_pe))
-        }
-        if (s.override_session_enabled != null) {
-          setOverrideSessionEnabled(s.override_session_enabled)
-          localStorage.setItem(OVERRIDE_SESSION_ENABLED_KEY, String(s.override_session_enabled))
-        }
-        // Sync risk ratio settings from backend
-        if (s.risk_ratio_l_pct != null && s.risk_ratio_m_pct != null && s.risk_ratio_h_pct != null) {
-          const synced = {
-            l: s.risk_ratio_l_pct,
-            m: s.risk_ratio_m_pct,
-            h: s.risk_ratio_h_pct,
-          }
-          setRiskRatios(synced)
-          setRiskRatioInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
-          localStorage.setItem(RISK_RATIOS_KEY, JSON.stringify(synced))
-        }
-        if (s.quantity_l != null && s.quantity_m != null && s.quantity_h != null) {
-          const synced = { l: s.quantity_l, m: s.quantity_m, h: s.quantity_h }
-          setQuantityTiers(synced)
-          setQuantityTierInputs({ l: String(synced.l), m: String(synced.m), h: String(synced.h) })
-          localStorage.setItem(QUANTITY_TIERS_KEY, JSON.stringify(synced))
-        }
-        if (s.default_sl_pct != null) {
-          const pct = Math.round(s.default_sl_pct * 100)
-          setDefaultSlPct(pct)
-          setDefaultSlPctInput(String(pct))
-          localStorage.setItem(DEFAULT_SL_PCT_KEY, String(pct))
-        }
-        if (s.context_menu_sl_mode === 'longOnly' || s.context_menu_sl_mode === 'both') {
-          setContextMenuSLMode(s.context_menu_sl_mode)
-          localStorage.setItem(CONTEXT_MENU_SL_MODE_KEY, s.context_menu_sl_mode)
-        }
-        {
-          const s = guardrails
-          setGrBlockBarsInput(String(s.guardrail_block_bars))
-          setGrCooldownBlockBarsInput(String(s.guardrail_cooldown_block_bars))
-          setGrCooldownLossesInput(String(s.guardrail_cooldown_losses))
-          setGrBanCapitalInput(String(s.guardrail_ban_capital_pct))
-          setGrBanLossTradeInput(String(s.guardrail_ban_loss_trade_pct))
-          setGrBanMinTradesInput(String(s.guardrail_ban_min_trades ?? 5))
-          setGrBanEnabled(s.guardrail_ban_enabled)
-          setGrBanHalfwayAlertEnabled(s.guardrail_ban_halfway_alert_enabled ?? false)
-          setGrMaxSizeAlertEnabled(s.guardrail_maxsize_alert_enabled ?? false)
-          publishTradingDisplaySettings(s)
-          setGrHighTierThresholdInput(String(s.high_tier_pnl_threshold_pct ?? 0))
-          setGrCooldownEnabled(s.guardrail_cooldown_enabled)
-          localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(s.guardrail_block_bars))
-          localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(s.guardrail_cooldown_block_bars))
-          localStorage.setItem(GUARDRAIL_COOLDOWN_LOSSES_KEY, String(s.guardrail_cooldown_losses))
-          localStorage.setItem(GUARDRAIL_BAN_CAPITAL_PCT_KEY, String(s.guardrail_ban_capital_pct))
-          localStorage.setItem(GUARDRAIL_BAN_LOSS_TRADE_PCT_KEY, String(s.guardrail_ban_loss_trade_pct))
-          localStorage.setItem(GUARDRAIL_BAN_MIN_TRADES_KEY, String(s.guardrail_ban_min_trades ?? 5))
-          localStorage.setItem(GUARDRAIL_BAN_ENABLED_KEY, String(s.guardrail_ban_enabled))
-          localStorage.setItem(GUARDRAIL_COOLDOWN_ENABLED_KEY, String(s.guardrail_cooldown_enabled))
-          if (s.guardrail_maxsize_enabled !== undefined) setGrMaxSizeEnabled(s.guardrail_maxsize_enabled)
-          if (s.guardrail_maxsize_mode !== undefined) setGrMaxSizeMode(s.guardrail_maxsize_mode)
-          if (s.guardrail_maxsize_pct !== undefined) setGrMaxSizePctInput(String(s.guardrail_maxsize_pct))
-          if (s.guardrail_maxsize_value !== undefined) setGrMaxSizeValueInput(String(s.guardrail_maxsize_value))
-          localStorage.setItem(GUARDRAIL_MAXSIZE_ENABLED_KEY, String(s.guardrail_maxsize_enabled ?? ''))
-          localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, s.guardrail_maxsize_mode ?? '')
-          localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
-          localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
-        }
-        onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0, maxSizeAlertEnabled: guardrails.guardrail_maxsize_alert_enabled ?? false })
         if (tokens) { setIciciMasked(tokens.icici_session); setKiteMasked(tokens.kite_access); setFyersAccessMasked(tokens.fyers_access); setFyersRefreshMasked(tokens.fyers_refresh) }
         if (stream) setStreamSource(stream.source)
         if (history) { setHistoricalSource(history.source); setHistoricalFallback(history.allow_fallback) }
