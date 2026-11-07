@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { DEFAULT_RECT_STYLE, hexToRgba, normalizeRectStyle } from '../indicators/rectangleMath'
+import {
+  DEFAULT_RECT_STYLE, hexToRgba, mergeRectSettings, normalizeRectStyle,
+} from '../indicators/rectangleMath'
 import { CHART_APPEARANCE_EVENT, requestChartSettings } from '../indicators/rectangleStyle'
 import { rendererAccountKey } from '../services/websiteChartPreferences'
 
@@ -39,7 +41,7 @@ export default function DisplaySettings() {
     try {
       const latest = await requestChartSettings()
       if (owner !== rendererAccountKey()) return
-      const saved = await requestChartSettings({ ...latest, drawingFillColor: color, drawingFillOpacity: opacity })
+      const saved = await requestChartSettings(mergeRectSettings(latest, { fillColor: color, opacity }))
       if (owner !== rendererAccountKey()) return
       window.dispatchEvent(new CustomEvent(CHART_APPEARANCE_EVENT, { detail: { owner, settings: saved } }))
       setMessage({ text: 'Saved. Rectangles on open charts updated.', error: false })
