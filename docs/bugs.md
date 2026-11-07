@@ -3,6 +3,24 @@
 This document has the bugs which are found while testing. They are divided at Phase wise.
 Look at each of the bugs, fix them and then mark them resolved as well if approved manually. Do get manual approval against each bug to resolve it.
 
+## Real Trading (website) — Open Issues
+
+**[FIXED — PENDING MANUAL APPROVAL]** `update-pane-strike` swapped a side's strike with no open-risk guard (found 2026-11-06, fixed 2026-11-07).
+- **Symptom / risk**: `PUT /api/simulation/{id}/update-pane-strike` (add a CE/PE pane at another strike while a session runs, and the saved-workspace restore on resume) ran the same swap as the ⟳ Strike button but skipped the open-risk check. With an open position, order or strategy on that side the session moved to the new strike, ticks stopped for the old contract and its stoploss / limit orders / P&L / EOD auto-close silently stopped being tracked.
+- **Fix** (`backend/app/routers/simulation.py`): `_strand_risk` refuses (409) only a swap that moves ticks away from an open position, order or strategy on that side. Open items on the contract being switched *to* do not block, so the paper-resume repair (which swaps the session onto the open position's own contract) still works; a strategy blocks unless a position/order already sits on the target contract; an order with no recorded strike counts as the streamed strike; same strike is a no-op. The check runs in the endpoint and again inside `_apply_session_strike` right before the strike is assigned, with no `await` in between, so it is atomic on the event loop (this also closes that gap for ⟳ Strike). If the check itself raises, only the swap is refused (503, strike unchanged); orders, exits, stoplosses and strategies never go through it. `_side_open_risk` (⟳ Strike) is unchanged in meaning and now shares the per-contract enumeration `_open_side_items`.
+- **UI** (`frontend/src/App.tsx`, `services/api.ts`, `strikeRule.ts`): `updatePaneStrike` now carries the server's reason. Add-pane removes the just-added pane and shows the reason in the header error; workspace restore shows the reason and keeps loading the rest of the workspace.
+- **Tests**: `backend/tests/test_update_pane_strike_guard.py` (15) and `paneStrikeErrorMessage` in `frontend/src/strikeRule.test.mjs`.
+- **Validate in real trading**: (1) flat session: add a CE/PE pane at another strike works and streams; (2) open PE position, add a PE pane at a different strike: refused, pane removed, error shown, the position keeps ticking and its stoploss still works; (3) open PE position, reload/resume: workspace restores and the PE pane lands on the position's contract; (4) open CE position, add a PE pane: allowed; (5) place and exit orders right after a refusal: unaffected; (6) ⟳ Strike with two open PE contracts: refused.
+- **Still open (medium)**: `update_pane_strike` has no user-ownership check (unlike `reselect_strike`, which returns 403 for another user's session); adding one changes the endpoint signature and needs its own small PR. The guard reads only the app's own positions/orders/strategies plus `broker_positions`, not anything that exists only at the broker.
+- **Already fixed earlier (PR #769)**: `_side_open_risk` used to net positions per right (long 24000 PE + short 24100 PE read as flat); it now checks every contract on the side.
+
+**[OPEN — dev only, found 2026-11-07]** The ⟳ Strike button is not available on the KLine renderer (website).
+- `onReselectStrike` is wired only for the Lightweight `Chart.tsx`. When the chart renderer is "kline" (`TradingChartHost` → `WebsiteKLineChart`) there is no ⟳ Strike control, so a KLine user cannot re-select the strike. Not a regression of the #768/#769 fixes (the backend guard is unchanged); it is a feature-parity gap. Real trading on `preprod`/`main` has no KLine renderer. Build only if asked.
+
+**[OPEN — test debt, found 2026-11-07, not caused by recent changes]** Tests failing identically on `preprod`, `main` and `dev`:
+- `frontend/src/services/positionAccounting.test.mjs` "chart and panel share the same net P&L and capital percentage" asserts the pre-`1bf955d` exit-fee constant (`.001333`); `positionAccounting.ts` uses the statutory formula `(0.15 + 1.18 × 0.03563) / 100`. The code matches the backend formula; the test expectation is stale.
+- Backend swing tests (date dependent): `test_swing_api.py::test_exact_contract_lot_validation_and_invalid_master_do_not_create_context`, `test_swing_paper_runtime.py::test_expiry_quote_closes_paper_option_without_closing_equity_context`, `test_swing_stream_valuation.py::test_last_known_paper_valuation_survives_restart_without_executing_orders[True]` (a 4th, `test_swing_paper_recovery`, was fixed on `dev` by pinning the clock).
+
 ## Desktop Live Diagnostics
 
 ### Open Bugs

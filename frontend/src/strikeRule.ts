@@ -52,3 +52,42 @@ export function buildReselectBody(
   }
   return { right, mode: 'otm', otm_offset: effective.otmOffset }
 }
+
+export interface ReselectResponse { strike: number; changed: boolean }
+export type StrikeValue = number | null | undefined
+
+export interface ReselectOutcome {
+  /** Set when nothing changed: shown to the user instead of touching the pane. */
+  notice: string | null
+  /** CE / PE strikes after the re-select (the other side keeps its current value). */
+  ce: StrikeValue
+  pe: StrikeValue
+  /** `ce:pe` key of the strike change the App's workspace-reset effect must skip; null when it must not skip. */
+  skipKey: string | null
+}
+
+/**
+ * What the App does with the server's answer. An unchanged strike leaves everything alone. A changed one moves just
+ * that side. The workspace-reset effect is told to skip this change (so the user's pane layout is not rebuilt) except
+ * for paper options sessions, whose effect already returns early before that check.
+ */
+export function reselectOutcome(
+  response: ReselectResponse, right: 'CE' | 'PE', current: { ce: StrikeValue; pe: StrikeValue }, paperOptions: boolean,
+): ReselectOutcome {
+  if (!response.changed) return { notice: `Strike ${response.strike} is still the best match`, ce: current.ce, pe: current.pe, skipKey: null }
+  const ce = right === 'CE' ? response.strike : current.ce
+  const pe = right === 'PE' ? response.strike : current.pe
+  return { notice: null, ce, pe, skipKey: paperOptions ? null : `${ce}:${pe}` }
+}
+
+/**
+ * User-facing text when the server refuses or fails to stream a pane's strike (add-pane or workspace restore).
+ * Carries the server's reason, without the "Error: " prefix that `String(error)` would add.
+ */
+export function paneStrikeErrorMessage(error: unknown, right: 'CE' | 'PE', action: 'add' | 'restore'): string {
+  const reason = (error instanceof Error ? error.message : String(error ?? '')).replace(/^Error:\s*/, '').trim()
+    || 'Unable to stream the selected option contract'
+  return action === 'add'
+    ? `${right} pane not added: ${reason}`
+    : `Could not restore live ${right} contract: ${reason}`
+}

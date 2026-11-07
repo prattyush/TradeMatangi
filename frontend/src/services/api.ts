@@ -1448,7 +1448,11 @@ const api = {
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
       body: JSON.stringify({ right, strike }),
     })
-    if (!res.ok) throw new Error(`Update pane strike failed: ${res.status}`)
+    if (!res.ok) {
+      // Carry the server's reason (e.g. "Close the open PE 24100 position before streaming PE 24000") to the user.
+      const detail = await res.json().then(j => j?.detail).catch(() => null)
+      throw new Error(typeof detail === 'string' ? detail : `Update pane strike failed: ${res.status}`)
+    }
   },
 
   async reselectStrike(

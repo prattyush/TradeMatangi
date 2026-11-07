@@ -1289,6 +1289,28 @@ async def candidate(
     return DesktopTradingCandidate(status="existing", existing_session_id=record.get("session_id"))
 
 
+CONTRACT_SUBSCRIBE_TIMEOUT = 15
+
+
+async def _await_contract_subscription(session, contract: dict, task) -> None:
+    """Wait for a desktop option-contract feed subscription; raise 503 (leaving nothing registered) if it fails."""
+    key = contract["contract_key"]
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=CONTRACT_SUBSCRIBE_TIMEOUT)
+    except asyncio.TimeoutError:
+        task.cancel()
+        session.desktop_option_subscriptions.pop(key, None)
+        raise HTTPException(status_code=503, detail="Timed out subscribing to option contract") from None
+    except Exception as exc:
+        session.desktop_option_subscriptions.pop(key, None)
+        raise HTTPException(status_code=503, detail=f"Could not subscribe to option contract: {exc}") from exc
+    entry = session.desktop_option_subscriptions.get(key)
+    if (entry is None or entry[0] != "hub") and session.state != sim_svc.SimulationState.ENDED:
+        # The task reports its own failure by dropping the entry (and emitting a broker_error event).
+        session.desktop_option_subscriptions.pop(key, None)
+        raise HTTPException(status_code=503, detail="Could not subscribe to option contract: live data unavailable")
+
+
 @router.post("/{session_id}/contracts", response_model=DesktopTradingSnapshot)
 async def attach_contract(session_id: str, req: AttachContractRequest, user_id: str = Depends(get_desktop_user_id)):
     session = _require_session(session_id, user_id)
@@ -1306,9 +1328,13 @@ async def attach_contract(session_id: str, req: AttachContractRequest, user_id: 
             await run_history(ensure)
     if session.session_type in ("paper", "real") and getattr(session, "paper_stream_source", None):
         try:
-            sim_svc.subscribe_desktop_option_contract(session, contract)
+            task = sim_svc.subscribe_desktop_option_contract(session, contract)
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"Could not subscribe to option contract: {exc}") from exc
+        # The subscribe runs as a background task that swallows its own errors. Wait for it so a failed feed is
+        # reported to the caller instead of leaving a registered contract that never receives ticks.
+        if asyncio.isfuture(task):
+            await _await_contract_subscription(session, contract, task)
     if contract["right"] == "CE" and session.strike_ce is None:
         session.strike_ce = contract["strike"]
     elif contract["right"] == "PE" and session.strike_pe is None:
