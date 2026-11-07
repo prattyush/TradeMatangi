@@ -11,7 +11,7 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 | 2 | Timeline, cut plan, chapters (pure logic) | dev | Merged (#784) |
 | 3 | Rust: ffmpeg job, file picker, packaging | dev | Merged (#785). Installer 238 MB vs 211 MB before (+27 MB) |
 | 4 | Tools menu and Video Maker UI | dev | Merged (#786) |
-| 5 | Hardening and acceptance | dev | In PR (code part); your Windows run on real recordings still pending |
+| 5 | Hardening and acceptance | dev | Code merged (#787). Your Windows run on real recordings still pending (`docs/phase24-manual-acceptance.md`) |
 | 6 | Promote the tool to preprod | on request only | Not started |
 
 ## Context
