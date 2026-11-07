@@ -1,0 +1,50 @@
+.tools-view { display: grid; grid-template-rows: 48px 1fr; height: 100vh; background: #10131a; color: #e5e7eb; }
+.tools-view[hidden] { display: none; }
+.tools-nav { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: #181d27; border-bottom: 1px solid #293142; }
+.tools-nav .tools-title { font-weight: 600; margin-left: 8px; color: #e5e7eb; }
+.tools-body { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
+.tools-list { background: #141924; border-right: 1px solid #293142; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.tools-list h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #94a3b8; font-weight: 600; }
+.tools-list button { text-align: left; padding: 8px 10px; }
+.tools-list button[aria-pressed="true"] { background: #2563eb; border-color: #60a5fa; }
+.tools-content { overflow: auto; padding: 18px 22px 40px; }
+
+.vm { max-width: 980px; display: flex; flex-direction: column; gap: 14px; }
+.vm h2 { margin: 0; font-size: 18px; }
+.vm .vm-lead { margin: 2px 0 0; color: #94a3b8; font-size: 13px; }
+.vm-card { background: #181d27; border: 1px solid #293142; border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.vm-card[data-disabled="true"] { opacity: .55; pointer-events: none; }
+.vm-step { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.vm-step .vm-num { width: 22px; height: 22px; border-radius: 50%; background: #252c39; border: 1px solid #3b4659; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; }
+.vm-step .vm-num.done { background: #0f766e; border-color: #34d399; }
+.vm-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.vm-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #cbd5e1; }
+.vm-muted { color: #94a3b8; font-size: 12px; }
+.vm-path { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #cbd5e1; word-break: break-all; }
+.vm-warn { color: #fbbf24; font-size: 12px; margin: 0; }
+.vm-error { background: #7f1d1d; color: #fecaca; border-radius: 6px; padding: 8px 10px; font-size: 13px; margin: 0; }
+.vm-ok { color: #34d399; font-size: 13px; margin: 0; }
+.vm input[type="number"] { width: 72px; }
+.vm-primary { background: #2563eb; border-color: #60a5fa; font-weight: 600; padding: 7px 16px; }
+.vm-primary:disabled { background: #252c39; border-color: #3b4659; }
+.vm-sessions { display: flex; flex-direction: column; gap: 4px; }
+.vm-table-wrap { overflow-x: auto; }
+.vm table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.vm th { text-align: left; color: #94a3b8; font-weight: 600; padding: 6px 8px; border-bottom: 1px solid #293142; white-space: nowrap; }
+.vm td { padding: 6px 8px; border-bottom: 1px solid #1f2633; white-space: nowrap; }
+.vm td.num, .vm th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.vm .pos { color: #34d399; }
+.vm .neg { color: #f87171; }
+.vm .dim { color: #64748b; }
+.vm-stats { display: flex; gap: 22px; flex-wrap: wrap; }
+.vm-stat { display: flex; flex-direction: column; }
+.vm-stat b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.vm-stat span { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: .06em; }
+.vm-bar { height: 8px; background: #252c39; border-radius: 4px; overflow: hidden; }
+.vm-bar > div { height: 100%; background: #2563eb; transition: width .3s; }
+.vm textarea { width: 100%; min-height: 150px; background: #10131a; color: #e5e7eb; border: 1px solid #293142; border-radius: 6px; padding: 8px 10px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; resize: vertical; box-sizing: border-box; }
+.vm-timeline { position: relative; height: 22px; background: #10131a; border: 1px solid #293142; border-radius: 4px; }
+.vm-timeline > i { position: absolute; top: 0; bottom: 0; background: #2563eb99; border-left: 1px solid #60a5fa; border-right: 1px solid #60a5fa; }
+.vm input[type="radio"], .vm input[type="checkbox"] { width: auto; min-width: 0; padding: 0; margin: 0; flex: none; }
+.vm label { justify-content: flex-start; }
+.vm-sessions label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #cbd5e1; }
