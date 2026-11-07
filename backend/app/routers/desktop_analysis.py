@@ -11,7 +11,7 @@ from typing import get_type_hints
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.routing import APIRoute
 from app.dependencies import get_desktop_user_id
-from app.routers import analysis, data, labels, pattern_logger, performance, snapshots
+from app.routers import analysis, behavior, data, labels, pattern_logger, performance, snapshots
 from app.services import analysis_service, performance_service
 from app.services.history_workers import desktop_history_scope, run_history
 
@@ -73,6 +73,18 @@ allowed = [
     (pattern_logger.router, {f"/api/pattern/{p}": {"GET", "POST"} if p in ("strategies", "categories") else {"GET"}
                              for p in ("strategies", "categories", "chart/by-date", "ohlc/equity", "ohlc/options")}),
     (snapshots.router, {"/api/snapshots": {"GET", "DELETE"}, "/api/snapshots/{event_id}/candle": {"GET"}}),
+    # Phase 23 behavior questions/marks/stats. Archive/restore/update are POSTs because the
+    # native desktop analysis command supports only GET/POST/DELETE.
+    (behavior.router, {
+        "/api/behavior/questions": {"GET", "POST"},
+        "/api/behavior/questions/{question_id}/update": {"POST"},
+        "/api/behavior/questions/{question_id}/archive": {"POST"},
+        "/api/behavior/questions/{question_id}/restore": {"POST"},
+        "/api/behavior/marks": {"GET", "POST"},
+        "/api/behavior/marks/by-question": {"GET"},
+        "/api/behavior/stats": {"GET"},
+        "/api/behavior/habit-ledger": {"GET"},
+    }),
 ]
 for source, paths in allowed:
     for route in source.routes:

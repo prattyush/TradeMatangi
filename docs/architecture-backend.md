@@ -169,6 +169,10 @@ Strategies are in-process; cross-process cancellation writes `CANCELLED` to Dyna
 | `GuardRailSettings` | `user_id` (S) | — | — | GuardRail thresholds (mirrors UserSettings subset) |
 | `Tokens` | `token_key` (S) | — | — | Admin API tokens (Kite, Breeze) |
 | `RealTradingWhitelist` | `user_id` (S) | — | — | Users allowed to place real orders |
+| `TradeLabels` | `session_id` (S) | `round_trip_index` (N) | `UserIdDateIndex` (`user_id`, `date`) | Per round-trip category/strategy/tag labels (lazy-created by `trade_label_service`) |
+| `PatternNames` | `user_id` (S) | `name_key` (S) | — | Category/strategy name registry (`category#<name>`, `strategy#<name>`) |
+| `BehaviorQuestions` | `user_id` (S) | `question_id` (S) | — | Phase 23 behavior questions (`kind` entry/exit, `status` active/archived; never deleted) |
+| `BehaviorMarks` | `session_id` (S) | `mark_key` (S) `<round_trip_index:05d>#<question_id>` | `UserIdDateIndex` (`user_id`, `date`) | Phase 23 "yes" marks per round trip; lazy-created by `behavior_service`, deleted with the session |
 
 ---
 

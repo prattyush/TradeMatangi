@@ -801,6 +801,7 @@ async def update_pane_strike(session_id: str, req: UpdatePaneStrikeRequest):
         raise HTTPException(status_code=400, detail="Session is not an options session")
     if req.right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=400, detail="right must be CE or PE")
+    _assert_strike_swap_safe(session, req.right.upper(), req.strike)
     await _apply_session_strike(session, req.right.upper(), req.strike)
     return {"session_id": session_id, "right": req.right.upper(), "strike": req.strike}
 
@@ -829,6 +830,9 @@ async def _apply_session_strike(session, right: str, strike: int | float) -> Non
             await asyncio.to_thread(ensure)
 
     right = req.right.upper()
+    # Re-check after the awaits above and with no await before the assignment below, so an order or position
+    # that appeared while the data was being fetched cannot slip past the endpoint's earlier check.
+    _assert_strike_swap_safe(session, right, req.strike)
     old_strike = session.strike_ce if right == "CE" else session.strike_pe
     old_price = session.last_price_ce if right == "CE" else session.last_price_pe
     if right == "CE":
@@ -911,34 +915,90 @@ async def _apply_session_strike(session, right: str, strike: int | float) -> Non
             logger.warning("update_pane_strike: Kite re-subscribe failed for session %s right=%s: %s", session_id, right, exc)
 
 
-def _side_open_risk(session, right: str) -> str | None:
-    """Return a human-readable reason if the CE/PE side still has open risk.
+def _open_side_items(session, right: str) -> list[dict]:
+    """Everything still open on one CE/PE side, each with the strike it belongs to (None = unknown).
 
-    Changing a side's strike stops ticks for the old contract, so its SL/limit
-    orders, P&L and EOD auto-close would silently die. Block instead.
+    Positions are looked at per contract. Netting the whole side hides two open contracts at different
+    strikes (long 24000 PE + short 24100 PE reads as flat) although both still need their ticks.
     """
     from app.services import order_service, strategy_service, trading as trading_service
-    # Check every contract on this side on its own. Netting the whole side hides two open contracts at
-    # different strikes (e.g. long 24000 PE + short 24100 PE reads as flat) although both still need their ticks.
     contracts = {(trade.strike if trade.strike is None else strike_number(trade.strike), trade.expiry)
                  for trade in trading_service.get_trades(session.session_id)
                  if trade.symbol == session.symbol and trade.right == right}
     contracts |= {(item.get("strike") if item.get("strike") is None else strike_number(item["strike"]), item.get("expiry"))
                   for item in (getattr(session, "broker_positions", None) or [])
                   if item.get("right") == right}
+    items: list[dict] = []
     for strike, expiry in sorted(contracts, key=lambda c: (c[0] is None, c[0] or 0, c[1] or "")):
         position = trading_service.get_position(session.session_id, session.symbol, right=right,
                                                 strike=strike, expiry=expiry, exact_contract=True)
         if position.side != "FLAT" and position.quantity > 0:
-            label = f"{right} {strike}" if strike is not None else right
-            return f"Close the open {label} position before re-selecting its strike"
+            items.append({"kind": "position", "strike": strike})
     for order in order_service.get_open_orders(session.session_id):
         if (order.right or "").upper() == right:
-            return f"Cancel the open {right} order(s) before re-selecting its strike"
+            items.append({"kind": "order", "strike": None if order.strike is None else strike_number(order.strike)})
     for strategy in strategy_service.list_running(session.session_id):
         if strategy.right == right:
-            return f"Cancel the running {right} strategy before re-selecting its strike"
+            items.append({"kind": "strategy", "strike": None})   # strategies follow the side's streamed contract
+    return items
+
+
+def _side_open_risk(session, right: str) -> str | None:
+    """Return a human-readable reason if the CE/PE side still has open risk (used by the Re-select button).
+
+    Changing a side's strike stops ticks for the old contract, so its SL/limit
+    orders, P&L and EOD auto-close would silently die. Block instead.
+    """
+    for item in _open_side_items(session, right):
+        label = f"{right} {item['strike']}" if item["strike"] is not None else right
+        if item["kind"] == "position":
+            return f"Close the open {label} position before re-selecting its strike"
+        if item["kind"] == "order":
+            return f"Cancel the open {right} order(s) before re-selecting its strike"
+        return f"Cancel the running {right} strategy before re-selecting its strike"
     return None
+
+
+def _strand_risk(session, right: str, new_strike: int | float) -> str | None:
+    """Reason to refuse streaming `new_strike` on this side, or None if nothing open would lose its ticks.
+
+    Only a swap that moves ticks away from an open position, order or strategy is refused. Open items on the
+    contract being switched to are fine: the paper-resume repair swaps the session onto the position's own
+    contract and must not be blocked. A strategy follows whichever contract the side streams, so it blocks
+    unless an open position/order already sits on the target contract.
+    """
+    current = session.strike_ce if right == "CE" else session.strike_pe
+    target = strike_number(new_strike)
+    if current is None or strike_number(current) == target:
+        return None
+    items = _open_side_items(session, right)
+    at_target = any(item["kind"] != "strategy" and item["strike"] is not None and item["strike"] == target for item in items)
+    for item in items:
+        if item["kind"] == "strategy":
+            if not at_target:
+                return f"Cancel the running {right} strategy before streaming {right} {target}"
+            continue
+        strike = strike_number(current) if item["strike"] is None else item["strike"]
+        if strike == target:
+            continue
+        what = "position" if item["kind"] == "position" else "order(s)"
+        verb = "Close" if item["kind"] == "position" else "Cancel"
+        return f"{verb} the open {right} {strike} {what} before streaming {right} {target}"
+    return None
+
+
+def _assert_strike_swap_safe(session, right: str, new_strike: int | float) -> None:
+    """409 when the swap would strand open risk; 503 (fail closed, swap only) if the check itself fails.
+
+    This only decides whether the strike may change. It never touches orders, exits, stoplosses or strategies.
+    """
+    try:
+        reason = _strand_risk(session, right, new_strike)
+    except Exception as exc:
+        logger.exception("strike swap guard failed for %s %s", session.session_id, right)
+        raise HTTPException(status_code=503, detail="Could not verify open positions; strike not changed") from exc
+    if reason:
+        raise HTTPException(status_code=409, detail=reason)
 
 
 def _reselect_reference(session) -> tuple[str, str, str]:

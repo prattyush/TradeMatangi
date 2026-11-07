@@ -78,6 +78,17 @@
   .analysis-panels[data-pane="underlying"]:not(.chart-maximized) .analysis-option-pane, .analysis-panels[data-pane="option"]:not(.chart-maximized) .analysis-underlying-pane { display: none; }
   .analysis-panels.chart-maximized { grid-template-rows: minmax(0,1fr); }
 }
+/* Label Trades, not maximized: one chart at a time with the Underlying/Option switcher at any width (the split view is for the maximized layout), using the window height. */
+.analysis-panels.is-single.has-options { grid-template-columns: minmax(0,1fr); grid-template-rows: 34px minmax(0,1fr); }
+.analysis-panels.is-single .analysis-pane-navigation { display: flex; gap: 6px; }
+.analysis-panels.is-single .analysis-chart-separator { display: none; }
+.analysis-panels.is-single[data-pane="underlying"]:not(.chart-maximized) .analysis-option-pane, .analysis-panels.is-single[data-pane="option"]:not(.chart-maximized) .analysis-underlying-pane { display: none; }
+.analysis-panels.is-single.chart-maximized { grid-template-rows: minmax(0,1fr); }
+.is-single.chart-maximized .analysis-pane-navigation { display: none; }
+.desktop-label-workflow .tl-chart-col .analysis-panels { height: max(450px, calc(100vh - 300px)); }
+.desktop-label-workflow.labels-maximized { display: flex; flex-direction: column; }
+.desktop-label-workflow.labels-maximized .tl-chart-col .analysis-panels:not(.chart-maximized) { flex: 1; height: auto; min-height: 0; }
+.desktop-label-workflow.labels-maximized .tl-layout.maximized .tl-side-col { overflow-y: auto; min-height: 0; }
 .analysis-comparison-chart.comparison-chart-maximized { position: fixed; inset: 42px 0 0; background: #10131a; z-index: 2200; }
 .analysis-snapshot-caption { position: absolute; bottom: 30px; right: 6px; background: #182233; padding: 4px; font-size: 10px; pointer-events: none; }
 .label-chart-container:has(.chart-maximized) { container-type: normal; }

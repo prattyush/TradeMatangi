@@ -47,6 +47,9 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       'risk_ratio'
     ]),
     toggle('merge_exit_orders_on_consolidate', 'Merge exit orders when consolidating (Move SL / Move to Limit)'),
+    toggle('candle_alert_enabled', 'Candle-close sound alert (Replay, Paper, Real)'),
+    select('candle_alert_interval_min', 'Alert candle interval', ['1', '3', '5', '10', '15', '30']),
+    number('candle_alert_seconds_before', 'Alert seconds before candle end', 1, 600),
     ...(['l', 'm', 'h'] as const).flatMap((size) => [
       number(
         `quantity_${size}`,
@@ -112,17 +115,8 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       'options',
       'underlying'
     ]),
-    toggle('experimental_patterns_enabled', 'Experimental pattern detection'),
-    {
-      key: 'pattern_share_emails',
-      label: 'Pattern sharing emails (comma separated)',
-      type: 'text'
-    },
-    {
-      key: 'fine_structure_share_emails',
-      label: 'Fine-structure sharing emails (comma separated)',
-      type: 'text'
-    }
+    select('analysis_label_view', 'Label Trades view', ['one_by_one', 'all']),
+    toggle('experimental_patterns_enabled', 'Experimental pattern detection')
   ],
   Strategies: [
     select('strategy_interval_secs', 'Strategy candle interval (seconds)', [
@@ -145,6 +139,18 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
   'Desktop Options': [
     toggle('desktop_hide_chart_labels', 'Hide chart labels'),
     toggle('desktop_confirm_flatten', 'Confirm Flatten')
+  ],
+  Sharing: [
+    {
+      key: 'pattern_share_emails',
+      label: 'Pattern sharing emails (comma separated)',
+      type: 'text'
+    },
+    {
+      key: 'fine_structure_share_emails',
+      label: 'Fine-structure sharing emails (comma separated)',
+      type: 'text'
+    }
   ]
 }
 export function sectionSettings(

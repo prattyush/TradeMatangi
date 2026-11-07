@@ -9,6 +9,7 @@ import hashlib
 import math
 import random
 import statistics
+from zoneinfo import ZoneInfo
 
 VERSION = 1
 
@@ -18,6 +19,23 @@ def number(value, default=0.0):
     if not math.isfinite(result):
         raise ValueError("Nonfinite analytics input")
     return result
+
+
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def created_date_ist(created_at_ms):
+    """IST calendar day (ISO) a session was run on; None when the session has no wall-clock creation time.
+
+    ``created_at`` is true UTC epoch milliseconds (unlike candle times, which are IST-as-UTC).
+    """
+    try:
+        ms = float(created_at_ms or 0)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(ms) or ms <= 0:
+        return None
+    return datetime.fromtimestamp(ms / 1000, _IST).date().isoformat()
 
 
 def percent(pnl, capital):
@@ -120,6 +138,7 @@ def build_cycles(session, executions):
                     execution_broker=row.get("execution_broker") or (session.get("execution_broker") if session.get("session_type") == "real" else None),
                     broker_account_id=row.get("broker_account_id") or session.get("broker_account_id"),
                     date=session.get("date", ""),
+                    created_at=int(number(session.get("created_at"))),
                     trading_style=session.get("trading_style", "intraday"),
                     portfolio_id=session.get("portfolio_id"),
                     book_id=session.get("broker_projection_id")
@@ -146,6 +165,8 @@ def build_cycles(session, executions):
                         if row.get("execution_id") or row.get("execution_sort_time")
                         else "order_rows"
                     ),
+                    peak_capital_pct=None,
+                    _peak_exposure=0.0,
                     _lots=deque(),
                     _sign=sign,
                 )
@@ -213,8 +234,15 @@ def build_cycles(session, executions):
                     fee_unit=fee_unit,
                     entry=entry,
                     identifier=identifier,
+                    margin=number(meta.get("margin_rate")) or 1.0,
                 )
                 state["_lots"].append(lot)
+                # Capital in use right after this fill (open lots at cost, margin-adjusted like the entry's
+                # effective allocation); the trade's peak is the most it ever had at once.
+                state["_peak_exposure"] = max(
+                    state["_peak_exposure"],
+                    sum(l["quantity"] * l["price"] * l["margin"] for l in state["_lots"]),
+                )
                 state["executions"].append(
                     {
                         **row,
@@ -310,6 +338,7 @@ def build_cycles(session, executions):
             l["quantity"] * l["fee_unit"] for l in state["_lots"]
         )
         state["pnl_pct"] = percent(state["net_pnl"], state["capital"])
+        state["peak_capital_pct"] = percent(state["_peak_exposure"], state["capital"])
         state["entry_count"] = len(state["entries"])
         state["exit_count"] = len({e["exit_id"] for e in state["exits"]})
         state["holding_seconds"] = (
@@ -336,7 +365,7 @@ def build_cycles(session, executions):
                 if entry["initial_risk"] and not entry["open_quantity"]
                 else None
             )
-        del state["_lots"], state["_sign"]
+        del state["_lots"], state["_sign"], state["_peak_exposure"]
     return cycles
 
 
@@ -992,6 +1021,14 @@ def load_cycles(user_id, **filters):
         ):
             continue
         date = session.get("date", "")
+        if session.get("trading_style")!="swing" and (filters.get("created_from") or filters.get("created_to")):
+            run_date = created_date_ist(session.get("created_at"))
+            if (
+                run_date is None
+                or (filters.get("created_from") and run_date < filters["created_from"])
+                or (filters.get("created_to") and run_date > filters["created_to"])
+            ):
+                continue
         if session.get("trading_style")!="swing" and filters.get("start_date") and date < filters["start_date"]:
             continue
         if session.get("trading_style")!="swing" and filters.get("end_date") and date > filters["end_date"]:

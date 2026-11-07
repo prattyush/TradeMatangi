@@ -11,6 +11,9 @@ import {
 } from 'lightweight-charts'
 import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import type { AnalysisTrade, OHLCCandle } from '../../../../shared/analysis/api'
+import { rendererAccountKey } from '../../services/websiteChartPreferences'
+import { LightweightChartTools, useLightweightTools, type LightweightTools } from './LightweightChartTools'
+import { lightweightDrawingKey } from './lightweightDrawings'
 function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
   if (!trade.right) return trade.side
   if (trade.right === 'CE') return trade.side === 'BUY' ? 'BUY' : 'SELL'
@@ -47,10 +50,11 @@ function computeEMA(closes: number[], period: number): (number | null)[] {
 
 // ── Chart toolbar ─────────────────────────────────────────────────────────────
 
-function ChartToolbar({ title, isMaximized = false, onMaximize }: {
+function ChartToolbar({ title, isMaximized = false, onMaximize, tools }: {
   title: string
   isMaximized?: boolean
   onMaximize?: () => void
+  tools?: LightweightTools
 }) {
   return (
     <div style={{
@@ -59,6 +63,7 @@ function ChartToolbar({ title, isMaximized = false, onMaximize }: {
       borderBottom: '1px solid #21262d',
     }}>
       <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 600 }}>{title}</span>
+      {tools && <LightweightChartTools tools={tools} />}
       <CandleInterval />
       {onMaximize && (
         <button
@@ -81,7 +86,7 @@ function ChartToolbar({ title, isMaximized = false, onMaximize }: {
 export function WebsiteAnalysisChart({
   symbol, date, trades, historicalDays = 2, title = 'Underlying',
   isMaximized = false, onMaximize,
-  getMarkerText,
+  getMarkerText, fill = false, focusTime,
 }: {
   symbol: string
   date: string
@@ -91,7 +96,10 @@ export function WebsiteAnalysisChart({
   isMaximized?: boolean
   onMaximize?: () => void
   getMarkerText?: (trade: AnalysisTrade) => string
+  fill?: boolean
+  focusTime?: number
 }) {
+  const fillContainer = isMaximized || fill
   const api = useAnalysisApi()
   const { intervalMinutes = 3 } = useAnalysisEnvironment()
   const [historyState,setHistoryState]=useState<HistoryState>('loading')
@@ -104,13 +112,14 @@ export function WebsiteAnalysisChart({
   const tradeMarkerPoolRef = useRef<ISeriesApi<'Line'>[]>([])
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const tools = useLightweightTools(lightweightDrawingKey(rendererAccountKey(), symbol))
   const [candles, setCandles] = useState<CandlestickData[]>([])
   const [markerFilter, setMarkerFilter] = useState<'all' | 'CE' | 'PE'>('all')
 
   useEffect(() => {
     if (!containerRef.current) return
     const w = containerRef.current.clientWidth
-    const h = isMaximized ? (containerRef.current.clientHeight || 500) : Math.max(300, Math.floor(w * 0.6))
+    const h = fillContainer ? (containerRef.current.clientHeight || 300) : Math.max(300, Math.floor(w * 0.6))
     const chart = createChart(containerRef.current, {
       width: w,
       height: h,
@@ -144,10 +153,11 @@ export function WebsiteAnalysisChart({
     ema9Ref.current = ema9
     ema21Ref.current = ema21
     tradeMarkerPoolRef.current = [markerSeries]
+    const detachTools = tools.attach(chart, series)
 
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect
-      const newHeight = isMaximized ? height : Math.max(300, Math.floor(width * 0.6))
+      const newHeight = fillContainer ? height : Math.max(300, Math.floor(width * 0.6))
       chart.applyOptions({ width, height: newHeight })
     })
     ro.observe(containerRef.current)
@@ -160,9 +170,16 @@ export function WebsiteAnalysisChart({
       tradeMarkerPoolRef.current = []
       ema9Ref.current = null
       ema21Ref.current = null
+      detachTools()
       chart.remove()
     }
-  }, [isMaximized])
+  }, [isMaximized, fill])
+
+  // EMA 9/21 is now toggleable (still on by default). The chart is recreated on maximize, hence isMaximized.
+  useEffect(() => {
+    ema9Ref.current?.applyOptions({ visible: tools.showEma })
+    ema21Ref.current?.applyOptions({ visible: tools.showEma })
+  }, [tools.showEma, isMaximized])
 
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date) return
@@ -216,6 +233,14 @@ export function WebsiteAnalysisChart({
   }, [api, symbol, date, historicalDays, intervalMinutes, historyRetry])
 
   const hasOptions = trades.some(t => t.right)
+
+  // Centre on the requested time (e.g. the round trip being labeled) once this interval's candles are drawn.
+  useEffect(() => {
+    if (focusTime == null || historyState !== 'ready' || loadedInterval !== intervalMinutes) return
+    const bar = intervalMinutes * 60
+    const slot = Math.floor(focusTime / bar) * bar
+    try { chartRef.current?.timeScale().setVisibleRange({ from: (slot - 45 * bar) as Time, to: (slot + 45 * bar) as Time }) } catch { /* range outside the loaded data */ }
+  }, [focusTime, historyState, loadedInterval, intervalMinutes])
 
   useEffect(() => {
     const chart = chartRef.current
@@ -281,14 +306,14 @@ export function WebsiteAnalysisChart({
     <div style={{
       position: 'relative',
       width: '100%',
-      height: isMaximized ? '100%' : 'auto',
+      height: fillContainer ? '100%' : 'auto',
       display: 'flex',
       flexDirection: 'column',
       borderRadius: 6,
       overflow: 'hidden'
     }}>
       <ChartHistoryStatus state={historyState==='ready'&&loadedInterval!==intervalMinutes?'loading':historyState} interval={intervalMinutes} retry={()=>setHistoryRetry(n=>n+1)}/>
-      <ChartToolbar title={title} isMaximized={isMaximized} onMaximize={onMaximize} />
+      <ChartToolbar title={title} isMaximized={isMaximized} onMaximize={onMaximize} tools={tools} />
       {hasOptions && (
         <div style={{ display: 'flex', gap: 4, padding: '4px 8px', background: '#161b22', flexShrink: 0 }}>
           {(['all', 'CE', 'PE'] as const).map(f => (
@@ -311,7 +336,7 @@ export function WebsiteAnalysisChart({
           ))}
         </div>
       )}
-      <div ref={containerRef} style={{ width: '100%', flex: 1 }} />
+      <div ref={containerRef} style={{ width: '100%', flex: 1, minHeight: 0 }} />
     </div>
   )
 }
@@ -320,7 +345,7 @@ export function WebsiteAnalysisChart({
 
 export function WebsiteOptionsChart({
   symbol, date, strike, expiry, right, trades, historicalDays = 2,
-  isMaximized = false, onMaximize,
+  isMaximized = false, onMaximize, getMarkerText, fill = false, focusTime,
 }: {
   symbol: string
   date: string
@@ -331,7 +356,11 @@ export function WebsiteOptionsChart({
   historicalDays?: number
   isMaximized?: boolean
   onMaximize?: () => void
+  getMarkerText?: (trade: AnalysisTrade) => string
+  fill?: boolean
+  focusTime?: number
 }) {
+  const fillContainer = isMaximized || fill
   const api = useAnalysisApi()
   const { intervalMinutes = 3 } = useAnalysisEnvironment()
   const [historyState,setHistoryState]=useState<HistoryState>('loading')
@@ -344,11 +373,12 @@ export function WebsiteOptionsChart({
   const tradeMarkerPoolRef = useRef<ISeriesApi<'Line'>[]>([])
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const tools = useLightweightTools(lightweightDrawingKey(rendererAccountKey(), symbol, right, strike, expiry))
 
   useEffect(() => {
     if (!containerRef.current) return
     const w = containerRef.current.clientWidth
-    const h = isMaximized ? (containerRef.current.clientHeight || 500) : Math.max(300, Math.floor(w * 0.6))
+    const h = fillContainer ? (containerRef.current.clientHeight || 300) : Math.max(300, Math.floor(w * 0.6))
     const chart = createChart(containerRef.current, {
       width: w,
       height: h,
@@ -382,10 +412,11 @@ export function WebsiteOptionsChart({
     ema9Ref.current = ema9
     ema21Ref.current = ema21
     tradeMarkerPoolRef.current = [markerSeries]
+    const detachTools = tools.attach(chart, series)
 
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect
-      const newHeight = isMaximized ? height : Math.max(300, Math.floor(width * 0.6))
+      const newHeight = fillContainer ? height : Math.max(300, Math.floor(width * 0.6))
       chart.applyOptions({ width, height: newHeight })
     })
     ro.observe(containerRef.current)
@@ -398,9 +429,16 @@ export function WebsiteOptionsChart({
       tradeMarkerPoolRef.current = []
       ema9Ref.current = null
       ema21Ref.current = null
+      detachTools()
       chart.remove()
     }
-  }, [isMaximized])
+  }, [isMaximized, fill])
+
+  // EMA 9/21 is now toggleable (still on by default). The chart is recreated on maximize, hence isMaximized.
+  useEffect(() => {
+    ema9Ref.current?.applyOptions({ visible: tools.showEma })
+    ema21Ref.current?.applyOptions({ visible: tools.showEma })
+  }, [tools.showEma, isMaximized])
 
   useEffect(() => {
     if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
@@ -445,6 +483,14 @@ export function WebsiteOptionsChart({
     return () => { cancelled = true }
   }, [api, symbol, date, strike, expiry, right, historicalDays, intervalMinutes, historyRetry])
 
+  // Centre on the requested time (e.g. the round trip being labeled) once this interval's candles are drawn.
+  useEffect(() => {
+    if (focusTime == null || historyState !== 'ready' || loadedInterval !== intervalMinutes) return
+    const bar = intervalMinutes * 60
+    const slot = Math.floor(focusTime / bar) * bar
+    try { chartRef.current?.timeScale().setVisibleRange({ from: (slot - 45 * bar) as Time, to: (slot + 45 * bar) as Time }) } catch { /* range outside the loaded data */ }
+  }, [focusTime, historyState, loadedInterval, intervalMinutes])
+
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
@@ -475,19 +521,19 @@ export function WebsiteOptionsChart({
           position: 'inBar' as const,
           color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
           shape: 'circle' as const,
-          text: t.side === 'BUY' ? 'B' : 'S',
+          text: getMarkerText ? getMarkerText(t) : (t.side === 'BUY' ? 'B' : 'S'),
           size: 0.6,
         }])
         tradeMarkerPoolRef.current.push(markerSeries)
       } catch { /* disposed */ }
     }
-  }, [trades, intervalMinutes, historyState, loadedInterval])
+  }, [trades, getMarkerText, intervalMinutes, historyState, loadedInterval])
 
   return (
     <div style={{
       position: 'relative',
       width: '100%',
-      height: isMaximized ? '100%' : 'auto',
+      height: fillContainer ? '100%' : 'auto',
       display: 'flex',
       flexDirection: 'column',
       borderRadius: 6,
@@ -498,8 +544,9 @@ export function WebsiteOptionsChart({
         title={`${right} ${strike}`}
         isMaximized={isMaximized}
         onMaximize={onMaximize}
+        tools={tools}
       />
-      <div ref={containerRef} style={{ width: '100%', flex: 1 }} />
+      <div ref={containerRef} style={{ width: '100%', flex: 1, minHeight: 0 }} />
     </div>
   )
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { positionPnlLevels, projectedPositionPnl } from './positionPnlLevels'
 import { positionPnlLevels as websiteLevels, projectedTotalPnlPctAtTarget as websiteTotalAtTarget } from '../../frontend/src/indicators/positionPnlLevels'
-import { projectedTotalPnlPctAtTarget } from './positionPnlLevels'
+import { projectedTotalPnlAtTarget, projectedTotalPnlPctAtTarget, pnlTargetLevels, parsePnlTargets } from './positionPnlLevels'
+import { pnlTargetLevels as websiteTargetLevels, parsePnlTargets as websiteParse } from '../../frontend/src/indicators/positionPnlLevels'
 
 describe('position P&L levels', () => {
   for (const side of ['LONG', 'SHORT'] as const) {
@@ -47,5 +48,63 @@ describe('position P&L levels', () => {
     expect(desktop).toBeCloseTo(5.965, 2)
     expect(website).toBe(desktop)
     expect(projectedTotalPnlPctAtTarget(position, 110, 120, 500, 0, 1)).toBeNull()
+  })
+})
+
+
+describe('target day P&L levels', () => {
+  it('parses the comma-separated setting', () => {
+    expect(parsePnlTargets('0,3, 6 ,,10,x,3')).toEqual([0, 3, 6, 10])
+    expect(parsePnlTargets('')).toEqual([])
+    expect(parsePnlTargets(undefined)).toEqual([])
+    expect(websiteParse('0,3, 6 ,,10,x,3')).toEqual([0, 3, 6, 10])
+  })
+
+  for (const side of ['LONG', 'SHORT'] as const) {
+    it(`${side}: each level makes the whole-day total hit the target, below/above entry follows the day P&L`, () => {
+      const dir = side === 'LONG' ? 1 : -1
+      const position = { side, quantity: 500, avg_entry_price: 200, entry_commission: 4 }
+      const capital = 100000
+      const current = 200 // freshly entered; the day's +6.9% is all booked P&L
+      // Day is +6.9% of capital in total, including this open position's mark.
+      const totalPnl = 6900
+      const targets = [0, 3, 6, 10, 15, 18]
+      const levels = pnlTargetLevels(position, current, totalPnl, capital, 2, targets, 'percent')
+      expect(levels).toHaveLength(6)
+      for (const [i, level] of levels.entries()) {
+        const projected = projectedTotalPnlAtTarget(position, current, level.price, totalPnl, 2) as number
+        expect(Math.abs(projected - targets[i] / 100 * capital)).toBeLessThanOrEqual(position.quantity * 0.005 + 0.01)
+        // Targets under the current +6.9% sit on the losing side of the current price.
+        const above = (level.price - current) * dir > 0
+        expect(above).toBe(targets[i] > 6.9)
+      }
+      // 0, 3 and 6 are below (in P&L terms) the entry-based breakeven of the position alone.
+      expect(levels.slice(0, 3).every(level => (level.price - 200) * dir < 0)).toBe(true)
+      expect(levels.slice(3).every(level => (level.price - 200) * dir > 0)).toBe(true)
+      expect(websiteTargetLevels(position, current, totalPnl, capital, 2, targets, 'percent')).toEqual(levels)
+    })
+  }
+
+  it('treats the values as rupees in currency mode and ignores capital', () => {
+    const position = { side: 'LONG' as const, quantity: 10, avg_entry_price: 100, entry_commission: 2 }
+    const levels = pnlTargetLevels(position, 110, 500, 0, 1, [0, 1000], 'currency')
+    expect(levels.map(level => level.label)).toEqual(['P&L 0', 'P&L +1000'])
+    for (const level of levels) {
+      const target = level.key === 'target:0' ? 0 : 1000
+      expect(Math.abs((projectedTotalPnlAtTarget(position, 110, level.price, 500, 1) as number) - target)).toBeLessThanOrEqual(0.06)
+    }
+  })
+
+  it('returns nothing without an active position or usable inputs', () => {
+    const flat = { side: 'FLAT' as const, quantity: 0, avg_entry_price: 0, entry_commission: 0 }
+    const long = { side: 'LONG' as const, quantity: 10, avg_entry_price: 100, entry_commission: 2 }
+    expect(pnlTargetLevels(flat, 100, 0, 1000, 1, [1], 'percent')).toEqual([])
+    expect(pnlTargetLevels(null, 100, 0, 1000, 1, [1], 'percent')).toEqual([])
+    expect(pnlTargetLevels(long, 100, 0, 0, 1, [1], 'percent')).toEqual([])
+    expect(pnlTargetLevels(long, 0, 0, 1000, 1, [1], 'percent')).toEqual([])
+    expect(pnlTargetLevels(long, 100, 0, 1000, 1, [], 'percent')).toEqual([])
+    // A short target that would need a non-positive price is dropped.
+    const short = { side: 'SHORT' as const, quantity: 10, avg_entry_price: 100, entry_commission: 2 }
+    expect(pnlTargetLevels(short, 100, 0, 1000, 1, [1e9], 'currency')).toEqual([])
   })
 })

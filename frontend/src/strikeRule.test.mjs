@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildReselectBody, strikeRuleFromStart } from './strikeRule.ts'
+import { buildReselectBody, paneStrikeErrorMessage, strikeRuleFromStart } from './strikeRule.ts'
 
 const fb = { storedMode: 'otm', storedThresholdCE: 40, storedThresholdPE: 45, offset: 3, isIndex: true }
 
@@ -55,4 +55,20 @@ test('a side without a known strike keeps its unknown value instead of inventing
   assert.equal(outcome.ce, 24500)
   assert.equal(outcome.pe, undefined)
   assert.equal(outcome.skipKey, '24500:undefined')   // matches the template the App effect compares against
+})
+
+test('pane strike errors carry the server reason for add-pane and restore', () => {
+  const refused = new Error('Close the open PE 24100 position before streaming PE 24000')
+  assert.equal(paneStrikeErrorMessage(refused, 'PE', 'add'),
+    'PE pane not added: Close the open PE 24100 position before streaming PE 24000')
+  assert.equal(paneStrikeErrorMessage(refused, 'PE', 'restore'),
+    'Could not restore live PE contract: Close the open PE 24100 position before streaming PE 24000')
+})
+
+test('pane strike errors tolerate non-Error values and an empty reason', () => {
+  assert.equal(paneStrikeErrorMessage('Error: boom', 'CE', 'add'), 'CE pane not added: boom')
+  assert.equal(paneStrikeErrorMessage(undefined, 'CE', 'restore'),
+    'Could not restore live CE contract: Unable to stream the selected option contract')
+  assert.equal(paneStrikeErrorMessage(new Error('  '), 'CE', 'add'),
+    'CE pane not added: Unable to stream the selected option contract')
 })

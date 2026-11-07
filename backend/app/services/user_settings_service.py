@@ -9,6 +9,9 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS: dict = {
+    "website_chart_renderer": "lightweight",
+    "website_analysis_chart_renderer": "lightweight",
+    "analysis_label_view": "one_by_one",
     "real_execution_broker": "kotak",
     "brokerage_per_order": 1.0,
     "strategy_interval_secs": 180,
@@ -29,6 +32,7 @@ DEFAULT_SETTINGS: dict = {
     "guardrail_ban_min_trades": 5,
     "guardrail_ban_enabled": False,
     "guardrail_ban_halfway_alert_enabled": False,
+    "guardrail_maxsize_alert_enabled": False,
     "high_tier_pnl_threshold_pct": 0.0,
     "guardrail_cooldown_enabled": False,
     "guardrail_maxsize_enabled": False,
@@ -62,6 +66,11 @@ DEFAULT_SETTINGS: dict = {
     "desktop_hide_chart_labels": False,
     "desktop_order_size_mode": "quantity",
     "desktop_pnl_display_mode": "currency",
+    # Comma-separated target day P&L values (% of capital or rupees, per display mode).
+    "pnl_target_levels": "",
+    "candle_alert_enabled": False,
+    "candle_alert_interval_min": 3,
+    "candle_alert_seconds_before": 15,
     "desktop_confirm_flatten": True,
     "target_deviation_pct": 0.01,
     "target_deviation_configured": False,

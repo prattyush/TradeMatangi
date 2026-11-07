@@ -178,7 +178,12 @@ async def get_pre_session(
     )
 
 
-@router.get("/options-historical", response_model=HistoricalDataResponse)
+class OptionsHistoricalResponse(HistoricalDataResponse):
+    # Present only when requested; older callers keep the same response shape.
+    as_of_time: str | None = None
+
+
+@router.get("/options-historical", response_model=OptionsHistoricalResponse, response_model_exclude_none=True)
 async def get_options_historical(
     request: Request,
     symbol: str = Query(...),
@@ -188,6 +193,7 @@ async def get_options_historical(
     right: str = Query(...),
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
     historical_days: int = Query(default=2, ge=1, le=5),
+    as_of_time: str | None = Query(default=None, pattern=r"^\d{2}:\d{2}(:\d{2})?$"),
 ):
     """
     Return OHLC candles for an options contract for the N trading days prior to date
@@ -199,6 +205,15 @@ async def get_options_historical(
         raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
     if right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=400, detail="right must be CE or PE")
+
+    cutoff = None
+    if as_of_time is not None:
+        try:
+            from datetime import time
+            as_of_time = time.fromisoformat(as_of_time).isoformat()
+            cutoff = pd.Timestamp(f"{date} {as_of_time}", tz="UTC")
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail="as_of_time must be a valid HH:MM or HH:MM:SS market time") from exc
 
     logger.info(
         "options_history_request client=%s symbol=%s right=%s strike=%s expiry=%s "
@@ -236,6 +251,11 @@ async def get_options_historical(
                 symbol, prior_date, strike, expiry, right.upper(),
             )
             df = await run_data_history(load_options_dataframe, symbol, prior_date, strike, expiry, right.upper())
+            if cutoff is not None and prior_date == date:
+                # Filter raw seconds BEFORE resampling: the current candle must
+                # not inherit high/low/close values from later replay prices.
+                bound = cutoff if df.index.tz is not None else cutoff.tz_localize(None)
+                df = df[df.index < bound]
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
             all_candles.extend(OHLCCandle(**r) for r in records)
@@ -262,10 +282,11 @@ async def get_options_historical(
         symbol, right.upper(), strike, expiry, date, ",".join(loaded_dates),
         len(all_candles),
     )
-    return HistoricalDataResponse(
+    return OptionsHistoricalResponse(
         symbol=f"{symbol}-{right.upper()}-{strike}",
         dates=loaded_dates,
         candles=all_candles,
+        as_of_time=as_of_time,
     )
 
 
