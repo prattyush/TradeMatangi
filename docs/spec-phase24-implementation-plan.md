@@ -10,8 +10,8 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 | 1 | Recorder metadata (`.rec.json`) | dev AND preprod (same branch, two PRs) | Merged to both (#781 preprod, #782 dev). Manual check in `docs/recording-metadata.md` pending |
 | 2 | Timeline, cut plan, chapters (pure logic) | dev | Merged (#784) |
 | 3 | Rust: ffmpeg job, file picker, packaging | dev | Merged (#785). Installer 238 MB vs 211 MB before (+27 MB) |
-| 4 | Tools menu and Video Maker UI | dev | In PR |
-| 5 | Hardening and acceptance | dev | Not started |
+| 4 | Tools menu and Video Maker UI | dev | Merged (#786) |
+| 5 | Hardening and acceptance | dev | In PR (code part); your Windows run on real recordings still pending |
 | 6 | Promote the tool to preprod | on request only | Not started |
 
 ## Context
@@ -168,3 +168,14 @@ Uploading to YouTube, a video preview player or editor, older recordings without
 - Logic that can be tested without a window is in `windowsapp/src/tools/videoMakerModel.ts` (metadata parsing and checks, plan building, job request, start rules, job-event reducer).
 - No backend change was needed: the candle interval comes from the recording (and can be changed in the screen).
 - Checked in a browser with a mocked desktop backend (layout, flow, progress, description); not yet run in the real Windows app. See `docs/phase24-manual-acceptance.md`.
+
+## Sprint 5 as built (hardening)
+
+Done on the development machine (WSL, CPU encoding):
+- **Speed check** (`perf_long_recording`, an ignored cargo test: `TM_PERF_SECONDS=600 cargo test --lib perf_long_recording -- --ignored --nocapture`). A 5-minute 1080p recording of a busy test pattern (the worst case for the encoder; a mostly still chart encodes faster): cutting 30% of it took 46 s (about 2x real time on the kept part); converting the whole file took 130 s (2.3x real time). Progress never went backwards. A 1-hour recording with 30% kept would take roughly 9 minutes on a similar machine; hardware encoders (NVENC, Quick Sync, AMF) should be faster but are untested here.
+- **Plain-language errors** for a full disk, a folder the app cannot write to, a missing file, and a damaged recording (`friendly_error`); anything else shows ffmpeg's last lines.
+- **Checks before starting**: the recording must exist and the output folder must exist.
+- **Clean-up**: a working folder left by a crash or forced quit (`.trade-matangi-work-*` beside the output, older than 24 hours) is removed at the next job. Cancel and failure already removed the temp files and any partial mp4.
+- Error text in the screen keeps its line breaks.
+
+Still needs you (Windows, real recordings): the checklist in `docs/phase24-manual-acceptance.md`, especially sections C and D, and noting the time and encoder on your machine.

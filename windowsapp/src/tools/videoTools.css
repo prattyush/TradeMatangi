@@ -48,3 +48,4 @@
 .vm input[type="radio"], .vm input[type="checkbox"] { width: auto; min-width: 0; padding: 0; margin: 0; flex: none; }
 .vm label { justify-content: flex-start; }
 .vm-sessions label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #cbd5e1; }
+.vm-error, .vm-ok, .vm-muted[role] { white-space: pre-wrap; }
