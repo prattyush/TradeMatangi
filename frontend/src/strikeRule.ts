@@ -79,3 +79,15 @@ export function reselectOutcome(
   const pe = right === 'PE' ? response.strike : current.pe
   return { notice: null, ce, pe, skipKey: paperOptions ? null : `${ce}:${pe}` }
 }
+
+/**
+ * User-facing text when the server refuses or fails to stream a pane's strike (add-pane or workspace restore).
+ * Carries the server's reason, without the "Error: " prefix that `String(error)` would add.
+ */
+export function paneStrikeErrorMessage(error: unknown, right: 'CE' | 'PE', action: 'add' | 'restore'): string {
+  const reason = (error instanceof Error ? error.message : String(error ?? '')).replace(/^Error:\s*/, '').trim()
+    || 'Unable to stream the selected option contract'
+  return action === 'add'
+    ? `${right} pane not added: ${reason}`
+    : `Could not restore live ${right} contract: ${reason}`
+}
