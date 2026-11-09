@@ -25,10 +25,47 @@ export interface VideoLinksSource {
   list(sessionId: string): Promise<SavedLink[]>
   /** Opens the video on YouTube in the system browser. */
   open(video: { videoId: string; url: string }): void
+  /** Saving and removing links by hand. Absent => Analysis only shows links, it cannot add them. */
+  save?(link: { sessionId: string; videoId: string; title: string; privacy: 'private' | 'unlisted' | 'public'; chapters: string }): Promise<SavedLink>
+  remove?(sessionId: string, videoId: string): Promise<void>
 }
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
 export const isVideoId = (id: string): boolean => VIDEO_ID.test(id)
+
+/**
+ * The video id in whatever the user pasted: a watch, youtu.be, embed, shorts or live address, or the bare 11-character id.
+ * Anything else (another site, a playlist without a video, an id of the wrong shape) gives null.
+ */
+export function parseYoutubeVideoId(input: string): string | null {
+  const text = (input ?? '').trim()
+  if (isVideoId(text)) return text
+  if (!text || /\s/.test(text)) return null
+  let url: URL
+  try { url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`) } catch { return null }
+  const host = url.hostname.toLowerCase().replace(/^(www|m|music)\./, '')
+  let id: string | null | undefined = null
+  if (host === 'youtu.be') id = url.pathname.split('/')[1]
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    id = url.pathname === '/watch' ? url.searchParams.get('v') : /^\/(?:embed|shorts|live|v)\/([^/]+)/.exec(url.pathname)?.[1]
+  }
+  return id && isVideoId(id) ? id : null
+}
+
+/**
+ * The title YouTube shows for a video, from its public oEmbed address (no account or key; it answers for Public and Unlisted
+ * videos and refuses Private ones). null when it cannot be read: the caller lets the user type the title.
+ */
+export async function lookupVideoTitle(videoId: string, fetcher: typeof fetch = fetch): Promise<string | null> {
+  if (!isVideoId(videoId)) return null
+  try {
+    const watch = `https://www.youtube.com/watch?v=${videoId}`
+    const response = await fetcher(`https://www.youtube.com/oembed?url=${encodeURIComponent(watch)}&format=json`, { signal: AbortSignal.timeout(8000) })
+    if (!response.ok) return null
+    const title = (await response.json())?.title
+    return typeof title === 'string' && title.trim() ? title.trim() : null
+  } catch { return null }
+}
 
 /** The player address, or null for anything that is not a well-formed video id. No cookies are set until the viewer plays. */
 export function embedUrl(videoId: string): string | null {

@@ -7,7 +7,7 @@ import { WebsiteSnapshotChart, WebsiteSnapshotOptionsChart } from '../components
 import { WebsiteTradesChart, WebsitePatternChart } from '../components/analysis/ComparisonCharts'
 import { useMemo, type ComponentType, type ComponentProps } from 'react'
 import { AnalysisProvider } from '../../../shared/analysis/environment'
-import api, { getVideoLinks } from './api'
+import api, { getVideoLinks, saveVideoLink, removeVideoLink } from './api'
 import { flashError } from './notifications'
 import * as performance from './performanceApi'
 import { useAnalysisChartRenderer } from '../hooks/useAnalysisChartRenderer'
@@ -22,7 +22,7 @@ const lightweightCharts = {
   SnapshotChart: WebsiteSnapshotChart, SnapshotOptionsChart: WebsiteSnapshotOptionsChart,
   TradesChart: WebsiteTradesChart, PatternChart: WebsitePatternChart,
 }
-const videoLinks = { list: getVideoLinks, open: (video: { url: string }) => { window.open(video.url, '_blank', 'noopener,noreferrer') } }
+const videoLinks = { list: getVideoLinks, save: saveVideoLink, remove: removeVideoLink, open: (video: { url: string }) => { window.open(video.url, '_blank', 'noopener,noreferrer') } }
 const base = { swingRequest, api, performance, videoLinks, reportError: flashError }
 const lightweightEnvironment = { ...base, charts: lightweightCharts }
 export function withWebsiteAnalysis<T extends ComponentType<any>>(Component: T) {

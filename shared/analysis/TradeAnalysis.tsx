@@ -358,7 +358,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
             >Label Trades</button>
           </div>
 
-          <SessionVideos sessionIds={group.sessions.map(s => s.session_id)} />
+          <SessionVideos sessionIds={group.sessions.map(s => s.session_id)} canAdd={!group.sessions.some(s => s.shared)} />
           {activeTab === 'trades' ? (
             <>
               <div className={group.trading_style==='swing'?undefined:`analysis-trades-top${environment.desktop ? ' analysis-trades-top-desktop' : ''}`}><div className={group.trading_style==='swing'?undefined:"analysis-trades-list"}>

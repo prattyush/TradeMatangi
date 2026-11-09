@@ -1,6 +1,7 @@
 mod video;
 mod youtube;
 mod youtube_upload;
+mod youtube_visibility;
 
 use futures_util::StreamExt;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -2213,6 +2214,18 @@ fn youtube_open_video(video_id: String) -> Result<(), String> {
     open_external_url(&youtube_upload::watch_url(&video_id))
 }
 
+/// Changes an uploaded video's visibility. Needs the optional "manage your videos" permission on the connection.
+#[tauri::command]
+async fn youtube_set_visibility(video_id: String, privacy: String) -> Result<String, String> {
+    if !youtube_upload::is_video_id(&video_id) {
+        return Err("That is not a YouTube video id.".into());
+    }
+    let token = youtube::manage_token().await?;
+    tauri::async_runtime::spawn_blocking(move || youtube_visibility::set_visibility(youtube_upload::API_BASE, &token, &video_id, &privacy))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Lets the user pick the mp4 to upload (the finished video is offered by default).
 #[tauri::command]
 async fn pick_mp4_file() -> Result<Option<String>, String> {
@@ -2446,6 +2459,7 @@ pub fn run() {
             youtube_upload_start,
             youtube_upload_cancel,
             youtube_open_video,
+            youtube_set_visibility,
             pick_mp4_file
         ])
         .run(tauri::generate_context!())

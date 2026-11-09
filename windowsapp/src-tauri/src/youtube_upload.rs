@@ -151,7 +151,7 @@ pub fn friendly_api_error(status: u16, body: &str) -> String {
     let message = json.pointer("/error/message").and_then(|v| v.as_str()).unwrap_or("");
     match reason {
         "quotaExceeded" | "dailyLimitExceeded" | "rateLimitExceeded" => {
-            "YouTube's daily limit for this app is used up (about 6 uploads a day). Try again tomorrow.".into()
+            "YouTube's daily limit for this app is used up. Try again tomorrow.".into()
         }
         "uploadLimitExceeded" => "This YouTube channel has reached its upload limit. Try again later.".into(),
         "youtubeSignupRequired" => "The Google account you connected has no YouTube channel. Create one at youtube.com, then connect again.".into(),

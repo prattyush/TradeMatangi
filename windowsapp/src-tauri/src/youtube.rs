@@ -17,6 +17,9 @@ use std::net::TcpListener;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const YOUTUBE_UPLOAD_SCOPE: &str = "https://www.googleapis.com/auth/youtube.upload";
+/// Needed only to change an uploaded video's visibility. Asked together with the upload permission; the user may
+/// leave it unticked on Google's screen, in which case uploading still works.
+pub const YOUTUBE_MANAGE_SCOPE: &str = "https://www.googleapis.com/auth/youtube.force-ssl";
 const KEY_TARGET: &str = "TradeMatangi.Desktop.YouTube";
 const KEY_ACCOUNT: &str = "youtube-upload";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(180);
@@ -34,12 +37,23 @@ pub struct YoutubeTokens {
     pub client_id: String,
     #[serde(default)]
     pub client_secret: Option<String>,
+    /// Space-separated scopes Google granted (empty for connections made before this was stored).
+    #[serde(default)]
+    pub scope: String,
+}
+
+impl YoutubeTokens {
+    pub fn can_change_visibility(&self) -> bool {
+        self.scope.split_whitespace().any(|s| s == YOUTUBE_MANAGE_SCOPE)
+    }
 }
 
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct YoutubeStatus {
     pub connected: bool,
+    /// The connection also has the permission to change a video's visibility.
+    pub can_change_visibility: bool,
     /// Why the connection is gone, when it was connected before.
     pub message: Option<String>,
 }
@@ -60,7 +74,7 @@ pub fn authorize_url(client_id: &str, redirect_uri: &str, challenge: &str, state
         "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent&code_challenge={}&code_challenge_method=S256&state={}",
         percent_encode(client_id),
         percent_encode(redirect_uri),
-        percent_encode(YOUTUBE_UPLOAD_SCOPE),
+        percent_encode(&format!("{YOUTUBE_UPLOAD_SCOPE} {YOUTUBE_MANAGE_SCOPE}")),
         percent_encode(challenge),
         percent_encode(state),
     )
@@ -96,6 +110,7 @@ pub fn parse_token_response(
         .and_then(|v| v.as_str())
         .filter(|v| !v.is_empty())
         .ok_or("Google did not return an access token")?;
+    let granted = value.get("scope").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if let Some(scope) = value.get("scope").and_then(|v| v.as_str()) {
         if !scope.split_whitespace().any(|s| s == YOUTUBE_UPLOAD_SCOPE) {
             return Err("The YouTube upload permission was not granted. On Google's screen, tick the box that lets Trade Matangi upload videos, then connect again.".into());
@@ -114,6 +129,7 @@ pub fn parse_token_response(
         expires_at: now + expires_in,
         client_id: client_id.to_string(),
         client_secret: client_secret.filter(|s| !s.is_empty()).map(str::to_string),
+        scope: granted,
     })
 }
 
@@ -292,8 +308,12 @@ async fn refresh(tokens: &YoutubeTokens) -> Result<YoutubeTokens, RefreshError> 
         let detail = google_token_error(status, &body);
         return Err(if detail.contains("invalid_grant") { RefreshError::Revoked } else { RefreshError::Other(friendly_error(&detail)) });
     }
-    parse_token_response(&body, now_secs(), &tokens.client_id, tokens.client_secret.as_deref(), Some(&tokens.refresh_token))
-        .map_err(RefreshError::Other)
+    let mut next = parse_token_response(&body, now_secs(), &tokens.client_id, tokens.client_secret.as_deref(), Some(&tokens.refresh_token))
+        .map_err(RefreshError::Other)?;
+    if next.scope.is_empty() {
+        next.scope = tokens.scope.clone();
+    }
+    Ok(next)
 }
 
 const EXPIRED_MESSAGE: &str = "The YouTube connection ended. Google expires it after about 7 days while the app is in Testing, or when access is removed. Connect again.";
@@ -318,22 +338,34 @@ pub async fn access_token() -> Result<String, String> {
     }
 }
 
+/// Like `access_token`, but only when the connection was given the permission to change a video's visibility.
+pub async fn manage_token() -> Result<String, String> {
+    match load()? {
+        None => Err("YouTube is not connected. Click Connect YouTube first.".into()),
+        Some(tokens) if !tokens.can_change_visibility() => Err(
+            "Changing a video's visibility needs one more permission. Disconnect YouTube here, connect again and tick the permission to manage your YouTube videos.".into(),
+        ),
+        Some(_) => access_token().await,
+    }
+}
+
 pub async fn status() -> Result<YoutubeStatus, String> {
-    let Some(tokens) = load()? else { return Ok(YoutubeStatus { connected: false, message: None }) };
+    let Some(tokens) = load()? else { return Ok(YoutubeStatus { connected: false, can_change_visibility: false, message: None }) };
+    let manage = tokens.can_change_visibility();
     if is_fresh(&tokens, now_secs()) {
-        return Ok(YoutubeStatus { connected: true, message: None });
+        return Ok(YoutubeStatus { connected: true, can_change_visibility: manage, message: None });
     }
     match refresh(&tokens).await {
         Ok(next) => {
             save(&next)?;
-            Ok(YoutubeStatus { connected: true, message: None })
+            Ok(YoutubeStatus { connected: true, can_change_visibility: next.can_change_visibility(), message: None })
         }
         Err(RefreshError::Revoked) => {
             delete();
-            Ok(YoutubeStatus { connected: false, message: Some(EXPIRED_MESSAGE.into()) })
+            Ok(YoutubeStatus { connected: false, can_change_visibility: false, message: Some(EXPIRED_MESSAGE.into()) })
         }
         // Offline or a Google hiccup: keep the connection, the upload will report a real problem.
-        Err(RefreshError::Other(_)) => Ok(YoutubeStatus { connected: true, message: None }),
+        Err(RefreshError::Other(_)) => Ok(YoutubeStatus { connected: true, can_change_visibility: manage, message: None }),
     }
 }
 
@@ -356,7 +388,7 @@ mod tests {
     use super::*;
 
     fn tokens(access: &str, expires_at: i64) -> YoutubeTokens {
-        YoutubeTokens { refresh_token: "r".into(), access_token: access.into(), expires_at, client_id: "cid".into(), client_secret: Some("sec".into()) }
+        YoutubeTokens { refresh_token: "r".into(), access_token: access.into(), expires_at, client_id: "cid".into(), client_secret: Some("sec".into()), scope: String::new() }
     }
 
     #[test]
@@ -369,13 +401,27 @@ mod tests {
     }
 
     #[test]
-    fn authorize_url_asks_for_upload_only_and_offline_access() {
+    fn authorize_url_asks_for_upload_and_manage_and_offline_access() {
         let url = authorize_url("cid.apps", "http://127.0.0.1:8765/oauth/callback", "chal", "st");
-        assert!(url.contains("scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.upload&"));
+        assert!(url.contains("scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.upload%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.force-ssl&"), "{url}");
         assert!(!url.contains("openid") && !url.contains("email"));
         assert!(url.contains("access_type=offline") && url.contains("prompt=consent"));
         assert!(url.contains("code_challenge_method=S256") && url.contains("state=st"));
         assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A8765%2Foauth%2Fcallback"));
+    }
+
+    #[test]
+    fn granted_scopes_are_stored_and_manage_is_optional() {
+        let both = format!(r#"{{"access_token":"a","refresh_token":"rt","scope":"{YOUTUBE_UPLOAD_SCOPE} {YOUTUBE_MANAGE_SCOPE}"}}"#);
+        assert!(parse_token_response(&both, 0, "cid", None, None).unwrap().can_change_visibility());
+        // Upload ticked, manage left unticked: the connection works for uploading only.
+        let upload_only = format!(r#"{{"access_token":"a","refresh_token":"rt","scope":"{YOUTUBE_UPLOAD_SCOPE}"}}"#);
+        let t = parse_token_response(&upload_only, 0, "cid", None, None).unwrap();
+        assert!(!t.can_change_visibility());
+        assert_eq!(t.scope, YOUTUBE_UPLOAD_SCOPE);
+        // Manage alone is not enough: uploading is the point of the connection.
+        let manage_only = format!(r#"{{"access_token":"a","refresh_token":"rt","scope":"{YOUTUBE_MANAGE_SCOPE}"}}"#);
+        assert!(parse_token_response(&manage_only, 0, "cid", None, None).unwrap_err().contains("permission was not granted"));
     }
 
     #[test]
@@ -445,7 +491,7 @@ mod tests {
         assert_eq!(back, t);
         let old: YoutubeTokens = serde_json::from_str(r#"{"refresh_token":"r","client_id":"c"}"#).unwrap();
         assert_eq!((old.access_token.as_str(), old.expires_at), ("", 0));
-        let status = serde_json::to_string(&YoutubeStatus { connected: true, message: None }).unwrap();
-        assert_eq!(status, r#"{"connected":true,"message":null}"#);
+        let status = serde_json::to_string(&YoutubeStatus { connected: true, can_change_visibility: false, message: None }).unwrap();
+        assert_eq!(status, r#"{"connected":true,"canChangeVisibility":false,"message":null}"#);
     }
 }
