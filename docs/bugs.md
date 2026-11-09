@@ -347,6 +347,15 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
 - **Files**: `backend/app/services/user_settings_service.py`, `backend/app/routers/guardrails.py`.
 - **Note**: Because writes had been failing from the project start, no `UserSettings` records exist in DynamoDB. The first save after this fix creates the record correctly.
 
+### Website BAN popup blocked every control
+
+**[RESOLVED]** After a guardrail BAN, the website covered the whole screen and nothing could be clicked (2026-11-09).
+- **Symptom**: once the loss limit triggered a BAN, the dimmed full-screen popup had no close button, so the trader could not stop the trading session, flatten, or stop a screen recording.
+- **Root cause**: `GuardRailPopup.tsx` rendered every type, BAN included, as a fixed full-screen backdrop (`inset: 0`, z-index 2000). BAN lasts for the rest of the session, so the screen stayed locked. The desktop app already showed a BAN as a corner notice.
+- **Fix**: a BAN is now a corner notice (bottom right) that leaves every control clickable, with a minimise button and a small "Trading suspended" pill. BLOCK and COOLDOWN keep the dimmed popup with "Got it".
+- **Files**: `frontend/src/components/GuardRailPopup.tsx`.
+- **Check**: trigger a BAN (paper or replay session with a low BAN limit); Stop session, Flatten and Stop recording must still work. Not run against a live session; verified only in an isolated page where the controls under the popup were reachable.
+
 ## Phase-XI AI Helper
 
 ### AI Helper Bugs
