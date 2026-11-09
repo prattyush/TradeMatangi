@@ -1,27 +1,9 @@
 import type { AnalysisRequest } from '../analysisApi'
 import type { Privacy } from './videoMakerModel'
+import type { SavedLink } from '../../../shared/analysis/videoLinks'
 
-/** A saved YouTube link as the server returns it (one row per trading session). */
-export interface SavedLink {
-  session_id: string
-  video_id: string
-  url: string
-  title: string
-  privacy: string
-  chapters: string
-  uploaded_at: string
-}
-
-/** One video, shown once even when it is saved under several sessions of the same recording. */
-export interface SavedVideo {
-  videoId: string
-  url: string
-  title: string
-  privacy: string
-  chapters: string
-  uploadedAt: string
-  sessionIds: string[]
-}
+export type { SavedLink, SavedVideo } from '../../../shared/analysis/videoLinks'
+export { groupSavedVideos } from '../../../shared/analysis/videoLinks'
 
 export interface VideoLinksApi {
   list(sessionId: string): Promise<SavedLink[]>
@@ -42,21 +24,6 @@ export function createVideoLinksApi(request: AnalysisRequest): VideoLinksApi {
       await request(`video-links?session_id=${encodeURIComponent(sessionId)}&video_id=${encodeURIComponent(videoId)}`, 'DELETE')
     },
   }
-}
-
-/** Groups the rows of several sessions by video, newest upload first. */
-export function groupSavedVideos(links: SavedLink[]): SavedVideo[] {
-  const byVideo = new Map<string, SavedVideo>()
-  for (const l of links) {
-    const known = byVideo.get(l.video_id)
-    if (known) {
-      if (!known.sessionIds.includes(l.session_id)) known.sessionIds.push(l.session_id)
-      if (l.uploaded_at > known.uploadedAt) Object.assign(known, { title: l.title, privacy: l.privacy, chapters: l.chapters, uploadedAt: l.uploaded_at })
-    } else {
-      byVideo.set(l.video_id, { videoId: l.video_id, url: l.url, title: l.title, privacy: l.privacy, chapters: l.chapters, uploadedAt: l.uploaded_at, sessionIds: [l.session_id] })
-    }
-  }
-  return [...byVideo.values()].sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : a.uploadedAt > b.uploadedAt ? -1 : 0))
 }
 
 /** The visibility to remember: what YouTube applied, falling back to what was asked for. */
