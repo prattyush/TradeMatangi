@@ -24,6 +24,7 @@ export default function SessionVideos({ sessionIds, canAdd = false }: { sessionI
   const [copied, setCopied] = useState<string | null>(null)
   const [version, setVersion] = useState(0)
   const [confirming, setConfirming] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
   const editable = canAdd && !!source?.save
 
   useEffect(() => {
@@ -44,35 +45,38 @@ export default function SessionVideos({ sessionIds, canAdd = false }: { sessionI
       style={{ width: '100%', textAlign: 'left', padding: '6px 10px', background: 'transparent', border: 'none', color: '#c9d1d9', cursor: 'pointer', fontSize: 13 }}>
       {open ? '▾' : '▸'} Videos{videos.length ? ` (${videos.length})` : editable ? ' — add a link' : ''}
     </button>
-    {open && <div style={{ padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+    {open && <div style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
       {error && <span role="alert" style={{ color: '#f85149', fontSize: 12 }}>Some saved videos could not be loaded: {error}</span>}
       {videos.map(v => {
         const player = playing === v.videoId ? embedUrl(v.videoId) : null
-        return <div key={v.videoId} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <strong style={{ fontSize: 13 }}>{v.title}</strong>
-            <span style={muted}>{privacyLabel(v.privacy)}{dateText(v.uploadedAt) ? ` · ${dateText(v.uploadedAt)}` : ''}</span>
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <button style={button} onClick={() => source.open({ videoId: v.videoId, url: v.url })}>Open on YouTube</button>
-            <button style={button} onClick={() => void copy(v)}>{copied === v.videoId ? 'Copied' : 'Copy link'}</button>
-            {editable && source.remove && confirming !== v.videoId && <button style={button} onClick={() => setConfirming(v.videoId)}>Remove link</button>}
-            {embedUrl(v.videoId) && <button style={button} onClick={() => setPlaying(p => (p === v.videoId ? null : v.videoId))}>{player ? 'Hide player' : 'Play here'}</button>}
+        return <div key={v.videoId} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
+            <strong title={v.title} style={{ fontSize: 12, fontWeight: 600, flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.title}</strong>
+            <span title={`${privacyLabel(v.privacy)}${dateText(v.uploadedAt) ? ` · ${dateText(v.uploadedAt)}` : ''}`} style={{ ...muted, whiteSpace: 'nowrap' }}>{privacyLabel(v.privacy)}</span>
+            <button style={button} title="Open on YouTube" aria-label="Open on YouTube" onClick={() => source.open({ videoId: v.videoId, url: v.url })}>Open</button>
+            <button style={button} title="Copy link" aria-label="Copy link" onClick={() => void copy(v)}>{copied === v.videoId ? 'Copied' : 'Copy'}</button>
+            {embedUrl(v.videoId) && <button style={button} title="Play the video here" aria-label={player ? 'Hide player' : 'Play here'} onClick={() => setPlaying(p => (p === v.videoId ? null : v.videoId))}>{player ? 'Hide' : 'Play'}</button>}
+            {editable && source.remove && confirming !== v.videoId && <button style={button} title="Remove the saved link (not the video)" aria-label="Remove link" onClick={() => setConfirming(v.videoId)}>✕</button>}
           </div>
           {confirming === v.videoId && source.remove && <div role="alertdialog" aria-label="Confirm removing the saved link" style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: 12 }}>
             <span>Remove this saved link? The video stays on YouTube.</span>
             <button style={button} onClick={() => { const remove = source.remove!; setConfirming(null); void Promise.all(v.sessionIds.map(id => remove(id, v.videoId))).then(() => setVersion(n => n + 1), e => setError(`Could not remove the link: ${e instanceof Error ? e.message : String(e)}`)) }}>Yes, remove</button>
             <button style={button} onClick={() => setConfirming(null)}>No</button>
           </div>}
-          <span style={muted}>{v.privacy === 'private' ? PRIVATE_EMBED_NOTE : EMBED_NOTE}</span>
-          {player && <iframe title={v.title} src={player} style={{ width: '100%', maxWidth: 640, aspectRatio: '16 / 9', border: 0, borderRadius: 4 }}
-            allow="accelerometer; encrypted-media; picture-in-picture; fullscreen" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />}
+          {player && <>
+            <span style={muted}>{v.privacy === 'private' ? PRIVATE_EMBED_NOTE : EMBED_NOTE}</span>
+            <iframe title={v.title} src={player} style={{ width: '100%', maxWidth: 640, aspectRatio: '16 / 9', border: 0, borderRadius: 4 }}
+              allow="accelerometer; encrypted-media; picture-in-picture; fullscreen" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />
+          </>}
         </div>
       })}
-      {editable && <AddVideoLink onAdd={async video => {
-        for (const sessionId of sessionIds) await source.save!({ sessionId, videoId: video.videoId, title: video.title, privacy: video.privacy, chapters: '' })
-        setVersion(n => n + 1)
-      }} />}
+      {editable && (adding || videos.length === 0)
+        ? <AddVideoLink onAdd={async video => {
+          for (const sessionId of sessionIds) await source.save!({ sessionId, videoId: video.videoId, title: video.title, privacy: video.privacy, chapters: '' })
+          setAdding(false)
+          setVersion(n => n + 1)
+        }} />
+        : editable && <div><button style={button} onClick={() => setAdding(true)}>+ Add a link</button></div>}
     </div>}
   </div>
 }
