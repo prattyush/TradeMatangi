@@ -173,6 +173,7 @@ Strategies are in-process; cross-process cancellation writes `CANCELLED` to Dyna
 | `PatternNames` | `user_id` (S) | `name_key` (S) | — | Category/strategy name registry (`category#<name>`, `strategy#<name>`) |
 | `BehaviorQuestions` | `user_id` (S) | `question_id` (S) | — | Phase 23 behavior questions (`kind` entry/exit, `status` active/archived; never deleted) |
 | `BehaviorMarks` | `session_id` (S) | `mark_key` (S) `<round_trip_index:05d>#<question_id>` | `UserIdDateIndex` (`user_id`, `date`) | Phase 23 "yes" marks per round trip; lazy-created by `behavior_service`, deleted with the session |
+| `VideoLinks` | `session_id` (S) | `video_id` (S) | — | Phase 24 saved YouTube links for Video Maker videos (title, visibility, chapters; the link is rebuilt from the video id); owner only; lazy-created by `video_links_service`, deleted with the session |
 
 ---
 

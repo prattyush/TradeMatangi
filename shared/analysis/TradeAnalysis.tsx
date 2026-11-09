@@ -6,6 +6,7 @@ import type {SwingChartProps} from '../SwingWorkspace'
 import type {ComponentType} from 'react'
 import type { AnalysisChartProps, OptionsChartProps, AnalysisChartPanelProps } from './chartProps'
 import StoredOrders from './StoredOrders'
+import SessionVideos from './SessionVideos'
 import { useAnalysisError } from './environment'
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -357,6 +358,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
             >Label Trades</button>
           </div>
 
+          <SessionVideos sessionIds={group.sessions.map(s => s.session_id)} />
           {activeTab === 'trades' ? (
             <>
               <div className={group.trading_style==='swing'?undefined:`analysis-trades-top${environment.desktop ? ' analysis-trades-top-desktop' : ''}`}><div className={group.trading_style==='swing'?undefined:"analysis-trades-list"}>

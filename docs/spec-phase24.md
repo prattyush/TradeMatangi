@@ -39,5 +39,5 @@ The sections above are the original requirements. These were added later, in cha
 3. **Play in the desktop.** The finished mp4 plays inside the desktop app, with the chapters as clickable seek points. Playback is of the local file; the YouTube copy opens in the browser.
 4. **Recording stops with the session.** A screen recording stops by itself 10 seconds after the trading session ends (website and desktop; dev only for now).
 
-Status of these: Connect YouTube is built (#789); recording auto-stop is in review (#790); upload, saved links and the player are planned as three more PRs (see the implementation plan status table).
+Status of these: Connect YouTube (#789), recording auto-stop (#790) and upload (#791) are merged; saved links, with the videos shown in Analysis on website and desktop, are in review; the player is planned as the last PR (see the implementation plan status table).
 

@@ -14,9 +14,9 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 | 5 | Hardening and acceptance | dev | Code merged (#787). Your Windows run on real recordings still pending (`docs/phase24-manual-acceptance.md`) |
 | 6 | Promote the tool to preprod | on request only | Not started |
 | Y1 | Connect YouTube (upload permission only) | dev | Merged (#789, together with the CI download-retry fix) |
-| A | Recording stops 10 s after the session ends | dev | In PR (#790) |
-| Y2 | Upload to YouTube | dev | Planned |
-| Y3 | Saved links (server table + endpoints) | dev | Planned |
+| A | Recording stops 10 s after the session ends | dev | Merged (#790) |
+| Y2 | Upload to YouTube | dev | Merged (#791, together with the replay forming-bar fix). Not yet run against real YouTube |
+| Y3 | Saved links (server table + endpoints) | dev | In PR: saved links + videos shown in Analysis (website and desktop). Not yet run on Windows |
 | Y4 | Play the video in the desktop | dev | Planned |
 
 The Y rows and A are described in `docs/spec-phase24-youtube-plan.md`.

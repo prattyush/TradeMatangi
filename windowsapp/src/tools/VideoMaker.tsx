@@ -6,6 +6,8 @@ import type { RecordingMeta } from '../../../shared/recordingMeta'
 import type { RoundTripLike } from './tradeWindows'
 import { formatTimestamp } from './chapters'
 import YoutubeConnect from './YoutubeConnect'
+import SavedVideos from './SavedVideos'
+import { createVideoLinksApi } from './videoLinks'
 import { videoDurationSec } from './videoTimeline'
 import {
   CANDLE_CHOICES, IDLE_JOB, applyVideoEvent, buildJobRequest, cannotStartReason, computeVideoPlan, defaultCandleSeconds, defaultVideoTitle, descriptionPathFor,
@@ -23,12 +25,16 @@ const pctText = (v: number | null) => (v === null ? 'n/a' : `${v > 0 ? '+' : ''}
 
 /** Trading Video Maker: cuts a screen recording down to its trades and writes the YouTube chapter list. */
 export default function VideoMaker({ baseUrl, token, onUnauthorized }: Props) {
-  const adapter = useMemo(() => {
-    const request: AnalysisRequest | undefined = native
+  const request = useMemo(() => {
+    const nativeRequest: AnalysisRequest | undefined = native
       ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} })
       : undefined
-    return createAnalysisApi(analysisRequest(baseUrl, token, request, onUnauthorized))
+    return analysisRequest(baseUrl, token, nativeRequest, onUnauthorized)
   }, [baseUrl, token, onUnauthorized])
+  const adapter = useMemo(() => createAnalysisApi(request), [request])
+  const linksApi = useMemo(() => createVideoLinksApi(request), [request])
+  const [savedVersion, setSavedVersion] = useState(0)
+  const onLinkSaved = useCallback(() => setSavedVersion(v => v + 1), [])
 
   const [ffmpeg, setFfmpeg] = useState<{ available: boolean; version?: string | null } | null>(null)
   const [videoPath, setVideoPath] = useState('')
@@ -275,7 +281,9 @@ export default function VideoMaker({ baseUrl, token, onUnauthorized }: Props) {
       </div>
     </section>}
 
-    <YoutubeConnect baseUrl={baseUrl} output={job.state === 'done' ? job.output ?? '' : ''} description={mode === 'cut' ? description : ''} defaultTitle={defaultVideoTitle(meta, selected)} />
+    <YoutubeConnect baseUrl={baseUrl} output={job.state === 'done' ? job.output ?? '' : ''} description={mode === 'cut' ? description : ''} defaultTitle={defaultVideoTitle(meta, selected)}
+      sessionIds={selected} linksApi={linksApi} onSaved={onLinkSaved} />
+    <SavedVideos api={linksApi} sessionIds={meta ? meta.sessions.map(s => s.sessionId) : []} version={savedVersion} />
   </div>
 }
 

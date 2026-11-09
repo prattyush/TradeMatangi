@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { privacyToSave, saveOutcomeText, saveVideoUnderSessions, type VideoLinksApi } from './videoLinks'
 import {
   IDLE_UPLOAD, PRIVACY_CHOICES, TITLE_MAX_CHARS, applyUploadEvent, fileNameOf, privacyNotice, startUpload, uploadCannotStartReason,
   type Privacy, type UploadEvent, type UploadUi,
@@ -14,6 +15,11 @@ interface Props {
   /** The chapter description shown in the Video Maker. */
   description: string
   defaultTitle: string
+  /** The sessions the finished video covers; the uploaded link is saved under each of them. */
+  sessionIds: string[]
+  linksApi: VideoLinksApi
+  /** Called after a link was saved, so the list of saved videos reloads. */
+  onSaved: () => void
 }
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -22,7 +28,7 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * Sign-in happens in the system browser; the token stays in Windows Credential Manager and never reaches
  * the server. The video is sent from this computer straight to YouTube.
  */
-export default function YoutubeConnect({ baseUrl, output, description, defaultTitle }: Props) {
+export default function YoutubeConnect({ baseUrl, output, description, defaultTitle, sessionIds, linksApi, onSaved }: Props) {
   const [status, setStatus] = useState<Status | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -36,6 +42,11 @@ export default function YoutubeConnect({ baseUrl, output, description, defaultTi
   const [startError, setStartError] = useState('')
   const [copied, setCopied] = useState(false)
   const requested = useRef<Privacy>('private')
+  const uploaded = useRef({ title: '', description: '' })
+  const savedFor = useRef<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveNote, setSaveNote] = useState('')
+  const [saveFailed, setSaveFailed] = useState(false)
 
   const refresh = useCallback(async () => {
     try { setStatus(await invoke<Status>('youtube_status')); setError('') } catch (e) { setStatus({ connected: false }); setError(errorText(e)) }
@@ -53,6 +64,25 @@ export default function YoutubeConnect({ baseUrl, output, description, defaultTi
     return () => { disposed = true; un?.() }
   }, [])
 
+  const saveLink = useCallback(async () => {
+    if (!upload.videoId) return
+    setSaving(true)
+    const outcome = await saveVideoUnderSessions(linksApi, sessionIds, {
+      videoId: upload.videoId, title: uploaded.current.title, privacy: privacyToSave(upload.privacy, requested.current), chapters: uploaded.current.description,
+    })
+    setSaveNote(saveOutcomeText(outcome, sessionIds.length))
+    setSaveFailed(outcome.failed.length > 0)
+    setSaving(false)
+    if (outcome.saved > 0) onSaved()
+  }, [linksApi, sessionIds, upload.videoId, upload.privacy, onSaved])
+
+  // Save the link with the session(s) as soon as an upload finishes (once per video).
+  useEffect(() => {
+    if (upload.state !== 'done' || !upload.videoId || savedFor.current === upload.videoId) return
+    savedFor.current = upload.videoId
+    void saveLink()
+  }, [upload.state, upload.videoId, saveLink])
+
   const running = upload.state === 'running'
   const reason = uploadCannotStartReason({ connected: !!status?.connected, file, title, description, running })
 
@@ -69,6 +99,8 @@ export default function YoutubeConnect({ baseUrl, output, description, defaultTi
   }
   const doUpload = async () => {
     setConfirming(false); setStartError(''); requested.current = privacy
+    uploaded.current = { title: title.trim(), description }
+    setSaveNote(''); setSaveFailed(false)
     try {
       const jobId = await invoke<string>('youtube_upload_start', { request: { path: file, title: title.trim(), description, privacy } })
       setUpload(current => (current.state === 'idle' ? startUpload(jobId) : current))
@@ -133,6 +165,11 @@ export default function YoutubeConnect({ baseUrl, output, description, defaultTi
           <button className="vm-primary" onClick={() => void invoke('youtube_open_video', { videoId: upload.videoId })}>Open on YouTube</button>
         </div>
         {notice && <p className="vm-warn" role="status">{notice}</p>}
+        {saving ? <span className="vm-muted" role="status">Saving the link…</span>
+          : saveNote && <div className="vm-row">
+            <span className={saveFailed ? 'vm-warn' : 'vm-ok'} role="status">{saveNote}</span>
+            {saveFailed && sessionIds.length > 0 && <button onClick={() => void saveLink()}>Save link</button>}
+          </div>}
         <span className="vm-muted">YouTube may take a few minutes to finish processing the video before it plays.</span>
       </>}
     </>}

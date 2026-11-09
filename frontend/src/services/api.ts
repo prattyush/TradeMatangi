@@ -28,6 +28,13 @@ async function behaviorRequest<T>(path: string, method: 'GET' | 'POST', body?: u
   return res.json()
 }
 
+/** Saved YouTube links of one of the user's own sessions. A 404 (not the owner, or no links yet) is thrown with "404" in the message. */
+export async function getVideoLinks(sessionId: string): Promise<import('../../../shared/analysis/videoLinks').SavedLink[]> {
+  const res = await fetch(`${BACKEND_URL}/api/video-links?session_id=${encodeURIComponent(sessionId)}`, { headers: _authHeaders() })
+  if (!res.ok) throw new Error(`Saved videos request failed: ${res.status}`)
+  return (await res.json()).links
+}
+
 export function _authHeaders(): Record<string, string> {
   try {
     const stored = localStorage.getItem('auth_user')
