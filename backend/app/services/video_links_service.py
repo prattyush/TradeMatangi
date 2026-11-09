@@ -25,6 +25,7 @@ PRIVACIES = ("private", "unlisted", "public")
 TITLE_MAX_CHARS = 100
 CHAPTERS_MAX_BYTES = 5000
 MAX_LINKS_PER_SESSION = 50
+MAX_LINKS_LISTED = 200
 _VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 _ENSURED = False
@@ -95,6 +96,24 @@ def list_links(session_id: str) -> list[dict]:
         params["ExclusiveStartKey"] = page["LastEvaluatedKey"]
     # Newest upload first.
     return sorted((_serialize(r) for r in rows), key=lambda r: r["uploaded_at"], reverse=True)
+
+
+def list_user_links(user_id: str) -> list[dict]:
+    """The newest links of one user across all their sessions (the table is keyed by session, so this reads it with a filter).
+
+    The table only holds a few rows per upload, so a filtered scan stays small; the result is capped at MAX_LINKS_LISTED.
+    """
+    from boto3.dynamodb.conditions import Attr
+    rows: list[dict] = []
+    params = {"FilterExpression": Attr("user_id").eq(user_id), "ConsistentRead": True}
+    table = _table()
+    while True:
+        page = table.scan(**params)
+        rows.extend(page.get("Items", []))
+        if not page.get("LastEvaluatedKey"):
+            break
+        params["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+    return sorted((_serialize(r) for r in rows), key=lambda r: r["uploaded_at"], reverse=True)[:MAX_LINKS_LISTED]
 
 
 def save_link(user_id: str, session_id: str, video_id: str, title: str, privacy: str, chapters: str = "") -> dict:

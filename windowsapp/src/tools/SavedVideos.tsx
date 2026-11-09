@@ -27,6 +27,14 @@ export default function SavedVideos({ api, sessionIds, version }: Props) {
   const key = sessionIds.join('|')
 
   const load = useCallback(async (live: () => boolean) => {
+    if (sessionIds.length === 0) {
+      // No recording open: show everything already saved, newest first.
+      try {
+        const rows = await api.listMine()
+        if (live()) { setVideos(groupSavedVideos(rows)); setError('') }
+      } catch (e) { if (live()) { setVideos([]); setError(`Could not load the saved videos: ${errorText(e)}`) } }
+      return
+    }
     const settled = await Promise.allSettled(sessionIds.map(id => api.list(id)))
     if (!live()) return
     const rows: SavedLink[] = settled.flatMap(r => (r.status === 'fulfilled' ? r.value : []))
@@ -62,12 +70,11 @@ export default function SavedVideos({ api, sessionIds, version }: Props) {
     try { await navigator.clipboard.writeText(video.url); setCopied(video.videoId); setTimeout(() => setCopied(null), 2000) } catch { /* clipboard unavailable */ }
   }
 
-  if (sessionIds.length === 0) return null
   return <section className="vm-card" aria-label="Saved videos">
     <div className="vm-step"><span className="vm-num">☰</span>Saved videos</div>
-    <span className="vm-muted">YouTube links saved with this recording’s sessions. They are stored on the server and only you can see them.</span>
+    <span className="vm-muted">{sessionIds.length === 0 ? 'Your saved YouTube links, newest first.' : 'YouTube links saved with this recording’s sessions.'} They are stored on the server and only you can see them.</span>
     {videos === null && !error && <span className="vm-muted" role="status">Loading saved videos…</span>}
-    {videos?.length === 0 && <span className="vm-muted">Nothing saved yet. A link is saved here after each upload.</span>}
+    {videos?.length === 0 && <span className="vm-muted">Nothing saved yet. A link is saved here after each upload, or add one by hand.</span>}
     {videos?.map(v => <div key={v.videoId} className="vm-saved">
       <div className="vm-row">
         <strong>{v.title}</strong>
@@ -92,10 +99,12 @@ export default function SavedVideos({ api, sessionIds, version }: Props) {
         <button onClick={() => setConfirming(null)}>No</button>
       </div>}
     </div>)}
-    <AddVideoLink onAdd={async video => {
+    {sessionIds.length === 0
+      ? <span className="vm-muted">Open a recording to add a link to its sessions here, or add one in Analysis.</span>
+      : <AddVideoLink onAdd={async video => {
       for (const sessionId of sessionIds) await api.save({ sessionId, videoId: video.videoId, title: video.title, privacy: video.privacy, chapters: '' })
       setReload(n => n + 1)
-    }} />
+    }} />}
     {error && <p className="vm-error" role="alert">{error}</p>}
   </section>
 }

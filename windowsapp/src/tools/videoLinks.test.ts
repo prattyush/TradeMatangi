@@ -15,10 +15,12 @@ describe('createVideoLinksApi', () => {
     const api = createVideoLinksApi(request as never)
     expect(await api.list('a b')).toHaveLength(1)
     await api.save({ sessionId: 's1', videoId: 'dQw4w9WgXcQ', title: 'T', privacy: 'private', chapters: '0:00 Open' })
+    expect(await api.listMine()).toHaveLength(1)
     await api.remove('s1', 'dQw4w9WgXcQ')
     expect(request.mock.calls.map(c => [c[0], c[1]])).toEqual([
       ['video-links?session_id=a%20b', 'GET'],
       ['video-links', 'POST'],
+      ['video-links/mine', 'GET'],
       ['video-links?session_id=s1&video_id=dQw4w9WgXcQ', 'DELETE'],
     ])
     expect(request.mock.calls[1][2]).toEqual({ session_id: 's1', video_id: 'dQw4w9WgXcQ', title: 'T', privacy: 'private', chapters: '0:00 Open' })
@@ -28,6 +30,8 @@ describe('createVideoLinksApi', () => {
     expect(validAnalysisPath('video-links?session_id=s1', 'GET')).toBe(true)
     expect(validAnalysisPath('video-links', 'POST')).toBe(true)
     expect(validAnalysisPath('video-links?session_id=s1&video_id=x', 'DELETE')).toBe(true)
+    expect(validAnalysisPath('video-links/mine', 'GET')).toBe(true)
+    for (const method of ['POST', 'DELETE', 'PUT']) expect(validAnalysisPath('video-links/mine', method)).toBe(false)
     expect(validAnalysisPath('video-links/extra', 'GET')).toBe(false)
     expect(validAnalysisPath('video-links', 'PUT')).toBe(false)
   })
@@ -61,6 +65,8 @@ describe('privacyToSave', () => {
 describe('saveVideoUnderSessions', () => {
   const fake = (failFor: string[]): VideoLinksApi => ({
     list: async () => [],
+    listMine: async () => [],
+    listMine: async () => [],
     remove: async () => {},
     save: async ({ sessionId }) => { if (failFor.includes(sessionId)) throw new Error('Session not found'); return link({ session_id: sessionId }) },
   })

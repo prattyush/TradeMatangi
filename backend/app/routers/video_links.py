@@ -76,6 +76,12 @@ async def list_links(session_id: str = Query(...), user_id: str = Depends(get_re
     return {"links": await _run(svc.list_links, session_id)}
 
 
+@router.get("/mine", response_model=LinksResponse)
+async def list_my_links(user_id: str = Depends(get_request_user_id)):
+    """Every saved video of the signed-in user, newest first, whatever the session (the Video Maker lists them before a recording is opened)."""
+    return {"links": await _run(svc.list_user_links, user_id)}
+
+
 @router.post("", response_model=LinkOut)
 async def save_link(req: LinkIn, user_id: str = Depends(get_request_user_id)):
     await asyncio.to_thread(_own_session, req.session_id, user_id)

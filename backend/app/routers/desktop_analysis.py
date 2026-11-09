@@ -86,7 +86,7 @@ allowed = [
         "/api/behavior/habit-ledger": {"GET"},
     }),
     # Phase 24 saved YouTube links for Video Maker videos. The router itself is owner only.
-    (video_links.router, {"/api/video-links": {"GET", "POST", "DELETE"}}),
+    (video_links.router, {"/api/video-links": {"GET", "POST", "DELETE"}, "/api/video-links/mine": {"GET"}}),
 ]
 for source, paths in allowed:
     for route in source.routes:
