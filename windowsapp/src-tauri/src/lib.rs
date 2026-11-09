@@ -1,4 +1,5 @@
 mod video;
+mod youtube;
 
 use futures_util::StreamExt;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -2114,6 +2115,22 @@ async fn ffmpeg_status() -> Result<FfmpegStatus, String> {
     .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn youtube_status() -> Result<youtube::YoutubeStatus, String> {
+    youtube::status().await
+}
+
+/// Opens Google's consent page in the system browser and stores the upload permission.
+#[tauri::command]
+async fn youtube_connect(base_url: String) -> Result<(), String> {
+    youtube::connect(&base_url).await
+}
+
+#[tauri::command]
+async fn youtube_disconnect() -> Result<(), String> {
+    youtube::disconnect().await
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PickedRecording {
@@ -2329,7 +2346,10 @@ pub fn run() {
             write_text_file,
             reveal_in_folder,
             video_job_start,
-            video_job_cancel
+            video_job_cancel,
+            youtube_status,
+            youtube_connect,
+            youtube_disconnect
         ])
         .run(tauri::generate_context!())
         .expect("tauri application error");

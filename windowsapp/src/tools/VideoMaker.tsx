@@ -5,6 +5,7 @@ import { analysisRequest, createAnalysisApi, type AnalysisRequest } from '../ana
 import type { RecordingMeta } from '../../../shared/recordingMeta'
 import type { RoundTripLike } from './tradeWindows'
 import { formatTimestamp } from './chapters'
+import YoutubeConnect from './YoutubeConnect'
 import { videoDurationSec } from './videoTimeline'
 import {
   CANDLE_CHOICES, IDLE_JOB, applyVideoEvent, buildJobRequest, cannotStartReason, computeVideoPlan, defaultCandleSeconds, descriptionPathFor,
@@ -273,6 +274,8 @@ export default function VideoMaker({ baseUrl, token, onUnauthorized }: Props) {
         {descSaved && <span className="vm-muted">{descSaved.startsWith('Could not') ? descSaved : `Saved to ${descSaved}`}</span>}
       </div>
     </section>}
+
+    <YoutubeConnect baseUrl={baseUrl} />
   </div>
 }
 
