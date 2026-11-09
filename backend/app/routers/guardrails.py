@@ -76,6 +76,12 @@ def get_status(session_id: str):
             guardrail_maxsize_mode=session.guardrail_maxsize_mode,
             guardrail_maxsize_pct=session.guardrail_maxsize_pct,
             guardrail_maxsize_value=session.guardrail_maxsize_value,
+            guardrail_maxentry_enabled=getattr(session, "guardrail_maxentry_enabled", False),
+            guardrail_maxentry_mode=getattr(session, "guardrail_maxentry_mode", "percentage"),
+            guardrail_maxentry_pct=getattr(session, "guardrail_maxentry_pct", 12.0),
+            guardrail_maxentry_value=getattr(session, "guardrail_maxentry_value", 0.0),
+            guardrail_mingap_enabled=getattr(session, "guardrail_mingap_enabled", False),
+            guardrail_mingap_minutes=getattr(session, "guardrail_mingap_minutes", 5),
         ),
     )
 
@@ -100,6 +106,12 @@ def get_settings(user_id: str = Depends(get_request_user_id)):
         guardrail_maxsize_mode=s.get("guardrail_maxsize_mode", "percentage"),
         guardrail_maxsize_pct=s.get("guardrail_maxsize_pct", 20.0),
         guardrail_maxsize_value=s.get("guardrail_maxsize_value", 0.0),
+        guardrail_maxentry_enabled=s.get("guardrail_maxentry_enabled", False),
+        guardrail_maxentry_mode=s.get("guardrail_maxentry_mode", "percentage"),
+        guardrail_maxentry_pct=s.get("guardrail_maxentry_pct", 12.0),
+        guardrail_maxentry_value=s.get("guardrail_maxentry_value", 0.0),
+        guardrail_mingap_enabled=s.get("guardrail_mingap_enabled", False),
+        guardrail_mingap_minutes=s.get("guardrail_mingap_minutes", 5),
     )
 
 
@@ -124,4 +136,10 @@ def update_settings(req: GuardRailSettingsUpdateRequest, user_id: str = Depends(
         guardrail_maxsize_mode=updated.get("guardrail_maxsize_mode", "percentage"),
         guardrail_maxsize_pct=updated.get("guardrail_maxsize_pct", 20.0),
         guardrail_maxsize_value=updated.get("guardrail_maxsize_value", 0.0),
+        guardrail_maxentry_enabled=updated.get("guardrail_maxentry_enabled", False),
+        guardrail_maxentry_mode=updated.get("guardrail_maxentry_mode", "percentage"),
+        guardrail_maxentry_pct=updated.get("guardrail_maxentry_pct", 12.0),
+        guardrail_maxentry_value=updated.get("guardrail_maxentry_value", 0.0),
+        guardrail_mingap_enabled=updated.get("guardrail_mingap_enabled", False),
+        guardrail_mingap_minutes=updated.get("guardrail_mingap_minutes", 5),
     )

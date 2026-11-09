@@ -41,3 +41,15 @@ The sections above are the original requirements. These were added later, in cha
 
 Status of these: Connect YouTube (#789), recording auto-stop (#790) and upload (#791) are merged; saved links, with the videos shown in Analysis on website and desktop, are in review; the player is planned as the last PR (see the implementation plan status table).
 
+
+#### GuardRails: Max per entry and Minimum gap between orders
+
+##### Requirement (2026-11-09)
+Two guardrails are added to the GuardRails settings (website Settings window and desktop Settings). Both apply to simulated, replay, stepwise, paper and real sessions, to day trading only, and are off by default.
+
+1. **Max per entry** (in the MAX SIZE section). A cap on how large one new entry may be. It is set as a % of capital or an exact rupee value, with its own Enabled checkbox. An entry larger than the cap is **reduced** to it, not rejected: with 24% selected as the order size and a 12% cap, the order is placed at 12%. The cap is measured the way MAX SIZE measures capital in use (full premium for options, 20% margin for intraday equity) and rounds down to whole lots. It applies to every new entry whatever the sizing mode (funds %, risk %, typed quantity, target-profit sizing, AutoStop, desktop orders). Exits are never reduced, and a reversal only has its new part reduced. If even one lot or share costs more than the cap, the entry is rejected with a `MAXSIZE: one lot costs ...` message. The total MAX SIZE limit still applies afterwards. The original quantity is kept in the order analytics as `entry_cap_requested_qty`.
+2. **Minimum gap between orders** (new section). A number input in whole minutes (1 to 390) with an Enabled checkbox. A new entry placed sooner than that many minutes after the previous entry was **filled** is refused with a `MINGAP: next entry allowed in N min` message. It covers entries only (a new position, an add, or a reversal); exits, stoplosses and square-offs are never held back. The clock is the session clock, so replay and stepwise sessions follow simulated time. The check runs when the order is placed, not when a pending limit or target order later fills, so a fill is never refused. Because the clock is the fill, several pending entries can be placed before the first one fills.
+
+Both are settings keys on the user's settings record (`guardrail_maxentry_*`, `guardrail_mingap_*`), copied onto the session when it is created like the other guardrails, and enforced on the server so the website, the desktop and AutoStop behave the same.
+
+Status: built on `dev` (backend `guardrail_service.py`, orders and direct trade routes, AutoStop; website and desktop settings); tests in `backend/tests/test_guardrail_maxentry_mingap.py` and `windowsapp/src/guardrailSettings.test.ts`.

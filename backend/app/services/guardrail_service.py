@@ -81,6 +81,12 @@ def initialize_guardrails(session: "SimulationSession", user_id: str) -> None:
     session.guardrail_maxsize_mode = str(settings.get("guardrail_maxsize_mode", "percentage"))
     session.guardrail_maxsize_pct = float(settings.get("guardrail_maxsize_pct", 20.0))
     session.guardrail_maxsize_value = float(settings.get("guardrail_maxsize_value", 0.0))
+    session.guardrail_maxentry_enabled = bool(settings.get("guardrail_maxentry_enabled", False))
+    session.guardrail_maxentry_mode = str(settings.get("guardrail_maxentry_mode", "percentage"))
+    session.guardrail_maxentry_pct = float(settings.get("guardrail_maxentry_pct", 12.0))
+    session.guardrail_maxentry_value = float(settings.get("guardrail_maxentry_value", 0.0))
+    session.guardrail_mingap_enabled = bool(settings.get("guardrail_mingap_enabled", False))
+    session.guardrail_mingap_minutes = int(settings.get("guardrail_mingap_minutes", 5))
     session.guardrail_block_until_bar = 0
     session.guardrail_ban_active = False
     session.guardrail_consecutive_losses = 0
@@ -415,6 +421,26 @@ def _simulate_post_trade_capital(
     return current_capital + price * quantity * margin_rate
 
 
+def _opening_quantity(
+    session: "SimulationSession", side: str, quantity: int,
+    right: str | None = None, strike: int | float | None = None, expiry: str | None = None,
+) -> int:
+    """
+    The part of an order that opens or adds exposure: all of it for a new
+    position or an add, none for a pure exit, and only the excess for a reversal.
+    """
+    from app.services.trading import get_position
+    target_right = right
+    if target_right is None and session.instrument_type == "options":
+        target_right = session.right or "CE"
+    kwargs = {"strike": strike, "expiry": expiry} if strike is not None or expiry is not None else {}
+    position = get_position(session.session_id, symbol=session.symbol, right=target_right, **kwargs)
+    closes_position = (side == "BUY" and position.side == "SHORT") or (side == "SELL" and position.side == "LONG")
+    if not closes_position:
+        return quantity
+    return max(0, quantity - position.quantity)
+
+
 def check_maxsize(
     session: "SimulationSession", price: float, quantity: int, side: str,
     right: str | None = None, strike: int | float | None = None, expiry: str | None = None,
@@ -426,18 +452,11 @@ def check_maxsize(
     if not session.guardrail_maxsize_enabled:
         return False, ""
 
-    post_capital = _simulate_post_trade_capital(session, price, quantity, side, right, strike, expiry)
-    from app.services.trading import get_position
-    target_right = right
-    if target_right is None and session.instrument_type == "options":
-        target_right = session.right or "CE"
-    kwargs = {"strike": strike, "expiry": expiry} if strike is not None or expiry is not None else {}
-    position = get_position(session.session_id, symbol=session.symbol, right=target_right, **kwargs)
-    closes_position = (side == "BUY" and position.side == "SHORT") or (side == "SELL" and position.side == "LONG")
     # Exits must remain possible after lowering the configured limit. Reversals
     # open a new position and must still satisfy it, even if exposure decreases.
-    if closes_position and quantity <= position.quantity:
+    if _opening_quantity(session, side, quantity, right, strike, expiry) <= 0:
         return False, ""
+    post_capital = _simulate_post_trade_capital(session, price, quantity, side, right, strike, expiry)
 
     if session.guardrail_maxsize_mode == "percentage":
         limit = (session.guardrail_maxsize_pct / 100.0) * session.session_capital
@@ -448,5 +467,96 @@ def check_maxsize(
         return True, (
             f"MAXSIZE: trade would bring capital-in-use to ₹{post_capital:,.2f} "
             f"exceeding limit of ₹{limit:,.2f}"
+        )
+    return False, ""
+
+
+# ── Max per entry (reduces an entry to a cap instead of rejecting it) ─────────
+
+def cap_entry_quantity(
+    session: "SimulationSession", price: float, quantity: int, side: str,
+    right: str | None = None, strike: int | float | None = None, expiry: str | None = None,
+    lot_size: int = 1,
+) -> tuple[int, int | None]:
+    """
+    Reduce an entry so the capital it uses stays within the per-entry cap.
+
+    Returns (quantity, requested). `requested` is the original quantity when it
+    was reduced and None otherwise. Exits are never reduced; a reversal only has
+    its opening part capped. Raises ValueError when even one lot costs more than
+    the cap (the caller turns it into a 403).
+    """
+    if getattr(session, "guardrail_maxentry_enabled", False) is not True or price <= 0 or quantity <= 0:
+        return quantity, None
+    opening = _opening_quantity(session, side, quantity, right, strike, expiry)
+    if opening <= 0:
+        return quantity, None
+
+    if session.guardrail_maxentry_mode == "percentage":
+        limit = (session.guardrail_maxentry_pct / 100.0) * session.session_capital
+    else:
+        limit = session.guardrail_maxentry_value
+    margin_rate = _capital_margin_rate(session, right)
+    lot = max(1, lot_size)
+    lots_allowed = int(limit // (price * margin_rate * lot)) if limit > 0 else 0
+    if lots_allowed < 1:
+        raise ValueError(
+            f"MAXSIZE: one lot costs ₹{price * margin_rate * lot:,.2f}, "
+            f"above the per-entry cap of ₹{limit:,.2f}"
+        )
+    allowed_opening = lots_allowed * lot
+    if opening <= allowed_opening:
+        return quantity, None
+    reduced = quantity - (opening - allowed_opening)
+    logger.info(
+        "MAXENTRY reduced entry on session %s from %s to %s (cap ₹%.2f)",
+        session.session_id, quantity, reduced, limit,
+    )
+    return reduced, quantity
+
+
+# ── Minimum gap between entries ───────────────────────────────────────────────
+
+def _last_entry_fill_time(session_id: str) -> int | None:
+    """Timestamp of the latest fill that opened, added to or flipped a position."""
+    from app.services.trading import get_trades
+    net: dict[tuple, int] = {}
+    last: int | None = None
+    for trade in get_trades(session_id):
+        key = (trade.right, trade.strike, trade.expiry)
+        signed = trade.quantity if trade.side == TradeSide.BUY else -trade.quantity
+        before = net.get(key, 0)
+        after = before + signed
+        net[key] = after
+        if abs(after) > abs(before) or (before != 0 and (before > 0) != (after > 0) and after != 0):
+            last = trade.timestamp if last is None else max(last, trade.timestamp)
+    return last
+
+
+def check_min_gap(
+    session: "SimulationSession", side: str, quantity: int,
+    right: str | None = None, strike: int | float | None = None, expiry: str | None = None,
+) -> tuple[bool, str]:
+    """
+    Refuse a new entry placed sooner than the configured minutes after the
+    previous entry was filled. Exits are never refused. Uses the session clock,
+    so replay and stepwise sessions follow simulated time.
+    Returns (blocked, reason).
+    """
+    if getattr(session, "guardrail_mingap_enabled", False) is not True:
+        return False, ""
+    if _opening_quantity(session, side, quantity, right, strike, expiry) <= 0:
+        return False, ""
+    last = _last_entry_fill_time(session.session_id)
+    if last is None or not session.current_time:
+        return False, ""
+    gap_secs = max(1, int(session.guardrail_mingap_minutes)) * 60
+    elapsed = int(session.current_time) - int(last)
+    if 0 <= elapsed < gap_secs:
+        wait_min = -(-(gap_secs - elapsed) // 60)  # round up to whole minutes
+        filled_at = datetime.fromtimestamp(int(last), tz=timezone.utc).strftime("%H:%M")
+        return True, (
+            f"MINGAP: next entry allowed in {wait_min} min "
+            f"(previous entry filled at {filled_at}, minimum gap {int(session.guardrail_mingap_minutes)} min)"
         )
     return False, ""

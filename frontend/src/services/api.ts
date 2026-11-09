@@ -808,6 +808,12 @@ export interface GuardRailSettings {
   guardrail_maxsize_mode: "percentage" | "value"
   guardrail_maxsize_pct: number
   guardrail_maxsize_value: number
+  guardrail_maxentry_enabled?: boolean
+  guardrail_maxentry_mode?: "percentage" | "value"
+  guardrail_maxentry_pct?: number
+  guardrail_maxentry_value?: number
+  guardrail_mingap_enabled?: boolean
+  guardrail_mingap_minutes?: number
 }
 
 export interface GuardRailStatusResponse {
