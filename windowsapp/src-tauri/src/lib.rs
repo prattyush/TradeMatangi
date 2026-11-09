@@ -1103,16 +1103,16 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
     if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if method == "POST" {
-        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks")
+        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks" | "video-links")
             || route.strip_prefix("behavior/questions/").and_then(|rest| rest.split_once('/')).map(|(id, action)| valid_id(id) && matches!(action, "update" | "archive" | "restore")).unwrap_or(false);
     }
-    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees"; }
+    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees" || route == "video-links"; }
     if method != "GET" { return false; }
     match route {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
-        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" => true,
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -2485,6 +2485,21 @@ mod tests {
         }
         for path in ["pattern/chart", "pattern/chart/by-date", "pattern/ohlc/equity", "pattern/strategies/extra"] {
             assert!(!valid_analysis_path(path, "POST"));
+        }
+    }
+
+    #[test]
+    fn video_links_allow_only_get_post_and_delete_on_the_exact_path() {
+        for method in ["GET", "POST", "DELETE"] {
+            assert!(valid_analysis_path("video-links", method), "{method}");
+        }
+        assert!(valid_analysis_path("video-links?session_id=s1", "GET"));
+        assert!(valid_analysis_path("video-links?session_id=s1&video_id=dQw4w9WgXcQ", "DELETE"));
+        assert!(!valid_analysis_path("video-links", "PUT"));
+        for path in ["video-links/extra", "video-links/", "/video-links", "video-links/../labels", "video-link", "video-links%2Fx"] {
+            for method in ["GET", "POST", "DELETE"] {
+                assert!(!valid_analysis_path(path, method), "{method} {path}");
+            }
         }
     }
 

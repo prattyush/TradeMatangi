@@ -52,3 +52,6 @@
 
 .vm-field { display: flex; flex-direction: column; align-items: stretch; gap: 4px; font-size: 13px; color: #cbd5e1; }
 .vm-field input[type="text"] { width: 100%; box-sizing: border-box; background: #10131a; color: #e5e7eb; border: 1px solid #293142; border-radius: 6px; padding: 7px 10px; font-size: 13px; }
+
+.vm-saved { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border, #2a2f3a); }
+.vm-saved:first-of-type { border-top: none; }
