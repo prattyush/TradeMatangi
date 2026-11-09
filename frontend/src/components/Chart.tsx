@@ -24,6 +24,7 @@ import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, Strategy
 import { PositionPnlPrimitive } from '../indicators/positionPnlPrimitive'
 import { positionPnlLevels, projectedTotalPnlPctAtTarget, pnlTargetLevels, parsePnlTargets } from '../indicators/positionPnlLevels'
 import { exitOrderLineLabel } from '../orderLineLabel'
+import { replayAsOfTime } from '../replayAsOf'
 import {
   computeOptionsRocComparison,
   IndicatorCandle,
@@ -1050,16 +1051,7 @@ export default function Chart({
         // sim time so completed candles (e.g. 09:15, 09:18, 09:21) are restored
         // immediately rather than rebuilt tick-by-tick. Guard with a date check so
         // stale ticks from a previous session never poison a different trading date.
-        if (currentTs != null) {
-          const simDate = new Date(currentTs * 1000).toISOString().slice(0, 10)
-          if (simDate === tradingDate) {
-            const totalSecs = currentTs % 86400
-            const h = Math.floor(totalSecs / 3600)
-            const m = Math.floor((totalSecs % 3600) / 60)
-            const s = totalSecs % 60
-            preSessionTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-          }
-        }
+        if (currentTs != null) preSessionTime = replayAsOfTime(currentTs, tradingDate)
         if (!preSessionTime && startTime) preSessionTime = startTime
 
         const [histCandles, preCandles] = await Promise.all([
@@ -1143,9 +1135,13 @@ export default function Chart({
     candleTimesRef.current = []
 
     let cancelled = false
+    // In a replay the forming bar must only hold prices up to the replay clock. Without a cutoff the
+    // backend returns the whole day, and the current bar (used below to seed the live bar) would
+    // already carry its final high/low: switching the interval would show the future.
+    const asOf = historyMode === 'replay' ? replayAsOfTime(currentSimTimeRef.current ?? latestTickRef.current?.time, tradingDate) : null
     rememberChartData(
-      `${historyMode}:${optionsCacheKey(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}`,
-      () => api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays, localReloadKey > 0, historyMode).then(res => res.candles),
+      `${historyMode}:${optionsCacheKey(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays)}:reload:${effectiveReloadKey}:asof:${asOf ?? ''}`,
+      () => api.getOptionsHistorical(symbol, tradingDate, strike, expiry, right, intervalMinutes, historicalDays, localReloadKey > 0, historyMode, asOf ?? undefined).then(res => res.candles),
     )
       .then((candles) => {
         if (cancelled) return
