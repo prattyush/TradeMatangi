@@ -179,3 +179,6 @@ Done on the development machine (WSL, CPU encoding):
 - Error text in the screen keeps its line breaks.
 
 Still needs you (Windows, real recordings): the checklist in `docs/phase24-manual-acceptance.md`, especially sections C and D, and noting the time and encoder on your machine.
+
+## CI note (2026-11-09)
+The Windows installer build failed on `dev` and two PRs because GitHub release downloads answered 504 (first the ffmpeg zip, then the NSIS tool that Tauri fetches itself); the app code compiled fine. The workflow now retries `fetch-ffmpeg.py` (5 tries) and the `tauri build` step (3 attempts, a retry reuses the compiled app), and caches the cargo build (`Swatinem/rust-cache`) and Tauri's tool folder (`%LOCALAPPDATA%\tauri`). If a build fails with `http status: 504`, re-run it first.

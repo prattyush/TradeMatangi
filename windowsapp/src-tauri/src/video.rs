@@ -622,6 +622,7 @@ fn run_job_inner(
 }
 
 /// Reads the length of a finished file by asking ffmpeg (`Duration:` line). Used by tests and checks.
+#[cfg_attr(not(test), allow(dead_code))] // used by the tests
 pub fn media_duration(ffmpeg: &Path, file: &str) -> Option<f64> {
     probe(ffmpeg, file).ok().and_then(|p| p.duration_sec)
 }

@@ -288,6 +288,7 @@ async fn refresh(tokens: &YoutubeTokens) -> Result<YoutubeTokens, RefreshError> 
 const EXPIRED_MESSAGE: &str = "The YouTube connection ended. Google expires it after about 7 days while the app is in Testing, or when access is removed. Connect again.";
 
 /// A valid access token for the upload (Y2). Refreshes and stores it when needed.
+#[allow(dead_code)] // used by the upload in Y2
 pub async fn access_token() -> Result<String, String> {
     let Some(tokens) = load()? else { return Err("YouTube is not connected. Click Connect YouTube first.".into()) };
     if is_fresh(&tokens, now_secs()) {
