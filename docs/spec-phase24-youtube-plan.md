@@ -1,6 +1,6 @@
 # Phase 24 follow-up: YouTube upload, saved links, desktop player
 
-Status (2026-11-09): Y1 (#789), recording auto-stop (#790) and Y2 upload (#791) merged; Y3 saved links in PR; Y4 player planned. Tool code stays on `dev` only. Builds on the Video Maker (see `spec-phase24-implementation-plan.md`).
+Status (2026-11-09): Y1 (#789), recording auto-stop (#790) and Y2 upload (#791) merged; Y3 saved links and videos in Analysis (#792) merged; Y4 local player optional, not started. Tool code stays on `dev` only. Builds on the Video Maker (see `spec-phase24-implementation-plan.md`).
 
 ## Decisions (user, 2026-11-09)
 - **Permission:** upload only (`https://www.googleapis.com/auth/youtube.upload`). The app cannot edit, delete or list videos, and cannot set a thumbnail. Privacy/description changes are done in YouTube Studio.
@@ -15,7 +15,7 @@ Status (2026-11-09): Y1 (#789), recording auto-stop (#790) and Y2 upload (#791) 
 4. Note: in Testing status the refresh token expires after about 7 days (reconnect weekly). Publishing the app (unverified is acceptable for personal use, it shows a warning screen) removes that.
 5. Note: videos uploaded through the API from a project created after July 2020 that has not passed YouTube's API audit are forced to **private**. Change visibility in YouTube Studio, or apply for the audit. Both notes are to be re-checked against Google's current documentation in Sprint Y1.
 6. The upload goes to the channel chosen on Google's consent screen (the login account may own several channels).
-7. Quota: default 10,000 units/day; one upload costs 1,600, so about 6 uploads a day.
+7. Quota (re-checked 2026-11-09 against Google's "determine quota cost" page): `videos.insert` has its own bucket of 100 calls a day, 1 unit each; `videos.update` costs 50 units from the general 10,000 a day. The earlier note here (1,600 units per upload, about 6 uploads a day) was out of date. The app's "daily limit" message in `youtube_upload.rs` still says "about 6 uploads a day"; change it to about 100 with the next code change.
 
 ## Design
 - **Connect YouTube** button in the Video Maker. A second OAuth round (same loopback callback as login, PKCE, `access_type=offline`, `prompt=consent`) asking only for `youtube.upload`. The login flow is not changed. The YouTube refresh token is stored in the Windows Credential Manager under its own entry, never sent to the server.
@@ -68,3 +68,9 @@ Stopping a trading session did not stop the screen recording, so the video kept 
 - The local mp4 player with clickable chapters (old Y4) is optional and not part of this PR.
 - **Tests:** 19 backend tests, also run against a real DynamoDB Local (lazy table creation, update in place, other user gets 404, session cascade delete) (`tests/test_video_links.py`: validation, update-in-place, cap, website and desktop owner checks, shared-read viewer refused, method allowlist, cascade delete with and without the table), `tests/test_ddb_maintenance.py` extended; Rust path-validator test; 15 vitest cases (`videoLinks.test.ts`, `sessionVideos.test.ts`). The cards were checked in a browser page with a mocked backend (auto-save, forced-private, failed save then retry, list, remove). **Not run on Windows or against the real server.**
 - Not in this step: the local mp4 player (Y4, optional).
+
+## Changing a video's visibility (question raised 2026-11-09, no code)
+- **Not needed in the normal case.** The upload panel already lets you pick Unlisted when uploading, with only the `youtube.upload` permission. The embedded player works for Unlisted and Public videos.
+- **What changing it later would need:** `videos.update` (50 units) with the `youtube` or `youtube.force-ssl` scope, both of which also allow editing and deleting all of the account's videos, plus a reconnect. The request must resend the whole `status` (omitted fields such as `embeddable` are cleared).
+- **The real blocker is probably not the permission.** Google's `videos.insert` reference (the `developers.google.cn` copy, and secondary sources) says videos uploaded by an API project created after 2020-07-28 that has not passed YouTube's API audit are locked to Private, and that sending another `privacyStatus` does not lift it. The `.com` copy of the page, as summarised by the fetch tool, says the opposite, so this is not settled. A locked video is unlikely to be changeable through the API either. The first real upload shows which case applies: the app reports the visibility YouTube applied (`privacyNotice`).
+- **Next step:** do one real upload on Windows with Unlisted selected. If YouTube keeps it Unlisted, nothing more is needed. If it forces Private and Studio also refuses Unlisted, the options are the audit, or uploading by hand in Studio and saving the link in the app (a small "Add a video link" feature, no extra permission).
