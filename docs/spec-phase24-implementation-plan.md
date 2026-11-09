@@ -18,7 +18,7 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 | Y2 | Upload to YouTube | dev | Merged (#791, together with the replay forming-bar fix). Not yet run against real YouTube |
 | Y3 | Saved links (server table + endpoints) | dev | Merged (#792): saved links + videos shown in Analysis (website and desktop). Not yet run on Windows |
 | Y4 | Play the video in the desktop | dev | Optional; not started (embedded Play here exists in Analysis) |
-| V | Make Unlisted from the app + Add a YouTube link (website and desktop) | dev | In PR. Not yet run on Windows |
+| V | Make Unlisted from the app + Add a YouTube link (website and desktop) | dev | Merged (#794). Confirmed by the user on Windows and the website: upload, Make Unlisted, embedded Play here |
 
 The Y rows and A are described in `docs/spec-phase24-youtube-plan.md`.
 
