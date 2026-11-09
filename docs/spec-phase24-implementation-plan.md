@@ -13,6 +13,13 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 | 4 | Tools menu and Video Maker UI | dev | Merged (#786) |
 | 5 | Hardening and acceptance | dev | Code merged (#787). Your Windows run on real recordings still pending (`docs/phase24-manual-acceptance.md`) |
 | 6 | Promote the tool to preprod | on request only | Not started |
+| Y1 | Connect YouTube (upload permission only) | dev | Merged (#789, together with the CI download-retry fix) |
+| A | Recording stops 10 s after the session ends | dev | In PR (#790) |
+| Y2 | Upload to YouTube | dev | Planned |
+| Y3 | Saved links (server table + endpoints) | dev | Planned |
+| Y4 | Play the video in the desktop | dev | Planned |
+
+The Y rows and A are described in `docs/spec-phase24-youtube-plan.md`.
 
 ## Context
 `docs/spec-phase24.md` asks for a desktop-only tool that takes a screen recording (`.webm`), converts it to a seekable `.mp4`, cuts it down to the periods around real trades, and produces a YouTube chapter list ("m:ss Trade N, P&L %").
@@ -148,7 +155,7 @@ Why first and alone: you need the `.json` on `preprod` before the real-trading t
 - **Your intended workflow works:** record real trading on `preprod` (website or desktop) → you get `video.webm` + `video.rec.json` → open both in the **dev-installed desktop** Tools view. The tool only reads those two files and calls the existing analysis routes (`sessions`, `round-trips`) that `preprod` already has, so it needs nothing else from `preprod`. Point the dev desktop's server URL at the backend that holds the real session (the `preprod`/real-trading server), because the trades are fetched from there.
 
 ## Out of scope
-Uploading to YouTube, a video preview player or editor, older recordings without metadata, and macOS/Linux installers.
+Older recordings without metadata, a video editor, and macOS/Linux installers. (YouTube upload, saved links and a player were out of scope at first and were added on 2026-11-09: see `docs/spec-phase24-youtube-plan.md`.)
 
 ## Sprint 3 as built
 

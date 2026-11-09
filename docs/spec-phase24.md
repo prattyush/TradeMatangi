@@ -31,3 +31,13 @@ The description should say trade id (1,2,3 ..) and P&L % of that round trip trad
 b) These details would be provided along with the finished video to the user to be uploaded to youtube.
 
 Choose Ui as you wish, on professional side and matching desktop styling. Add the tools options in the dropdown menu same as analysis etc.
+
+##### Additions (2026-11-09, requested after the first release)
+The sections above are the original requirements. These were added later, in chat, and are tracked in `docs/spec-phase24-youtube-plan.md`.
+1. **Upload to YouTube from the desktop.** The user signs in with Google; the app asks only for the permission to upload (`youtube.upload`). The finished mp4 is uploaded with its title and the chapter description. Default visibility is Private. The token stays on the PC (Windows Credential Manager).
+2. **Keep the links.** Each uploaded video's link is saved on the server against the trading session(s) it covers, so it can be found again and shown on other devices.
+3. **Play in the desktop.** The finished mp4 plays inside the desktop app, with the chapters as clickable seek points. Playback is of the local file; the YouTube copy opens in the browser.
+4. **Recording stops with the session.** A screen recording stops by itself 10 seconds after the trading session ends (website and desktop; dev only for now).
+
+Status of these: Connect YouTube is built (#789); recording auto-stop is in review (#790); upload, saved links and the player are planned as three more PRs (see the implementation plan status table).
+

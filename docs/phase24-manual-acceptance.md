@@ -31,3 +31,16 @@ Needs a Windows desktop build that includes Sprints 1-4 (the CI job `Desktop Win
 5. Cancel in the middle of a long cut: the job stops, no mp4 or `.trade-matangi-work-*` folder is left behind.
 6. Saving to a full or read-only folder shows an error.
 7. Time check: note how long a 1-hour recording takes (progress should move steadily) and the CPU use. If the machine has an NVIDIA, Intel or AMD GPU, note which encoder the result reports (it should say so after "Finished").
+
+## E. Recording stops with the session, and YouTube (added 2026-11-09)
+Recording auto-stop (needs the build with #790):
+1. Start a recording, start a replay or paper session, then press Stop on the session. About 10 seconds later the recording stops by itself, `video.webm` and `video.rec.json` download, and a notice says why.
+2. Start recording with no session running and wait over 10 seconds: it keeps recording.
+3. Stop a session and start another one within 10 seconds: the recording keeps going.
+
+YouTube (each step becomes available as its PR is merged):
+4. **Connect (built):** Tools > Trading Video Maker > YouTube > Connect YouTube; sign in, tick the upload permission; the card says connected, and still does after restarting the app. Disconnect returns to Connect.
+5. **Upload (Y2):** make a short video, upload as Private; progress moves, the link opens in the browser, the video shows in YouTube Studio. If YouTube forces Private, the app says so.
+6. **Saved links (Y3):** after the upload the link is listed under the session; it is still there after restarting the app and from another computer logged in to the same account.
+7. **Player (Y4):** the finished mp4 plays in the app, the seek bar works, and clicking a chapter time jumps to it.
+
