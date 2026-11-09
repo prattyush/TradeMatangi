@@ -1,6 +1,6 @@
 # Phase 24 follow-up: YouTube upload, saved links, desktop player
 
-Status: Y1 in PR (2026-11-09); Y2-Y4 planned. Tool code stays on `dev` only. Builds on the Video Maker (see `spec-phase24-implementation-plan.md`).
+Status (2026-11-09): Y1 merged (#789). Recording auto-stop in PR. Y2 upload, Y3 saved links, Y4 player planned, one PR each. Tool code stays on `dev` only. Builds on the Video Maker (see `spec-phase24-implementation-plan.md`).
 
 ## Decisions (user, 2026-11-09)
 - **Permission:** upload only (`https://www.googleapis.com/auth/youtube.upload`). The app cannot edit, delete or list videos, and cannot set a thumbnail. Privacy/description changes are done in YouTube Studio.
@@ -43,3 +43,6 @@ Editing or deleting uploaded videos, thumbnails, playlists, scheduled publishing
 - A different Trade Matangi user on the same PC would share this YouTube connection (it is per Windows user, not per Trade Matangi account). Logging out of Trade Matangi does not disconnect it.
 - Tests: 8 Rust unit tests (authorize URL, callback parsing, token response and scope check, refresh, freshness margin, error wording, storage format). The card was checked in a browser page with a mocked `invoke` (connect, waiting state, connected, disconnect, error). Not run against real Google.
 - **Manual check (Windows build):** Video Maker > YouTube > Connect YouTube; the browser opens Google; pick the account/channel and tick the upload permission; the page says "connected"; the card shows "YouTube is connected". Close and reopen the app: still connected. Disconnect: back to Connect. Also try declining on Google's screen and confirm the message.
+
+## Recording auto-stop (added 2026-11-09, dev only)
+Stopping a trading session did not stop the screen recording, so the video kept recording dead footage. The recorder now stops 10 seconds after every session on screen has ended (see `docs/recording-metadata.md`, "Automatic stop"). Not on `preprod` yet.

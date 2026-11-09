@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { RecordingMetaRecorder, metaFileName, type RecordingClock, type RecordingSource } from './recordingMeta'
+import { RecordingMetaRecorder, SessionEndWatcher, metaFileName, type RecordingClock, type RecordingClockSession, type RecordingSource } from './recordingMeta'
 
 export type RecordingState = 'idle' | 'requesting' | 'recording' | 'paused'
 
@@ -17,6 +17,7 @@ function pickMimeType(): string {
 }
 
 const SAMPLE_INTERVAL_MS = 1000
+export const SESSION_ENDED_NOTICE = 'Recording stopped because the trading session ended. The video and its .rec.json were saved.'
 
 /**
  * `clock` (optional) reports the sessions on screen so a `<video>.rec.json` file can be saved
@@ -25,6 +26,7 @@ const SAMPLE_INTERVAL_MS = 1000
 export function useRecording(clock?: RecordingClock, source: RecordingSource = 'website') {
   const [recordingState, setRecordingState] = useState<RecordingState>('idle')
   const [recordingError, setRecordingError] = useState<string | null>(null)
+  const [recordingNotice, setRecordingNotice] = useState<string | null>(null)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -34,6 +36,7 @@ export function useRecording(clock?: RecordingClock, source: RecordingSource = '
   clockRef.current = clock
   const metaRef = useRef<RecordingMetaRecorder | null>(null)
   const samplerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const endWatcherRef = useRef<SessionEndWatcher | null>(null)
 
   const stopSampler = useCallback(() => {
     if (samplerRef.current !== null) clearInterval(samplerRef.current)
@@ -84,8 +87,30 @@ export function useRecording(clock?: RecordingClock, source: RecordingSource = '
     // Stream tracks stopped inside onstop to ensure all data is flushed first
   }, [])
 
+  /** One sampler tick: reads the clock once, saves a sample, and stops the recording when the session has ended. */
+  const tick = useCallback(() => {
+    let sessions: RecordingClockSession[] | undefined
+    try {
+      sessions = clockRef.current?.()
+    } catch {
+      sessions = undefined
+    }
+    withMeta(m => m.sample(sessions ? () => sessions! : undefined))
+    if (!sessions) return
+    try {
+      if (endWatcherRef.current?.observe(sessions, Date.now()) === 'stop') {
+        endWatcherRef.current = null
+        setRecordingNotice(SESSION_ENDED_NOTICE)
+        stopRecording()
+      }
+    } catch {
+      // Never let the watcher break recording.
+    }
+  }, [withMeta, stopRecording])
+
   const startRecording = useCallback(async (filename: string) => {
     setRecordingError(null)
+    setRecordingNotice(null)
 
     // getDisplayMedia requires a secure context (HTTPS or localhost)
     if (!window.isSecureContext || !navigator.mediaDevices?.getDisplayMedia) {
@@ -136,6 +161,7 @@ export function useRecording(clock?: RecordingClock, source: RecordingSource = '
       streamRef.current = null
       recorderRef.current = null
       stopSampler()
+      endWatcherRef.current = null
       triggerDownload(chunksRef.current, mimeType, filenameRef.current)
       downloadMeta(filenameRef.current)
       chunksRef.current = []
@@ -159,12 +185,13 @@ export function useRecording(clock?: RecordingClock, source: RecordingSource = '
       meta.start()
       metaRef.current = meta
       meta.sample(clockRef.current)
+      endWatcherRef.current = new SessionEndWatcher()
       stopSampler()
-      samplerRef.current = setInterval(() => withMeta(m => m.sample(clockRef.current)), SAMPLE_INTERVAL_MS)
+      samplerRef.current = setInterval(tick, SAMPLE_INTERVAL_MS)
     } catch {
       metaRef.current = null
     }
-  }, [triggerDownload, downloadMeta, stopSampler, withMeta, source])
+  }, [triggerDownload, downloadMeta, stopSampler, withMeta, tick, source])
 
   const pauseRecording = useCallback(() => {
     if (recorderRef.current?.state === 'recording') {
@@ -193,5 +220,5 @@ export function useRecording(clock?: RecordingClock, source: RecordingSource = '
     }
   }, [])
 
-  return { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording }
+  return { recordingState, recordingError, recordingNotice, startRecording, pauseRecording, resumeRecording, stopRecording }
 }

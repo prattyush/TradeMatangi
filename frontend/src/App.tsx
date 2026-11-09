@@ -242,7 +242,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
     tickTimes: [sim.latestEquityTick?.time, sim.latestCETick?.time, sim.latestPETick?.time],
     candleSeconds: stratIntervalSecsRef.current, speed: sim.group?.speed, stepwise: sim.stepwise,
   }), [sim.sessionId, sim.sessionState, sim.sessionType, sim.symbol, sim.date, sim.latestEquityTick, sim.latestCETick, sim.latestPETick, sim.group?.speed, sim.stepwise])
-  const { recordingState, recordingError, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording(recordingClock, 'website')
+  const { recordingState, recordingError, recordingNotice, startRecording, pauseRecording, resumeRecording, stopRecording } = useRecording(recordingClock, 'website')
   const simRef = useRef(sim)
   const { snapshotActive, startSnapshots, stopSnapshots, captureSnapshot, notifyCommit } = useSnapshot(simRef)
   // Keep simRef in sync with latest sim state for useSnapshot; tell it a commit has landed so
@@ -289,6 +289,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   useFlashError(brokerError, 'Broker')
   useFlashError(sim.orderError, 'Order')
   useFlashError(recordingError, 'Recording')
+  useEffect(() => { if (recordingNotice) flashMessage(recordingNotice, 'info', 'Recording') }, [recordingNotice])
   useEffect(() => { setNotificationContext({ sessionId: sim.sessionId ?? undefined, symbol: sim.symbol, mode: sim.sessionType }); return () => setNotificationContext({}) }, [sim.sessionId, sim.symbol, sim.sessionType])
   useEffect(() => { if (brokerError) setBrokerError(null) }, [brokerError])
   useEffect(() => { if (sim.orderError) sim.clearOrderError() }, [sim.orderError, sim.clearOrderError])
