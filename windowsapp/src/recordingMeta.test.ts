@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_RECORDING_SAMPLES, RecordingMetaRecorder, metaFileName, type RecordingClockSession } from '../../shared/recordingMeta'
+import { MAX_RECORDING_SAMPLES, RecordingMetaRecorder, SESSION_END_GRACE_MS, SessionEndWatcher, metaFileName, type RecordingClockSession } from '../../shared/recordingMeta'
 import { desktopRecordingSessions, websiteRecordingSessions } from '../../shared/recordingClocks'
 
 function clockOf(start = 1_000_000) {
@@ -154,6 +154,10 @@ describe('website clock', () => {
     expect(websiteRecordingSessions({ ...base, tickTimes: [null, undefined] })[0].marketTime).toBeNull()
     expect(websiteRecordingSessions({ ...base, sessionState: 'ended', tickTimes: [1000] })[0].marketTime).toBeNull()
   })
+  it('marks the session ended only when it is', () => {
+    expect(websiteRecordingSessions({ ...base, tickTimes: [1000] })[0].ended).toBe(false)
+    expect(websiteRecordingSessions({ ...base, sessionState: 'ended', tickTimes: [1000] })[0].ended).toBe(true)
+  })
   it('reports nothing without a session', () => {
     expect(websiteRecordingSessions({ ...base, sessionId: null, tickTimes: [1000] })).toEqual([])
   })
@@ -178,5 +182,63 @@ describe('desktop clock', () => {
   it('reports nothing without a session, and no time once ended', () => {
     expect(desktopRecordingSessions({ session: null, mode: 'Paper', nowMs })).toEqual([])
     expect(desktopRecordingSessions({ session: { ...session1, state: 'ended' }, mode: 'Paper', nowMs })[0].marketTime).toBeNull()
+  })
+  it('marks the session ended only when it is', () => {
+    expect(desktopRecordingSessions({ session: session1, mode: 'Paper', nowMs })[0].ended).toBe(false)
+    expect(desktopRecordingSessions({ session: { ...session1, state: 'ended' }, mode: 'Paper', nowMs })[0].ended).toBe(true)
+  })
+})
+
+describe('SessionEndWatcher', () => {
+  const live = [session(100)]
+  const ended = [session(null, { ended: true })]
+
+  it('never stops a recording made before any session was running', () => {
+    const w = new SessionEndWatcher()
+    expect(w.observe([], 0)).toBe('continue')
+    expect(w.observe([], SESSION_END_GRACE_MS * 10)).toBe('continue')
+    expect(w.observe(ended, SESSION_END_GRACE_MS * 20)).toBe('continue') // an old, already ended session
+  })
+
+  it('stops once every session has stayed ended for the whole grace period', () => {
+    const w = new SessionEndWatcher()
+    expect(w.observe(live, 0)).toBe('continue')
+    expect(w.observe(ended, 1000)).toBe('continue')
+    expect(w.observe(ended, 1000 + SESSION_END_GRACE_MS - 1)).toBe('continue')
+    expect(w.observe(ended, 1000 + SESSION_END_GRACE_MS)).toBe('stop')
+  })
+
+  it('treats an empty or missing session list as ended after a session ran', () => {
+    for (const gone of [[], null, undefined]) {
+      const w = new SessionEndWatcher(5000)
+      w.observe(live, 0)
+      expect(w.observe(gone, 100)).toBe('continue')
+      expect(w.observe(gone, 5100)).toBe('stop')
+    }
+  })
+
+  it('keeps recording when a new session starts inside the grace period, and restarts the countdown', () => {
+    const w = new SessionEndWatcher()
+    w.observe(live, 0)
+    w.observe(ended, 1000)
+    expect(w.observe(live, 5000)).toBe('continue') // quick Stop then Start
+    expect(w.observe(ended, 6000)).toBe('continue')
+    expect(w.observe(ended, 6000 + SESSION_END_GRACE_MS - 1)).toBe('continue') // counted from 6000, not 1000
+    expect(w.observe(ended, 6000 + SESSION_END_GRACE_MS)).toBe('stop')
+  })
+
+  it('stays running while any one of several sessions is live', () => {
+    const w = new SessionEndWatcher()
+    const two = [session(100, { sessionId: 'a', ended: true }), session(100, { sessionId: 'b' })]
+    w.observe(two, 0)
+    expect(w.observe(two, SESSION_END_GRACE_MS * 5)).toBe('continue')
+  })
+
+  it('ignores malformed entries', () => {
+    const w = new SessionEndWatcher(1000)
+    w.observe(live, 0)
+    const junk = [null, { sessionId: '' }, undefined] as unknown as RecordingClockSession[]
+    expect(w.observe(junk, 10)).toBe('continue')
+    expect(w.observe(junk, 1010)).toBe('stop')
   })
 })
