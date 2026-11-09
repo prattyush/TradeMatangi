@@ -4,7 +4,7 @@ import type { SavedLink, VideoLinksApi } from './tools/videoLinks'
 
 const row = (sessionId: string): SavedLink => ({ session_id: sessionId, video_id: 'dQw4w9WgXcQ', url: '', title: 'T', privacy: 'unlisted', chapters: '', uploaded_at: '' })
 const video = { videoId: 'dQw4w9WgXcQ', title: 'T', chapters: '0:00 Open', sessionIds: ['s1', 's2'] }
-const apiWith = (save: VideoLinksApi['save']): VideoLinksApi => ({ list: async () => [], remove: async () => {}, save })
+const apiWith = (save: VideoLinksApi['save']): VideoLinksApi => ({ list: async () => [], listMine: async () => [], remove: async () => {}, save })
 
 describe('changeVisibility', () => {
   it('changes the video on YouTube and then the label of every session', async () => {

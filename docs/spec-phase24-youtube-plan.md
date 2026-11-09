@@ -91,6 +91,11 @@ Stopping a trading session did not stop the screen recording, so the video kept 
 - Quota wording: the "daily limit" message no longer says "about 6 uploads a day" (Google's current limit is 100 uploads a day).
 - Tests: 8 Rust tests (`youtube_visibility.rs`: the update body keeps the settable status and drops the rest, request order and bearer token against a fake YouTube, permission/lock/not-found wording, input checks, applied-differs-from-asked) plus granted-scope parsing; vitest for URL parsing, the title lookup, and the visibility helper. The add-link form was checked in a browser page against a real oEmbed call (title of a public video read correctly).
 
+## Saved videos before a recording is chosen (fix, 2026-11-09)
+- **Problem:** the Video Maker's Saved videos card only appeared after a recording was chosen, because links were listed per session of the open recording.
+- **Fix:** the card is always shown. With a recording it lists that recording's sessions (as before); without one it lists all of the user's saved videos, newest first, through the new `GET /api/video-links/mine` (desktop: `video-links/mine`, read-only, owner only; a filtered table scan capped at 200 rows because the table is keyed by session). Copy, Open on YouTube, Make Unlisted and Remove link work there too; adding a link by hand needs a recording (it says to open one, or add it in Analysis).
+- Tests: backend (list across sessions, isolation, cap, web and desktop routes), path-validator tests (TypeScript and Rust), `listMine` request. Not checked in the real app.
+
 ## Videos row made compact; website embed confirmed (2026-11-09)
-- **Confirmed by the user on Windows + website:** an uploaded video switched to Unlisted (from the app) plays embedded in the website's Analysis (Play here). The desktop embed is still unconfirmed.
+- **Confirmed by the user (2026-11-09):** an uploaded video switched to Unlisted (from the app) plays embedded (Play here) in Analysis on the website and in the Windows desktop app, and the Videos row folds to one line on both. No error 153 in the desktop WebView.
 - The expanded Videos row in Analysis is one line per video: title (cut off with an ellipsis), visibility, **Open**, **Copy**, **Play**/**Hide**, **✕** (remove the saved link), with the longer explanation only under an opened player. **+ Add a link** opens the add form (shown directly when no video is saved yet). Clicking the Videos header again folds everything back to the single row. Checked in a browser page.

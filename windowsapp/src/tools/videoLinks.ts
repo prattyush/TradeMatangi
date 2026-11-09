@@ -7,6 +7,8 @@ export { groupSavedVideos } from '../../../shared/analysis/videoLinks'
 
 export interface VideoLinksApi {
   list(sessionId: string): Promise<SavedLink[]>
+  /** Every saved video of the signed-in user (newest first), whatever the session. */
+  listMine(): Promise<SavedLink[]>
   save(link: { sessionId: string; videoId: string; title: string; privacy: Privacy; chapters: string }): Promise<SavedLink>
   remove(sessionId: string, videoId: string): Promise<void>
 }
@@ -18,6 +20,7 @@ export interface VideoLinksApi {
 export function createVideoLinksApi(request: AnalysisRequest): VideoLinksApi {
   return {
     list: async sessionId => (await request<{ links: SavedLink[] }>(`video-links?session_id=${encodeURIComponent(sessionId)}`, 'GET')).links,
+    listMine: async () => (await request<{ links: SavedLink[] }>('video-links/mine', 'GET')).links,
     save: ({ sessionId, videoId, title, privacy, chapters }) =>
       request<SavedLink>('video-links', 'POST', { session_id: sessionId, video_id: videoId, title, privacy, chapters }),
     remove: async (sessionId, videoId) => {

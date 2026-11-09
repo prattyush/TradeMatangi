@@ -1113,7 +1113,7 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
-        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" => true,
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -2510,6 +2510,11 @@ mod tests {
         assert!(valid_analysis_path("video-links?session_id=s1", "GET"));
         assert!(valid_analysis_path("video-links?session_id=s1&video_id=dQw4w9WgXcQ", "DELETE"));
         assert!(!valid_analysis_path("video-links", "PUT"));
+        // The user's own list is read-only.
+        assert!(valid_analysis_path("video-links/mine", "GET"));
+        for method in ["POST", "DELETE", "PUT"] {
+            assert!(!valid_analysis_path("video-links/mine", method), "{method}");
+        }
         for path in ["video-links/extra", "video-links/", "/video-links", "video-links/../labels", "video-link", "video-links%2Fx"] {
             for method in ["GET", "POST", "DELETE"] {
                 assert!(!valid_analysis_path(path, method), "{method} {path}");
