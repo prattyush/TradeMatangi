@@ -79,6 +79,22 @@ def test_delete_removes_only_the_link(database):
         svc.delete_link("s1", VIDEO)
 
 
+def test_list_user_links_covers_all_sessions_of_that_user_newest_first(database):
+    svc.save_link("alice", "s1", VIDEO, "First", "private")
+    svc.save_link("alice", "s2", OTHER_VIDEO, "Second", "unlisted")
+    svc.save_link("bob", "s9", "zzzzzzzzzzz", "Not mine", "private")
+    rows = svc.list_user_links("alice")
+    assert [(r["session_id"], r["title"]) for r in rows] == [("s2", "Second"), ("s1", "First")]
+    assert svc.list_user_links("nobody") == []
+
+
+def test_list_user_links_is_capped(database, monkeypatch):
+    monkeypatch.setattr(svc, "MAX_LINKS_LISTED", 2)
+    for i, vid in enumerate(["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"]):
+        svc.save_link("alice", f"s{i}", vid, f"T{i}", "private")
+    assert len(svc.list_user_links("alice")) == 2
+
+
 # ── Website API ──────────────────────────────────────────────────────────────
 
 def test_api_save_list_delete_round_trip(database):
@@ -99,6 +115,17 @@ def test_api_rejects_bad_input_with_400(database):
     client = TestClient(app)
     assert client.post(WEB, json=body(video_id="nope"), headers=headers("alice")).status_code == 400
     assert client.post(WEB, json=body(privacy="secret"), headers=headers("alice")).status_code == 422
+
+
+def test_api_mine_lists_only_the_callers_links(database):
+    add_session(database, "s1", user="alice")
+    add_session(database, "s2", user="bob")
+    client = TestClient(app)
+    client.post(WEB, json=body("s1"), headers=headers("alice"))
+    client.post(WEB, json=body("s2", video_id=OTHER_VIDEO), headers=headers("bob"))
+    mine = client.get(f"{WEB}/mine", headers=headers("alice")).json()["links"]
+    assert [(r["session_id"], r["video_id"]) for r in mine] == [("s1", VIDEO)]
+    assert client.get(f"{WEB}/mine", headers=headers("carol")).json() == {"links": []}
 
 
 def test_other_users_get_404_and_cannot_change_anything(database):
@@ -139,6 +166,16 @@ def test_desktop_route_is_owner_only_and_exposes_only_the_listed_methods(databas
     as_user["user"] = "alice"
     assert client.put(DESKTOP, json=body()).status_code in (404, 405)
     assert client.delete(f"{DESKTOP}?session_id=s1&video_id={VIDEO}").json() == {"deleted": True}
+
+
+def test_desktop_mine_route_lists_the_callers_links(database, as_user):
+    add_session(database, "s1", user="alice")
+    client = TestClient(app)
+    client.post(DESKTOP, json=body())
+    assert [r["video_id"] for r in client.get(f"{DESKTOP}/mine").json()["links"]] == [VIDEO]
+    as_user["user"] = "bob"
+    assert client.get(f"{DESKTOP}/mine").json() == {"links": []}
+    assert client.post(f"{DESKTOP}/mine", json=body()).status_code in (404, 405)
 
 
 def test_desktop_shared_read_viewer_gets_404(database, as_user, monkeypatch):
