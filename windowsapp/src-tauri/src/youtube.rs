@@ -178,9 +178,20 @@ pub fn load() -> Result<Option<YoutubeTokens>, String> {
     }
 }
 
+/// Writes `raw` and reads it back through a brand-new entry. A store that accepts the write but does not keep it
+/// (the keyring crate without its Windows backend does exactly that) must fail here, not later as "not connected".
+fn store_and_verify(raw: &str, make_entry: impl Fn() -> Result<keyring::Entry, String>) -> Result<(), String> {
+    make_entry()?.set_password(raw).map_err(|e| format!("Windows Credential Manager could not save the YouTube connection: {e}"))?;
+    match make_entry()?.get_password() {
+        Ok(saved) if saved == raw => Ok(()),
+        Ok(_) => Err("Windows Credential Manager changed the YouTube connection while saving it. Connect again.".into()),
+        Err(e) => Err(format!("Windows Credential Manager did not keep the YouTube connection ({e}). It was not saved.")),
+    }
+}
+
 fn save(tokens: &YoutubeTokens) -> Result<(), String> {
     let raw = serde_json::to_string(tokens).map_err(|e| e.to_string())?;
-    entry()?.set_password(&raw).map_err(|e| format!("Windows Credential Manager could not save the YouTube connection: {e}"))
+    store_and_verify(&raw, entry)
 }
 
 fn delete() {
@@ -225,9 +236,9 @@ fn authorize_in_browser(config: DesktopGoogleConfig) -> Result<YoutubeTokens, St
                 }
                 let parsed = parse_callback(&request);
                 let page = if parsed.is_ok() {
-                    "<h2>Trade Matangi is connected to YouTube</h2><p>You can close this browser tab and return to the desktop app.</p>"
+                    "<h2>Google answered Trade Matangi</h2><p>You can close this browser tab. The desktop app now finishes the connection and tells you whether YouTube is connected.</p>"
                 } else {
-                    "<h2>YouTube was not connected</h2><p>You can close this browser tab and see the message in the desktop app.</p>"
+                    "<h2>YouTube was not connected</h2><p>You can close this browser tab and read the message in the desktop app.</p>"
                 };
                 respond(&mut stream, "200 OK", page);
                 break parsed?;
@@ -346,6 +357,15 @@ mod tests {
 
     fn tokens(access: &str, expires_at: i64) -> YoutubeTokens {
         YoutubeTokens { refresh_token: "r".into(), access_token: access.into(), expires_at, client_id: "cid".into(), client_secret: Some("sec".into()) }
+    }
+
+    #[test]
+    fn saving_fails_loudly_when_the_store_does_not_keep_the_value() {
+        // Without a real backend the keyring crate hands out a fresh empty entry each time (the "mock" store),
+        // which is how the Windows build lost the YouTube connection. Linux CI runs on that same store.
+        let error = store_and_verify("secret", entry).unwrap_err();
+        assert!(error.contains("did not keep the YouTube connection"), "{error}");
+        assert!(error.contains("not saved"), "{error}");
     }
 
     #[test]
