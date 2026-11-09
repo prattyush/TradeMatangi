@@ -212,6 +212,46 @@ class TestAutoStopBarMode:
         assert len(order_service.get_open_orders(SESSION)) == 0
 
 
+class TestAutoStopEntryGuardrails:
+    def _autostop(self, session, **extra):
+        svc.start_strategy(session, "AutoStop", None, {
+            "direction": "BUY", "autostop_trigger_type": "bar", "autostop_deviation_pct": 1.0, **extra,
+        })
+        svc.on_tick(session, _tick(T0, h=125.0, c=110.0), None)
+        svc.on_tick(session, _tick(T1, h=115.0, c=112.0), None)
+
+    def test_entry_is_reduced_to_the_per_entry_cap(self):
+        session = _session()
+        session.guardrail_maxentry_enabled = True
+        session.guardrail_maxentry_mode = "percentage"
+        session.guardrail_maxentry_pct = 12.0
+        with patch("app.services.guardrail_service._capital_margin_rate", return_value=1.0), \
+             patch("app.services.trading.get_position", return_value=Position(symbol=SYMBOL, quantity=0, avg_entry_price=0.0, side="FLAT")):
+            self._autostop(session, quantity=1000)
+        orders = order_service.get_open_orders(SESSION)
+        assert len(orders) == 1
+        # 12% of 150,000 = 18,000 at the 125 trigger = 144 shares
+        assert orders[0].quantity == 144
+
+    def test_entry_inside_the_minimum_gap_is_skipped_and_stays_armed(self):
+        from app.models.schemas import Trade
+        session = _session()
+        session.guardrail_mingap_enabled = True
+        session.guardrail_mingap_minutes = 5
+        session.current_time = T1
+        recent = [Trade(user_id=USER_ID, symbol=SYMBOL, side=TradeSide.BUY, quantity=1, price=100.0,
+                        timestamp=T1 - 60, session_id=SESSION)]
+        with patch("app.services.trading.get_trades", return_value=recent), \
+             patch("app.services.trading.get_position", return_value=Position(symbol=SYMBOL, quantity=1, avg_entry_price=100.0, side="LONG")):
+            self._autostop(session, quantity=1)
+        assert len(order_service.get_open_orders(SESSION)) == 0
+
+    def test_disabled_guardrails_leave_the_quantity_alone(self):
+        session = _session()
+        self._autostop(session, quantity=1000)
+        assert order_service.get_open_orders(SESSION)[0].quantity == 1000
+
+
 class TestAutoStopDeviationMode:
     def test_buy_places_target_at_close_plus_deviation(self):
         session = _session()

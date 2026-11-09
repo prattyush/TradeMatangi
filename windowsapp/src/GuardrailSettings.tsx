@@ -14,6 +14,12 @@ export const guardrailFields = [
   ['guardrail_maxsize_mode', 'Max Size mode'],
   ['guardrail_maxsize_pct', 'Max Size (% of capital)', 1, 100, 0.1],
   ['guardrail_maxsize_value', 'Max Size value (₹)', 0, undefined, 0.1],
+  ['guardrail_maxentry_enabled', 'Enable Max per entry (an entry larger than the cap is reduced to it)'],
+  ['guardrail_maxentry_mode', 'Max per entry mode'],
+  ['guardrail_maxentry_pct', 'Max per entry (% of capital)', 1, 100, 0.1],
+  ['guardrail_maxentry_value', 'Max per entry value (₹)', 0, undefined, 0.1],
+  ['guardrail_mingap_enabled', 'Enable minimum gap between entries (exits are never held back)'],
+  ['guardrail_mingap_minutes', 'Minutes between entries', 1, 390, 1],
 ] as const
 
 export function GuardrailFields({ draft, onChange }: { draft: Record<string, unknown>; onChange: (value: Record<string, unknown>) => void }) {
