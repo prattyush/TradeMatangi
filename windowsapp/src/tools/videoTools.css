@@ -49,3 +49,6 @@
 .vm label { justify-content: flex-start; }
 .vm-sessions label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #cbd5e1; }
 .vm-error, .vm-ok, .vm-muted[role] { white-space: pre-wrap; }
+
+.vm-field { display: flex; flex-direction: column; align-items: stretch; gap: 4px; font-size: 13px; color: #cbd5e1; }
+.vm-field input[type="text"] { width: 100%; box-sizing: border-box; background: #10131a; color: #e5e7eb; border: 1px solid #293142; border-radius: 6px; padding: 7px 10px; font-size: 13px; }

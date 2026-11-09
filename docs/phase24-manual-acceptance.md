@@ -40,7 +40,7 @@ Recording auto-stop (needs the build with #790):
 
 YouTube (each step becomes available as its PR is merged):
 4. **Connect (built):** Tools > Trading Video Maker > YouTube > Connect YouTube; sign in, tick the upload permission; the card says connected, and still does after restarting the app. Disconnect returns to Connect.
-5. **Upload (Y2):** make a short video, upload as Private; progress moves, the link opens in the browser, the video shows in YouTube Studio. If YouTube forces Private, the app says so.
+5. **Upload (Y2, built):** make a short video (a few minutes), then in the YouTube card click Upload to YouTube..., confirm. The progress bar moves, the result shows the link; Open on YouTube opens it and the video is in YouTube Studio with the chapter description. Also try Cancel part-way, and unplugging the network for ~20 s during an upload (it should resume). If YouTube forces Private, the app says so. Upload a longer video (a few hundred MB) once to see the speed.
 6. **Saved links (Y3):** after the upload the link is listed under the session; it is still there after restarting the app and from another computer logged in to the same account.
 7. **Player (Y4):** the finished mp4 plays in the app, the seek bar works, and clicking a chapter time jumps to it.
 

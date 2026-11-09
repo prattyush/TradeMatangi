@@ -3,6 +3,7 @@ import type { RecordingMeta } from '../../../shared/recordingMeta'
 import {
   IDLE_JOB, applyVideoEvent, buildJobRequest, cannotStartReason, computeVideoPlan, defaultCandleSeconds, descriptionPathFor, describeSession,
   formatDuration, marketClock, pairingWarning, parseRecordingMeta, startJob, suggestedOutputName,
+  applyUploadEvent, defaultVideoTitle, fileNameOf, privacyNotice, startUpload, uploadCannotStartReason,
 } from './videoMakerModel'
 
 const T0 = Date.UTC(2026, 10, 6, 3, 50, 0)
@@ -117,5 +118,57 @@ describe('job events', () => {
   })
   it('accepts the first event of a job whose id was not known yet', () => {
     expect(applyVideoEvent(IDLE_JOB, ev({}))).toMatchObject({ state: 'running', jobId: 'j1' })
+  })
+})
+
+describe('YouTube upload model', () => {
+  const ok = { connected: true, file: 'C:\\v\\day_trades.mp4', title: 'NIFTY 2026-11-06 trades', description: '0:00 Introduction', running: false }
+
+  it('lets an upload start only when everything is valid', () => {
+    expect(uploadCannotStartReason(ok)).toBe('')
+    expect(uploadCannotStartReason({ ...ok, connected: false })).toMatch(/Connect YouTube/)
+    expect(uploadCannotStartReason({ ...ok, file: '' })).toMatch(/Choose the video/)
+    expect(uploadCannotStartReason({ ...ok, file: 'a.webm' })).toMatch(/mp4/)
+    expect(uploadCannotStartReason({ ...ok, title: '   ' })).toMatch(/title/)
+    expect(uploadCannotStartReason({ ...ok, title: 'x'.repeat(101) })).toMatch(/100/)
+    expect(uploadCannotStartReason({ ...ok, title: 'a<b' })).toMatch(/< or >/)
+    expect(uploadCannotStartReason({ ...ok, description: 'a > b' })).toMatch(/< or >/)
+    expect(uploadCannotStartReason({ ...ok, description: 'x'.repeat(5001) })).toMatch(/5000/)
+    expect(uploadCannotStartReason({ ...ok, running: true })).toMatch(/running/)
+  })
+
+  it('counts title characters and description bytes the way YouTube does', () => {
+    expect(uploadCannotStartReason({ ...ok, title: 'é'.repeat(100) })).toBe('')
+    expect(uploadCannotStartReason({ ...ok, description: 'é'.repeat(2501) })).toMatch(/5000/) // 5002 bytes
+    expect(uploadCannotStartReason({ ...ok, description: 'é'.repeat(2500) })).toBe('')
+  })
+
+  it('follows upload events and ignores other uploads and late events', () => {
+    let ui = startUpload('j1')
+    ui = applyUploadEvent(ui, { jobId: 'j1', status: 'progress', percent: 40, message: 'Uploading 10 MB of 25 MB' })
+    expect(ui).toMatchObject({ state: 'running', percent: 40 })
+    expect(applyUploadEvent(ui, { jobId: 'other', status: 'done', percent: 100, message: '', videoId: 'x' })).toBe(ui)
+    ui = applyUploadEvent(ui, { jobId: 'j1', status: 'progress', percent: 10, message: 'retry' })
+    expect(ui.percent).toBe(40) // never goes backwards
+    ui = applyUploadEvent(ui, { jobId: 'j1', status: 'done', percent: 100, message: 'Uploaded', videoId: 'abcDEF12345', url: 'https://www.youtube.com/watch?v=abcDEF12345', privacy: 'private' })
+    expect(ui).toMatchObject({ state: 'done', percent: 100, videoId: 'abcDEF12345', privacy: 'private' })
+    expect(applyUploadEvent(ui, { jobId: 'j1', status: 'error', percent: 0, message: 'late' })).toBe(ui)
+    expect(applyUploadEvent(startUpload('j2'), { jobId: 'j2', status: 'error', percent: 0, message: 'quota' })).toMatchObject({ state: 'error', message: 'quota' })
+    expect(applyUploadEvent(startUpload('j3'), { jobId: 'j3', status: 'cancelled', percent: 0, message: '' }).state).toBe('cancelled')
+  })
+
+  it('says so when YouTube changed the visibility', () => {
+    expect(privacyNotice('private', 'private')).toBe('')
+    expect(privacyNotice('public', null)).toBe('')
+    expect(privacyNotice('public', 'private')).toMatch(/Made this video Private|made this video Private/i)
+    expect(privacyNotice('public', 'unlisted')).toMatch(/unlisted/)
+  })
+
+  it('suggests a title from the selected session', () => {
+    const meta = { sessions: [{ sessionId: 'a', symbol: 'NIFTY', date: '2026-11-06' }, { sessionId: 'b', symbol: 'BANKNIFTY', date: '2026-11-06' }] } as unknown as RecordingMeta
+    expect(defaultVideoTitle(meta, ['b'])).toBe('BANKNIFTY 2026-11-06 trades')
+    expect(defaultVideoTitle(meta, [])).toBe('NIFTY 2026-11-06 trades')
+    expect(defaultVideoTitle(null, [])).toBe('Trading video')
+    expect(fileNameOf('C:\\a\\b\\v.mp4')).toBe('v.mp4')
   })
 })

@@ -410,6 +410,12 @@ Look at each of the bugs, fix them and then mark them resolved as well if approv
      - Added `--symbol NIFTY|BSESEN` flag — selects the per-broker right value format (Breeze `call`/`put` lowercase for both), exchange code (NFO vs BFO), base name (NIFTY vs SENSEX), strike interval (50 vs 100), and weekly-expiry weekday (Thursday always; NSE Tuesday from 2025-09-01).
 - **Files**: `backend/app/services/breeze_master.py` (new), `backend/app/services/breeze_service.py`, `scripts/test_broker_streaming.py`, `backend/tests/test_breeze_master.py` (new), `backend/tests/test_breeze_service.py`.
 - **Tests**: 29 tests pass — covers BFO tick resolution, equity fallback when ScripCode unknown, daily-refresh cutoff, cache freshness, download path, master parse filter by (strike, right, expiry).
+**[RESOLVED]** Replay: switching the candle interval (3 min -> 1 min -> 3 min) showed the final high/low of the bar still forming on CE/PE charts (2026-11-09).
+- **Symptom**: In a replay or simulated session, going back to a longer interval after a while drew the current bar with its complete high/low, which shows where price goes next.
+- **Root cause**: `Chart.tsx` (options pane) reloads history when the interval changes. It asked `/api/data/options-historical` for the whole day (no `as_of_time`) and seeded the live bar (`liveWindowRef`) from the current bar of that full-day answer.
+- **Fix**: in replay mode the reload passes `as_of_time` = the replay clock (new `frontend/src/replayAsOf.ts`, also used by the equity reload), so the backend cuts raw seconds before resampling; the cache key includes the cutoff. Paper and real sessions are unchanged. The desktop app builds the forming bar from the replay cursor and is not affected.
+- **Tests**: `frontend/src/replayAsOf.test.mjs`; the backend cutoff is covered by `backend/tests/test_phase22_options_cutoff.py`.
+
 # Live paper options resume: historical candles but no Breeze ticks
 
 ## Symptoms

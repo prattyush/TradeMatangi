@@ -1,6 +1,6 @@
 # Phase 24 follow-up: YouTube upload, saved links, desktop player
 
-Status (2026-11-09): Y1 merged (#789). Recording auto-stop in PR. Y2 upload, Y3 saved links, Y4 player planned, one PR each. Tool code stays on `dev` only. Builds on the Video Maker (see `spec-phase24-implementation-plan.md`).
+Status (2026-11-09): Y1 merged (#789); recording auto-stop merged (#790); Y2 upload in PR; Y3 saved links and Y4 player planned, one PR each. Tool code stays on `dev` only. Builds on the Video Maker (see `spec-phase24-implementation-plan.md`).
 
 ## Decisions (user, 2026-11-09)
 - **Permission:** upload only (`https://www.googleapis.com/auth/youtube.upload`). The app cannot edit, delete or list videos, and cannot set a thumbnail. Privacy/description changes are done in YouTube Studio.
@@ -46,3 +46,13 @@ Editing or deleting uploaded videos, thumbnails, playlists, scheduled publishing
 
 ## Recording auto-stop (added 2026-11-09, dev only)
 Stopping a trading session did not stop the screen recording, so the video kept recording dead footage. The recorder now stops 10 seconds after every session on screen has ended (see `docs/recording-metadata.md`, "Automatic stop"). Not on `preprod` yet.
+
+## Y2 as built (upload)
+- `windowsapp/src-tauri/src/youtube_upload.rs`: YouTube resumable upload with `reqwest::blocking` in `spawn_blocking`. One request starts a session (`snippet`: title, description, category 22; `status`: privacy, `selfDeclaredMadeForKids: false`); the file then goes in 8 MiB chunks with `Content-Range`. A dropped connection or a 5xx waits (2 s, 4 s, 8 s ...), asks the session how much it holds (`bytes */total`) and continues from there; 5 failures in a row end the upload with a clear message. The session address is the credential for chunks, so a long upload does not depend on the access token (the token is read once, at the start, through `youtube::access_token()`).
+- Commands (`lib.rs`): `youtube_upload_start` (checks the request, returns a job id, progress through the `desktop-youtube-progress` event), `youtube_upload_cancel`, `youtube_open_video` (only a well-formed video id is opened, in the system browser), `pick_mp4_file`. One upload at a time (`UploadState`).
+- Checks before sending: `.mp4`, not empty, title 1-100 characters, no `<`/`>` in title or description, description at most 5000 bytes, visibility private/unlisted/public. The same rules run in the UI (`uploadCannotStartReason`).
+- Friendly messages for: daily quota (about 6 uploads a day), channel upload limit, no YouTube channel, refused permission, bad title/description, expired upload session, connection ended.
+- If YouTube applies a different visibility than asked (it forces Private for API projects that have not passed YouTube's audit) the panel says so and points to YouTube Studio. The default visibility is Private.
+- UI (`YoutubeConnect.tsx`, shown under the description once connected): the video (the one just made, or "Choose an mp4..."), title (default "SYMBOL DATE trades"), visibility, an explicit confirmation ("Upload x.mp4 to YouTube as Private?"), progress bar and Cancel, then the link with Copy and Open on YouTube.
+- Tests: 13 Rust tests, 8 of them against a local fake YouTube server (chunking and `Content-Range`, resume after a dropped connection, 5xx retry and give-up, quota error, forced-private answer, cancel before and during, missing video id); 5 vitest cases for the model. The panel was checked in a browser page with a mocked backend (confirm, progress, cancel, done, open). **Not run against real YouTube.**
+- Not in this step: saving the link on the server (Y3) and the player (Y4). Until Y3 the link is only shown in the panel after the upload: copy it.
