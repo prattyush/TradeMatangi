@@ -1,5 +1,6 @@
 mod video;
 mod youtube;
+mod youtube_upload;
 
 use futures_util::StreamExt;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -2131,6 +2132,97 @@ async fn youtube_disconnect() -> Result<(), String> {
     youtube::disconnect().await
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UploadEvent {
+    job_id: String,
+    /// "progress" | "done" | "error" | "cancelled"
+    status: String,
+    percent: f64,
+    message: String,
+    video_id: Option<String>,
+    url: Option<String>,
+    /// The visibility YouTube applied (it can force "private").
+    privacy: Option<String>,
+}
+
+fn upload_event(job_id: &str, status: &str, percent: f64, message: String) -> UploadEvent {
+    UploadEvent { job_id: job_id.to_string(), status: status.to_string(), percent, message, video_id: None, url: None, privacy: None }
+}
+
+/// Starts an upload of a finished mp4. Returns the job id at once; progress and the result arrive as
+/// `desktop-youtube-progress` events. Only one upload runs at a time.
+#[tauri::command]
+async fn youtube_upload_start(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, youtube_upload::UploadState>,
+    request: youtube_upload::UploadRequest,
+) -> Result<String, String> {
+    youtube_upload::validate(&request)?;
+    let token = youtube::access_token().await?;
+    let control = Arc::new(youtube_upload::UploadControl::default());
+    {
+        let mut slot = state.0.lock().map_err(|_| "Upload state is locked".to_string())?;
+        if slot.is_some() {
+            return Err("An upload is already running.".into());
+        }
+        *slot = Some(control.clone());
+    }
+    let job_id = format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+    let slot = state.0.clone();
+    let id = job_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let emit_app = app.clone();
+        let emit_id = id.clone();
+        let outcome = youtube_upload::run_upload(&youtube_upload::UploadConfig::default(), &token, &request, &control, &mut |percent, message| {
+            let _ = emit_app.emit("desktop-youtube-progress", upload_event(&emit_id, "progress", percent, message));
+        });
+        let event = match outcome {
+            Ok(done) => {
+                let mut e = upload_event(&id, "done", 100.0, "Uploaded".into());
+                e.video_id = Some(done.video_id);
+                e.url = Some(done.url);
+                e.privacy = Some(done.privacy);
+                e
+            }
+            Err(youtube_upload::UploadError::Cancelled) => upload_event(&id, "cancelled", 0.0, "Cancelled".into()),
+            Err(youtube_upload::UploadError::Failed(message)) => upload_event(&id, "error", 0.0, message),
+        };
+        if let Ok(mut guard) = slot.lock() {
+            *guard = None;
+        }
+        let _ = app.emit("desktop-youtube-progress", event);
+    });
+    Ok(job_id)
+}
+
+#[tauri::command]
+fn youtube_upload_cancel(state: tauri::State<'_, youtube_upload::UploadState>) -> Result<(), String> {
+    if let Some(control) = state.0.lock().map_err(|_| "Upload state is locked".to_string())?.as_ref() {
+        control.cancel();
+    }
+    Ok(())
+}
+
+/// Opens an uploaded video in the system browser. Only a well-formed video id is accepted.
+#[tauri::command]
+fn youtube_open_video(video_id: String) -> Result<(), String> {
+    if !youtube_upload::is_video_id(&video_id) {
+        return Err("That is not a YouTube video id.".into());
+    }
+    open_external_url(&youtube_upload::watch_url(&video_id))
+}
+
+/// Lets the user pick the mp4 to upload (the finished video is offered by default).
+#[tauri::command]
+async fn pick_mp4_file() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        rfd::FileDialog::new().set_title("Choose the video to upload").add_filter("MP4 video", &["mp4"]).pick_file().map(|f| f.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PickedRecording {
@@ -2294,6 +2386,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(HostState::default())
         .manage(video::VideoJobState::default())
+        .manage(youtube_upload::UploadState::default())
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) { schedule_window_close(&webview, window.state::<HostState>().inner().clone()); }
@@ -2349,7 +2442,11 @@ pub fn run() {
             video_job_cancel,
             youtube_status,
             youtube_connect,
-            youtube_disconnect
+            youtube_disconnect,
+            youtube_upload_start,
+            youtube_upload_cancel,
+            youtube_open_video,
+            pick_mp4_file
         ])
         .run(tauri::generate_context!())
         .expect("tauri application error");

@@ -8,7 +8,7 @@ import { formatTimestamp } from './chapters'
 import YoutubeConnect from './YoutubeConnect'
 import { videoDurationSec } from './videoTimeline'
 import {
-  CANDLE_CHOICES, IDLE_JOB, applyVideoEvent, buildJobRequest, cannotStartReason, computeVideoPlan, defaultCandleSeconds, descriptionPathFor,
+  CANDLE_CHOICES, IDLE_JOB, applyVideoEvent, buildJobRequest, cannotStartReason, computeVideoPlan, defaultCandleSeconds, defaultVideoTitle, descriptionPathFor,
   describeSession, formatDuration, marketClock, pairingWarning, parseRecordingMeta, statusLabel, suggestedOutputName,
   type JobUi, type VideoEvent,
 } from './videoMakerModel'
@@ -275,7 +275,7 @@ export default function VideoMaker({ baseUrl, token, onUnauthorized }: Props) {
       </div>
     </section>}
 
-    <YoutubeConnect baseUrl={baseUrl} />
+    <YoutubeConnect baseUrl={baseUrl} output={job.state === 'done' ? job.output ?? '' : ''} description={mode === 'cut' ? description : ''} defaultTitle={defaultVideoTitle(meta, selected)} />
   </div>
 }
 

@@ -188,3 +188,86 @@ export function applyVideoEvent(ui: JobUi, e: VideoEvent): JobUi {
     case 'error': return { ...ui, state: 'error', message: e.message }
   }
 }
+
+// --- YouTube upload ---------------------------------------------------------------------------
+
+export type Privacy = 'private' | 'unlisted' | 'public'
+export const PRIVACY_CHOICES: Array<{ value: Privacy; label: string }> = [
+  { value: 'private', label: 'Private (only you)' },
+  { value: 'unlisted', label: 'Unlisted (anyone with the link)' },
+  { value: 'public', label: 'Public' },
+]
+export const TITLE_MAX_CHARS = 100
+export const DESCRIPTION_MAX_BYTES = 5000
+
+export interface UploadEvent {
+  jobId: string
+  status: 'progress' | 'done' | 'error' | 'cancelled'
+  percent: number
+  message: string
+  videoId?: string | null
+  url?: string | null
+  privacy?: string | null
+}
+
+export interface UploadUi {
+  state: 'idle' | 'running' | 'done' | 'error' | 'cancelled'
+  jobId: string | null
+  percent: number
+  message: string
+  videoId: string | null
+  url: string | null
+  /** The visibility YouTube applied (it can force private). */
+  privacy: string | null
+}
+
+export const IDLE_UPLOAD: UploadUi = { state: 'idle', jobId: null, percent: 0, message: '', videoId: null, url: null, privacy: null }
+
+export function startUpload(jobId: string): UploadUi {
+  return { ...IDLE_UPLOAD, state: 'running', jobId, message: 'Starting…' }
+}
+
+/** Same rules as `applyVideoEvent`: other jobs' events are ignored and a finished upload stays finished. */
+export function applyUploadEvent(ui: UploadUi, e: UploadEvent): UploadUi {
+  if (ui.jobId !== null && e.jobId !== ui.jobId) return ui
+  if (ui.state === 'done' || ui.state === 'error' || ui.state === 'cancelled') return ui
+  switch (e.status) {
+    case 'progress': return { ...ui, jobId: e.jobId, state: 'running', percent: Math.max(ui.percent, Math.min(99, e.percent)), message: e.message }
+    case 'done': return { ...ui, jobId: e.jobId, state: 'done', percent: 100, message: e.message, videoId: e.videoId ?? null, url: e.url ?? null, privacy: e.privacy ?? null }
+    case 'cancelled': return { ...ui, state: 'cancelled', message: 'Cancelled. Nothing is left on YouTube.' }
+    case 'error': return { ...ui, state: 'error', message: e.message }
+  }
+}
+
+/** A starting title: the symbol and date of the first selected session. */
+export function defaultVideoTitle(meta: RecordingMeta | null, selected: string[]): string {
+  const session = meta?.sessions.find(s => selected.includes(s.sessionId)) ?? meta?.sessions[0]
+  return session ? `${session.symbol} ${session.date} trades` : 'Trading video'
+}
+
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).length
+
+/** Why the upload cannot start yet, or '' when it can. Mirrors the checks the app makes before uploading. */
+export function uploadCannotStartReason(i: { connected: boolean; file: string; title: string; description: string; running: boolean }): string {
+  if (i.running) return 'An upload is running.'
+  if (!i.connected) return 'Connect YouTube first.'
+  if (!i.file) return 'Choose the video to upload.'
+  if (!/\.mp4$/i.test(i.file)) return 'Only .mp4 files can be uploaded.'
+  const title = i.title.trim()
+  if (!title) return 'Enter a title.'
+  if ([...title].length > TITLE_MAX_CHARS) return `The title is longer than ${TITLE_MAX_CHARS} characters.`
+  if (/[<>]/.test(i.title) || /[<>]/.test(i.description)) return 'YouTube does not allow < or > in the title or description.'
+  if (utf8Bytes(i.description) > DESCRIPTION_MAX_BYTES) return `The description is longer than ${DESCRIPTION_MAX_BYTES} bytes.`
+  return ''
+}
+
+/** Said after an upload when YouTube did not apply the visibility that was asked for. */
+export function privacyNotice(requested: string, applied: string | null): string {
+  if (!applied || applied === requested) return ''
+  if (applied === 'private') return 'YouTube made this video Private (apps that have not passed YouTube’s audit can only upload private videos). Open YouTube Studio to change the visibility.'
+  return `YouTube set the visibility to ${applied}.`
+}
+
+export function fileNameOf(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path
+}
