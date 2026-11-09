@@ -17,7 +17,8 @@ Requirements: `docs/spec-phase24.md` (the user's text, unchanged). This file is 
 | A | Recording stops 10 s after the session ends | dev | Merged (#790) |
 | Y2 | Upload to YouTube | dev | Merged (#791, together with the replay forming-bar fix). Not yet run against real YouTube |
 | Y3 | Saved links (server table + endpoints) | dev | Merged (#792): saved links + videos shown in Analysis (website and desktop). Not yet run on Windows |
-| Y4 | Play the video in the desktop | dev | Planned |
+| Y4 | Play the video in the desktop | dev | Optional; not started (embedded Play here exists in Analysis) |
+| V | Make Unlisted from the app + Add a YouTube link (website and desktop) | dev | In PR. Not yet run on Windows |
 
 The Y rows and A are described in `docs/spec-phase24-youtube-plan.md`.
 

@@ -42,3 +42,37 @@ describe('loadSavedVideos', () => {
     expect(error).toBe('')
   })
 })
+
+import { lookupVideoTitle, parseYoutubeVideoId } from '../../shared/analysis/videoLinks'
+
+describe('parseYoutubeVideoId', () => {
+  const id = 'dQw4w9WgXcQ'
+  it('reads the id from every usual address', () => {
+    for (const text of [
+      `https://www.youtube.com/watch?v=${id}`, `http://youtube.com/watch?v=${id}&t=42s`, `https://m.youtube.com/watch?feature=share&v=${id}`,
+      `https://youtu.be/${id}`, `https://youtu.be/${id}?si=abc`, `https://www.youtube.com/embed/${id}`, `https://www.youtube.com/shorts/${id}`,
+      `https://www.youtube.com/live/${id}?feature=share`, `https://music.youtube.com/watch?v=${id}`, `www.youtube.com/watch?v=${id}`, `youtu.be/${id}`, `  ${id}  `, id,
+    ]) expect(parseYoutubeVideoId(text), text).toBe(id)
+  })
+  it('refuses anything else', () => {
+    for (const text of ['', 'hello', 'https://example.com/watch?v=dQw4w9WgXcQ', 'https://www.youtube.com/playlist?list=PL123', 'https://www.youtube.com/watch?v=short',
+      'https://evil.com/?u=https://youtu.be/dQw4w9WgXcQ', 'javascript:alert(1)', 'https://youtube.com.evil.com/watch?v=dQw4w9WgXcQ', 'two words dQw4w9WgXcQ']) {
+      expect(parseYoutubeVideoId(text), text).toBeNull()
+    }
+  })
+})
+
+describe('lookupVideoTitle', () => {
+  it('returns the title from the oEmbed answer', async () => {
+    let asked = ''
+    const fetcher = (async (url: string) => { asked = url; return { ok: true, json: async () => ({ title: ' My video ' }) } }) as unknown as typeof fetch
+    expect(await lookupVideoTitle('dQw4w9WgXcQ', fetcher)).toBe('My video')
+    expect(asked).toBe('https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ&format=json')
+  })
+  it('gives null for a refusal, a network error, a bad answer or a bad id', async () => {
+    expect(await lookupVideoTitle('dQw4w9WgXcQ', (async () => ({ ok: false })) as unknown as typeof fetch)).toBeNull()
+    expect(await lookupVideoTitle('dQw4w9WgXcQ', (async () => { throw new Error('offline') }) as unknown as typeof fetch)).toBeNull()
+    expect(await lookupVideoTitle('dQw4w9WgXcQ', (async () => ({ ok: true, json: async () => ({}) })) as unknown as typeof fetch)).toBeNull()
+    expect(await lookupVideoTitle('bad', (async () => { throw new Error('must not be called') }) as unknown as typeof fetch)).toBeNull()
+  })
+})

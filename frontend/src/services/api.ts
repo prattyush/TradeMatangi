@@ -35,6 +35,25 @@ export async function getVideoLinks(sessionId: string): Promise<import('../../..
   return (await res.json()).links
 }
 
+/** Saves (or updates) one video under a session of the user. Only the video id is sent; the server builds the address. */
+export async function saveVideoLink(link: { sessionId: string; videoId: string; title: string; privacy: 'private' | 'unlisted' | 'public'; chapters: string }): Promise<import('../../../shared/analysis/videoLinks').SavedLink> {
+  const res = await fetch(`${BACKEND_URL}/api/video-links`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify({ session_id: link.sessionId, video_id: link.videoId, title: link.title, privacy: link.privacy, chapters: link.chapters }),
+  })
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null))?.detail
+    throw new Error(typeof detail === 'string' ? detail : `Saving the video link failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+/** Removes the saved link only; the video on YouTube is untouched. */
+export async function removeVideoLink(sessionId: string, videoId: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/video-links?session_id=${encodeURIComponent(sessionId)}&video_id=${encodeURIComponent(videoId)}`, { method: 'DELETE', headers: _authHeaders() })
+  if (!res.ok) throw new Error(`Removing the video link failed: ${res.status}`)
+}
+
 export function _authHeaders(): Record<string, string> {
   try {
     const stored = localStorage.getItem('auth_user')

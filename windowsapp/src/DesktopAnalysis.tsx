@@ -28,6 +28,8 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     const api = createVideoLinksApi(analysisRequest(baseUrl, token, native, onUnauthorized))
     return {
       list: api.list,
+      save: api.save,
+      remove: api.remove,
       open: (video: { videoId: string; url: string }) => { if (native) void invoke('youtube_open_video', { videoId: video.videoId }); else window.open(video.url, '_blank', 'noopener,noreferrer') },
     }
   }, [baseUrl, token, onUnauthorized])
