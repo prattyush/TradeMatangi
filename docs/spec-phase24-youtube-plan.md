@@ -1,6 +1,6 @@
 # Phase 24 follow-up: YouTube upload, saved links, desktop player
 
-Status: planned (2026-11-09). Tool code stays on `dev` only. Builds on the Video Maker (see `spec-phase24-implementation-plan.md`).
+Status: Y1 in PR (2026-11-09); Y2-Y4 planned. Tool code stays on `dev` only. Builds on the Video Maker (see `spec-phase24-implementation-plan.md`).
 
 ## Decisions (user, 2026-11-09)
 - **Permission:** upload only (`https://www.googleapis.com/auth/youtube.upload`). The app cannot edit, delete or list videos, and cannot set a thumbnail. Privacy/description changes are done in YouTube Studio.
@@ -32,3 +32,14 @@ Status: planned (2026-11-09). Tool code stays on `dev` only. Builds on the Video
 
 ## Out of scope
 Editing or deleting uploaded videos, thumbnails, playlists, scheduled publishing, the YouTube audit, and the website (desktop only).
+
+## Y1 as built (connect)
+- `windowsapp/src-tauri/src/youtube.rs`: second Google sign-in in the system browser (PKCE, loopback port 8765, same Google client and secret as the app login, fetched from the server's `google-config`), scope `youtube.upload` only, `access_type=offline`, `prompt=consent`. 3-minute wait for the browser, then a clear timeout message. Only the OAuth redirect counts (a stray `/favicon.ico` request is ignored). State is checked.
+- The result is stored in Windows Credential Manager under its own target `TradeMatangi.Desktop.YouTube`: refresh token, current access token and expiry, and the client id/secret needed to refresh. Nothing goes to the server and the WebView never sees a token.
+- If the consent screen is shown with the upload box unticked, the response lacks the scope and the app says so instead of saving a useless connection.
+- `youtube_status` refreshes an expired access token. If Google answers `invalid_grant` (revoked, or the 7-day Testing expiry) the stored connection is deleted and the card says it ended. Offline keeps the connection. `youtube::access_token()` is what Y2 uses.
+- `youtube_disconnect` asks Google to revoke the grant (best effort) and deletes the stored entry.
+- UI: a "YouTube" card at the bottom of the Video Maker (`YoutubeConnect.tsx`): Connect / Disconnect and Google's error text (for example the Test users hint).
+- A different Trade Matangi user on the same PC would share this YouTube connection (it is per Windows user, not per Trade Matangi account). Logging out of Trade Matangi does not disconnect it.
+- Tests: 8 Rust unit tests (authorize URL, callback parsing, token response and scope check, refresh, freshness margin, error wording, storage format). The card was checked in a browser page with a mocked `invoke` (connect, waiting state, connected, disconnect, error). Not run against real Google.
+- **Manual check (Windows build):** Video Maker > YouTube > Connect YouTube; the browser opens Google; pick the account/channel and tick the upload permission; the page says "connected"; the card shows "YouTube is connected". Close and reopen the app: still connected. Disconnect: back to Connect. Also try declining on Google's screen and confirm the message.

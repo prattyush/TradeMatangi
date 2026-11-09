@@ -14,6 +14,8 @@ import argparse
 import hashlib
 import shutil
 import sys
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -34,6 +36,23 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def download(url: str, target: Path, attempts: int = 5) -> None:
+    """GitHub release downloads sometimes answer 5xx for a moment (a 504 failed a CI build), so retry."""
+    for attempt in range(1, attempts + 1):
+        try:
+            urllib.request.urlretrieve(url, target)
+            return
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            # A 4xx is a real problem (wrong URL); only server errors and network drops are retried.
+            if isinstance(error, urllib.error.HTTPError) and error.code < 500:
+                raise
+            if attempt == attempts:
+                raise
+            wait = 5 * attempt
+            print(f"Download failed ({error}); retrying in {wait}s ({attempt}/{attempts})", file=sys.stderr)
+            time.sleep(wait)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--zip", type=Path, help="use this already downloaded zip instead of downloading")
@@ -46,7 +65,7 @@ def main() -> int:
         archive = args.out / f"ffmpeg-{VERSION}.zip.part"
         args.out.mkdir(parents=True, exist_ok=True)
         print(f"Downloading {URL}")
-        urllib.request.urlretrieve(URL, archive)
+        download(URL, archive)
         downloaded = True
 
     try:
