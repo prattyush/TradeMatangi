@@ -118,6 +118,7 @@ export default function SwingChart(
             "MA",
             "EMA",
             "BOLL_TV",
+            "VOL",
             "VWAP",
             "SuperTrend",
             "Ichimoku",

@@ -71,6 +71,8 @@ export interface OHLCCandle {
   high: number
   low: number
   close: number
+  /** Traded quantity in the bar; absent when the instrument has none (indices) or the file predates volume. */
+  volume?: number
 }
 
 export interface ChartStructureItem {
@@ -134,6 +136,8 @@ export interface TickEvent {
   high: number
   low: number
   close: number
+  /** Quantity traded in this one-second tick (replay/stepwise history); absent for live ticks. */
+  volume?: number
   right?: string   // "CE" or "PE" for options dual-stream; undefined for equity
 }
 

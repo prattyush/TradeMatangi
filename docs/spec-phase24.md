@@ -101,4 +101,10 @@ Evaluate and add volume to the historical data fetched from Kite and ICICI Breez
 1. **B1 (this work):** keep volume through history, replay, stepwise, the website and desktop APIs and swing; add the `VOL` indicator (and make VWAP usable) for instruments that have volume. Volume is the sum per bar; indices report no volume (null, not 0); gap-filled seconds are 0; older cached files without the column still load.
 2. **B2 (later, gated):** live volume for real and paper trading. First a read-only probe of the real Kite (quote mode), Breeze, Kotak and Fyers payloads during market hours; findings are written here before any code. Real-trading orders, stoplosses and square-offs never depend on volume. Not promoted to `preprod` without the user's real-session test.
 
-Status: B1 planned. B2 waits for the live probe.
+##### B1 as built (2026-11-10)
+- **Stored data was cleaned up on read, not rewritten.** The stored volume column also held forward-filled copies on filled seconds (about 1.7 to 2.4% too much on the option files checked), so `clean_volume` zeroes them when a file is loaded and the gap fill zeroes them when a file is written. OHLC values are unchanged; no cache file was touched.
+- Backend: loaders, `_normalize`, `resample_to_candles`, `candles_to_records`, replay/stepwise ticks, the historical and desktop APIs (`volume` is `null` for indices), desktop live history and replay snapshot (summed per bar). Tests: `backend/tests/test_ohlc_volume.py`.
+- Website and desktop: `VOL` ("Volume") in the shared indicator list; `VOL` and `VWAP` appear only when the data has volume. Replay and stepwise bars built from ticks sum the seconds' volume. Tests: `windowsapp/src/liveCandles.test.ts`, `phase22Charts.test.ts`.
+- Not done in B1: live volume, the older Lightweight Chart, and volume on the paper-session gap-fill ticks (`simulation._historical_gap_ticks`).
+
+Status: B1 built on `dev` (PR pending). B2 waits for the live probe.

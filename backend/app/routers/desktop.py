@@ -49,6 +49,7 @@ class DesktopCandle(ContractModel):
     high: float
     low: float
     close: float
+    volume: int | None = None  # None when the instrument has no traded volume (indices)
 
 
 class HistoricalPage(ContractModel):
@@ -166,7 +167,7 @@ async def historical_page(
         try:
             await run_history(_ensure_data, symbol, page_date)
             records = candles_to_records(resample_to_candles(load_dataframe(symbol, page_date), interval_minutes))
-            candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"]) for item in records)
+            candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"], volume=item.get("volume")) for item in records)
             loaded_dates.append(page_date)
         except HTTPException as exc:
             if exc.status_code in (404, 503):
@@ -216,7 +217,7 @@ async def option_historical_page(
             from app.services.desktop_preparation import trim_leading_option_frame
             frame = await run_history(trim_leading_option_frame, frame, symbol, page_date, strike, expiry, right.upper())
             records = candles_to_records(resample_to_candles(frame, interval_minutes))
-            candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"]) for item in records)
+            candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"], volume=item.get("volume")) for item in records)
             loaded_dates.append(page_date)
         except Exception:
             # A partial page remains valid: each missing contract is a visible
@@ -315,6 +316,7 @@ async def underlying_history_page(
                                 high=r["high"],
                                 low=r["low"],
                                 close=r["close"],
+                                volume=r.get("volume"),
                             )
                             for r in rows
                         )
