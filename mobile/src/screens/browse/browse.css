@@ -1,0 +1,32 @@
+/* Browse: the chart fills the screen; its header row carries the symbol, day, Spot/CE/PE and strike. */
+.screen.browse { min-height: 0; }
+.browse-chart { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.browse-chart .desktop-analysis-chart { flex: 1 1 auto; min-height: 0; }
+.browse-bar { display: flex; align-items: center; flex: 0 0 auto; min-height: 44px; padding: 0 6px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.browse-state { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; padding: 16px; text-align: center; color: var(--muted); }
+.browse-controls { gap: 6px; }
+.symbol-button { font-weight: 600; }
+.day-stepper { display: inline-flex; flex: 0 0 auto; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--panel-2); }
+.day-stepper button { min-height: 36px; min-width: 36px; padding: 0 6px; background: none; border: 0; color: var(--text); font: inherit; font-size: 16px; }
+.day-stepper button:disabled { opacity: 0.35; }
+.day-stepper .day-label { min-width: 84px; padding: 0 8px; font-size: 13px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); white-space: nowrap; }
+.segmented button:disabled { opacity: 0.4; }
+
+.symbol-search { width: 100%; min-height: 44px; padding: 0 12px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); font: inherit; font-size: 15px; }
+.symbol-group { margin: 6px 0 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.symbol-row { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; width: 100%; min-height: 48px; padding: 4px 6px; background: none; border: 0; border-bottom: 1px solid #21262d; color: inherit; font: inherit; text-align: left; }
+.symbol-row strong { font-size: 14px; }
+.symbol-row small { font-size: 11px; color: var(--muted); }
+.symbol-row[aria-current='true'] strong { color: var(--accent); }
+
+/* Live: a pill in the control row (green dot when ticks arrive) and a status line over the chart while it is not live yet. */
+.browse-chart { position: relative; }
+.live-button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; font-size: 13px; white-space: nowrap; }
+.live-button.on { border-color: var(--good); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.live-button[data-phase='live'] .live-dot { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.live-button[data-phase='waiting'] .live-dot, .live-button[data-phase='starting'] .live-dot { background: var(--warn); }
+.live-button[data-phase='error'] .live-dot { background: var(--bad); }
+.live-status { position: absolute; left: 8px; bottom: 34px; z-index: 5; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 90px); padding: 4px 10px; border-radius: var(--radius); background: rgba(13, 17, 23, 0.88); border: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.live-status[data-phase='error'] { color: var(--bad); border-color: var(--bad); }
+.live-status .btn { min-height: 32px; padding: 0 10px; }

@@ -8,7 +8,7 @@ interface Props {
   /** Executions to mark; the strike pane follows the option contracts found in them. */
   trades: AnalysisTrade[]
   historicalDays: number
-  getMarkerText: (trade: AnalysisTrade) => string
+  getMarkerText: (trade: AnalysisTrade, forOption?: boolean) => string
   /** Candle-clock epoch seconds to centre both charts on. */
   focusTime?: number
   /** Label Trades is maximized: show the Underlying and strike charts stacked. Otherwise one chart with a switcher. */

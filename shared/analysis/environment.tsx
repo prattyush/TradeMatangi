@@ -43,6 +43,11 @@ export interface AnalysisEnvironment {
   desktop?: boolean
   intervalMinutes?: number
   setIntervalMinutes?: (minutes: number) => void
+  /**
+   * Candle and indicator details drawn over the chart (time, open/high/low/close, indicator values):
+   * `always` (default, as before), `follow_cross` (only while the crosshair is active, i.e. while touching) or `none`.
+   */
+  chartInfo?: 'always' | 'follow_cross' | 'none'
   historicalDays?: number
   /** Label Trades layout (user setting `analysis_label_view`); absent => one trade at a time. */
   labelView?: 'one_by_one' | 'all'

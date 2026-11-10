@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TradeMatangi</string>
+    <string name="title_activity_main">TradeMatangi</string>
+    <string name="package_name">in.co.tradematangi.phone</string>
+    <string name="custom_url_scheme">in.co.tradematangi.phone</string>
+</resources>

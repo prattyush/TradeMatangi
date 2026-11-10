@@ -149,3 +149,14 @@
 - Candles may carry `volume` (optional). `mergeKLineTick` (website) and `aggregateLiveCandles` (desktop) add per-second tick volume only into a bar the stream itself started, and remember the last counted second, so a bar loaded from history is never doubled and a re-delivered tick is never counted twice.
 - `VOL` and `VWAP` are created by the shared `KLineChart` only when the loaded candles contain volume; indices show neither. `sameCandle`/`sameCandles` compare volume, so a volume-only change redraws.
 - The legacy Lightweight Chart (`Chart.tsx`) is unchanged.
+
+## Phone app (`mobile/`, Phase 24)
+
+- **Landscape only, about 740 to 960 by 340 to 440 CSS px.** Height is the scarce resource: no stacked headers, no modal-on-modal, no wide tables. Touch targets are at least 44 px (40 px in dense lists). Every screen is checked at 915x412, 851x393, 740x360 and 960x432 (`mobile/tests/`).
+- **Safe areas.** Capacitor 8 injects the real inset values as `--safe-area-inset-top|right|bottom|left` CSS variables (edge-to-edge is enforced at target SDK 36); `env(safe-area-inset-*)` is only the fallback. `mobile/src/theme.css` exposes both as `--sai-*`. Use `100dvh`, never `100vh`.
+- **Bearer only.** The phone sends `Authorization: Bearer` and never the website's `X-User-Id`. All calls go through `mobile/src/api/transport.ts` (timeout, one shared token refresh, one retry after a 401, retries for reads only). Never call `fetch` directly from a screen.
+- **Server base URL is absolute.** The WebView origin is `https://<hostname>`, so a relative `/api` never works. Release builds accept `https` only.
+- **Older servers.** A route a server does not have (`404` with detail `Not Found`) or a `403` is shown as "not available on this server" (`NotAvailable`), never as a crash. Use `isMissingEndpoint` / `isNotAvailable` from `mobile/src/api/errors.ts`.
+- **Date-bounded requests.** `GET /api/analysis/sessions` has no pagination; the phone always sends `start_date` and `end_date`.
+- **Secrets.** The refresh token lives in secure storage (Android Keystore); the access token only in memory; neither is ever logged (`diagnostics.redact`). In a plain browser nothing secret is persisted.
+- **Shared code.** Phone layout components compose shared logic; edits to shared UI components must be additive props whose default is the current behavior (the website, webapp and desktop all use them).

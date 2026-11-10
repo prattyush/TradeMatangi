@@ -2,7 +2,7 @@ import { ToolbarIcon } from './ToolbarIcon'
 import { CandleInterval } from '../CandleInterval'
 import { contractTabs } from './analysisContracts'
 import { snapshotCandles, snapshotBarTime, resolveSnapshotExecutions } from './analysisSnapshot'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { init, dispose, registerOverlay, type Chart, type KLineData } from 'klinecharts'
 import type { AnalysisTrade, OHLCCandle, PatternAnnotation, TopPatterns } from '../api'
 import { useAnalysisApi, useAnalysisEnvironment } from '../environment'
@@ -14,10 +14,17 @@ import { ensureKLineExtensions, useKLineIndicators } from '../../charts/useKLine
 import { KLineIndicatorMenu, KLineToolsRail, useToolsRailVisible } from '../../charts/KLineToolsPanel'
 
 interface Props {
+  /** Hosts with little vertical room (the phone) put their own controls at the start of the chart's header row. */
+  toolbarStart?: ReactNode
+  /**
+   * Live: the host supplies the whole candle series (history plus ticks) and updates it as ticks arrive; the chart then
+   * fetches nothing itself. Candles that only change in the last bar are pushed incrementally.
+   */
+  liveCandles?: OHLCCandle[]
   symbol: string; date: string; trades?: AnalysisTrade[]; historicalDays?: number
   exchange?: string; product?: string;
   strike?: number; expiry?: string; right?: string; title?: string; isMaximized?: boolean
-  onMaximize?: () => void; onMax?: () => void; getMarkerText?: (trade: AnalysisTrade) => string
+  onMaximize?: () => void; onMax?: () => void; getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
   /** Epoch seconds to centre the chart on (e.g. the round trip being labeled). Zoom is kept. */
   focusTime?: number
   /** Show `getMarkerText` on option-contract markers (they are unlabeled by default). */
@@ -92,7 +99,7 @@ export default function DesktopAnalysisChart(props: Props) {
   useEffect(()=>{
     if(!container.current)return
     ensureKLineExtensions(); registerAnalysisOverlays(); const chart=init(container.current); if(!chart)return
-    chartRef.current=chart; chart.setTimezone('Etc/UTC'); chart.setStyles('dark'); chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0}); chart.setPeriod({span:intervalMinutes,type:'minute'})
+    chartRef.current=chart; chart.setTimezone('Etc/UTC'); chart.setStyles('dark'); chart.setStyles({candle:{tooltip:{showRule:chartInfoRef.current}},indicator:{tooltip:{showRule:chartInfoRef.current}}}); chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0}); chart.setPeriod({span:intervalMinutes,type:'minute'})
     let lastWidth=container.current.clientWidth
     let resizeRevision=0
     const observer=new ResizeObserver(()=>{
@@ -125,10 +132,14 @@ export default function DesktopAnalysisChart(props: Props) {
   const drawingInstrument=useMemo(()=>environment.drawingRequest&&symbolInfo!==undefined&&symbolInfo!==false?analysisDrawingInstrument({symbol:props.symbol,right:props.right,strike:props.strike,expiry:props.expiry,kind:symbolInfo?.kind,exchange:symbolInfo?.exchange}):null,[environment.drawingRequest,symbolInfo,props.symbol,props.right,props.strike,props.expiry])
   const [hovered,setHovered]=useState(false)
   const drawings=useKLineDrawings({chartRef,instrument:drawingInstrument,request:environment.drawingRequest,active:hovered&&environment.active!==false,onError:error=>environment.reportError?.(String(error),'Drawings')})
-  const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`)
+  // Details over the chart follow the environment setting (default: always, as before).
+  const chartInfo=environment.chartInfo??'always'; const chartInfoRef=useRef(chartInfo); chartInfoRef.current=chartInfo
+  useEffect(()=>{chartRef.current?.setStyles({candle:{tooltip:{showRule:chartInfo}},indicator:{tooltip:{showRule:chartInfo}}})},[chartInfo])
+  const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`,{hasVolume:candles.some(c=>c.volume!=null)})
   const [toolsVisible,toggleTools]=useToolsRailVisible()
   const toolsAvailable=Boolean(environment.drawingRequest)
   useEffect(()=>{
+    if(props.liveCandles)return
     const controller=new AbortController()
     const request=++generation.current; setLoading(true);setError('');setChooser(null)
     const clearCandles=()=>{
@@ -170,7 +181,7 @@ export default function DesktopAnalysisChart(props: Props) {
       if(!continuing){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:intervalMinutes,type:'minute'})}
       // Reuse the loader on event changes so KLine also retains a manual price scale.
       if(continuing)chart.resetData()
-      else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close} satisfies KLineData)):[],{forward:false,backward:false})})
+      else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})} satisfies KLineData)):[],{forward:false,backward:false})})
       const restoreViewport=()=>{
         if(request!==generation.current||chartRef.current!==chart)return
         chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length))))
@@ -194,6 +205,29 @@ export default function DesktopAnalysisChart(props: Props) {
     }})
     return () => { controller.abort(); generation.current++ }
   },[api,key,historicalDays,refresh])
+  const subscribeBar=useRef<((bar:KLineData)=>void)|null>(null)
+  useEffect(()=>{
+    const live=props.liveCandles; const chart=chartRef.current
+    if(!live||!chart)return
+    const toBar=(c:OHLCCandle):KLineData=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})})
+    const previous=candlesRef.current
+    const sameBar=(a:OHLCCandle|undefined,b:OHLCCandle|undefined)=>!!a&&!!b&&a.time===b.time&&a.open===b.open&&a.high===b.high&&a.low===b.low&&a.close===b.close
+    const incremental=loadedKey.current===chartKey&&previous.length>0&&live.length>0&&subscribeBar.current!==null&&live[0].time===previous[0].time
+      &&(live.length===previous.length||live.length===previous.length+1)&&(live.length<2||sameBar(live[live.length-2],previous[live.length-2]))
+    candlesRef.current=live;setCandles(live);setError('');setLoading(live.length===0)
+    if(!live.length){loadedKey.current=null;chart.setDataLoader({getBars:({callback})=>callback([],{forward:false,backward:false})});return}
+    if(incremental){subscribeBar.current!(toBar(live[live.length-1]));return}
+    const first=loadedKey.current!==chartKey
+    loadedKey.current=chartKey
+    if(first){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:intervalMinutes,type:'minute'})}
+    chart.setDataLoader({
+      getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(toBar):[],{forward:false,backward:false}),
+      subscribeBar:({callback})=>{subscribeBar.current=callback},
+      unsubscribeBar:()=>{subscribeBar.current=null},
+    })
+    if(first)requestAnimationFrame(()=>{if(chartRef.current!==chart)return;chart.setBarSpace(Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,live.length))));chart.scrollToRealTime(0)})
+    else chart.resetData()
+  },[props.liveCandles,chartKey])
   // Re-centre when the requested time changes on an already loaded chart (Prev/Next in Label Trades).
   useEffect(()=>{
     const chart=chartRef.current
@@ -230,7 +264,7 @@ export default function DesktopAnalysisChart(props: Props) {
     for(const order of levels){const price=order.price;if(!price||!candles.length)continue;const id=chart.createOverlay({name:'analysisLevel',lock:true,points:[{timestamp:candles[candles.length-1].time*1000,value:price}],extendData:{text:order.text}});if(typeof id==='string')overlays.current.push(id)}
   },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.openOrders,props.position,props.currentPrice,intervalMinutes])
   return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''} ${toolsAvailable&&toolsVisible?'has-tools-rail':''}`} onPointerEnter={()=>setHovered(true)} onPointerLeave={()=>setHovered(false)}>
-    <header><strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · {intervalMinutes}m · IST</strong>
+    <header>{props.toolbarStart}<strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · {intervalMinutes}m · IST</strong>
       {!props.right&&trades.some(t=>t.right)&&<select aria-label="Underlying markers" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option>CE</option><option>PE</option></select>}
       <CandleInterval />
       {toolsAvailable&&<button className="kline-tools-toggle" type="button" aria-pressed={toolsVisible} aria-label={toolsVisible?'Hide drawing tools':'Show drawing tools'} title={toolsVisible?'Hide drawing tools':'Show drawing tools'} onClick={toggleTools}>✎</button>}

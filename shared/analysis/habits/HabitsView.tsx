@@ -84,7 +84,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
             <h3>Habits</h3>
             <p>Which of your own behaviors cost you, and which pay — from the trades you marked, in the period and filters above.</p>
           </div>
-          <button type="button" onClick={() => setManaging(true)}>Manage questions</button>
+          <button type="button" className="hb-manage" onClick={() => setManaging(true)}>Manage questions</button>
         </div>
         <div className="hb-controls">
           <Segmented label="Habit type" value={kind} onChange={setKind} options={[['all', 'All'], ['entry', 'Entry'], ['exit', 'Exit']]} />
@@ -119,7 +119,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
             <section className="pa-card">
               <h3>Start with a habit to track</h3>
               <p>Add a behavior question — for example “Exited after one bar in profit” — then mark it on trades while you trade or in Analysis → Label Trades. This page then shows what each habit costs or earns.</p>
-              <button type="button" onClick={() => setManaging(true)}>Add a question</button>
+              <button type="button" className="hb-manage" onClick={() => setManaging(true)}>Add a question</button>
             </section>
           )}
           {hasQuestions && !overview.habits.length && (
