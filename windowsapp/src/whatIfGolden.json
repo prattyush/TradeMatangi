@@ -1,0 +1,452 @@
+[
+ {
+  "name": "options long, averaged, one exit: drop the second entry and exit the rest higher",
+  "brokerage": 1.0,
+  "margin": 1.0,
+  "capital": 100000,
+  "edits": [
+   {
+    "id": "2",
+    "quantity": 0,
+    "price": null
+   },
+   {
+    "id": "3",
+    "quantity": 75,
+    "price": 130.0
+   }
+  ],
+  "original": {
+   "net_pnl": 1452.6819,
+   "fees": 47.3181,
+   "pnl_pct": 1.452682,
+   "peak_capital_pct": 17.25,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 75,
+     "price": 120.0,
+     "timestamp": 1000,
+     "commission": 5.2339
+    },
+    {
+     "trade_id": "2",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 75,
+     "price": 110.0,
+     "timestamp": 1100,
+     "commission": 4.8961
+    },
+    {
+     "trade_id": "3",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 150,
+     "price": 125.0,
+     "timestamp": 1600,
+     "commission": 37.1881
+    }
+   ]
+  },
+  "edited": {
+   "net_pnl": 724.8619,
+   "fees": 25.1381,
+   "pnl_pct": 0.724862,
+   "peak_capital_pct": 9.0,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 75,
+     "price": 120.0,
+     "timestamp": 1000,
+     "commission": 5.2339
+    },
+    {
+     "trade_id": "3",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 75,
+     "price": 130.0,
+     "timestamp": 1600,
+     "commission": 19.9042
+    }
+   ]
+  }
+ },
+ {
+  "name": "options short: buy back at a different price",
+  "brokerage": 1.0,
+  "margin": 1.0,
+  "capital": 100000,
+  "edits": [
+   {
+    "id": "2",
+    "quantity": 40,
+    "price": 105.5
+   }
+  ],
+  "original": {
+   "net_pnl": 387.3884,
+   "fees": 12.6116,
+   "pnl_pct": 0.387388,
+   "peak_capital_pct": 4.4,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "SELL",
+     "quantity": 40,
+     "price": 110.0,
+     "timestamp": 1000,
+     "commission": 9.6299
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "BUY",
+     "quantity": 40,
+     "price": 100.0,
+     "timestamp": 1500,
+     "commission": 2.9817
+    }
+   ]
+  },
+  "edited": {
+   "net_pnl": 167.2893,
+   "fees": 12.7107,
+   "pnl_pct": 0.167289,
+   "peak_capital_pct": 4.4,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "SELL",
+     "quantity": 40,
+     "price": 110.0,
+     "timestamp": 1000,
+     "commission": 9.6299
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "BUY",
+     "quantity": 40,
+     "price": 105.5,
+     "timestamp": 1500,
+     "commission": 3.0808
+    }
+   ]
+  }
+ },
+ {
+  "name": "partial exits, second exit later",
+  "brokerage": 1.0,
+  "margin": 1.0,
+  "capital": 100000,
+  "edits": [
+   {
+    "id": "3",
+    "quantity": 60,
+    "price": 60.0
+   }
+  ],
+  "original": {
+   "net_pnl": 303.991,
+   "fees": 16.009,
+   "pnl_pct": 0.303991,
+   "peak_capital_pct": 5.0,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 100,
+     "price": 50.0,
+     "timestamp": 1000,
+     "commission": 3.4322
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 40,
+     "price": 55.0,
+     "timestamp": 1200,
+     "commission": 5.405
+    },
+    {
+     "trade_id": "3",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 60,
+     "price": 52.0,
+     "timestamp": 1400,
+     "commission": 7.1718
+    }
+   ]
+  },
+  "edited": {
+   "net_pnl": 783.0692,
+   "fees": 16.9308,
+   "pnl_pct": 0.783069,
+   "peak_capital_pct": 5.0,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 100,
+     "price": 50.0,
+     "timestamp": 1000,
+     "commission": 3.4322
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 40,
+     "price": 55.0,
+     "timestamp": 1200,
+     "commission": 5.405
+    },
+    {
+     "trade_id": "3",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 60,
+     "price": 60.0,
+     "timestamp": 1400,
+     "commission": 8.0936
+    }
+   ]
+  }
+ },
+ {
+  "name": "equity intraday margin 0.2",
+  "brokerage": 1.0,
+  "margin": 0.2,
+  "capital": 100000,
+  "edits": [
+   {
+    "id": "1",
+    "quantity": 100,
+    "price": 1995.0
+   },
+   {
+    "id": "2",
+    "quantity": 100,
+    "price": 2020.0
+   }
+  ],
+  "original": {
+   "net_pnl": 521.546,
+   "fees": 478.454,
+   "pnl_pct": 0.521546,
+   "peak_capital_pct": 40.0,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 100,
+     "price": 2000.0,
+     "timestamp": 1000,
+     "commission": 91.2668
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 100,
+     "price": 2010.0,
+     "timestamp": 1300,
+     "commission": 387.1872
+    }
+   ]
+  },
+  "edited": {
+   "net_pnl": 2019.8507,
+   "fees": 480.1493,
+   "pnl_pct": 2.019851,
+   "peak_capital_pct": 39.9,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 100,
+     "price": 1995.0,
+     "timestamp": 1000,
+     "commission": 91.0416
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 100,
+     "price": 2020.0,
+     "timestamp": 1300,
+     "commission": 389.1077
+    }
+   ]
+  }
+ },
+ {
+  "name": "higher brokerage, double quantity",
+  "brokerage": 20.0,
+  "margin": 1.0,
+  "capital": 100000,
+  "edits": [
+   {
+    "id": "1",
+    "quantity": 130,
+    "price": 80.0
+   },
+   {
+    "id": "2",
+    "quantity": 130,
+    "price": 70.0
+   }
+  ],
+  "original": {
+   "net_pnl": -708.2803,
+   "fees": 58.2803,
+   "pnl_pct": -0.70828,
+   "peak_capital_pct": 5.2,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 65,
+     "price": 80.0,
+     "timestamp": 1000,
+     "commission": 25.9423
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 65,
+     "price": 70.0,
+     "timestamp": 1800,
+     "commission": 32.338
+    }
+   ]
+  },
+  "edited": {
+   "net_pnl": -1369.3604,
+   "fees": 69.3604,
+   "pnl_pct": -1.36936,
+   "peak_capital_pct": 10.4,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 130,
+     "price": 80.0,
+     "timestamp": 1000,
+     "commission": 28.2845
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 130,
+     "price": 70.0,
+     "timestamp": 1800,
+     "commission": 41.0759
+    }
+   ]
+  }
+ },
+ {
+  "name": "no edits",
+  "brokerage": 1.0,
+  "margin": 1.0,
+  "capital": 100000,
+  "edits": [],
+  "original": {
+   "net_pnl": 350.582,
+   "fees": 24.418,
+   "pnl_pct": 0.350582,
+   "peak_capital_pct": 9.0,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 75,
+     "price": 120.0,
+     "timestamp": 1000,
+     "commission": 5.2339
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 75,
+     "price": 125.0,
+     "timestamp": 1500,
+     "commission": 19.1841
+    }
+   ]
+  },
+  "edited": {
+   "net_pnl": 350.582,
+   "fees": 24.418,
+   "pnl_pct": 0.350582,
+   "peak_capital_pct": 9.0,
+   "state": "closed",
+   "capital": 100000.0,
+   "executions": [
+    {
+     "trade_id": "1",
+     "role": "entry",
+     "side": "BUY",
+     "quantity": 75,
+     "price": 120.0,
+     "timestamp": 1000,
+     "commission": 5.2339
+    },
+    {
+     "trade_id": "2",
+     "role": "exit",
+     "side": "SELL",
+     "quantity": 75,
+     "price": 125.0,
+     "timestamp": 1500,
+     "commission": 19.1841
+    }
+   ]
+  }
+ }
+]
