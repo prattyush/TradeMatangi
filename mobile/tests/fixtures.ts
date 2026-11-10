@@ -1,4 +1,5 @@
 import type { Page, Route } from '@playwright/test'
+import { analysisResponse, newAnalysisState, type AnalysisMockState } from './analysisMock'
 
 /** The four landscape sizes every screen must work at (CSS px). */
 export const VIEWPORTS = [
@@ -16,6 +17,8 @@ export interface MockServer {
   rejectLogin: boolean
   /** Make the capabilities endpoint answer 404 like an older server. */
   oldServer: boolean
+  /** The analysis endpoints' behaviour and what they were asked. */
+  analysis: AnalysisMockState
 }
 
 const CORS = {
@@ -28,7 +31,7 @@ const bundle = { access_token: 'access-token-1', refresh_token: 'refresh-token-1
 
 /** Stand in for the TradeMatangi server on the given hosts (the app talks to an absolute https URL). */
 export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co.in']): Promise<MockServer> {
-  const state: MockServer = { requests: [], rejectLogin: false, oldServer: false }
+  const state: MockServer = { requests: [], rejectLogin: false, oldServer: false, analysis: newAnalysisState() }
   const answer = (route: Route, status: number, body?: unknown) =>
     route.fulfill({ status, headers: { ...CORS, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
 
@@ -47,6 +50,11 @@ export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co
         if (state.oldServer) return answer(route, 404, { detail: 'Not Found' })
         return answer(route, 200, { api_version: 'v1', features: ['catalogue', 'historical-candles'], trading_capabilities: ['trade-labels', 'behavior-labels'] })
       }
+      const analysisPrefix = '/api/desktop/v1/analysis/'
+      if (url.pathname.startsWith(analysisPrefix)) {
+        const result = analysisResponse(url.pathname.slice(analysisPrefix.length), url.searchParams, state.analysis)
+        return answer(route, result.status, result.body)
+      }
       return answer(route, 404, { detail: 'Not Found' })
     })
   }
@@ -59,4 +67,9 @@ export async function signIn(page: Page) {
   await page.getByLabel('Password').fill('secret')
   await page.getByRole('button', { name: 'Sign in' }).click()
   await page.getByRole('navigation', { name: 'Main' }).waitFor()
+}
+
+export async function openSessions(page: Page) {
+  await signIn(page)
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Sessions' }).click()
 }

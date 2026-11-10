@@ -1,0 +1,50 @@
+/* Sessions: list on the left, the chosen day on the right. */
+.screen.sessions { display: grid; grid-template-columns: clamp(230px, 32%, 310px) minmax(0, 1fr); }
+.session-pane { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+.pane-head { display: flex; align-items: center; gap: 8px; height: 48px; flex: 0 0 auto; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); }
+.pane-head h2 { font-size: 15px; font-weight: 600; }
+.pane-head .btn { min-height: 38px; padding: 0 12px; }
+.range-note { flex: 0 0 auto; padding: 4px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+.session-list { flex: 1 1 auto; overflow: auto; min-height: 0; }
+
+.session-row {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  width: 100%; min-height: 52px; padding: 6px 10px 6px 9px; text-align: left;
+  background: none; color: inherit; font: inherit; border: 0; border-bottom: 1px solid #21262d; border-left: 3px solid transparent;
+}
+.session-row[aria-current='true'] { background: var(--panel-2); border-left-color: var(--accent); }
+.session-date, .session-what, .session-result { display: flex; flex-direction: column; min-width: 0; }
+.session-date { align-items: center; line-height: 1.1; }
+.session-date strong { font-size: 16px; }
+.session-date small, .session-what small, .session-result small { font-size: 11px; color: var(--muted); }
+.session-what strong { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-what small { display: flex; align-items: center; flex-wrap: wrap; row-gap: 2px; }
+.session-what .badge { margin-left: 5px; }
+.session-result { align-items: flex-end; }
+.session-result strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+
+.detail-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.detail { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+.tabs-result { display: flex; align-items: center; gap: 8px; padding-right: 6px; font-size: 13px; white-space: nowrap; }
+.tabs-when { color: var(--muted); }
+.detail-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.detail-body .scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.detail-body > .state { margin: auto; }
+
+/* The shared analysis chart panel is built for a 450 px desktop card; here it fills the pane. */
+.phone-chart { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.phone-chart .analysis-panels { height: 100%; min-height: 0; flex: 1 1 auto; }
+
+/* Phone layer over the shared chart (desktop CSS assumes a 450 px card): fill the pane, drop what duplicates the list. */
+.phone-chart .desktop-analysis-chart { min-height: 0; }
+.phone-chart .desktop-analysis-chart > small { display: none; }
+.phone-chart .desktop-analysis-chart header { min-height: 38px; padding: 0 6px; gap: 6px; }
+.phone-chart .desktop-analysis-chart header strong { display: none; }
+.phone-chart .desktop-analysis-chart header button, .phone-chart .desktop-analysis-chart header select { min-height: 32px; }
+.phone-chart .analysis-pane-navigation { gap: 0; padding: 4px 6px 0; align-items: stretch; }
+.phone-chart .analysis-pane-navigation button { flex: 1 1 0; min-height: 34px; font: inherit; font-size: 13px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+.phone-chart .analysis-pane-navigation button:first-child { border-radius: 8px 0 0 8px; }
+.phone-chart .analysis-pane-navigation button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
+.phone-chart .analysis-pane-navigation button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #04131f; font-weight: 600; }
+.phone-chart .analysis-panels.is-single.has-options { grid-template-rows: 40px minmax(0, 1fr); }
+.phone-chart .analysis-option-pane > nav { max-height: 44px; }

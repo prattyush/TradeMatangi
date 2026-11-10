@@ -1,11 +1,12 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
 /**
- * The web bundle (dist/) is served inside the app at https://<hostname>. That origin is what a YouTube embed sees
- * as its referrer, so it must be a valid https origin. `CAP_HOSTNAME` picks it at sync time; the default is Capacitor's
- * own `localhost`. Sprint 0 spike (docs/spec-phase24-android-plan.md) decides whether a real domain is needed.
+ * The web bundle (dist/) is served inside the app at https://<hostname>. That origin is what a YouTube embed sees as
+ * its referrer, so it must be a valid https origin. The Sprint 0 device spike (docs/spec-phase24-android-plan.md)
+ * showed every embed variant playing with this domain origin. The name is never looked up on the network: the app
+ * answers requests for it locally. `CAP_HOSTNAME` overrides it at sync time (for example `localhost`).
  */
-const hostname = process.env.CAP_HOSTNAME?.trim() || undefined
+const hostname = process.env.CAP_HOSTNAME?.trim() || 'app.tradematangi.co.in'
 
 const config: CapacitorConfig = {
   appId: 'in.co.tradematangi.phone',
@@ -13,7 +14,7 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     androidScheme: 'https',
-    ...(hostname ? { hostname } : {}),
+    hostname,
     // Never load anything over plain http inside the app.
     cleartext: false,
   },

@@ -16,6 +16,7 @@
     "@aparajita/capacitor-secure-storage": "8.0.1",
     "@capacitor/android": "8.6.0",
     "@capacitor/app": "8.1.2",
+    "@capacitor/browser": "^8.0.5",
     "@capacitor/core": "8.6.0",
     "@capacitor/preferences": "8.0.1",
     "klinecharts": "10.0.0",

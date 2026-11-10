@@ -6,10 +6,11 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ?? (existsSync
 
 export default defineConfig({
   testDir: './tests',
-  timeout: 30_000,
+  timeout: 45_000,
+  expect: { timeout: 8_000 },
   workers: 1,
   use: {
-    baseURL: 'http://127.0.0.1:5176',
+    baseURL: 'http://127.0.0.1:5177',
     launchOptions: { executablePath },
     screenshot: 'only-on-failure',
     // A phone in landscape; individual specs override the size.
@@ -18,6 +19,7 @@ export default defineConfig({
     isMobile: false,
   },
   webServer: [
-    { command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1', url: 'http://127.0.0.1:5176/', reuseExistingServer: false },
+    // The production build, as it ships inside the APK (no dev-server compile delays).
+    { command: 'node node_modules/vite/bin/vite.js build && node node_modules/vite/bin/vite.js preview --host 127.0.0.1', url: 'http://127.0.0.1:5177/', reuseExistingServer: false, timeout: 120_000 },
   ],
 })

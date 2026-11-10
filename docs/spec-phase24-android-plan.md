@@ -15,10 +15,10 @@ Branch: `feat/android-phone-app` (off `dev`), **one PR into `dev`** with a merge
 
 | Sprint | Scope | Status |
 |---|---|---|
-| S0 | Requirements, plan, architecture doc; spikes (toolchain, YouTube embed, Google token, chart performance) | In progress: docs written; toolchain spike done; embed, Google and performance spikes need a phone |
+| S0 | Requirements, plan, architecture doc; spikes (toolchain, YouTube embed, Google token, chart performance) | Docs written; toolchain and embed spikes done; Google token spike waits for the Android OAuth client; chart performance is measured with the real chart in S3 |
 | S1 | `mobile/` shell, auth core (password), server URL, capabilities, offline/error states, CI | Built on the branch: 30 unit tests, 17 landscape UI tests (4 sizes), debug and release (R8) APKs build locally; CI workflow written, not yet run on GitHub; not yet installed on a phone |
 | S2 | Google sign-in, first-time account name, optional app lock, setup doc | Not started |
-| S3 | Sessions list and session detail (Chart / Trades / Orders / Videos row) | Not started |
+| S3 | Sessions list and session detail (Chart / Trades / Orders / Videos row) | Built on the branch: 7 filter/format unit tests, 15 landscape UI tests (4 sizes, mocked analysis API); label progress in the list moved to S4; not yet tried on a phone |
 | S4 | One-at-a-time trade labeling (landscape) | Not started |
 | S5 | Stats and Habits | Not started |
 | S6 | Videos tab and embedded player (with fallback) | Not started |
@@ -31,10 +31,10 @@ Branch: `feat/android-phone-app` (off `dev`), **one PR into `dev`** with a merge
 - **S0.** Docs above. Spikes, each written up here when done: (a) WSL toolchain: JDK, Android SDK command-line tools on the Linux filesystem, a Gradle build of a hello Capacitor app, install through Windows `adb.exe`; (b) **YouTube embed matrix** on a real phone: direct iframe with `server.hostname` set to a real https name, the same through a relay page on the server (`https://tradematangi.co.in/embed.html?v=<id>`), and the Open-in-YouTube intent; also fullscreen and landscape behavior; (c) native Google sign-in returns a token that `/api/auth/desktop/google-token` accepts; (d) KLine chart performance on the phone. Only the hello shell may be merged from the spikes.
 - **S1.** `mobile/` scaffold and Capacitor project; theme tokens; NavRail, screen stack, back button; transport, token store, single-flight refresh; server config; email and password login with `device_name`; logout; capabilities probe; offline and error states; Settings stub; GitHub Actions `android-phone.yml`; `mobile/README.md`; constraints docs. Tests: refresh single-flight, one retry on 401, no token in logs, https enforcement; landscape Playwright login with a mocked API.
 - **S2.** Native Google sign-in (Web client ID) to `/api/auth/desktop/google-token`; prompt for `account_name` for a first-time user; error mapping (including Credential Manager 28444); optional BiometricPrompt app lock; `docs/phone-google-signin-setup.md`.
-- **S3.** Sessions master-detail; filters sheet; grouping; detail pane with the session chart and trade markers; label progress; date-bounded fetches.
+- **S3.** Sessions master-detail; filters sheet; grouping; detail pane with the session chart and trade markers; date-bounded fetches. The list shows P&L and trade counts; the per-day label progress (`4/6`) needs a label fetch per day, so it arrives with labeling in S4. Swing days show Trades and Videos only for now; the swing review screens come with Stats (S5).
 - **S4.** Labeling: shared saver and model, tag pickers, behavior rows, unlabeled filter, notes sheet, keyboard handling, save-state footer, leave-guard.
 - **S5.** Spike (reuse `PerformanceDashboard` with a phone layer, or recompose from `performance.ts` and `habits/*`), then Stats pager, KPI row, filter sheet, Habits scorecard and deep-dive; fallback when the behavior endpoints are missing.
-- **S6.** Videos list and player with chapters using the S0 decision; private-video note; add and remove link; Open in YouTube; keep-screen-on while playing. If S0 shows a relay page is needed, add `frontend/public/embed.html` (static) and note that the server branch must include it.
+- **S6.** Videos list and player with chapters using the S0 decision; private-video note; add and remove link; Open in YouTube; keep-screen-on while playing. The S0 spike showed the production iframe plays from the domain origin, so no relay page is needed.
 - **S7.** Browse: symbol picker, date sheet, interval chips, Spot / CE / PE pickers from `option-metadata`, `historical/pages` with paging, read-only `KLineChart` with indicators (including VOL), crosshair read-out.
 - **S8.** Decide between the existing positions endpoints and a small passive read endpoint (both have attach side effects today); then the Swing and Day columns, foreground-only polling, stale handling, Real gating by capability.
 - **S9.** Back-stack audit, low-end performance pass, accessibility pass, R8 and signing check, diagnostics, final docs, merge `origin/dev`, full test runs, open the PR.
@@ -58,19 +58,21 @@ Later (not in this PR; the design leaves room): alerts (device-token table, regi
 - Not yet done: installing on a phone (copy the APK, or `adb` on Windows) and the first run of the GitHub Actions workflow.
 - Plugin versions on npm today: `@capgo/capacitor-social-login` 8.7.7, `@aparajita/capacitor-biometric-auth` 10.0.0, `@aparajita/capacitor-secure-storage` 8.0.1, `@capacitor/app|keyboard|browser|status-bar|screen-orientation|preferences` 8.x. Compatibility with Capacitor 8 is re-checked when each is added.
 
-**(b) YouTube embed matrix: waiting for a phone test.** Two spike APKs were built from the same page (four variants on a left menu: the production iframe, nocookie + `enablejsapi` + `origin`, `youtube.com/embed` + `enablejsapi` + `origin`, and Open in YouTube through the Capacitor Browser plugin). They differ only in the app origin: A runs at `https://localhost`, B at `https://app.tradematangi.co.in`. The page shows the origin and any player error code. Results are written here once tested.
+**(b) YouTube embed matrix, 2026-11-10, on a real phone.** Two spike APKs from the same page (four variants on a left menu: the production iframe, nocookie + `enablejsapi` + `origin`, `youtube.com/embed` + `enablejsapi` + `origin`, and Open in YouTube through the Capacitor Browser plugin) that differ only in the app origin: A at `https://localhost`, B at `https://app.tradematangi.co.in`.
 
 | Origin | 1. production iframe | 2. nocookie + origin | 3. youtube.com + origin | 4. Open in YouTube |
 |---|---|---|---|---|
 | A `https://localhost` | not tested | not tested | not tested | not tested |
-| B `https://app.tradematangi.co.in` | not tested | not tested | not tested | not tested |
+| B `https://app.tradematangi.co.in` | **plays** | **plays** | **plays** | **opens the YouTube app** |
+
+**Decision:** the app uses the domain origin `https://app.tradematangi.co.in` (`server.hostname` in `mobile/capacitor.config.ts`) and the **unchanged production iframe** (`shared/analysis/SessionVideos.tsx`, nocookie, `referrerpolicy strict-origin-when-cross-origin`). No relay page on the server is needed, so no server-side change is tied to the phone branch; Open in YouTube stays as the fallback. The hostname is never looked up on the network (the app answers it locally). The localhost origin was not tested, so it is not known whether it would fail; the app does not use it.
 
 **(c) Google token accepted by `/api/auth/desktop/google-token`:** needs the Android OAuth client (user action 1). Not started.
 
 **(d) KLine chart performance on the phone:** measured in Sprint 1 / 3 with the real chart bundle. Not started.
 
 ## Risks
-- Embedded YouTube can fail in a WebView (error 153) when the referrer or origin is missing. Mitigation: the S0 matrix; a relay page on the server's own https origin; Open in YouTube always visible.
+- Embedded YouTube can fail in a WebView (error 153) when the referrer or origin is missing. Mitigation: the S0 matrix; the domain origin is verified on a real phone; Open in YouTube is always visible.
 - Google sign-in setup errors (28444, wrong SHA-1, consent-screen test users, propagation delay). Mitigation: a step-by-step guide; debug and release SHA-1 both registered.
 - A server on another branch lacks endpoints. Mitigation: capability probe, per-feature 404 / 403 handling, About screen.
 - Positions endpoints attach runtimes on the server. Mitigation: decided in S8; passive endpoint if needed.

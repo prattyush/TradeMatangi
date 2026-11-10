@@ -5,14 +5,22 @@ import { Spinner } from './shell/States'
 import { Login } from './screens/Login'
 import { More } from './screens/More'
 import { Placeholder } from './screens/Placeholder'
+import { SessionsScreen } from './screens/sessions/SessionsScreen'
+import { PhoneAnalysisProvider } from './env/analysisEnvironment'
 
-const TITLES: Record<Exclude<Tab, 'more'>, string> = {
-  sessions: 'Sessions', stats: 'Stats', browse: 'Browse', positions: 'Positions', videos: 'Videos',
+const TITLES: Record<Exclude<Tab, 'more' | 'sessions'>, string> = {
+  stats: 'Stats', browse: 'Browse', positions: 'Positions', videos: 'Videos',
 }
 
 function Screens() {
   const { tab } = useNav()
-  return <Shell>{tab === 'more' ? <More /> : <Placeholder title={TITLES[tab]} />}</Shell>
+  return (
+    <PhoneAnalysisProvider>
+      <Shell>
+        {tab === 'more' ? <More /> : tab === 'sessions' ? <SessionsScreen /> : <Placeholder title={TITLES[tab]} />}
+      </Shell>
+    </PhoneAnalysisProvider>
+  )
 }
 
 export function App() {

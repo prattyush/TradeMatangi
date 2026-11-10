@@ -37,7 +37,7 @@ D's only real advantage is Rust-side token refresh and no CORS. A gets the same 
 
 ```
 mobile/
-  capacitor.config.ts       appId in.co.tradematangi.phone, webDir dist, server.hostname (real https origin), androidScheme https
+  capacitor.config.ts       appId in.co.tradematangi.phone, webDir dist, server.hostname app.tradematangi.co.in (https origin), androidScheme https
   android/                  committed Capacitor project (landscape lock, immersive, https-only network config, allowBackup=false)
   src/main.tsx              providers, theme, in-memory screen stack + Android back button
   src/shell/                NavRail, Screen, Sheet, SegmentedTabs, EmptyState, ErrorState, OfflineBanner
@@ -104,7 +104,7 @@ Principles: no stacked headers; master-detail panes instead of modals; filters i
 
 **Stats.** A vertical tab strip (Overview, Entries, Exits, Sizing, Behavior, Habits); each tab is a horizontal pager of single-purpose cards with a scrolling KPI row and a filter sheet. Tables become condensed lists. Habits goes scorecard to deep-dive.
 
-**Videos.** Left list grouped by date; right a 16:9 player sized to the available height with the chapters beside it. Tapping a chapter seeks. Private videos show the existing note to make them Unlisted; Open in YouTube is always available.
+**Videos.** Left list grouped by date; right a 16:9 player sized to the available height with the chapters beside it. Tapping a chapter seeks. Private videos show the existing note to make them Unlisted; Open in YouTube is always available. The player is the shared `youtube-nocookie` iframe; a device spike showed it plays from the app origin `https://app.tradematangi.co.in` (see the sprint plan), which is why the app is served from that origin and not from `localhost`.
 
 **Browse** (read-only). A full-bleed chart with an auto-hiding slim control bar: symbol (full-screen search), date (calendar sheet, previous / next day), interval chips, Spot / CE / PE with expiry and strike, indicators. Long-press shows an OHLC and volume read-out. No trading menu, no drawings.
 
@@ -139,6 +139,15 @@ Reserved room: Alerts, Swing orders (biometric confirm; guardrails stay on the s
 - **App layer** (`mobile/src/app/`): `services.ts` builds the singletons once; `AppContext.tsx` provides services, auth state (`loading | signedIn | signedOut`; an `onAuthLost` event from the transport signs the user out) and the capability probe; `Nav.tsx` holds the current tab, a stack of screens opened on top of it, and the back button: handlers registered with `useBackHandler` run first (newest first), then pop one screen, then go to Sessions from any other tab, then a second press within 2 s exits. The Capacitor `backButton` event drives it in the app; the Escape key stands in for it in a browser.
 - **Android project** (`mobile/android/`, committed): sensor-landscape, immersive bars (`MainActivity`), `adjustResize`, `allowBackup=false`, data-extraction rules that exclude everything, `usesCleartextTraffic=false` with a `network_security_config` that a debug build overrides to allow a LAN dev server, R8 and resource shrinking on release with keep rules for Capacitor and the secure-storage plugin, release signing read from the environment, `versionCode` and `versionName` from Gradle properties.
 - **Screens in this sprint:** sign-in (brand left, form right, server address editable), the shell with the 56 px rail, a placeholder for each screen built in later sprints, and More (account, sign-out with confirmation, server address, About with the server capability summary, copy diagnostics).
+
+## Sprint 3 notes (Sessions)
+
+- **Analysis environment** (`mobile/src/env/analysisEnvironment.tsx`): the phone is the third host of the shared `AnalysisEnvironment`. It builds the data layer with the desktop's `createAnalysisApi` and `createVideoLinksApi`, fed by one request function that goes through the phone's Bearer transport to `/api/desktop/v1/analysis/<path>` (the desktop's `validAnalysisPath` allowlist still applies, and `204` becomes `null` as the shared code expects). Saved videos open in the YouTube app or a Custom Tab through `@capacitor/browser`.
+- **Screen** (`mobile/src/screens/sessions/`): `SessionsScreen` (list pane 230 to 310 px, proportional, and detail pane), `FilterSheet` (period, style, mode, instrument, symbol; edits a draft until Apply), `SessionRow` (date, symbol and instrument, mode badge, P&L, trade count; uses the shared `groupSessions` so two sessions on one day are one row), `SessionDetail` (tabs Chart, Trades, Orders, Videos; the P&L and date sit at the right of the tab row because the selected list row already shows them), `TradesList` (a six-column table that fits 400 px).
+- **Requests are date-bounded** (7 days, 30 days default, 90 days, 1 year, or a custom range of at most 400 days).
+- **Chart.** The shared `AnalysisPanels` in `layout="single"` (one pane at a time with an Underlying / Option toggle). `sessions.css` overrides the desktop CSS that assumes a 450 px card: the panel fills the pane, the chart title and footnote are hidden, the toggle and header controls are compacted.
+- **Shared-code fixes made for the phone, additive and unchanged for other hosts:** the Analysis chart now passes `volume` to the chart (it was dropped), and `useKLineIndicators` takes an optional `hasVolume` so `VOL` and `VWAP` are skipped for an index.
+- **Not in this sprint:** per-day label progress (S4), the swing review screens (S5), tapping a trade to focus the chart (S4, with labeling).
 
 ---
 

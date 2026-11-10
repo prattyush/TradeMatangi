@@ -125,7 +125,7 @@ export default function DesktopAnalysisChart(props: Props) {
   const drawingInstrument=useMemo(()=>environment.drawingRequest&&symbolInfo!==undefined&&symbolInfo!==false?analysisDrawingInstrument({symbol:props.symbol,right:props.right,strike:props.strike,expiry:props.expiry,kind:symbolInfo?.kind,exchange:symbolInfo?.exchange}):null,[environment.drawingRequest,symbolInfo,props.symbol,props.right,props.strike,props.expiry])
   const [hovered,setHovered]=useState(false)
   const drawings=useKLineDrawings({chartRef,instrument:drawingInstrument,request:environment.drawingRequest,active:hovered&&environment.active!==false,onError:error=>environment.reportError?.(String(error),'Drawings')})
-  const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`)
+  const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`,{hasVolume:candles.some(c=>c.volume!=null)})
   const [toolsVisible,toggleTools]=useToolsRailVisible()
   const toolsAvailable=Boolean(environment.drawingRequest)
   useEffect(()=>{
@@ -170,7 +170,7 @@ export default function DesktopAnalysisChart(props: Props) {
       if(!continuing){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:intervalMinutes,type:'minute'})}
       // Reuse the loader on event changes so KLine also retains a manual price scale.
       if(continuing)chart.resetData()
-      else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close} satisfies KLineData)):[],{forward:false,backward:false})})
+      else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})} satisfies KLineData)):[],{forward:false,backward:false})})
       const restoreViewport=()=>{
         if(request!==generation.current||chartRef.current!==chart)return
         chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length))))
