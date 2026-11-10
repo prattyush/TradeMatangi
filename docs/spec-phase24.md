@@ -158,7 +158,8 @@ For phone you can show the exact entry details or exit details as a color or sho
 2. **All session types.** Real, paper, replay (sim) and stepwise. Real sessions also show how the charges were counted (estimated or allocated actual).
 3. **Contents (per round trip).** Entries (time, size, price, capital %, risk %, sizing method), exits (time, size, price, capital %, how it happened), the trade's peak capital %, and the **P&L story before and after**: the day's realised P&L (money and % of capital) before this trade and after it, with the trade's own P&L between. Realised only; trades that overlap in time are noted.
 4. **How an exit happened** is shown with a colour and a short code (details in `docs/spec-phase24-walkthrough-whatif-plan.md`): stoploss, limit, target, take-profit strategy, other strategy exits, market, session close.
-5. **Read-only.** Nothing is saved or sent. It reuses the Label Trades layout (charts left, one round trip right, Prev / Next).
+5. **Order.** Trades are walked in time order by their **first entry**: with overlapping trades, the one opened first comes first, then the next one opened, and so on (not by exit time or label number).
+6. **Read-only.** Nothing is saved or sent. It reuses the Label Trades layout (charts left, one round trip right, Prev / Next).
 
 Status: built on branch `feat/trade-walkthrough` (website, desktop, webapp, phone); not yet seen on a phone or in the Windows app. Sprints W0 to W4 in `docs/spec-phase24-walkthrough-whatif-plan.md` (first pull request).
 

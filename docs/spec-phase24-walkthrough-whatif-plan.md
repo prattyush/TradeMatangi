@@ -5,7 +5,7 @@ Requirements: `docs/spec-phase24.md` ("TRADE WALKTHROUGH", "WHAT IF", with the d
 ## Scope and decisions (2026-11-10)
 - Hosts: website (Lightweight and KLine renderers), desktop, webapp, phone app. Session types: real, paper, replay (sim), stepwise. Intraday only (as Label Trades).
 - One shared implementation in `shared/analysis/` reaches website, desktop and webapp through the single `GroupCard` tab bar in `shared/analysis/TradeAnalysis.tsx`; the phone app has its own layout (menu entries in `mobile/src/screens/sessions/SessionDetail.tsx`).
-- Walkthrough is read-only. What If never sends an order and changes nothing but its own saved scenarios.
+- Walkthrough is read-only and walks the trades by **first entry time** (overlapping trades in the order they opened); the day's P&L before and after counts realised trades in the order they closed, so with overlapping trades one trade's "before" can differ from the previous trade's "after" (the panel says so). What If never sends an order and changes nothing but its own saved scenarios.
 - What If: edit existing legs only (quantity 0 removes one); chart click-to-pick and hypothetical markers on KLine only; saved **per day**, named, several per day, compared across days.
 - P&L in What If is cash flow (sells minus buys minus charges, by direction) with a visible warning when entry and exit quantities do not match. Real-session charges are an estimate.
 

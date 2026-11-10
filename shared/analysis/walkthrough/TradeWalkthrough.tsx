@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AnalysisTrade } from '../api'
 import { useAnalysisApi, useAnalysisEnvironment } from '../environment'
 import type { PerformanceCycle } from '../performance'
-import { orderRoundTrips, tripKey, type LabeledRoundTrip } from '../labeling/model'
+import { orderRoundTripsByEntry, tripKey, type LabeledRoundTrip } from '../labeling/model'
 import OneByOneLabeling from '../labeling/OneByOneLabeling'
 import RoundTripSplitLayout from '../labeling/RoundTripSplitLayout'
 import { useMaximized, useRoundTripView } from '../labeling/useRoundTripView'
@@ -44,7 +44,7 @@ export default function TradeWalkthrough({ symbol, date, sessionIds, allTrades, 
     void Promise.all(sessionIds.map(id => api.getRoundTrips(id)))
       .then(pages => {
         if (cancelled) return
-        setTrips(orderRoundTrips(pages.flatMap((rows, i) => rows.map(rt => ({ ...rt, session_id: sessionIds[i] }))), sessionIds))
+        setTrips(orderRoundTripsByEntry(pages.flatMap((rows, i) => rows.map(rt => ({ ...rt, session_id: sessionIds[i] }))), sessionIds))
         setIndex(0)
       })
       .catch(cause => { if (!cancelled) setError(String(cause)) })

@@ -146,6 +146,8 @@ export interface AnalysisMockState extends StatsMockState {
   /** Saved videos per session id. */
   /** Make the saved-videos list answer 404 like an older server. */
   videosOld?: boolean
+  /** The round-trips endpoint lists the trades in reverse (the walkthrough must still go by entry time). */
+  tripsReversed?: boolean
   /** The session detail carries no cycles (an older server: no entry and exit details). */
   cyclesOld?: boolean
   /** Compare: saved pattern annotations exist for the day. */
@@ -197,7 +199,8 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
 
   if (route === 'round-trips') {
     const session = SESSIONS.find(item => item.session_id === query.get('session_id'))
-    return { status: 200, body: session ? roundTripsFor(session) : [] }
+    const trips = session ? roundTripsFor(session) : []
+    return { status: 200, body: state.tripsReversed ? [...trips].reverse() : trips }
   }
   if (route === 'labels') {
     if (method === 'POST') {

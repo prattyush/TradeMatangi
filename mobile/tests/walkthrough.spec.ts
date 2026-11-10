@@ -44,6 +44,17 @@ test('Next moves to the second trade, which starts the day where the first one l
   await expect(overlay(page)).toContainText('CE 24600')
 })
 
+test('trades come in the order they were entered, whatever order the server lists them in', async ({ page }) => {
+  const server = await mockServer(page)
+  server.analysis.tripsReversed = true
+  await openWalkthrough(page)
+  await expect(overlay(page).locator('.tl-strip .tl-chip.current')).toHaveText('1')
+  await expect(overlay(page).getByLabel('Entries').locator('tbody tr').first()).toContainText('10:05') // the first trade opened at 10:05, the second at 11:05
+  await expect(overlay(page).getByLabel('Day before')).toContainText('+₹0.00')
+  await overlay(page).getByRole('button', { name: 'Next trade' }).click()
+  await expect(overlay(page).getByLabel('Entries').locator('tbody tr').first()).toContainText('11:05')
+})
+
 test('a stopped-out trade is a red SS chip and a loss, and More info explains the entry', async ({ page }) => {
   await mockServer(page)
   await openWalkthrough(page, 1)

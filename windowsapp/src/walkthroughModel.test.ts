@@ -146,3 +146,28 @@ describe('text helpers', () => {
     expect(signedPct(undefined)).toBe('—')
   })
 })
+
+describe('order of the walkthrough', () => {
+  const t = (sessionId: string, index: number, entries: number[], exits: number[]) => ({
+    session_id: sessionId, index, right: null, pnl: 0,
+    entry_trades: entries.map((timestamp, i) => ({ trade_id: `${sessionId}${index}e${i}`, side: 'BUY', quantity: 1, price: 1, timestamp })),
+    exit_trades: exits.map((timestamp, i) => ({ trade_id: `${sessionId}${index}x${i}`, side: 'SELL', quantity: 1, price: 1, timestamp })),
+  }) as unknown as LabeledRoundTrip
+  it('goes by first entry, so overlapping trades come in the order they were opened, not closed', async () => {
+    const { orderRoundTripsByEntry } = await import('../../shared/analysis/labeling/model')
+    // 5 opens first but closes last; 3 opens second and closes first; 4 opens last.
+    const trips = [t('s1', 3, [200], [300]), t('s1', 4, [400], [500]), t('s1', 5, [100], [600])]
+    expect(orderRoundTripsByEntry(trips, ['s1']).map(trip => trip.index)).toEqual([5, 3, 4])
+  })
+  it('uses the earliest of several entries, and the number or the session only to break a tie', async () => {
+    const { orderRoundTripsByEntry } = await import('../../shared/analysis/labeling/model')
+    const trips = [t('s2', 1, [100], [150]), t('s1', 9, [300, 90], [400]), t('s1', 2, [100], [130])]
+    expect(orderRoundTripsByEntry(trips, ['s1', 's2']).map(trip => `${trip.session_id}${trip.index}`)).toEqual(['s19', 's12', 's21'])
+  })
+  it('puts a trade with no timestamps last and keeps Label Trades\' own numbering order unchanged', async () => {
+    const { orderRoundTripsByEntry, orderRoundTrips } = await import('../../shared/analysis/labeling/model')
+    const trips = [t('s1', 1, [], []), t('s1', 0, [500], [600])]
+    expect(orderRoundTripsByEntry(trips, ['s1']).map(trip => trip.index)).toEqual([0, 1])
+    expect(orderRoundTrips([t('s1', 2, [100], []), t('s1', 1, [900], [])], ['s1']).map(trip => trip.index)).toEqual([1, 2])
+  })
+})
