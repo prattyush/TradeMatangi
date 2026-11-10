@@ -6,6 +6,7 @@ import AnalysisChart, { ComparisonChart } from '../../../shared/analysis/kline/A
 import { createAnalysisApi, validAnalysisPath, type AnalysisRequest } from '../../../windowsapp/src/analysisApi'
 import { createVideoLinksApi } from '../../../windowsapp/src/tools/videoLinks'
 import { useServices } from '../app/AppContext'
+import { useChartInfo } from '../app/ChartInfo'
 import { isNativeApp } from '../api/storage'
 import type { ApiClient } from '../api/transport'
 import '../../../shared/analysis/kline/desktopAnalysis.css'
@@ -32,6 +33,7 @@ export async function openVideo(video: { videoId: string; url: string }): Promis
 /** Build the environment that the shared Analysis components read. Rebuilt only when the signed-in client changes. */
 export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
   const { client } = useServices()
+  const { chartInfo } = useChartInfo()
   const built = useMemo(() => {
     const request = createAnalysisRequest(client)
     const adapter = createAnalysisApi(request)
@@ -56,7 +58,8 @@ export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
     }
     return { adapter, environment }
   }, [client])
-  return built.environment
+  // The data layer is built once per client; only the display setting changes here.
+  return useMemo(() => ({ ...built.environment, chartInfo }), [built, chartInfo])
 }
 
 export function PhoneAnalysisProvider({ children }: { children: ReactNode }) {

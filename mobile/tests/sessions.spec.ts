@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mockServer, openSessions, VIEWPORTS } from './fixtures'
+import { chooseView, mockServer, openSessions, VIEWPORTS } from './fixtures'
 
 const rows = (page: import('@playwright/test').Page) => page.locator('.session-row')
 
@@ -36,31 +36,34 @@ test('asks the server only for a bounded period (the endpoint has no pagination)
   expect(call.authorization).toBe('Bearer access-token-1')
 })
 
-test('selecting a day shows its chart; Trades, Orders and Videos tabs work', async ({ page }) => {
+test('selecting a day shows its chart; Trades, Orders and Videos open from the view menu', async ({ page }) => {
   await mockServer(page)
   await openSessions(page)
   await expect(page.getByText('Pick a session')).toBeVisible()
   await rows(page).first().click()
-  await expect(page.getByRole('tab', { name: 'Chart' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('button', { name: 'View: Chart' })).toBeVisible()
   await expect(page.locator('.phone-chart canvas').first()).toBeVisible()
-  await page.getByRole('tab', { name: 'Trades' }).click()
+  await chooseView(page, 'Trades')
   const table = page.locator('.trades-table')
   await expect(table).toBeVisible()
   await expect(table.locator('tbody tr')).toHaveCount(4)
   await expect(table.locator('tbody tr').first()).toContainText('10:05:00')
   await expect(table.locator('tbody tr').first()).toContainText('BUY')
   await expect(table.locator('tbody tr').first()).toContainText('24500 CE')
-  await page.getByRole('tab', { name: 'Orders' }).click()
+  await expect(page.getByRole('button', { name: 'View: Trades' })).toBeVisible()
+  await chooseView(page, 'Orders')
   await expect(page.getByText('No stored orders for this session.')).toBeVisible()
-  await page.getByRole('tab', { name: 'Videos' }).click()
-  await expect(page.getByRole('tab', { name: 'Videos' })).toHaveAttribute('aria-selected', 'true')
+  await chooseView(page, 'Videos')
+  await expect(page.getByRole('button', { name: 'View: Videos' })).toBeVisible()
+  await chooseView(page, 'Chart')
+  await expect(page.locator('.phone-chart canvas').first()).toBeVisible()
 })
 
 test('a day with two sessions splits its trades by session', async ({ page }) => {
   await mockServer(page)
   await openSessions(page)
   await rows(page).filter({ hasText: '2 sessions' }).click()
-  await page.getByRole('tab', { name: 'Trades' }).click()
+  await chooseView(page, 'Trades')
   await expect(page.getByText(/^Session 1/)).toBeVisible()
   await expect(page.getByText(/^Session 2/)).toBeVisible()
 })
@@ -69,8 +72,10 @@ test('a swing day offers Trades and Videos only', async ({ page }) => {
   await mockServer(page)
   await openSessions(page)
   await rows(page).filter({ hasText: 'Swing' }).click()
-  await expect(page.getByRole('tab')).toHaveCount(2)
-  await expect(page.getByRole('tab', { name: 'Trades' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('button', { name: 'View: Trades' })).toBeVisible()
+  await page.getByRole('button', { name: /^View:/ }).click()
+  await expect(page.getByRole('menuitemradio')).toHaveCount(2)
+  await expect(page.getByRole('menuitemradio', { name: 'Videos' })).toBeVisible()
 })
 
 test('filters: pick Paper and 90 days, apply, and only matching days stay', async ({ page }) => {
@@ -150,16 +155,201 @@ for (const viewport of VIEWPORTS) {
       await page.screenshot({ path: `test-results/sessions-list-${viewport.name}.png` })
       await rows(page).first().click()
       await expect(page.locator('.phone-chart canvas').first()).toBeVisible()
-      for (const tab of await page.getByRole('tab').all()) expect((await tab.boundingBox())!.height).toBeGreaterThanOrEqual(40)
+      // The controls share one 44 px row that is part of the chart header; they are 36 px tall (rows and the rail stay 44+).
+      for (const control of await page.locator('.phone-chart header button, .phone-chart header select').all()) {
+        if (await control.isVisible()) expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(36)
+      }
       const chart = await page.locator('.phone-chart .analysis-kline').first().boundingBox()
-      expect(chart!.height).toBeGreaterThanOrEqual(180) // the candles themselves, below the toggle and the chart header
-      expect(chart!.width).toBeGreaterThanOrEqual(380)
+      expect(chart!.height).toBeGreaterThanOrEqual(viewport.height - 44 - 60) // everything below the one control row is candles
+      expect(chart!.width).toBeGreaterThanOrEqual(viewport.width - 56 - 70)
+      const header = await page.locator('.phone-chart header').boundingBox()
+      expect(header!.height).toBeLessThanOrEqual(46)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth && document.documentElement.scrollHeight <= window.innerHeight + 1)).toBe(true)
       await page.screenshot({ path: `test-results/sessions-chart-${viewport.name}.png` })
-      await page.getByRole('tab', { name: 'Trades' }).click()
+      await page.getByRole('button', { name: 'Option' }).click()
+      await page.screenshot({ path: `test-results/sessions-option-${viewport.name}.png` })
+      await chooseView(page, 'Trades')
       await page.screenshot({ path: `test-results/sessions-trades-${viewport.name}.png` })
+      await page.getByRole('button', { name: 'Show days' }).click()
       await page.getByRole('button', { name: /^Filters/ }).click()
       await page.screenshot({ path: `test-results/sessions-filters-${viewport.name}.png` })
     })
   })
 }
+
+
+test.describe('days list', () => {
+  test('choosing a day hides the list; Days brings it back; choosing another hides it again', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await expect(page.locator('.session-pane')).toBeHidden()
+    const detail = await page.locator('.detail-pane').boundingBox()
+    expect(detail!.width).toBeGreaterThan(600) // the chart gets the width the list used to take
+    await page.getByRole('button', { name: 'Show days' }).click()
+    await expect(page.locator('.session-pane')).toBeVisible()
+    await expect(rows(page).first()).toHaveAttribute('aria-current', 'true')
+    await rows(page).nth(1).click()
+    await expect(page.locator('.session-pane')).toBeHidden()
+    await expect(page.getByRole('region', { name: 'TATPOW 2026-11-09' })).toBeVisible()
+  })
+
+  test('tapping Sessions again toggles the list', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await expect(page.locator('.session-pane')).toBeHidden()
+    const rail = page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Sessions' })
+    await rail.click()
+    await expect(page.locator('.session-pane')).toBeVisible()
+    await rail.click()
+    await expect(page.locator('.session-pane')).toBeHidden()
+  })
+
+  test('with no day chosen the list stays; tapping Sessions does nothing', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Sessions' }).click()
+    await expect(page.locator('.session-pane')).toBeVisible()
+  })
+
+  test('the back key shows the list before it leaves Sessions', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await expect(page.locator('.session-pane')).toBeHidden()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.session-pane')).toBeVisible()
+  })
+
+  test('coming back from another tab finds the same day, with the list still hidden', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).nth(1).click()
+    await expect(page.getByRole('region', { name: 'TATPOW 2026-11-09' })).toBeVisible()
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Browse' }).click()
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Sessions' }).click()
+    await expect(page.getByRole('region', { name: 'TATPOW 2026-11-09' })).toBeVisible()
+    await expect(page.locator('.session-pane')).toBeHidden()
+  })
+})
+
+test.describe('maximized chart', () => {
+  test.use({ viewport: { width: 851, height: 393 } })
+
+  test('shows one chart that fills the screen, and the back key restores it', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await expect(page.locator('.phone-chart canvas').first()).toBeVisible()
+    await page.getByRole('button', { name: 'Maximize chart' }).click()
+    const maximized = page.locator('.phone-chart.maximized')
+    await expect(maximized).toBeVisible()
+    await expect(maximized.locator('.desktop-analysis-chart')).toHaveCount(1)
+    await expect(maximized.getByRole('button', { name: 'Restore chart' })).toHaveCount(1)
+    // Days and the view menu are not offered over a maximized chart; Underlying / Option stay.
+    await expect(maximized.getByRole('button', { name: /^View:/ })).toHaveCount(0)
+    await expect(maximized.getByRole('button', { name: 'Option' })).toBeVisible()
+    const box = await maximized.boundingBox()
+    expect(box).toMatchObject({ x: 0, y: 0, width: 851, height: 393 })
+    await expect.poll(async () => (await maximized.locator('.analysis-kline').boundingBox())!.height, { timeout: 5000 }).toBeGreaterThanOrEqual(393 - 44 - 50)
+    await page.screenshot({ path: 'test-results/sessions-maximized.png' })
+    await page.keyboard.press('Escape') // Android back
+    await expect(page.locator('.phone-chart.maximized')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Maximize chart' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^View:/ })).toBeVisible()
+  })
+
+  test('the Restore button also works, and Option stays selected while maximized', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await page.getByRole('button', { name: 'Option' }).click()
+    await page.getByRole('button', { name: 'Maximize chart' }).click()
+    await expect(page.locator('.phone-chart.maximized .contract-pill, .phone-chart.maximized .menu-button')).toBeVisible()
+    await page.getByRole('button', { name: 'Restore chart' }).click()
+    await expect(page.locator('.phone-chart.maximized')).toHaveCount(0)
+  })
+})
+
+test.describe('chart controls', () => {
+  test('Underlying, Option, the view menu and the chart controls share one row', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await expect(page.locator('.phone-chart canvas').first()).toBeVisible()
+    const tops = async () => Promise.all([
+      page.getByRole('button', { name: /^View:/ }),
+      page.getByRole('button', { name: 'Underlying' }),
+      page.getByRole('button', { name: 'Option', exact: true }),
+      page.getByRole('button', { name: 'Fit chart' }),
+    ].map(async locator => (await locator.boundingBox())!.y))
+    const ys = await tops()
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThanOrEqual(8)
+  })
+
+  test('choosing Option shows the strikes in a menu over the chart, without taking a row', async ({ page }) => {
+    const server = await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click() // this day has two option contracts: 24500 CE and 24600 CE
+    await expect(page.locator('.phone-chart canvas').first()).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Option contract/ })).toHaveCount(0)
+    const before = await page.locator('.phone-chart .analysis-kline').boundingBox()
+    await page.getByRole('button', { name: 'Option', exact: true }).click()
+    const strike = page.getByRole('button', { name: 'Option contract: CE 24500' })
+    await expect(strike).toBeVisible()
+    await expect(page.locator('.phone-chart canvas').first()).toBeVisible()
+    const after = await page.locator('.phone-chart .analysis-kline').boundingBox()
+    expect(after!.height).toBe(before!.height) // the strike control lives in the same row
+    await strike.click()
+    await expect(page.getByRole('menuitemradio')).toHaveCount(2)
+    await page.getByRole('menuitemradio', { name: /CE 24600/ }).click()
+    await expect(page.getByRole('button', { name: 'Option contract: CE 24600' })).toBeVisible()
+    await expect.poll(() => server.requests.some(r => r.path.endsWith('data/options-historical') && r.query.get('strike') === '24600')).toBe(true)
+    await page.getByRole('button', { name: 'Underlying', exact: true }).click()
+    await expect(page.getByRole('button', { name: /^Option contract/ })).toHaveCount(0)
+  })
+
+  test('a day with a single contract shows it as a label, not a menu', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).filter({ hasText: 'Stepwise' }).click()
+    await page.getByRole('button', { name: 'Option', exact: true }).click()
+    await expect(page.locator('.contract-pill')).toHaveText('CE 24300')
+  })
+
+  test('an equity day has no Underlying / Option toggle', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).filter({ hasText: 'TATPOW' }).click()
+    await expect(page.locator('.phone-chart canvas').first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Option', exact: true })).toHaveCount(0)
+  })
+
+  test('the back key closes an open strike menu before anything else', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await page.getByRole('button', { name: 'Option', exact: true }).click()
+    await page.getByRole('button', { name: /^Option contract/ }).click()
+    await expect(page.getByRole('menu')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menu')).toHaveCount(0)
+    await expect(page.locator('.session-pane')).toBeHidden() // still on the same day
+  })
+})
+
+test('chart details can be chosen in More and are remembered', async ({ page }) => {
+  await mockServer(page)
+  await openSessions(page)
+  const nav = page.getByRole('navigation', { name: 'Main' })
+  await nav.getByRole('button', { name: 'More' }).click()
+  const group = page.getByRole('group', { name: 'Chart details' })
+  await expect(group.getByRole('button', { name: 'While touching' })).toHaveAttribute('aria-pressed', 'true') // the default
+  await group.getByRole('button', { name: 'Never' }).click()
+  await expect(group.getByRole('button', { name: 'Never' })).toHaveAttribute('aria-pressed', 'true')
+  expect(await page.evaluate(() => localStorage.getItem('tm.chart_info'))).toBe('none')
+  await nav.getByRole('button', { name: 'Sessions' }).click()
+  await nav.getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('group', { name: 'Chart details' }).getByRole('button', { name: 'Never' })).toHaveAttribute('aria-pressed', 'true')
+})

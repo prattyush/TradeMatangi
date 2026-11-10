@@ -5,12 +5,14 @@ import { summarizeCapabilities } from '../api/capabilities'
 import { describeError } from '../api/errors'
 import { ServerUrlError } from '../api/serverConfig'
 import { useToast } from '../shell/Toast'
+import { CHART_INFO_LABELS, useChartInfo, type ChartInfo } from '../app/ChartInfo'
 
 export function More() {
   const { account, signOut } = useAuth()
   const { serverConfig, diagnostics } = useServices()
   const { capabilities, checking, refresh } = useCapabilities()
   const toast = useToast()
+  const { chartInfo, setChartInfo } = useChartInfo()
   const [server, setServer] = useState('')
   const [editing, setEditing] = useState(false)
   const [input, setInput] = useState('')
@@ -87,6 +89,17 @@ export function More() {
               </div>
             </>
           )}
+        </div>
+        <div className="card">
+          <h3>Charts</h3>
+          <div className="field" role="group" aria-label="Chart details">
+            <span className="field-label">Details over the chart (time, open, high, low, close, indicator values)</span>
+            <div className="chips">
+              {(Object.keys(CHART_INFO_LABELS) as ChartInfo[]).map(option => (
+                <button key={option} type="button" className="chip" aria-pressed={chartInfo === option} onClick={() => setChartInfo(option)}>{CHART_INFO_LABELS[option]}</button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="card">
           <h3>About</h3>

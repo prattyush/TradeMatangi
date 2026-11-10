@@ -22,6 +22,8 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+/* The shared chart panels hide panes with the hidden attribute; their own CSS sets display, which would defeat it. */
+[hidden] { display: none !important; }
 html, body, #root { height: 100%; margin: 0; }
 body {
   background: var(--bg);
@@ -166,9 +168,36 @@ input[type='date'] {
 .badge-stepwise { background: #3b2f63; color: #d2c3ff; }
 .badge-swing { background: #4d3b0b; color: #f2cc60; }
 
-.tabs { display: flex; flex: 0 0 auto; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--border); background: var(--panel); }
-.tab { min-height: 40px; padding: 0 14px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font: inherit; font-size: 14px; }
-.tab[aria-selected='true'] { color: var(--accent); border-bottom-color: var(--accent); }
+/* Popover menu (a button that opens a short list over the content) and the segmented toggle. */
+.popover-menu { position: relative; display: inline-flex; }
+.menu-button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; font-size: 13px; white-space: nowrap;
+}
+.menu-button[aria-expanded='true'] { border-color: var(--accent); }
+.menu-button .caret { color: var(--muted); font-size: 10px; }
+.menu-backdrop { position: fixed; inset: 0; z-index: 29; background: transparent; }
+.menu-list {
+  position: absolute; top: calc(100% + 4px); z-index: 30; min-width: 170px; max-height: 70vh; overflow: auto; margin: 0; padding: 4px 0; list-style: none;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(1, 4, 9, 0.6);
+}
+.menu-left { left: 0; }
+.menu-right { right: 0; }
+.menu-list button {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 0 14px;
+  background: none; border: 0; color: var(--text); font: inherit; font-size: 14px; text-align: left;
+}
+.menu-list button[aria-checked='true'] { color: var(--accent); font-weight: 600; background: var(--panel-2); }
+.menu-list small { color: var(--muted); font-size: 11px; }
+.segmented { display: inline-flex; flex: 0 0 auto; }
+.segmented button {
+  min-height: 36px; padding: 0 10px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+  font: inherit; font-size: 13px; white-space: nowrap;
+}
+.segmented button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.segmented button:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: 0; }
+.segmented button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #04131f; font-weight: 600; }
+.contract-pill { display: inline-flex; align-items: center; min-height: 36px; padding: 0 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--panel-2); font-size: 13px; white-space: nowrap; }
 
 .trades-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .trades-table th { position: sticky; top: 0; background: var(--panel); text-align: left; font-weight: 500; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }

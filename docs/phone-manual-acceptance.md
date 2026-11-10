@@ -7,14 +7,14 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 
 ## B. Sessions and session detail (S3)
 1. Open Sessions: the list shows your trading days, newest first, one row per day and instrument (two sessions on one day are one row marked "2 sessions"). Each row shows the date, symbol, Options or Equity, a mode badge (Replay, Stepwise, Paper, Real, Swing), the net P&L in green or red, and the trade count.
-2. The note under the title says "Last 30 days"; tap **Filters**, choose **90 days** and a **Mode**, Apply: the list changes, the Filters button shows how many are active. Choose **Custom** without a start date: Apply stays disabled and says why.
-3. Tap a day: the **Chart** tab shows the underlying with your buys and sells marked; **Underlying / Option** switches to the option contract. Pinch and drag to zoom and scroll; the interval selector in the chart header changes the candle size. The chart should use almost the whole right side with no page scrolling.
-4. **Trades** shows each execution (time, side, quantity, price, contract, value); a day with two sessions has a "Session 1 / Session 2" divider. **Orders** and **Videos** open without errors; a day with a saved video lists it, and Open takes you to the YouTube app.
-5. A swing day shows only Trades and Videos.
-6. Press the Android back button with the Filters panel open: it closes the panel and does not leave Sessions.
-7. Turn on airplane mode and tap another day: you get a clear message with Try again, not a blank screen.
-8. On a server that does not have the analysis routes the screen says "Sessions is not available on this server".
-9. Volume (from the Volume work): open an option day's chart, open the indicators menu (fx), switch on **Volume**: a volume pane appears. On a NIFTY underlying chart Volume does nothing.
+2. Tap a day: the list **hides** and the chart takes the whole width. Tap **Days** (top left of the chart), or the **Sessions** item in the left rail, to show the list again; tap Sessions again to hide it. Android back shows the list before it leaves the screen. Go to Browse and come back: the same day is still open.
+3. **Filters** (in the list): choose **90 days** and a **Mode**, Apply; the Filters button shows how many are active. **Custom** without a start date cannot be applied and says why.
+4. The chart has **one row at the top**: Days, a view menu (Chart ▾), **Underlying | Option**, then the chart's interval, indicators (fx), fit and maximize. Nothing else sits above the candles. Choose **Option**: the strike menu appears in the same row (a plain label if the day had one contract); open it and pick another strike, and the option chart changes. The menu opens over the chart.
+5. The candle details (time, open, high, low, close, EMA values) are hidden; **touch and hold** the chart and they appear. More > Charts changes this to Always or Never.
+6. Pinch and drag to zoom and scroll, in the underlying and in the option chart. **Maximize** shows one chart over the whole screen (Underlying / Option and the strike menu stay); Android back or the restore button returns.
+7. The view menu: **Trades** shows each execution (time, side, quantity, price, contract, value; a day with two sessions has a Session 1 / Session 2 divider); **Orders** and **Videos** open without errors; a day with a saved video lists it, and Open takes you to the YouTube app. A swing day offers only Trades and Videos.
+8. Airplane mode, then tap another day: a clear message with Try again. On a server without the analysis routes: "Sessions is not available on this server".
+9. Volume: in the chart's indicators menu (fx) switch on **Volume**: a volume pane appears for an option or a stock; for the NIFTY underlying it does nothing.
 
 ## C. Trade labeling (S4)
 (Filled in when S4 lands.)

@@ -120,7 +120,7 @@ An Android phone app for leisure-time analysis. Day trading stays on the desktop
 
 1. **Platform.** Android phones, landscape only. Built with Capacitor around a new phone-first React entry (`mobile/`) that reuses `shared/` and the Tauri-free desktop modules, so changes to shared code reach the phone, the website, the webapp and the desktop. Installed as an APK (sideload first; Play Store later). Why Capacitor and not a Tauri Android build of the desktop app: `docs/architecture-phone.md`.
 2. **First version (read and review).**
-   - Sessions and the whole Analysis section: session list with filters, session chart with trade markers, trades, orders.
+   - Sessions and the **whole Analysis section** (as on the website and desktop): session list with filters; session chart with trade markers, Underlying and option contracts (strikes); trades and stored orders; **event snapshots** (the captured chart at each order event, with a searchable event list); **Compare** (trades against saved pattern annotations); the day journey chart; and execution details.
    - One-at-a-time trade labeling, including behavior questions and tags.
    - Stats and Habits.
    - Session videos with an embedded player, chapters, and Open in YouTube.

@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { AppProviders } from './app/AppContext'
 import { NavProvider } from './app/Nav'
+import { ChartInfoProvider } from './app/ChartInfo'
 import { createServices } from './app/services'
 import { ToastProvider } from './shell/Toast'
 
@@ -13,9 +14,11 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ToastProvider>
       <AppProviders services={services}>
-        <NavProvider>
-          <App />
-        </NavProvider>
+        <ChartInfoProvider>
+          <NavProvider>
+            <App />
+          </NavProvider>
+        </ChartInfoProvider>
       </AppProviders>
     </ToastProvider>
   </StrictMode>,

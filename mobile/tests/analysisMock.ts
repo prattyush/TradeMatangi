@@ -42,12 +42,13 @@ export const SESSIONS: MockSession[] = [
 function tradesFor(session: MockSession) {
   const option = session.instrument_type === 'options'
   const common = { user_id: 'u1', session_id: session.session_id, symbol: session.symbol, instrument_type: session.instrument_type, commission: 20 }
-  const contract = option ? { right: 'CE', strike: session.strike, expiry: session.expiry } : { right: null, strike: null, expiry: null }
   const pairs = Math.max(1, Math.round(session.trade_count / 2))
   const rows = []
   for (let i = 0; i < pairs; i++) {
     const entry = epoch(session.date, 10 + i, 5)
     const exit = epoch(session.date, 10 + i, 40)
+    // Each round trip uses the next strike up, so a day with two round trips has two option contracts.
+    const contract = option ? { right: 'CE', strike: (session.strike ?? 0) + i * 100, expiry: session.expiry } : { right: null, strike: null, expiry: null }
     rows.push({ ...common, ...contract, trade_id: `${session.session_id}-b${i}`, side: 'BUY', quantity: 75, price: option ? 120 + i * 5 : 540, timestamp: entry })
     rows.push({ ...common, ...contract, trade_id: `${session.session_id}-s${i}`, side: 'SELL', quantity: 75, price: (option ? 120 + i * 5 : 540) + session.net_pnl / pairs / 75, timestamp: exit })
   }

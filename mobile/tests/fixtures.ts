@@ -9,7 +9,7 @@ export const VIEWPORTS = [
   { name: 'large-960x432', width: 960, height: 432 },
 ]
 
-export interface RecordedRequest { method: string; path: string; host: string; authorization?: string; headers: Record<string, string>; body?: unknown }
+export interface RecordedRequest { method: string; path: string; host: string; authorization?: string; headers: Record<string, string>; query: URLSearchParams; body?: unknown }
 
 export interface MockServer {
   requests: RecordedRequest[]
@@ -42,7 +42,7 @@ export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS })
       let body: unknown
       try { body = request.postDataJSON() } catch { body = undefined }
-      state.requests.push({ method: request.method(), path: url.pathname, host: url.host, authorization: request.headers().authorization, headers: request.headers(), body })
+      state.requests.push({ method: request.method(), path: url.pathname, host: url.host, authorization: request.headers().authorization, headers: request.headers(), query: url.searchParams, body })
       if (url.pathname === '/api/auth/desktop/token') return state.rejectLogin ? answer(route, 401, { detail: 'Invalid email or password' }) : answer(route, 200, bundle)
       if (url.pathname === '/api/auth/desktop/refresh') return answer(route, 200, bundle)
       if (url.pathname === '/api/auth/desktop/logout') return route.fulfill({ status: 204, headers: CORS })
@@ -72,4 +72,10 @@ export async function signIn(page: Page) {
 export async function openSessions(page: Page) {
   await signIn(page)
   await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Sessions' }).click()
+}
+
+/** Choose a view (Chart, Trades, Orders, Videos) from the view menu in the control row. */
+export async function chooseView(page: Page, name: string) {
+  await page.getByRole('button', { name: /^View:/ }).click()
+  await page.getByRole('menuitemradio', { name }).click()
 }

@@ -18,6 +18,8 @@ interface NavValue {
   pop(): void
   /** Register a handler for the back button while a component is mounted. Newest handler runs first. */
   addBackHandler(handler: BackHandler): () => void
+  /** Run `handler` when the user taps the rail item of `tab` while already on it. Returns an unsubscribe function. */
+  addReselectHandler(tab: Tab, handler: () => void): () => void
 }
 const NavContext = createContext<NavValue | null>(null)
 
@@ -39,6 +41,14 @@ export function useBackHandler(handler: BackHandler | null): void {
   }, [active, addBackHandler])
 }
 
+/** Tapping the current tab again (for example Sessions) lets that screen react, such as showing or hiding its list. */
+export function useTabReselect(tab: Tab, handler: () => void): void {
+  const { addReselectHandler } = useNav()
+  const latest = useRef(handler)
+  latest.current = handler
+  useEffect(() => addReselectHandler(tab, () => latest.current()), [tab, addReselectHandler])
+}
+
 const EXIT_WINDOW_MS = 2000
 
 export function NavProvider({ children, onExit }: { children: ReactNode; onExit?: () => void }) {
@@ -50,7 +60,16 @@ export function NavProvider({ children, onExit }: { children: ReactNode; onExit?
   const state = useRef({ tab, stack })
   state.current = { tab, stack }
 
-  const setTab = useCallback((next: Tab) => { setTabState(next); setStack([]) }, [])
+  const reselect = useRef(new Map<Tab, Set<() => void>>())
+  const setTab = useCallback((next: Tab) => {
+    if (next === state.current.tab) { reselect.current.get(next)?.forEach(handler => handler()); return }
+    setTabState(next); setStack([])
+  }, [])
+  const addReselectHandler = useCallback((tab: Tab, handler: () => void) => {
+    const handlers = reselect.current.get(tab) ?? new Set<() => void>()
+    handlers.add(handler); reselect.current.set(tab, handlers)
+    return () => { handlers.delete(handler) }
+  }, [])
   const push = useCallback((screen: string) => setStack(current => [...current, screen]), [])
   const pop = useCallback(() => setStack(current => current.slice(0, -1)), [])
   const addBackHandler = useCallback((handler: BackHandler) => {
@@ -75,7 +94,7 @@ export function NavProvider({ children, onExit }: { children: ReactNode; onExit?
     return () => { void subscription.then(handle => handle.remove()) }
   }, [handleBack])
 
-  const value = useMemo(() => ({ tab, setTab, stack, push, pop, addBackHandler }), [tab, setTab, stack, push, pop, addBackHandler])
+  const value = useMemo(() => ({ tab, setTab, stack, push, pop, addBackHandler, addReselectHandler }), [tab, setTab, stack, push, pop, addBackHandler, addReselectHandler])
   return (
     <NavContext.Provider value={value}>
       {children}
@@ -88,7 +107,8 @@ export function NavProvider({ children, onExit }: { children: ReactNode; onExit?
 function BackProbe({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     if (isNativeApp()) return
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onBack() }
+    // Only real key presses: a screen may fire a synthetic Escape to close a shared component (see maximized charts).
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && event.isTrusted) onBack() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onBack])

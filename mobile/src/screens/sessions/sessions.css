@@ -31,20 +31,25 @@
 .detail-body .scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .detail-body > .state { margin: auto; }
 
-/* The shared analysis chart panel is built for a 450 px desktop card; here it fills the pane. */
-.phone-chart { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.phone-chart .analysis-panels { height: 100%; min-height: 0; flex: 1 1 auto; }
+/* With a day chosen the list is hidden and the detail gets the whole width. */
+.screen.sessions.list-hidden { grid-template-columns: minmax(0, 1fr); }
 
-/* Phone layer over the shared chart (desktop CSS assumes a 450 px card): fill the pane, drop what duplicates the list. */
-.phone-chart .desktop-analysis-chart { min-height: 0; }
+/* The one control row: Days, the view menu and, for the chart, the chart's own header (see PhoneChartPanel). */
+.detail-bar { display: flex; align-items: center; gap: 6px; height: 44px; flex: 0 0 auto; padding: 0 6px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.tabs-result { display: flex; align-items: center; gap: 8px; padding-right: 6px; font-size: 13px; white-space: nowrap; }
+.tabs-when { color: var(--muted); }
+.days-button { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; min-width: 40px; justify-content: center; padding: 0 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font: inherit; font-size: 13px; }
+.days-button[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 800px) { .days-text { display: none; } }
+
+/* The shared chart (built for a 450 px desktop card) fills the pane; its header row carries everything. */
+.phone-chart { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.phone-chart .desktop-analysis-chart { min-height: 0; flex: 1 1 auto; }
 .phone-chart .desktop-analysis-chart > small { display: none; }
-.phone-chart .desktop-analysis-chart header { min-height: 38px; padding: 0 6px; gap: 6px; }
+.phone-chart .desktop-analysis-chart header { min-height: 44px; padding: 0 6px; gap: 6px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .phone-chart .desktop-analysis-chart header strong { display: none; }
-.phone-chart .desktop-analysis-chart header button, .phone-chart .desktop-analysis-chart header select { min-height: 32px; }
-.phone-chart .analysis-pane-navigation { gap: 0; padding: 4px 6px 0; align-items: stretch; }
-.phone-chart .analysis-pane-navigation button { flex: 1 1 0; min-height: 34px; font: inherit; font-size: 13px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
-.phone-chart .analysis-pane-navigation button:first-child { border-radius: 8px 0 0 8px; }
-.phone-chart .analysis-pane-navigation button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
-.phone-chart .analysis-pane-navigation button[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: #04131f; font-weight: 600; }
-.phone-chart .analysis-panels.is-single.has-options { grid-template-rows: 40px minmax(0, 1fr); }
-.phone-chart .analysis-option-pane > nav { max-height: 44px; }
+.phone-chart .desktop-analysis-chart header button, .phone-chart .desktop-analysis-chart header select { min-height: 36px; }
+.phone-toolbar-start { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+
+/* Maximized: the chart takes the whole screen (Underlying / Option and strike stay; Days and the view menu go). */
+.phone-chart.maximized { position: fixed; inset: 0; z-index: 50; background: #10131a; padding: var(--sai-t) var(--sai-r) var(--sai-b) var(--sai-l); }
