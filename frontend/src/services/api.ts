@@ -565,6 +565,11 @@ export interface RoundTripTrade {
 
 export interface RoundTrip {
   index: number
+  /** The performance cycle this round trip is (join to SessionDetail.cycles); absent on older servers. */
+  cycle_id?: string | null
+  state?: string
+  strike?: number | null
+  expiry?: string | null
   right: string | null
   entry_trades: RoundTripTrade[]
   exit_trades: RoundTripTrade[]

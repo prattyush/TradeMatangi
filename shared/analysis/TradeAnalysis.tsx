@@ -9,11 +9,12 @@ import StoredOrders from './StoredOrders'
 import SessionVideos from './SessionVideos'
 import { useAnalysisError } from './environment'
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { SessionSummary, SessionDetail, AnalysisTrade, EventSnapshot } from './api'
 import EventSnapshotViewer from './EventSnapshotViewer'
 import TradeLabeling from './TradeLabeling'
+import TradeWalkthrough from './walkthrough/TradeWalkthrough'
 import StatsModal from './StatsModal'
 import PatternVsTradeComparison from './PatternVsTradeComparison'
 
@@ -144,7 +145,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const [loading, setLoading] = useState(false)
   const [viewingSnapshots, setViewingSnapshots] = useState<{ session: SessionSummary; snapshots: EventSnapshot[]; sessionIds: string[] } | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'trades' | 'labels'>('trades')
+  const [activeTab, setActiveTab] = useState<'trades' | 'labels' | 'walkthrough'>('trades')
   const [detailError, setDetailError] = useState('')
   const [hasPattern, setHasPattern] = useState(false)
   const [showComparison, setShowComparison] = useState(false)
@@ -181,6 +182,9 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   }, [group.totalCommission])
 
   const allTrades = group.sessions.flatMap(s => details.get(s.session_id)?.trades ?? [])
+  // Stable inputs for Trade Walkthrough (it recomputes its story when these change).
+  const dayCycles = useMemo(() => [...details.values()].flatMap(d => d.cycles ?? []), [details])
+  const sessionCapitals = useMemo(() => new Map(group.sessions.map(s => [s.session_id, s.session_capital])), [group.sessions])
   const multiSession = group.sessions.length > 1
 
   const pnlColor = group.totalPnl > 0 ? '#26a641' : group.totalPnl < 0 ? '#f85149' : '#8b949e'
@@ -356,6 +360,18 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 borderRadius: '4px 4px 0 0',
               }}
             >Label Trades</button>
+            <button
+              onClick={() => { if (environment.confirmDiscard?.() !== false) setActiveTab('walkthrough') }}
+              style={{
+                padding: '6px 16px', border: 'none',
+                borderBottom: activeTab === 'walkthrough' ? '2px solid #58a6ff' : '2px solid transparent',
+                background: activeTab === 'walkthrough' ? '#1c2333' : 'transparent',
+                color: activeTab === 'walkthrough' ? '#58a6ff' : '#8b949e',
+                cursor: 'pointer', fontSize: 13,
+                fontWeight: activeTab === 'walkthrough' ? 600 : 400,
+                borderRadius: '4px 4px 0 0',
+              }}
+            >Walkthrough</button>
           </div>
 
           <SessionVideos sessionIds={group.sessions.map(s => s.session_id)} canAdd={!group.sessions.some(s => s.shared)} />
@@ -402,6 +418,16 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 historicalDays={historicalDays}
               />
             </>
+          ) : activeTab === 'walkthrough' ? (
+            <TradeWalkthrough
+              symbol={group.symbol}
+              date={group.date}
+              sessionIds={group.sessions.map(s => s.session_id)}
+              allTrades={allTrades}
+              historicalDays={historicalDays}
+              cycles={dayCycles}
+              capitals={sessionCapitals}
+            />
           ) : (
             <TradeLabeling
               readOnly={group.sessions.some(s => s.shared)}

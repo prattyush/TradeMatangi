@@ -98,6 +98,9 @@ function cyclesFor(session: MockSession, trades: ReturnType<typeof tradesFor>) {
       user_id: 'u1', cycle_id: `${session.session_id}-c${i / 2}`, session_id: session.session_id, symbol: session.symbol, right: entry.right, strike: entry.strike, expiry: entry.expiry,
       date: session.date, mode: session.session_type, direction: 'long', state: 'closed', entry_time: entry.timestamp, exit_time: exit.timestamp, exit_sort_time: null,
       entry_count: 1, exit_count: 1, net_pnl: pnl, pnl_pct: +(pnl / session.session_capital * 100).toFixed(2), fees: 40, open_quantity: 0, matches: [],
+      capital: session.session_capital, peak_capital_pct: 1.8, holding_seconds: exit.timestamp - entry.timestamp,
+      entries: [{ entry_id: `${session.session_id}-e${i / 2}`, entry_method: 'MARKET', client: 'desktop', timestamp: entry.timestamp, quantity: entry.quantity, matched_quantity: entry.quantity, open_quantity: 0, average_price: entry.price, net_pnl: pnl, pnl_pct: 0, sizing_method: 'CAPITAL', requested_pct: 2, r_multiple: null, analytics: { effective_allocation_pct: 1.8, effective_risk_pct: 0.3, margin_rate: 1, capital: session.session_capital, initial_stop: +(entry.price * 0.9).toFixed(2) } }],
+      exits: [{ exit_id: `${session.session_id}-x${i / 2}`, exit_method: pnl < 0 ? 'STOPLOSS' : 'TargetProfit', quantity: exit.quantity, price: exit.price, timestamp: exit.timestamp, analytics: {} }],
       executions: [{ trade_id: entry.trade_id, role: 'entry', quantity: entry.quantity, price: entry.price, timestamp: entry.timestamp }, { trade_id: exit.trade_id, role: 'exit', quantity: exit.quantity, price: exit.price, timestamp: exit.timestamp }],
     })
   }
@@ -112,7 +115,7 @@ export function roundTripsFor(session: MockSession) {
     const entry = trades[i], exit = trades[i + 1]
     const leg = (trade: typeof entry) => ({ trade_id: trade.trade_id, side: trade.side, quantity: trade.quantity, price: trade.price, timestamp: trade.timestamp, right: trade.right, strike: trade.strike })
     const pnl = Math.round((exit.price - entry.price) * entry.quantity)
-    trips.push({ index: i / 2, right: entry.right, entry_trades: [leg(entry)], exit_trades: [leg(exit)], pnl, pnl_pct: +(pnl / session.session_capital * 100).toFixed(2), max_capital_pct: 1.8 })
+    trips.push({ index: i / 2, cycle_id: `${session.session_id}-c${i / 2}`, right: entry.right, entry_trades: [leg(entry)], exit_trades: [leg(exit)], pnl, pnl_pct: +(pnl / session.session_capital * 100).toFixed(2), max_capital_pct: 1.8 })
   }
   return trips
 }
@@ -143,6 +146,10 @@ export interface AnalysisMockState extends StatsMockState {
   /** Saved videos per session id. */
   /** Make the saved-videos list answer 404 like an older server. */
   videosOld?: boolean
+  /** The round-trips endpoint lists the trades in reverse (the walkthrough must still go by entry time). */
+  tripsReversed?: boolean
+  /** The session detail carries no cycles (an older server: no entry and exit details). */
+  cyclesOld?: boolean
   /** Compare: saved pattern annotations exist for the day. */
   patterns?: boolean
   patternRequests: URLSearchParams[]
@@ -175,7 +182,7 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
   const detail = route.match(/^sessions\/([A-Za-z0-9_-]+)$/)
   if (detail) {
     const session = SESSIONS.find(s => s.session_id === detail[1])
-    return session ? { status: 200, body: { ...session, trades: tradesFor(session), orders: [], cycles: cyclesFor(session, tradesFor(session)) } } : { status: 404, body: { detail: 'Session not found' } }
+    return session ? { status: 200, body: { ...session, trades: tradesFor(session), orders: [], cycles: state.cyclesOld ? [] : cyclesFor(session, tradesFor(session)) } } : { status: 404, body: { detail: 'Session not found' } }
   }
   if (route === 'data/historical') {
     const date = query.get('trading_date') ?? '2026-11-09'
@@ -192,7 +199,8 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
 
   if (route === 'round-trips') {
     const session = SESSIONS.find(item => item.session_id === query.get('session_id'))
-    return { status: 200, body: session ? roundTripsFor(session) : [] }
+    const trips = session ? roundTripsFor(session) : []
+    return { status: 200, body: state.tripsReversed ? [...trips].reverse() : trips }
   }
   if (route === 'labels') {
     if (method === 'POST') {

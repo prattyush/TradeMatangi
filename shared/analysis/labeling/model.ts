@@ -64,6 +64,22 @@ export function orderRoundTrips(trips: LabeledRoundTrip[], sessionOrder: string[
   return [...trips].sort((a, b) => (rank.get(a.session_id) ?? 0) - (rank.get(b.session_id) ?? 0) || a.index - b.index)
 }
 
+/** When a round trip was first entered: its earliest entry fill (or, with none, its earliest exit). */
+export function firstEntryTime(trip: Pick<LabeledRoundTrip, 'entry_trades' | 'exit_trades'>): number {
+  const legs = trip.entry_trades.length ? trip.entry_trades : trip.exit_trades
+  const times = legs.map(leg => leg.timestamp).filter(Number.isFinite)
+  return times.length ? Math.min(...times) : Number.POSITIVE_INFINITY
+}
+
+/**
+ * Time order for walking through trades: by first entry, so overlapping trades come one after the other in the order they
+ * were opened (the round trip number only breaks a tie). Label Trades keeps `orderRoundTrips` (its numbering).
+ */
+export function orderRoundTripsByEntry(trips: LabeledRoundTrip[], sessionOrder: string[]): LabeledRoundTrip[] {
+  const rank = new Map(sessionOrder.map((id, position) => [id, position]))
+  return [...trips].sort((a, b) => firstEntryTime(a) - firstEntryTime(b) || (rank.get(a.session_id) ?? 0) - (rank.get(b.session_id) ?? 0) || a.index - b.index)
+}
+
 /** Candle clock time (the backend stores IST wall-clock values as UTC epoch seconds). */
 export function fmtHHMM(ts: number): string {
   return new Date(ts * 1000).toLocaleTimeString('en-IN', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' })

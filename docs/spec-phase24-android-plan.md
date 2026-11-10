@@ -11,6 +11,10 @@ Branch: `feat/android-phone-app` (off `dev`), **one PR into `dev`** with a merge
 - **Read and review in v1**; the only writes are labels and behavior marks. No orders from the phone.
 - The server-branch situation does **not** change the design. Promoting `preprod` to `main` and `dev` to `preprod` first is optional (it would only simplify testing) and stays the user's release decision.
 
+## Next work, in this order (2026-11-10)
+1. **Trade Walkthrough** and **What If** (all hosts including the phone): `docs/spec-phase24-walkthrough-whatif-plan.md`.
+2. **Phone phase 2 (TODO, next after the above):** S2 Google sign-in with optional app lock and S8 read-only Positions, below.
+
 ## Phase 1 and phase 2 (user decision 2026-11-10)
 Phase 1 (this PR): shell and password sign-in, Sessions with Snapshots, Day journey and execution details, Label trades, Compare, Stats and Habits, Videos, Browse, hardening. **Phase 2** (a later PR): Google sign-in with optional app lock (S2), read-only Positions for swing and day (S8), then alerts and swing actions.
 
@@ -20,7 +24,7 @@ Phase 1 (this PR): shell and password sign-in, Sessions with Snapshots, Day jour
 |---|---|---|
 | S0 | Requirements, plan, architecture doc; spikes (toolchain, YouTube embed, Google token, chart performance) | Docs written; toolchain and embed spikes done; Google token spike waits for the Android OAuth client; chart performance is measured with the real chart in S3 |
 | S1 | `mobile/` shell, auth core (password), server URL, capabilities, offline/error states, CI | Built on the branch: 30 unit tests, 17 landscape UI tests (4 sizes), debug and release (R8) APKs build locally; CI workflow written, not yet run on GitHub; not yet installed on a phone |
-| S2 | Google sign-in, first-time account name, optional app lock, setup doc | **Moved to phase 2 (user decision 2026-11-10)**; email and password sign-in is the way in for phase 1 |
+| S2 | Google sign-in, first-time account name, optional app lock, setup doc | **TODO, phase 2 (next after Walkthrough and What If)**; email and password sign-in is the way in for phase 1 |
 | S3 | Sessions list and session detail (Chart / Trades / Orders / Videos) | Built and accepted on a phone (2026-11-10); first phone test (2026-11-10) found it working; feedback applied: the list hides once a day is chosen (Days button, Sessions tab, Back), one control row with a view menu replaces the tab row and carries Underlying / Option and a strike menu so the chart gets the height, maximize fixed (one chart, full screen, Back restores), chart details only while touching (setting in More). 37 unit and 45 landscape UI tests |
 | S3b | Snapshots, day journey, execution details (the rest of the session view) | Built on the branch: 14 snapshot UI tests (4 sizes), 3 journey/inspector tests, 3 shared snapshot-model tests; accepted on a phone. **Compare** (trades vs pattern annotations) is a separate follow-up, S3c |
 | S3c | Compare (trades vs saved pattern annotations) | Built on the branch: the shared two-pane Compare screen full screen in the phone layout (one header row, filters, both charts), opened from the view menu; 3 UI tests; not yet tried on a phone |
@@ -28,7 +32,7 @@ Phase 1 (this PR): shell and password sign-in, Sessions with Snapshots, Day jour
 | S5 | Stats and Habits | Built on the branch: the shared performance dashboard (all six sections including Habits and Swing) in a phone layout, filters in a panel, read-only, "Open cycle" from execution details wired; 18 UI tests (4 sizes); not yet tried on a phone |
 | S6 | Videos tab and embedded player (with fallback) | Built on the branch: list of all saved videos by upload day, Play-to-load inline player sized by the pane height, chapter list that restarts the player at that time, Private notice with Open on YouTube, wake lock while playing; 13 UI tests (4 sizes) and 9 unit tests; not yet tried on a phone (player fullscreen unverified) |
 | S7 | Browse (read-only) | Built on the branch: reuses the shared analysis chart (volume, VOL, EMA, intervals) fed by the analysis data routes; symbol search sheet with recents, day stepper and date sheet, Spot / CE / PE with the day's expiry and a 43-strike menu around the money; 14 UI tests (4 sizes) and 10 unit tests; not yet tried on a phone. Panning to older days beyond the 2-day context is not in this version |
-| S8 | Positions (swing and day, read-only) | **Moved to phase 2 (user decision 2026-11-10)** |
+| S8 | Positions (swing and day, read-only) | **TODO, phase 2 (next after Walkthrough and What If)** |
 | S9 | Hardening, release signing, acceptance, final docs, PR into `dev` | Done for phase 1: unused Positions placeholder removed, release (R8) build verified (1.2 MB unsigned; signing via `ANDROID_KEYSTORE_*` secrets), `origin/dev` merged (nothing new), `CLAUDE.md` row and docs updated, PR opened. Remaining before merge: your phone acceptance of S5 to S7 and the Compare screen (`docs/phone-manual-acceptance.md` D to F, B12) |
 
 ## Sprint scope
