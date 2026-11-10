@@ -4,6 +4,7 @@ import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
 import type { HabitLedger } from './habits/types'
 import type { VideoLinksSource } from './videoLinks'
+import type { WhatIfSource } from './whatif/scenarios'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -24,6 +25,8 @@ export interface AnalysisEnvironment {
   api: AnalysisApi
   /** YouTube videos uploaded for a session (owner only). Absent => Analysis shows no videos. */
   videoLinks?: VideoLinksSource
+  /** Saved What If scenarios (owner only). Absent => What If is a playground that is lost on refresh. */
+  whatIf?: WhatIfSource
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
     getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>

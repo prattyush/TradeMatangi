@@ -5,6 +5,7 @@ import AnalysisPanels from '../../../shared/analysis/kline/AnalysisPanels'
 import AnalysisChart, { ComparisonChart } from '../../../shared/analysis/kline/AnalysisChart'
 import { createAnalysisApi, validAnalysisPath, type AnalysisRequest } from '../../../windowsapp/src/analysisApi'
 import { createVideoLinksApi } from '../../../windowsapp/src/tools/videoLinks'
+import { createWhatIfApi } from '../../../windowsapp/src/tools/whatIf'
 import { useServices } from '../app/AppContext'
 import { useChartInfo } from '../app/ChartInfo'
 import { isNativeApp } from '../api/storage'
@@ -47,10 +48,12 @@ export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
     const request = createAnalysisRequest(client)
     const adapter = createAnalysisApi(request)
     const links = createVideoLinksApi(request)
+    const whatIf = createWhatIfApi(request)
     const environment: AnalysisEnvironment = {
       api: adapter.api,
       performance: adapter.performance,
       videoLinks: { list: links.list, listMine: links.listMine, save: links.save, remove: links.remove, open: video => { void openVideo(video) } },
+      whatIf,
       active: true,
       desktop: false,
       historicalDays: 2,

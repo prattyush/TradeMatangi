@@ -54,6 +54,41 @@ export async function removeVideoLink(sessionId: string, videoId: string): Promi
   if (!res.ok) throw new Error(`Removing the video link failed: ${res.status}`)
 }
 
+const whatIfFailure = async (res: Response, fallback: string): Promise<Error> => {
+  const detail = (await res.json().catch(() => null))?.detail
+  return new Error(typeof detail === 'string' ? detail : `${fallback}: ${res.status}`)
+}
+
+/** Saved what-ifs of one of the user's own days. */
+export async function getWhatIfScenarios(sessionId: string): Promise<import('../../../shared/analysis/whatif/scenarios').WhatIfScenario[]> {
+  const res = await fetch(`${BACKEND_URL}/api/whatif?session_id=${encodeURIComponent(sessionId)}`, { headers: _authHeaders() })
+  if (!res.ok) throw await whatIfFailure(res, 'Saved what-ifs request failed')
+  return (await res.json()).scenarios
+}
+
+/** The user's saved what-ifs over a date range (summaries only), for Compare days. */
+export async function getWhatIfRange(start?: string, end?: string): Promise<import('../../../shared/analysis/whatif/scenarios').WhatIfScenario[]> {
+  const query = [start ? `start=${encodeURIComponent(start)}` : '', end ? `end=${encodeURIComponent(end)}` : ''].filter(Boolean).join('&')
+  const res = await fetch(`${BACKEND_URL}/api/whatif/range${query ? `?${query}` : ''}`, { headers: _authHeaders() })
+  if (!res.ok) throw await whatIfFailure(res, 'Saved what-ifs request failed')
+  return (await res.json()).scenarios
+}
+
+/** Saves a what-if for a day (replacing the one with the same name). It changes nothing about the trades. */
+export async function saveWhatIfScenario(scenario: { sessionId: string; name: string; edits: import('../../../shared/analysis/whatif/scenarios').WhatIfEdit[]; summary: import('../../../shared/analysis/whatif/scenarios').WhatIfSummary }): Promise<import('../../../shared/analysis/whatif/scenarios').WhatIfScenario> {
+  const res = await fetch(`${BACKEND_URL}/api/whatif`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify({ session_id: scenario.sessionId, name: scenario.name, edits: scenario.edits, summary: scenario.summary }),
+  })
+  if (!res.ok) throw await whatIfFailure(res, 'Saving the what-if failed')
+  return res.json()
+}
+
+export async function removeWhatIfScenario(sessionId: string, scenarioId: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/whatif?session_id=${encodeURIComponent(sessionId)}&scenario_id=${encodeURIComponent(scenarioId)}`, { method: 'DELETE', headers: _authHeaders() })
+  if (!res.ok) throw await whatIfFailure(res, 'Removing the what-if failed')
+}
+
 export function _authHeaders(): Record<string, string> {
   try {
     const stored = localStorage.getItem('auth_user')
