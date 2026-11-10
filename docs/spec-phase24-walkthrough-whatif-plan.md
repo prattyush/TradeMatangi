@@ -13,7 +13,7 @@ Requirements: `docs/spec-phase24.md` ("TRADE WALKTHROUGH", "WHAT IF", with the d
 | Sprint | Scope | Status |
 |---|---|---|
 | W0 | Docs: spec decisions, this plan, acceptance checklist, phase 2 TODO, `CLAUDE.md` row | Done (this commit) |
-| W1 | Shared refactor of `TradeLabeling` into `useRoundTrips` + `RoundTripSplitLayout` (no behaviour change); TS cycle type gains `peak_capital_pct`, `label_index`, `holding_seconds`, `fee_source` | Not started |
+| W1 | Shared pieces taken out of `TradeLabeling` without touching its saving code: `useRoundTripView` (marker text, focus time, chart trades), `useMaximized`, `RoundTripSplitLayout` (charts left, panel right, desktop/maximized wrappers); `OneByOneLabeling` gains an optional `status` override; TS cycle type gains `peak_capital_pct`, `label_index`, `holding_seconds` | Done: windowsapp 502, webapp 23, phone labeling and sessions UI 50 all pass unchanged |
 | W2 | Pure model: `walkthroughModel.ts`, `exitMethods.ts`, before/after P&L from `sessionJourney`; fixtures for equity, options, partial exits, reversal, real, stepwise | Not started |
 | W3 | Shared Walkthrough UI and the `walkthrough` tab in `GroupCard` (website, desktop, webapp) | Not started |
 | W4 | Phone Walkthrough overlay (menu entry, P&L strip, entry and exit cards with method chips, More info) | Not started |

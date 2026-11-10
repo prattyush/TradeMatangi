@@ -4,12 +4,13 @@ import { AnalysisTrade, BehaviorQuestion, TradeLabel } from './api'
 import BehaviorManagerModal from './behavior/BehaviorManagerModal'
 import { questionIdsByTrip } from './behavior/model'
 import { readableError } from './behavior/types'
-import LabelChartPanes from './labeling/LabelChartPanes'
+import RoundTripSplitLayout from './labeling/RoundTripSplitLayout'
+import { useMaximized, useRoundTripView } from './labeling/useRoundTripView'
 import OneByOneLabeling from './labeling/OneByOneLabeling'
 import RoundTripLabelForm from './labeling/RoundTripLabelForm'
 import { combineSaverStates, LabelSaver, MarkSaver, type MarkEdit, type SaverState } from './labeling/saver'
 import {
-  blankLabel, finalizeLabel, labelKey, legsText, orderRoundTrips, peakCapitalText, pnlText, pnlTitle, roundTripMarkerText, tradesForRoundTrip, tripKey,
+  blankLabel, finalizeLabel, labelKey, legsText, orderRoundTrips, peakCapitalText, pnlText, pnlTitle, tripKey,
   type LabelView, type LabeledRoundTrip,
 } from './labeling/model'
 import './labeling/labeling.css'
@@ -206,24 +207,8 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
   const displayedStrategies = useMemo(() => [...new Set([...strategies, ...[...labels.values()].flatMap(label => [label.expected_strategy, label.actual_strategy]).filter(Boolean)])].sort(), [strategies, labels])
 
   const current = view === 'one_by_one' ? roundTrips[index] : undefined
-  const getMarkerText = useCallback((trade: AnalysisTrade, forOption?: boolean) => roundTripMarkerText(roundTrips, trade, !forOption), [roundTrips])
-  // Centre the charts on the viewed trade's entry.
-  const focusTime = current?.entry_trades[0]?.timestamp ?? current?.exit_trades[0]?.timestamp
-  // One at a time: the chart shows only the viewed trade's executions (unless "All markers" is on).
-  const chartTrades = useMemo(() => {
-    if (!current || showAllMarkers) return allTrades
-    const own = tradesForRoundTrip(current, allTrades)
-    return own.length ? own : allTrades
-  }, [current, showAllMarkers, allTrades])
-
-  const [maximized, setMaximized] = useState(false)
-
-  useEffect(() => {
-    if (!maximized) return
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setMaximized(false) }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [maximized])
+  const { getMarkerText, focusTime, chartTrades } = useRoundTripView(roundTrips, current, allTrades, showAllMarkers)
+  const [maximized, setMaximized] = useMaximized()
 
   const blankFor = (rt: LabeledRoundTrip) => labels.get(tripKey(rt)) ?? blankLabel(rt.session_id, rt.index)
   const formFor = (rt: LabeledRoundTrip) => (
@@ -244,21 +229,11 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
       aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): one chart with a switcher' : 'Maximize: larger view, Underlying and strike charts stacked'}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
   )
 
-  const LabelCharts = environment.charts?.LabelCharts
   const sessionGroups = new Map<string, LabeledRoundTrip[]>()
   for (const rt of roundTrips) sessionGroups.set(rt.session_id, [...(sessionGroups.get(rt.session_id) ?? []), rt])
 
-  const content = (
-    <div className={`tl-root tl-layout ${maximized ? 'maximized' : ''}`}>
-      {/* Chart */}
-      <div className="label-chart-container tl-chart-col">
-        {LabelCharts
-          ? <LabelCharts symbol={symbol} date={date} allTrades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers layout={maximized ? 'split' : 'single'} />
-          : <LabelChartPanes symbol={symbol} date={date} trades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized} />}
-      </div>
-
-      {/* Round-trip forms */}
-      <div className="tl-side-col">
+  const sidePanel = (
+      <>
         {behaviorError && <p role="note" className="tl-status">Behavior questions unavailable: {behaviorError}</p>}
         {view === 'one_by_one' ? (
           <OneByOneLabeling
@@ -340,21 +315,16 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
             ))}
           </>
         )}
-      </div>
-      {manageOpen && <BehaviorManagerModal api={api} onClose={() => setManageOpen(false)} onChanged={() => void reloadQuestions()} />}
-    </div>
+      </>
+  )
+  const content = (
+    <RoundTripSplitLayout symbol={symbol} date={date} historicalDays={historicalDays} chartTrades={chartTrades} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized}
+      footer={manageOpen && <BehaviorManagerModal api={api} onClose={() => setManageOpen(false)} onChanged={() => void reloadQuestions()} />}>
+      {sidePanel}
+    </RoundTripSplitLayout>
   )
 
   if (loading) return <p role="status">Loading round trips and saved labels…</p>
   if (loadError) return <p role="alert">{loadError}<button onClick={() => setRetry(n => n + 1)}>Retry labels</button></p>
-  if (environment.desktop) return <div className={`desktop-label-workflow ${maximized ? 'labels-maximized' : ''}`}>{content}</div>
-  if (maximized) {
-    return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0d1117', display: 'flex', flexDirection: 'column', padding: 12 }}>
-        {content}
-      </div>
-    )
-  }
-
   return content
 }
