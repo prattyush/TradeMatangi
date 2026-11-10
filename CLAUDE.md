@@ -41,6 +41,17 @@ source ~/venvs/tradematangi/bin/activate
 python -m pytest tests/ -v
 ```
 
+### Phone app (Android, branch `feat/android-phone-app`)
+
+```bash
+cd mobile && npm install --no-bin-links
+npm run dev                      # browser at http://127.0.0.1:5176 (use a 915x412 window)
+npm run typecheck && npm test    # unit tests
+npm run test:ui                  # landscape UI tests (Playwright, system Chrome)
+bash scripts/build-android-phone.sh   # debug APK (needs JDK 21 and ~/Android/Sdk; see mobile/README.md)
+```
+Docs: `docs/architecture-phone.md`, `docs/spec-phase24-android-plan.md`. The phone app lives on one branch with one PR into `dev`.
+
 ### TypeScript check
 
 ```bash

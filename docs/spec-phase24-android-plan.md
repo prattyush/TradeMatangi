@@ -16,7 +16,7 @@ Branch: `feat/android-phone-app` (off `dev`), **one PR into `dev`** with a merge
 | Sprint | Scope | Status |
 |---|---|---|
 | S0 | Requirements, plan, architecture doc; spikes (toolchain, YouTube embed, Google token, chart performance) | In progress: docs written; toolchain spike done; embed, Google and performance spikes need a phone |
-| S1 | `mobile/` shell, auth core (password), server URL, capabilities, offline/error states, CI | Not started |
+| S1 | `mobile/` shell, auth core (password), server URL, capabilities, offline/error states, CI | Built on the branch: 30 unit tests, 17 landscape UI tests (4 sizes), debug and release (R8) APKs build locally; CI workflow written, not yet run on GitHub; not yet installed on a phone |
 | S2 | Google sign-in, first-time account name, optional app lock, setup doc | Not started |
 | S3 | Sessions list and session detail (Chart / Trades / Orders / Videos row) | Not started |
 | S4 | One-at-a-time trade labeling (landscape) | Not started |
@@ -54,7 +54,8 @@ Later (not in this PR; the design leaves room): alerts (device-token table, regi
 - Capacitor current stable is **8.6.0** (needs Node 22 or newer; this machine has Node 24). Its Android template uses minSdk **24**, compile and target SDK **36**, **Java 21** and Gradle **8.14.3**.
 - Installed on the Linux filesystem: JDK 21 (already present), Android command-line tools, `platform-tools`, `platforms;android-36`, `build-tools;36.0.0` in `~/Android/Sdk` (about 460 MB). `ANDROID_HOME=$HOME/Android/Sdk`.
 - A throwaway Capacitor app built with `./gradlew assembleDebug` in about 2 minutes (first run, includes the Gradle download) and produced a 4 MB debug APK with the expected package, min and target SDK.
-- Not yet done: installing on a phone (needs `adb` on Windows or a manual copy of the APK) and running the same build on GitHub Actions (Sprint 1).
+- Sprint 1 repeated the build for the real app **in place on `/mnt/d`** (Gradle caches on the Linux filesystem via `GRADLE_USER_HOME`): debug and release together took 5m41s on a cold cache, no symlink problems. The R8-shrunk release APK is 1.1 MB (unsigned without a keystore) and still contains the Capacitor bridge, the secure-storage and preferences plugins and the app's `MainActivity`; the debug APK is 4.1 MB. Min SDK 24, target SDK 36.
+- Not yet done: installing on a phone (copy the APK, or `adb` on Windows) and the first run of the GitHub Actions workflow.
 - Plugin versions on npm today: `@capgo/capacitor-social-login` 8.7.7, `@aparajita/capacitor-biometric-auth` 10.0.0, `@aparajita/capacitor-secure-storage` 8.0.1, `@capacitor/app|keyboard|browser|status-bar|screen-orientation|preferences` 8.x. Compatibility with Capacitor 8 is re-checked when each is added.
 
 **(b) YouTube embed matrix: waiting for a phone test.** Two spike APKs were built from the same page (four variants on a left menu: the production iframe, nocookie + `enablejsapi` + `origin`, `youtube.com/embed` + `enablejsapi` + `origin`, and Open in YouTube through the Capacitor Browser plugin). They differ only in the app origin: A runs at `https://localhost`, B at `https://app.tradematangi.co.in`. The page shows the origin and any player error code. Results are written here once tested.

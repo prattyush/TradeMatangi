@@ -133,6 +133,15 @@ Reserved room: Alerts, Swing orders (biometric confirm; guardrails stay on the s
 
 ---
 
+## Sprint 1 notes (shell, auth core)
+
+- **API layer** (`mobile/src/api/`): `transport.ts` (Bearer; 20 s timeout; one in-flight token refresh shared by concurrent calls; one retry after a 401 and only if no other call refreshed in the meantime; reads retry twice on network errors and 502/503/504, writes never; a pre-cancelled request never reaches `fetch`), `tokenStore.ts` (refresh token in secure storage, access token in memory), `auth.ts` (password and Google ID-token sign-in, sign-out that revokes the refresh token on the server but always signs out locally), `capabilities.ts` (`ok | old | forbidden | unreachable | unknown`), `serverConfig.ts` (normalises and validates the server address, `https` only unless a debug build), `diagnostics.ts` (ring buffer that redacts tokens), `errors.ts` (`ApiError`, `isMissingEndpoint`, `isNotAvailable`, `describeError`).
+- **App layer** (`mobile/src/app/`): `services.ts` builds the singletons once; `AppContext.tsx` provides services, auth state (`loading | signedIn | signedOut`; an `onAuthLost` event from the transport signs the user out) and the capability probe; `Nav.tsx` holds the current tab, a stack of screens opened on top of it, and the back button: handlers registered with `useBackHandler` run first (newest first), then pop one screen, then go to Sessions from any other tab, then a second press within 2 s exits. The Capacitor `backButton` event drives it in the app; the Escape key stands in for it in a browser.
+- **Android project** (`mobile/android/`, committed): sensor-landscape, immersive bars (`MainActivity`), `adjustResize`, `allowBackup=false`, data-extraction rules that exclude everything, `usesCleartextTraffic=false` with a `network_security_config` that a debug build overrides to allow a LAN dev server, R8 and resource shrinking on release with keep rules for Capacitor and the secure-storage plugin, release signing read from the environment, `versionCode` and `versionName` from Gradle properties.
+- **Screens in this sprint:** sign-in (brand left, form right, server address editable), the shell with the 56 px rail, a placeholder for each screen built in later sprints, and More (account, sign-out with confirmation, server address, About with the server capability summary, copy diagnostics).
+
+---
+
 ## Status by sprint
 
 See `docs/spec-phase24-android-plan.md`.
