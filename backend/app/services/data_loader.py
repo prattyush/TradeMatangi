@@ -41,6 +41,54 @@ def attach_observation_provenance(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_PRICE_COLUMNS = ["open", "high", "low", "close"]
+
+
+def clean_volume(df: pd.DataFrame) -> pd.DataFrame:
+    """Return ``df`` with a trustworthy ``volume`` column (unchanged when it has none).
+
+    Gap filling forward/back-fills every column, so a filled second would repeat the
+    traded volume of its neighbour and a bar sum would overstate it.  Volume belongs
+    to provider rows only: filled rows get 0.  Files saved before provenance was
+    recorded carry no ``observed`` flag, so a filled row is recognised as a row
+    identical to the previous one in all of open/high/low/close/volume (with volume),
+    and the leading back-filled run as identical rows up to the first real change.
+    Real zero-volume seconds are kept as 0.  Negative or missing values become 0.
+    """
+    if "volume" not in df.columns:
+        return df
+    df = df.copy()
+    volume = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0).clip(lower=0.0)
+    if "observed" in df.columns:
+        filled = ~df["observed"].fillna(False).astype(bool).to_numpy()
+    else:
+        filled = pd.Series(False, index=df.index).to_numpy()
+        columns = [c for c in _PRICE_COLUMNS if c in df.columns]
+        if columns and len(df) > 1:
+            values = pd.concat([df[columns], volume.rename("volume")], axis=1).to_numpy()
+            same = (values[1:] == values[:-1]).all(axis=1)  # row i+1 equals row i
+            filled[1:] = same & (volume.to_numpy()[1:] > 0)
+            changed = ~same
+            first_real = int(changed.argmax()) if changed.any() else len(values) - 1
+            filled[:first_real] = True
+            filled[first_real] = False  # the real row that the leading run was copied from
+    df["volume"] = volume.where(~filled, 0.0)
+    return df
+
+
+def _is_index(symbol: str) -> bool:
+    from app.config import SUPPORTED_SYMBOLS
+    return bool(SUPPORTED_SYMBOLS.get(symbol, {}).get("options_only"))
+
+
+def _select_columns(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """OHLC plus a cleaned ``volume`` when the file has one.  Indices report no volume."""
+    df = df.rename(columns=str.lower)
+    if "volume" in df.columns and not _is_index(symbol):
+        return clean_volume(df)[_PRICE_COLUMNS + ["volume"]]
+    return df[_PRICE_COLUMNS]
+
+
 def parquet_path(symbol: str, date: str) -> Path:
     """date format: YYYY-MM-DD  →  ohlcdata/SYMBOL-DD-MM-YYYY.parquet"""
     y, m, d = date.split("-")
@@ -78,8 +126,7 @@ def _load_breeze_dataframe(symbol: str, date: str) -> pd.DataFrame:
             "Start a session to trigger a Breeze fetch, or check the date."
         )
 
-    df = df.rename(columns=str.lower)
-    df = df[["open", "high", "low", "close"]]
+    df = _select_columns(df, symbol)
     if df.index.tzinfo is None:
         df.index = df.index.tz_localize("UTC")
     else:
@@ -141,7 +188,10 @@ def validate_and_fill_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
 
     full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
     observed = df["observed"].reindex(full_index).astype("boolean").fillna(False).astype(bool) if "observed" in df else None
+    provider_rows = pd.Series(True, index=df.index[~df.index.duplicated()]).reindex(full_index, fill_value=False)
     df = df.drop(columns=["observed"],errors="ignore").reindex(full_index).ffill().bfill()
+    if "volume" in df.columns:
+        df["volume"] = df["volume"].where(provider_rows, 0.0)  # filled seconds traded nothing
     if observed is not None:
         df["observed"] = observed
     return df
@@ -153,13 +203,23 @@ def resample_to_candles(
 ) -> pd.DataFrame:
     """Resample second-level data to interval_minutes-minute OHLC candles."""
     rule = f"{interval_minutes}min"
-    candles = df.resample(rule).agg(
+    aggregations = dict(
         open=("open", "first"),
         high=("high", "max"),
         low=("low", "min"),
         close=("close", "last"),
-    ).dropna()
-    return candles
+    )
+    if "volume" in df.columns:
+        aggregations["volume"] = ("volume", "sum")
+    return df.resample(rule).agg(**aggregations).dropna()
+
+
+def _volume_field(row) -> dict:
+    """``{"volume": n}`` when the row carries a usable volume, else nothing (indices, legacy files)."""
+    value = row.get("volume") if hasattr(row, "get") else None
+    if value is None or pd.isna(value):
+        return {}
+    return {"volume": int(round(float(value)))}
 
 
 def candles_to_records(candles: pd.DataFrame) -> list[dict]:
@@ -172,6 +232,7 @@ def candles_to_records(candles: pd.DataFrame) -> list[dict]:
             "high": round(float(row["high"]), 2),
             "low": round(float(row["low"]), 2),
             "close": round(float(row["close"]), 2),
+            **_volume_field(row),
         })
     return records
 
@@ -227,11 +288,14 @@ def iter_ticks(
             "high": round(float(row["high"]), 2),
             "low": round(float(row["low"]), 2),
             "close": round(float(row["close"]), 2),
+            **_volume_field(row),
         }
 
 
 def load_dataframe(symbol: str, date: str) -> pd.DataFrame:
     from app.services.historical_data_service import history_mode, load_history
     if history_mode() == "live":
-        return load_history(symbol, date).frame
+        frame = load_history(symbol, date).frame
+        # Indices have no traded volume; report none rather than a column of zeros.
+        return frame.drop(columns=["volume"]) if "volume" in frame.columns and _is_index(symbol) else frame
     return _load_breeze_dataframe(symbol, date)

@@ -497,6 +497,18 @@ async def _place_order_locked(req: PlaceOrderRequest):
             raise HTTPException(status_code=400, detail="quantity must be at least 1")
         quantity = req.quantity
 
+    entry_cap_requested = None
+    if req.order_type in (OrderType.TARGET, OrderType.LIMIT) and not req.is_stoploss:
+        cap_price = req.limit_price if req.order_type == OrderType.LIMIT else req.trigger_price
+        if cap_price is not None and cap_price > 0:
+            from app.services.guardrail_service import cap_entry_quantity
+            try:
+                quantity, entry_cap_requested = cap_entry_quantity(
+                    session, cap_price, quantity, req.side.value,
+                    right=order_right, strike=order_strike, expiry=order_expiry, lot_size=lot_size)
+            except ValueError as exc:
+                raise HTTPException(status_code=403, detail=str(exc))
+
     if order_right is not None and (quantity < lot_size or quantity % lot_size):
         raise HTTPException(status_code=400, detail=f"Option quantity must be a positive multiple of {lot_size}")
 
@@ -519,10 +531,16 @@ async def _place_order_locked(req: PlaceOrderRequest):
             blocked, reason = check_maxsize(session, maxsize_price, quantity, req.side.value, right=order_right, strike=order_strike, expiry=order_expiry)
             if blocked:
                 raise HTTPException(status_code=403, detail=reason)
+            from app.services.guardrail_service import check_min_gap
+            blocked, reason = check_min_gap(session, req.side.value, quantity, right=order_right, strike=order_strike, expiry=order_expiry)
+            if blocked:
+                raise HTTPException(status_code=403, detail=reason)
 
     from app.services.execution_analytics import from_request
     sizing_price = req.trigger_price if req.order_type in (OrderType.TARGET, OrderType.STOPLOSS) else req.limit_price
     analytics = from_request(session, req, sum(qty_chunks), float(sizing_price or 0), order_margin_rate, sizing_stop=sizing_stop)
+    if entry_cap_requested is not None:
+        analytics["entry_cap_requested_qty"] = entry_cap_requested
 
     try:
         order = order_service.place_order(

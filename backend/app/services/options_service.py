@@ -19,6 +19,7 @@ from app.config import DATA_DIR, OHLCDATA_DIR, MARKET_OPEN, MARKET_CLOSE, get_ma
 from app.utils import NSE_HOLIDAYS, is_trading_day as _is_trading_day
 
 from app.services.breeze_history import CHUNK_SECONDS
+from app.services.data_loader import clean_volume, _volume_field
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +252,10 @@ def _validate_options_gaps(df: pd.DataFrame, date: str, partial: bool = False) -
         end_ts = pd.Timestamp(f"{date} {get_market_close(date)}") - pd.Timedelta(seconds=1)
     full_index = pd.date_range(start=market_open, end=end_ts, freq="1s")
     observed = df["observed"].reindex(full_index).astype("boolean").fillna(False).astype(bool) if "observed" in df else None
+    provider_rows = pd.Series(True, index=df.index[~df.index.duplicated()]).reindex(full_index, fill_value=False)
     df = df.drop(columns=["observed"],errors="ignore").reindex(full_index).ffill().bfill()
+    if "volume" in df.columns:
+        df["volume"] = df["volume"].where(provider_rows, 0.0)  # filled seconds traded nothing
     if observed is not None:
         df["observed"] = observed
     return df
@@ -434,7 +438,8 @@ def _load_breeze_options_dataframe(
         )
     df = pd.read_parquet(pq)
     df = df.rename(columns=str.lower)
-    df = df[["open", "high", "low", "close"]]
+    # Contracts (including index options) trade, so volume is kept; filled seconds carry none.
+    df = clean_volume(df)[["open", "high", "low", "close"] + (["volume"] if "volume" in df.columns else [])]
     if df.index.tzinfo is None:
         df.index = df.index.tz_localize("UTC")
     else:
@@ -469,6 +474,7 @@ def options_iter_ticks(
             "high": round(float(row["high"]), 2),
             "low": round(float(row["low"]), 2),
             "close": round(float(row["close"]), 2),
+            **_volume_field(row),
         }
 
 

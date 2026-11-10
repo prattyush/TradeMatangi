@@ -195,6 +195,7 @@ class OHLCCandle(ContractModel):
     high: float
     low: float
     close: float
+    volume: int | None = None  # traded quantity in the bar; None when the symbol has none (indices)
 
 
 class HistoricalDataResponse(ContractModel):
@@ -671,6 +672,8 @@ class StrategyResponse(ContractModel):
     strike: int | float | None = None
     expiry: str | None = None
     contract_key: str | None = None
+    # AutoStop only: older waiting AutoStops on the same contract that this one replaced.
+    replaced_strategy_ids: list[str] = []
 
 
 class CancelAllStrategiesRequest(ContractModel):
@@ -720,6 +723,12 @@ class GuardRailSettingsResponse(ContractModel):
     guardrail_maxsize_mode: str = "percentage"
     guardrail_maxsize_pct: float = 20.0
     guardrail_maxsize_value: float = 0.0
+    guardrail_maxentry_enabled: bool = False
+    guardrail_maxentry_mode: str = "percentage"
+    guardrail_maxentry_pct: float = 12.0
+    guardrail_maxentry_value: float = 0.0
+    guardrail_mingap_enabled: bool = False
+    guardrail_mingap_minutes: int = 5
 
 
 class GuardRailSettingsUpdateRequest(ContractModel):
@@ -738,6 +747,12 @@ class GuardRailSettingsUpdateRequest(ContractModel):
     guardrail_maxsize_mode: str | None = None
     guardrail_maxsize_pct: float | None = Field(default=None, ge=1.0, le=100.0)
     guardrail_maxsize_value: float | None = Field(default=None, ge=0.0)
+    guardrail_maxentry_enabled: bool | None = None
+    guardrail_maxentry_mode: Literal["percentage", "value"] | None = None
+    guardrail_maxentry_pct: float | None = Field(default=None, ge=1.0, le=100.0)
+    guardrail_maxentry_value: float | None = Field(default=None, ge=0.0)
+    guardrail_mingap_enabled: bool | None = None
+    guardrail_mingap_minutes: int | None = Field(default=None, ge=1, le=390)
 
 
 class GuardRailStatusResponse(ContractModel):
