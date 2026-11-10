@@ -10,7 +10,7 @@ export type AnalysisChartProps = {
   title?: string
   isMaximized?: boolean
   onMaximize?: () => void
-  /** Marker text for an execution; `forOption` is true on an option-contract (CE / PE) chart, where the marker colour already says buy or sell. */
+  /** Marker text for an execution. `forOption` is true on an option-contract (CE / PE) chart of a KLine host that labels contracts (Label Trades), where the colour already says buy or sell. */
   getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
   /** Fill the parent's height instead of the width-derived default (Label Trades stacked panes). */
   fill?: boolean

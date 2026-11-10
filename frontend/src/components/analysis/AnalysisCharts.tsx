@@ -95,7 +95,7 @@ export function WebsiteAnalysisChart({
   title?: string
   isMaximized?: boolean
   onMaximize?: () => void
-  getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
+  getMarkerText?: (trade: AnalysisTrade) => string
   fill?: boolean
   focusTime?: number
 }) {
@@ -356,7 +356,7 @@ export function WebsiteOptionsChart({
   historicalDays?: number
   isMaximized?: boolean
   onMaximize?: () => void
-  getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
+  getMarkerText?: (trade: AnalysisTrade) => string
   fill?: boolean
   focusTime?: number
 }) {
@@ -521,8 +521,7 @@ export function WebsiteOptionsChart({
           position: 'inBar' as const,
           color: t.side === 'BUY' ? '#FFFFFF' : '#00AAFF',
           shape: 'circle' as const,
-          // Option-contract chart: the marker colour already says buy or sell, so no text (Underlying charts keep theirs).
-          text: getMarkerText ? getMarkerText(t, true) : '',
+          text: getMarkerText ? getMarkerText(t) : (t.side === 'BUY' ? 'B' : 'S'),
           size: 0.6,
         }])
         tradeMarkerPoolRef.current.push(markerSeries)
