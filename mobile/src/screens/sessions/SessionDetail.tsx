@@ -16,6 +16,7 @@ import { dateParts, formatPnl, pnlClass } from './format'
 import { PopoverMenu, type MenuItem } from '../../shell/PopoverMenu'
 import { useToast } from '../../shell/Toast'
 import { CompareOverlay } from './compare/CompareOverlay'
+import { WalkthroughOverlay } from './walkthrough/WalkthroughOverlay'
 import { LabelingOverlay } from './labeling/LabelingOverlay'
 import { useLabelProgress } from './labeling/useLabelProgress'
 import { PhoneChartPanel } from './PhoneChartPanel'
@@ -24,8 +25,8 @@ import { TradesList } from './TradesList'
 
 type View = 'chart' | 'trades' | 'journey' | 'orders' | 'snapshots' | 'videos'
 /** The view menu also offers actions that open their own screen (Label trades). */
-type Choice = View | 'label' | 'compare'
-const LABELS: Record<Choice, string> = { chart: 'Chart', trades: 'Trades', journey: 'Day journey', orders: 'Orders', snapshots: 'Snapshots', videos: 'Videos', label: 'Label trades', compare: 'Compare' }
+type Choice = View | 'label' | 'compare' | 'walkthrough'
+const LABELS: Record<Choice, string> = { chart: 'Chart', trades: 'Trades', journey: 'Day journey', orders: 'Orders', snapshots: 'Snapshots', videos: 'Videos', label: 'Label trades', compare: 'Compare', walkthrough: 'Walkthrough' }
 
 /** The right-hand pane: one trading day of one instrument, with the chart, executions, orders and videos. */
 export function SessionDetail({ group, daysOpen, onToggleDays }: { group: SessionGroup; daysOpen: boolean; onToggleDays: () => void }) {
@@ -42,6 +43,7 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
   const toast = useToast()
   const [labeling, setLabeling] = useState(false)
   const [comparing, setComparing] = useState(false)
+  const [walking, setWalking] = useState(false)
   const [labelRevision, setLabelRevision] = useState(0)
   const progress = useLabelProgress(group, !isSwing, labelRevision)
   const [inspected, setInspected] = useState<AnalysisTrade | null>(null)
@@ -57,14 +59,16 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
   const menuItems: Array<MenuItem<Choice>> = [
     ...tabs.map(id => ({ id, label: LABELS[id] })),
     ...(isSwing ? [] : [
+      { id: 'walkthrough' as const, label: LABELS.walkthrough },
       { id: 'compare' as const, label: LABELS.compare },
       { id: 'label' as const, label: LABELS.label, detail: progress ? `${progress.labeled}/${progress.total}` : undefined },
     ]),
   ]
   const choose = (choice: Choice) => {
-    if (choice !== 'label' && choice !== 'compare') { setTab(choice); return }
+    if (choice !== 'label' && choice !== 'compare' && choice !== 'walkthrough') { setTab(choice); return }
     if (!details.data) { toast('The session is still loading'); return }
     if (choice === 'compare') setComparing(true)
+    else if (choice === 'walkthrough') setWalking(true)
     else setLabeling(true)
   }
   // One row of controls: Days, the view menu and (for the chart) everything else. It is part of the chart's own header
@@ -125,6 +129,9 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
         )}
         {labeling && details.data && (
           <LabelingOverlay group={group} trades={trades} readOnly={shared} onClose={() => { setLabeling(false); setLabelRevision(value => value + 1) }} />
+        )}
+        {walking && details.data && (
+          <WalkthroughOverlay group={group} trades={trades} cycles={details.data.flatMap(detail => detail.cycles ?? [])} onClose={() => setWalking(false)} />
         )}
         {comparing && details.data && (
           <CompareOverlay group={group} trades={trades} historicalDays={environment.historicalDays ?? 2} onClose={() => setComparing(false)} />

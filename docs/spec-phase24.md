@@ -160,7 +160,7 @@ For phone you can show the exact entry details or exit details as a color or sho
 4. **How an exit happened** is shown with a colour and a short code (details in `docs/spec-phase24-walkthrough-whatif-plan.md`): stoploss, limit, target, take-profit strategy, other strategy exits, market, session close.
 5. **Read-only.** Nothing is saved or sent. It reuses the Label Trades layout (charts left, one round trip right, Prev / Next).
 
-Status: planned. Sprints W0 to W4 in `docs/spec-phase24-walkthrough-whatif-plan.md` (first pull request).
+Status: built on branch `feat/trade-walkthrough` (website, desktop, webapp, phone); not yet seen on a phone or in the Windows app. Sprints W0 to W4 in `docs/spec-phase24-walkthrough-whatif-plan.md` (first pull request).
 
 ### WHAT IF
 

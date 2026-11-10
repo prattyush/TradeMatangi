@@ -154,6 +154,12 @@ export function buildWalkthrough(trips: LabeledRoundTrip[], cycles: PerformanceC
   return result
 }
 
+/** "10:05" / "15:10": a fill's clock time (the server stores India wall-clock time as UTC seconds). */
+export function clock24(timestamp: number): string {
+  const date = new Date(timestamp * 1000)
+  return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`
+}
+
 /** "1h 05m", "12m 30s", "40s": how long a trade was held. */
 export function holdingText(seconds: number | null): string {
   if (seconds === null || !(seconds >= 0)) return '—'

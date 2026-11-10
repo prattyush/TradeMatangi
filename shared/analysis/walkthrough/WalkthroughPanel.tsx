@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { fmtHHMM, type PnlDisplayMode } from '../labeling/model'
+import type { PnlDisplayMode } from '../labeling/model'
 import { TONE_COLORS } from './exitMethods'
-import { holdingText, signedMoney, signedPct, type WalkthroughLeg, type WalkthroughTrip } from './walkthroughModel'
+import { clock24, holdingText, signedMoney, signedPct, type WalkthroughLeg, type WalkthroughTrip } from './walkthroughModel'
 import './walkthrough.css'
 
 const tone = (value: number | null | undefined) => (value == null || value === 0 ? '' : value > 0 ? 'up' : 'down')
@@ -22,22 +22,23 @@ function LegRows({ title, legs, role }: { title: string; legs: WalkthroughLeg[];
     <section className="wt-block" aria-label={title}>
       <h4>{title}</h4>
       <table className="wt-table">
-        <thead><tr><th>Time</th><th className="num">Size</th><th className="num">Price</th><th className="num">Capital</th>{role === 'entry' && <th className="num">Risk</th>}<th>How</th><th /></tr></thead>
+        <thead><tr><th>Time</th><th className="num">Size</th><th className="num">Price</th><th className="num">Capital</th>{role === 'entry' && <th className="num">Risk</th>}<th>How</th></tr></thead>
         <tbody>
           {legs.map((leg, index) => {
             const hasMore = leg.details.length > 0 || leg.method.tone === 'unknown'
             return [
               <tr key={`${role}-${index}`} className={`wt-leg ${leg.side === 'BUY' ? 'buy' : 'sell'}`}>
-                <td>{fmtHHMM(leg.time)}</td>
+                <td>{hasMore
+                  ? <button type="button" className="wt-more" aria-expanded={open.has(index)} aria-label={`More info on ${role} ${index + 1}`} onClick={() => toggle(index)}>{open.has(index) ? '▾' : '▸'} {clock24(leg.time)}</button>
+                  : clock24(leg.time)}</td>
                 <td className="num">{leg.side === 'BUY' ? 'B' : 'S'} {number(leg.quantity)}</td>
                 <td className="num">{number(leg.price)}</td>
                 <td className="num">{pctText(leg.capitalPct)}</td>
                 {role === 'entry' && <td className="num">{pctText(leg.riskPct)}</td>}
                 <td><Chip leg={leg} /></td>
-                <td>{hasMore && <button type="button" className="wt-more" aria-expanded={open.has(index)} aria-label={`More info on ${role} ${index + 1}`} onClick={() => toggle(index)}>{open.has(index) ? '▾' : '▸'}</button>}</td>
               </tr>,
               open.has(index) && (
-                <tr key={`${role}-${index}-more`} className="wt-extra"><td colSpan={role === 'entry' ? 7 : 6}>
+                <tr key={`${role}-${index}-more`} className="wt-extra"><td colSpan={role === 'entry' ? 6 : 5}>
                   <strong>{leg.method.name}</strong>
                   {leg.details.map(([label, text]) => <span key={label}> · {label}: {text}</span>)}
                 </td></tr>

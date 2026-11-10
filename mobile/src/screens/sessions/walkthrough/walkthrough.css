@@ -1,0 +1,19 @@
+/* Trade Walkthrough on a landscape phone: the shared panel (shared/analysis/walkthrough) inside Label trades' layout. */
+.phone-walkthrough .wt-panel { gap: 8px; font-size: 13px; }
+.phone-walkthrough .wt-step { padding: 8px 4px; }
+/* Narrow column: the three figures side by side without arrows, and no duplicate of the entry and exit rows below. */
+.phone-walkthrough .wt-arrow { display: none; }
+.phone-walkthrough .wt-story { gap: 4px; }
+.phone-walkthrough .tl-summary { display: none; }
+/* The identity row (contract, P&L, peak) repeats what the figures below say; the chart is already filtered to this trade. */
+.phone-walkthrough .tl-meta { display: none; }
+.phone-walkthrough .wt-step small { font-size: 12px; }
+.phone-walkthrough .wt-facts { gap: 2px 12px; font-size: 12px; }
+.phone-walkthrough .wt-table { font-size: 12px; table-layout: auto; }
+.phone-walkthrough .wt-table td { padding: 2px 2px; height: 40px; }
+.phone-walkthrough .wt-table th { font-size: 11px; padding: 2px 2px; }
+.phone-walkthrough .wt-chip { min-width: 34px; padding: 3px 6px; font-size: 12px; }
+.phone-walkthrough .wt-more { min-height: 40px; min-width: 44px; text-align: left; }
+.phone-walkthrough .wt-extra td { font-size: 12px; line-height: 1.5; }
+/* Nothing here is edited, so the card around the panel needs no extra padding. */
+.phone-walkthrough .tl-card { padding: 8px; }
