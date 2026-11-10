@@ -276,6 +276,35 @@ def cancel_persisted_for_session(session_id: str) -> int:
     return count
 
 
+def cancel_replaced_autostops(session_id: str, new: StrategyInstance) -> list[str]:
+    """One waiting AutoStop per contract, direction and entry type: a newer one replaces the older one.
+
+    AutoStop is a one-shot entry that places its order at the next bar close, so two waiting
+    instances on the same contract would place two entries (a doubled position). Only RUNNING
+    (not yet fired) instances are cancelled; one that already placed its order is COMPLETED and
+    is left alone. AS (TARGET) and ASL (LIMIT) are different entry types and keep separate slots, so
+    one of each can wait on the same contract. Returns the cancelled strategy ids.
+    """
+    if new.strategy_type != "AutoStop":
+        return []
+
+    def slot(strategy: StrategyInstance):
+        m = strategy.metadata
+        return (strategy.right, strike_number(m.get("desktop_strike")), m.get("desktop_expiry"),
+                m.get("direction", "BUY"), m.get("autostop_order_type", "TARGET"))
+
+    wanted = slot(new)
+    replaced: list[str] = []
+    for old in list(_registry.get(session_id, [])):
+        if (old.strategy_id != new.strategy_id and old.strategy_type == "AutoStop"
+                and old.status == StrategyStatus.RUNNING and slot(old) == wanted):
+            if cancel_strategy(session_id, old.strategy_id):
+                replaced.append(old.strategy_id)
+    if replaced:
+        logger.info("autostop_replaced session=%s new=%s replaced=%s", session_id, new.strategy_id, replaced)
+    return replaced
+
+
 def cancel_strategy(session_id: str, strategy_id: str) -> bool:
     """Cancel a single strategy by ID. Returns True if found and cancelled."""
     for s in _registry.get(session_id, []):
@@ -747,6 +776,22 @@ def _on_bar_close_autostop(
         logger.info("AutoStop %s skipped — guardrail active: %s", strategy.strategy_id, reason)
         return
 
+    # Per-entry cap reduces the size; the minimum gap refuses an entry that is too soon.
+    from app.services.guardrail_service import cap_entry_quantity, check_min_gap
+    from app.config import LOT_SIZES as _LOT_SIZES
+    entry_expiry = _strategy_expiry(strategy, session, tick_right)
+    try:
+        quantity, entry_cap_requested = cap_entry_quantity(
+            session, trigger_price, quantity, direction, right=tick_right, strike=order_strike,
+            expiry=entry_expiry, lot_size=_LOT_SIZES.get(session.symbol, 1) if tick_right else 1)
+    except ValueError as exc:
+        logger.info("AutoStop %s skipped — %s", strategy.strategy_id, exc)
+        return
+    blocked, reason = check_min_gap(session, direction, quantity, right=tick_right, strike=order_strike, expiry=entry_expiry)
+    if blocked:
+        logger.info("AutoStop %s skipped — %s", strategy.strategy_id, reason)
+        return
+
     from app.services.order_service import place_order
     from app.models.schemas import TradeSide, OrderType
     import uuid as _uuid
@@ -763,6 +808,8 @@ def _on_bar_close_autostop(
         entry_method='AUTOSTOP_LIMIT' if order_type == OrderType.LIMIT else 'AUTOSTOP',
         action_id=strategy.strategy_id, strategy_id=strategy.strategy_id)
     analytics['stop_source'] = 'explicit' if meta.get('entry_sl_price') is not None else 'sizing_default' if sizing_stop is not None else None
+    if entry_cap_requested is not None:
+        analytics['entry_cap_requested_qty'] = entry_cap_requested
     try:
         if entry_sl_price is not None and (entry_sl_price <= 0 or
             (side == TradeSide.BUY and entry_sl_price >= trigger_price) or

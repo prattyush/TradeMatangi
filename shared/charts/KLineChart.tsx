@@ -42,7 +42,7 @@ import {
 } from "./positionPnlLevels";
 import { orderLineLabel, orderPrice } from "./orderLineLabel";
 import { TradingOverlayRegistry } from "./tradingOverlays";
-import { drawingTools, indicatorLabel } from "./catalogue";
+import { drawingTools, indicatorLabel, volumeIndicators } from "./catalogue";
 
 interface ChartSettings {
   background: string;
@@ -1055,6 +1055,10 @@ export function KLineChart({
     if (!chart) return;
     applyChartStyles(chart, settings);
   }, [settings]);
+  const hasVolume = useMemo(
+    () => candles.some((candle) => candle.volume !== undefined && candle.volume !== null),
+    [candles],
+  );
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -1075,10 +1079,13 @@ export function KLineChart({
           },
           true,
         );
+      } else if (volumeIndicators.includes(indicator) && !hasVolume) {
+        // Indices report no traded volume; an empty VOL pane or a VWAP of zeros would mislead.
       } else if (indicator !== "PositionPnL" && indicator !== "PnLTargets")
         chart.createIndicator(indicator);
     });
   }, [
+    hasVolume,
     indicatorKey,
     settings.movingAveragePeriods,
     settings.movingAverageType,
@@ -1255,7 +1262,8 @@ export function KLineChart({
         left.open === right.open &&
         left.high === right.high &&
         left.low === right.low &&
-        left.close === right.close;
+        left.close === right.close &&
+        left.volume === right.volume;
       // Live snapshots normally change only the current candle or append one
       // candle. Feed those updates through KLineCharts' incremental loader so
       // the user's scroll position and crosshair remain untouched.

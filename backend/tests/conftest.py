@@ -26,6 +26,7 @@ def isolated_history_throttle(monkeypatch):
     """No real pacing delays or cooldown state shared between broker mocks."""
     from app.services import breeze_history, options_service
     monkeypatch.setattr(breeze_history, "_MIN_INTERVAL", 0.0)
+    monkeypatch.setattr(breeze_history, "_CONNECT_BACKOFF", 0.0)
     monkeypatch.setattr(breeze_history, "_next_request", 0.0)
     monkeypatch.setattr(breeze_history, "_retry_after", 0.0)
     options_service._options_fetch_failures.clear()

@@ -11,6 +11,7 @@ import type { AnalysisTrade, SessionDetail } from '../../shared/analysis/api'
 import type { PerformanceCycle } from '../../shared/analysis/performance'
 import DesktopAnalysisChart, { clearAnalysisViewports, ComparisonChart } from './AnalysisChart'
 import { analysisRequest, createAnalysisApi, type AnalysisRequest } from './analysisApi'
+import { createVideoLinksApi } from './tools/videoLinks'
 import ExecutionInspector from './ExecutionInspector'
 import '../../shared/analysis/kline/desktopAnalysis.css'
 
@@ -20,6 +21,18 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
       ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
     return createAnalysisApi(analysisRequest(baseUrl, token, native,onUnauthorized))
   }, [baseUrl, token,onUnauthorized])
+  // Saved YouTube links (uploaded by the Video Maker): listed per session, opened in the system browser.
+  const videoLinks = useMemo(() => {
+    const native: AnalysisRequest | undefined = '__TAURI_INTERNALS__' in window
+      ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
+    const api = createVideoLinksApi(analysisRequest(baseUrl, token, native, onUnauthorized))
+    return {
+      list: api.list,
+      save: api.save,
+      remove: api.remove,
+      open: (video: { videoId: string; url: string }) => { if (native) void invoke('youtube_open_video', { videoId: video.videoId }); else window.open(video.url, '_blank', 'noopener,noreferrer') },
+    }
+  }, [baseUrl, token, onUnauthorized])
   const drawingRequest=useCallback(async<T,>(path:string,method:'GET'|'POST'|'PUT'|'PATCH'|'DELETE',body:Record<string,unknown>={})=>{if('__TAURI_INTERNALS__' in window)return invoke<T>('desktop_drawing_request',{baseUrl,path,method,body});const response=await fetch(`${baseUrl.replace(/\/$/,'')}/api/desktop/v1/${path}`,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:method==='GET'?undefined:JSON.stringify(body)});if(!response.ok)throw new Error('Swing analytics could not read this portfolio');return response.json() as Promise<T>},[baseUrl,token])
   // Same catalogue kind/exchange the Day tiles use, so Analysis drawings share their instrument key.
   const catalogue=useRef<Promise<Array<{symbol:string;exchange:string;chart_type?:string}>>|null>(null)
@@ -86,7 +99,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return () => window.removeEventListener('keydown', escape, true)
   }, [active, trade])
   const environment: AnalysisEnvironment = useMemo(() => ({
-    swingRequest, drawingRequest, resolveSymbolInstrument, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
+    swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
     onDataChanged: () => setDataRevision(n => n + 1),
     onLabelSavingChange: saving => { labelSaving.current = saving; if(!saving)setNavigationMessage('') },
     charts: { SwingChart:swingRenderer,AnalysisChartPanel: AnalysisPanels, LabelCharts: AnalysisPanels, AnalysisChart: DesktopAnalysisChart, OptionsChart: DesktopAnalysisChart, SnapshotChart: DesktopAnalysisChart, SnapshotOptionsChart: DesktopAnalysisChart, TradesChart: ComparisonChart, PatternChart: ComparisonChart },
@@ -94,7 +107,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     onDirtyChange: value => { dirty.current = value },
     confirmDiscard: () => { if(labelSaving.current){setNavigationMessage('Labels are saving. Wait for the result before changing sessions.');return false}; if (!dirty.current || window.confirm('Discard unsaved labels?')) { dirty.current = false; return true }; return false },
     onSelectionContextChange: () => setTrade(null),
-  }), [adapter, active, dataRevision,historicalDays,labelView,pnlDisplayMode,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
+  }), [adapter, videoLinks, active, dataRevision,historicalDays,labelView,pnlDisplayMode,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
   const navigationReady = useRef(onNavigationReady);
   navigationReady.current = onNavigationReady;
   const guard = useRef(environment.confirmDiscard);
