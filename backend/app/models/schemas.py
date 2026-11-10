@@ -195,6 +195,7 @@ class OHLCCandle(ContractModel):
     high: float
     low: float
     close: float
+    volume: int | None = None  # traded quantity in the bar; None when the symbol has none (indices)
 
 
 class HistoricalDataResponse(ContractModel):
