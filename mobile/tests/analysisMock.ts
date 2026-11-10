@@ -102,7 +102,36 @@ function cyclesFor(session: MockSession, trades: ReturnType<typeof tradesFor>) {
   return cycles
 }
 
+/** The round trips of a session (one per BUY/SELL pair), as the server's round-trips endpoint returns them. */
+export function roundTripsFor(session: MockSession) {
+  const trades = tradesFor(session)
+  const trips = []
+  for (let i = 0; i + 1 < trades.length; i += 2) {
+    const entry = trades[i], exit = trades[i + 1]
+    const leg = (trade: typeof entry) => ({ trade_id: trade.trade_id, side: trade.side, quantity: trade.quantity, price: trade.price, timestamp: trade.timestamp, right: trade.right, strike: trade.strike })
+    const pnl = Math.round((exit.price - entry.price) * entry.quantity)
+    trips.push({ index: i / 2, right: entry.right, entry_trades: [leg(entry)], exit_trades: [leg(exit)], pnl, pnl_pct: +(pnl / session.session_capital * 100).toFixed(2), max_capital_pct: 1.8 })
+  }
+  return trips
+}
+
+export const QUESTIONS = [
+  { question_id: 'q-entry-1', kind: 'entry', text: 'Chased the entry', status: 'active', sort_order: 1, created_at: '2026-10-01', archived_at: null },
+  { question_id: 'q-entry-2', kind: 'entry', text: 'Waited for confirmation', status: 'active', sort_order: 2, created_at: '2026-10-02', archived_at: null },
+  { question_id: 'q-exit-1', kind: 'exit', text: 'Exited too early', status: 'active', sort_order: 1, created_at: '2026-10-03', archived_at: null },
+]
+
 export interface AnalysisMockState {
+  /** Labels saved so far, per session (what GET labels returns), and every save request received. */
+  labels: Record<string, Array<Record<string, unknown>>>
+  labelPosts: Array<{ labels: Array<Record<string, unknown>> }>
+  /** Behavior marks per session (what GET behavior/marks returns) and every save request received. */
+  marks: Record<string, Array<{ round_trip_index: number; question_id: string; kind: string }>>
+  markPosts: Array<{ session_id: string; round_trip_index: number; answers: Record<string, boolean> }>
+  /** Make the labels endpoint fail once (500) on save, or on every load. */
+  labelSave?: 'fail-once'
+  labelsLoad?: 'fail'
+  failedSaveOnce?: boolean
   /** Make the snapshots endpoint answer 404 like an older server. */
   snapshotsOld?: boolean
   /** What the sessions endpoint should do: normal, return nothing, fail once with 500, or 404 like an old server. */
@@ -113,12 +142,12 @@ export interface AnalysisMockState {
   videos: Record<string, Array<{ video_id: string; title: string; privacy: string; url: string; chapters: string; uploaded_at: string; session_id: string }>>
 }
 
-export const newAnalysisState = (): AnalysisMockState => ({ sessions: 'ok', failedOnce: false, sessionsRequests: [], videos: {} })
+export const newAnalysisState = (): AnalysisMockState => ({ sessions: 'ok', failedOnce: false, sessionsRequests: [], videos: {}, labels: {}, labelPosts: [], marks: {}, markPosts: [] })
 
 export interface MockResponse { status: number; body?: unknown }
 
 /** `route` is the path after `/api/desktop/v1/analysis/`. */
-export function analysisResponse(route: string, query: URLSearchParams, state: AnalysisMockState): MockResponse {
+export function analysisResponse(route: string, query: URLSearchParams, state: AnalysisMockState, method = 'GET', body?: unknown): MockResponse {
   if (route === 'sessions') {
     state.sessionsRequests.push(query)
     if (state.sessions === 'old') return { status: 404, body: { detail: 'Not Found' } }
@@ -150,6 +179,45 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
   if (route === 'data/options-historical') {
     const date = query.get('date') ?? '2026-11-09'
     return { status: 200, body: { symbol: query.get('symbol'), dates: [date], candles: dayCandles(date, +(query.get('interval_minutes') ?? 3), 120) } }
+  }
+
+  if (route === 'round-trips') {
+    const session = SESSIONS.find(item => item.session_id === query.get('session_id'))
+    return { status: 200, body: session ? roundTripsFor(session) : [] }
+  }
+  if (route === 'labels') {
+    if (method === 'POST') {
+      if (state.labelSave === 'fail-once' && !state.failedSaveOnce) { state.failedSaveOnce = true; return { status: 500, body: { detail: 'Could not save' } } }
+      const posted = (body as { labels: Array<Record<string, unknown>> }).labels
+      state.labelPosts.push({ labels: posted })
+      for (const label of posted) {
+        const id = String(label.session_id)
+        state.labels[id] = [...(state.labels[id] ?? []).filter(row => row.round_trip_index !== label.round_trip_index), label]
+      }
+      return { status: 200, body: { saved: posted.length } }
+    }
+    if (state.labelsLoad === 'fail') return { status: 500, body: { detail: 'Labels unavailable' } }
+    return { status: 200, body: state.labels[query.get('session_id') ?? ''] ?? [] }
+  }
+  if (route === 'entry-tags') return { status: 200, body: { tags: ['AS_PER_PATTERN', 'BREAKOUT'] } }
+  if (route === 'exit-tags') return { status: 200, body: { tags: ['AS_PER_PATTERN', 'TARGET'] } }
+  if (route === 'pattern/strategies') return { status: 200, body: { strategies: ['Opening Range', 'Trend Pullback'] } }
+  if (route === 'pattern/categories') return { status: 200, body: { categories: ['Breakout', 'Reversal'] } }
+  if (route === 'behavior/questions') return { status: 200, body: { questions: QUESTIONS } }
+  if (route === 'behavior/marks') {
+    if (method === 'POST') {
+      const posted = body as { session_id: string; round_trip_index: number; answers: Record<string, boolean> }
+      state.markPosts.push(posted)
+      const rows = (state.marks[posted.session_id] ?? []).filter(mark => !(mark.round_trip_index === posted.round_trip_index && posted.answers[mark.question_id] === false))
+      for (const [questionId, showed] of Object.entries(posted.answers)) {
+        if (showed && !rows.some(mark => mark.round_trip_index === posted.round_trip_index && mark.question_id === questionId)) {
+          rows.push({ round_trip_index: posted.round_trip_index, question_id: questionId, kind: QUESTIONS.find(item => item.question_id === questionId)?.kind ?? 'entry' })
+        }
+      }
+      state.marks[posted.session_id] = rows
+      return { status: 200, body: { marks: rows } }
+    }
+    return { status: 200, body: { marks: state.marks[query.get('session_id') ?? ''] ?? [] } }
   }
   if (route === 'video-links') return { status: 200, body: { links: state.videos[query.get('session_id') ?? ''] ?? [] } }
   if (route === 'snapshots') {

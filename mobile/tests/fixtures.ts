@@ -52,9 +52,10 @@ export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co
       }
       const analysisPrefix = '/api/desktop/v1/analysis/'
       if (url.pathname.startsWith(analysisPrefix)) {
-        const result = analysisResponse(url.pathname.slice(analysisPrefix.length), url.searchParams, state.analysis)
+        const result = analysisResponse(url.pathname.slice(analysisPrefix.length), url.searchParams, state.analysis, request.method(), body)
         return answer(route, result.status, result.body)
       }
+      if (url.pathname === '/api/desktop/v1/trading/settings/current') return answer(route, 200, { desktop_pnl_display_mode: 'currency', analysis_label_view: 'one_by_one' })
       return answer(route, 404, { detail: 'Not Found' })
     })
   }
@@ -77,5 +78,6 @@ export async function openSessions(page: Page) {
 /** Choose a view (Chart, Trades, Orders, Videos) from the view menu in the control row. */
 export async function chooseView(page: Page, name: string) {
   await page.getByRole('button', { name: /^View:/ }).click()
-  await page.getByRole('menuitemradio', { name }).click()
+  // Anchored at the start so "Trades" does not also match "Label trades".
+  await page.getByRole('menuitemradio', { name: new RegExp(`^${name}`) }).click()
 }

@@ -19,7 +19,15 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 11. Volume: in the chart's indicators menu (fx) switch on **Volume**: a volume pane appears for an option or a stock; for the NIFTY underlying it does nothing.
 
 ## C. Trade labeling (S4)
-(Filled in when S4 lands.)
+1. Open a day, then the view menu > **Label trades** (the count of labeled trades is shown beside it). Labeling opens full screen: the chart on the left (centred on the trade, with only that trade's buy and sell marked), the form on the right.
+2. At the top of the form: **◀ Prev**, "Trade 1 of N", **Next ▶**. They stay in place while you scroll the form. The trade (contract, P&L) and a row of numbered trade chips (a green dot once a pattern is chosen) scroll with the form. Tap a chip to jump.
+3. Choose an Expected category and strategy from the lists (type a new name to add one). Type an Entry tag and an Exit tag (suggestions appear). Switch the entry and exit behavior questions Yes or No.
+4. The bar at the bottom says **Saving…** then **Saved ✓** by itself; there is no Save button. Tap Next: your changes are saved before the next trade opens. Go back to the first trade: your answers are still there.
+5. In the chart's top row: ← closes, **Underlying | Option** and the strike menu switch the chart; the interval and indicators work.
+6. Tap a text field: the keyboard opens and the chart steps aside so the form fills the screen; close the keyboard and the chart returns.
+7. Press the Android back button (or ←) right after typing: it waits for the save, then closes. Turn on airplane mode and change something: the bar shows the error with **Retry save**; leaving offers to discard.
+8. After closing, the view menu shows the new count, for example 3/5. Open the same day on the website or the desktop and check the labels are there.
+9. A shared (read-only) day shows the labels but cannot change them.
 
 ## D. Stats and Habits (S5)
 (Filled in when S5 lands.)

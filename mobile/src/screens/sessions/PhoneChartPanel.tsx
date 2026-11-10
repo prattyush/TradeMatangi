@@ -12,8 +12,12 @@ type Pane = 'underlying' | 'option'
  * the host's controls (Days, view menu), Underlying | Option, the strike menu when Option is chosen, then the
  * chart's own interval, indicators, fit and maximize. Nothing else takes height from the candles.
  */
-export function PhoneChartPanel({ symbol, date, trades, historicalDays, toolbarLead }: {
+export function PhoneChartPanel({ symbol, date, trades, historicalDays, toolbarLead, getMarkerText, focusTime, labelContractMarkers, allowMaximize = true }: {
   symbol: string; date: string; trades: AnalysisTrade[]; historicalDays: number; toolbarLead: ReactNode
+  /** Label Trades: marker text for each execution, the time to centre on, and whether option markers carry text. */
+  getMarkerText?: (trade: AnalysisTrade) => string; focusTime?: number; labelContractMarkers?: boolean
+  /** The maximize button of the chart header. Off where the chart shares the screen with a form. */
+  allowMaximize?: boolean
 }) {
   const contracts = useMemo(() => contractTabs(trades), [trades])
   const [pane, setPane] = useState<Pane>('underlying')
@@ -45,10 +49,12 @@ export function PhoneChartPanel({ symbol, date, trades, historicalDays, toolbarL
       {showOption ? (
         <AnalysisChart key={contract.key} symbol={symbol} date={date} trades={contract.trades} right={contract.right} strike={contract.strike}
           expiry={contract.expiry} exchange={contract.exchange} product={contract.product} historicalDays={historicalDays}
-          isMaximized={maximized} onMaximize={() => setMaximized(value => !value)} toolbarStart={toolbarStart} />
+          getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers={labelContractMarkers}
+          isMaximized={maximized} onMaximize={allowMaximize ? () => setMaximized(value => !value) : undefined} toolbarStart={toolbarStart} />
       ) : (
         <AnalysisChart key="underlying" symbol={symbol} date={date} trades={trades} historicalDays={historicalDays} title="Underlying"
-          isMaximized={maximized} onMaximize={() => setMaximized(value => !value)} toolbarStart={toolbarStart} />
+          getMarkerText={getMarkerText} focusTime={focusTime}
+          isMaximized={maximized} onMaximize={allowMaximize ? () => setMaximized(value => !value) : undefined} toolbarStart={toolbarStart} />
       )}
     </div>
   )

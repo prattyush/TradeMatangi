@@ -160,6 +160,16 @@ Reserved room: Alerts, Swing orders (biometric confirm; guardrails stay on the s
 - **Day journey:** the shared `DayJourneyChart` over `sessionJourney(cycles, capitals)`; day sessions only.
 - **Execution details:** tapping a trade row opens the desktop's `ExecutionInspector` as a panel over the right edge of the pane (Back closes it). Its "Open cycle" button is hidden until the phone has Stats.
 
+## Sprint 4 notes (Trade labeling)
+
+- **Reuse, not a copy.** `LabelingOverlay` (`mobile/src/screens/sessions/labeling/`) mounts the shared `TradeLabeling` with a copy of the environment whose `charts.LabelCharts` is `PhoneLabelCharts`, `labelView` is `one_by_one`, and the dirty / saving callbacks are tracked. All label logic (loading round trips and labels, debounced autosave, behavior marks, tag suggestions, the save status, Prev / Next saving first) therefore stays in one place for the website, the desktop and the phone.
+- **Phone chart.** `PhoneLabelCharts` is `PhoneChartPanel` (the session chart, Underlying | Option and the strike menu in the chart's header row) with `getMarkerText` / `focusTime` / `labelContractMarkers` passed through, the maximize button off, and a ← Back button in front. The strike menu follows the viewed trade's contracts.
+- **Layout** (`labeling.css`, rules more specific than the shared file's width-based ones so every size gets the same layout): the overlay covers the screen including the rail; chart column 58 %, form column the rest; the shared header uses `display: contents` so only the Prev / counter / Next row sticks to the top of the form column while the identity row, trade chips and summary scroll; the save status sticks to the bottom; chips are 36 px in one scrolling row; inputs 40 px; behavior switches 44 px; the Maximize and "All together" controls are hidden. When the viewport is under 300 px tall (keyboard open) the chart, identity row, chips and summary step aside and the form takes the whole screen.
+- **Leaving.** Back (the Android button or ←) closes straight away when nothing is pending; otherwise it shows "Saving labels…" and closes as soon as the saves finish; after 6 seconds without success it asks whether to leave without saving.
+- **Progress.** `useLabelProgress` loads a day's round trips and labels (two requests per session) only for the open day and shows `labeled/total` beside the menu item; it refreshes when labeling closes.
+- **P&L display.** The environment reads the user's `desktop_pnl_display_mode` (money or % of capital) from `/api/desktop/v1/trading/settings/current`; an older server or no access keeps money.
+- **Not in this sprint:** swing labeling (with S5, because swing labels use the swing endpoints), managing behavior questions as a separate screen (the shared "Manage questions" dialog is available inside labeling).
+
 ---
 
 ## Status by sprint

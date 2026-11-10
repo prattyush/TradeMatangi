@@ -12,24 +12,33 @@ import { describeError, isNotAvailable } from '../../api/errors'
 import { useLoad } from '../../app/useLoad'
 import { EmptyState, ErrorState, NotAvailable, Spinner } from '../../shell/States'
 import { dateParts, formatPnl, pnlClass } from './format'
-import { PopoverMenu } from '../../shell/PopoverMenu'
+import { PopoverMenu, type MenuItem } from '../../shell/PopoverMenu'
+import { useToast } from '../../shell/Toast'
+import { LabelingOverlay } from './labeling/LabelingOverlay'
+import { useLabelProgress } from './labeling/useLabelProgress'
 import { PhoneChartPanel } from './PhoneChartPanel'
 import { SnapshotsView } from './snapshots/SnapshotsView'
 import { TradesList } from './TradesList'
 
-type Tab = 'chart' | 'trades' | 'journey' | 'orders' | 'snapshots' | 'videos'
-const LABELS: Record<Tab, string> = { chart: 'Chart', trades: 'Trades', journey: 'Day journey', orders: 'Orders', snapshots: 'Snapshots', videos: 'Videos' }
+type View = 'chart' | 'trades' | 'journey' | 'orders' | 'snapshots' | 'videos'
+/** The view menu also offers actions that open their own screen (Label trades). */
+type Choice = View | 'label'
+const LABELS: Record<Choice, string> = { chart: 'Chart', trades: 'Trades', journey: 'Day journey', orders: 'Orders', snapshots: 'Snapshots', videos: 'Videos', label: 'Label trades' }
 
 /** The right-hand pane: one trading day of one instrument, with the chart, executions, orders and videos. */
 export function SessionDetail({ group, daysOpen, onToggleDays }: { group: SessionGroup; daysOpen: boolean; onToggleDays: () => void }) {
   const api = useAnalysisApi()
   const environment = useAnalysisEnvironment()
   const isSwing = group.trading_style === 'swing'
-  const tabs: Tab[] = isSwing ? ['trades', 'videos'] : ['chart', 'trades', 'journey', 'orders', 'snapshots', 'videos']
-  const [tab, setTab] = useState<Tab>(tabs[0])
+  const tabs: View[] = isSwing ? ['trades', 'videos'] : ['chart', 'trades', 'journey', 'orders', 'snapshots', 'videos']
+  const [tab, setTab] = useState<View>(tabs[0])
   useEffect(() => { setTab(isSwing ? 'trades' : 'chart') }, [group.key, isSwing])
 
   const details = useLoad(() => Promise.all(group.sessions.map(session => api.getSessionDetail(session.session_id))), [group.key, api])
+  const toast = useToast()
+  const [labeling, setLabeling] = useState(false)
+  const [labelRevision, setLabelRevision] = useState(0)
+  const progress = useLabelProgress(group, !isSwing, labelRevision)
   const [inspected, setInspected] = useState<AnalysisTrade | null>(null)
   useBackHandler(inspected ? () => { setInspected(null); return true } : null)
   useEffect(() => setInspected(null), [group.key, tab])
@@ -40,6 +49,15 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
   const parts = dateParts(group.date)
   const shared = group.sessions.some(session => session.shared)
 
+  const menuItems: Array<MenuItem<Choice>> = [
+    ...tabs.map(id => ({ id, label: LABELS[id] })),
+    ...(isSwing ? [] : [{ id: 'label' as const, label: LABELS.label, detail: progress ? `${progress.labeled}/${progress.total}` : undefined }]),
+  ]
+  const choose = (choice: Choice) => {
+    if (choice !== 'label') { setTab(choice); return }
+    if (!details.data) { toast('The session is still loading'); return }
+    setLabeling(true)
+  }
   // One row of controls: Days, the view menu and (for the chart) everything else. It is part of the chart's own header
   // when the chart shows, so the candles keep the height.
   const lead = (
@@ -47,7 +65,7 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
       <button type="button" className="days-button" aria-pressed={daysOpen} aria-label={daysOpen ? 'Hide days' : 'Show days'} onClick={onToggleDays}>
         <span aria-hidden="true">☰</span><span className="days-text"> Days</span>
       </button>
-      <PopoverMenu ariaLabel="View" value={tab} onChange={setTab} items={tabs.map(id => ({ id, label: LABELS[id] }))} />
+      <PopoverMenu ariaLabel="View" value={tab} onChange={choose} items={menuItems} />
     </>
   )
   const chartReady = details.data !== null && tab === 'chart' && trades.length > 0
@@ -95,6 +113,9 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
               ? <p className="muted">No stored orders for this session.</p>
               : details.data.map(detail => detail.orders?.length ? <StoredOrders key={detail.session_id} orders={detail.orders} /> : null)}
           </div>
+        )}
+        {labeling && details.data && (
+          <LabelingOverlay group={group} trades={trades} readOnly={shared} onClose={() => { setLabeling(false); setLabelRevision(value => value + 1) }} />
         )}
         {inspected && (
           <div className="phone-inspector">

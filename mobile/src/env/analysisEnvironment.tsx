@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Browser } from '@capacitor/browser'
 import { AnalysisProvider, type AnalysisEnvironment } from '../../../shared/analysis/environment'
 import AnalysisPanels from '../../../shared/analysis/kline/AnalysisPanels'
@@ -34,6 +34,15 @@ export async function openVideo(video: { videoId: string; url: string }): Promis
 export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
   const { client } = useServices()
   const { chartInfo } = useChartInfo()
+  // The user's P&L display preference (money or % of capital), the same setting the website and desktop use for labeling.
+  const [pnlDisplayMode, setPnlDisplayMode] = useState<'currency' | 'percent'>('currency')
+  useEffect(() => {
+    const controller = new AbortController()
+    client.get<{ desktop_pnl_display_mode?: string }>('/api/desktop/v1/trading/settings/current', undefined, { signal: controller.signal, retries: 0 })
+      .then(settings => setPnlDisplayMode(settings.desktop_pnl_display_mode === 'percent' ? 'percent' : 'currency'))
+      .catch(() => undefined) // an older server or no access: money, the default
+    return () => controller.abort()
+  }, [client])
   const built = useMemo(() => {
     const request = createAnalysisRequest(client)
     const adapter = createAnalysisApi(request)
@@ -59,7 +68,7 @@ export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
     return { adapter, environment }
   }, [client])
   // The data layer is built once per client; only the display setting changes here.
-  return useMemo(() => ({ ...built.environment, chartInfo }), [built, chartInfo])
+  return useMemo(() => ({ ...built.environment, chartInfo, pnlDisplayMode }), [built, chartInfo, pnlDisplayMode])
 }
 
 export function PhoneAnalysisProvider({ children }: { children: ReactNode }) {
