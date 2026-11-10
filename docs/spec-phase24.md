@@ -53,3 +53,35 @@ Two guardrails are added to the GuardRails settings (website Settings window and
 Both are settings keys on the user's settings record (`guardrail_maxentry_*`, `guardrail_mingap_*`), copied onto the session when it is created like the other guardrails, and enforced on the server so the website, the desktop and AutoStop behave the same.
 
 Status: built on `dev` (backend `guardrail_service.py`, orders and direct trade routes, AutoStop; website and desktop settings); tests in `backend/tests/test_guardrail_maxentry_mingap.py` and `windowsapp/src/guardrailSettings.test.ts`.
+
+
+#### More symbols: Midcap 50 and sectoral index constituents
+
+##### Requirement (2026-11-10)
+Add the stocks in NIFTY MIDCAP 50, NIFTY AUTO, NIFTY FMCG, NIFTY IT, NIFTY BANK, NIFTY METAL and NIFTY OIL & GAS to the symbol list on the website, the desktop and the webapp. A company already in the catalogue (the pinned Nifty 100, `backend/app/resources/nifty100.json`) is left alone. The three clients read one list (`/api/data/symbols`, the desktop catalogue), so one server change covers all of them.
+
+1. **Scope: 72 new stocks.** Constituents were taken from the official `niftyindices.com` `ind_nifty*list.csv` files (2026-11-10) and compared by ISIN with the Nifty 100: all 50 of Midcap 50; Auto +2 (SONACOMS, UNOMINDA); FMCG +5 (COLPAL, GODFRYPHLP, PATANJALI, RADICO, UBL); IT +3 (COFORGE, MPHASIS, OFSS); Bank +0; Metal +4 (HINDCOPPER, JSL, LLOYDSME, SAIL); Oil & Gas +8 (ATGL, AEGISLOG, AEGISVOPAK, CASTROLIND, CHENNPETRO, IGL, MGL, PETRONET). The index symbols themselves (NIFTY BANK and so on) are not added; only their companies.
+2. **Where they live.** A second pinned snapshot, `backend/app/resources/index_extras.json` (same row shape as `nifty100.json`, plus the indices a stock belongs to), loaded by `config.py` next to the Nifty 100. `nifty100.json` is not edited, so its test (exactly 100) stays valid. Kite and Kotak name maps are built from the same rows. Rows are produced by a manual script (`scripts/update_index_extras.py`); there is no automatic refresh from NSE.
+3. **Options.** A stock gets options only if the current Kite/Breeze derivative masters list it; lot size and strike step come from them. Nothing is guessed. The cached Kite list showed no F&O for UBL, HINDCOPPER, JSL, LLOYDSME, ATGL, AEGISLOG, AEGISVOPAK, CASTROLIND, CHENNPETRO, IGL and MGL; the script re-downloads the masters before deciding.
+4. **Broker validation (read-only, no orders).** Kite and ICICI Breeze: instrument mapping, a quote and one day of 1-minute history for the new symbols (tokens from DDB Local). Kotak Neo: the same check for every symbol in the list (the five originals, the Nifty 100 and the 72 new ones) against Kotak's `nse_cm` master. Anything Kotak lacks is recorded below as a limitation (Kotak trading or streaming is not offered for it; Kite and Breeze still work); it is never left to fail silently.
+
+Status: planned. Results of the broker validation are added here when it has been run.
+
+
+#### Volume in OHLC data
+
+##### Requirement (2026-11-10)
+Evaluate and add volume to the historical data fetched from Kite and ICICI Breeze (and Kotak), stored with it, and served to day trading and swing; and evaluate it for real-trading candles. Display is a `VOL` indicator on the KLine chart (website, desktop, webapp); the older Lightweight chart is unchanged.
+
+##### Evaluation
+- **Fetched and stored already.** Kite, Breeze and Kotak history all return volume and the history frames keep it. Every cached day file on this machine (255 parquet files and the legacy pickle) already has a `volume` column; no refetch or backfill is needed. Indices carry no volume (zero); options and equities do.
+- **Lost on read.** The day-trading loaders (`data_loader._load_breeze_dataframe`, `options_service._load_breeze_options_dataframe`, `historical_data_service._normalize`) keep only open/high/low/close, `resample_to_candles` does not sum volume, and the API candle models (`OHLCCandle`, `DesktopCandle`, `OHLCItem`) have no volume field.
+- **Swing already carries volume** in history (`swing_charts`), summed per bucket. Its live bar and the quote merge do not.
+- **Gap-fill would invent volume.** The second-level gap-fill forward/back-fills every column, so a filled second would show traded volume. Rows with `observed = false` must have volume 0.
+- **Real trading has none today.** Every live adapter (Kite, Kotak, Breeze, Fyers) turns ticks into 1-second OHLC and discards everything else; Kite is subscribed in LTP mode. Providers report a cumulative day total, so a bar's volume is a difference, not a sum of ticks. Reconnects, provider failover and option strike changes can create a false spike, and indices have no volume at all. No live candles are stored on the server; the desktop's local `desktop_live_ticks.volume` column exists but is never written.
+
+##### Decision
+1. **B1 (this work):** keep volume through history, replay, stepwise, the website and desktop APIs and swing; add the `VOL` indicator (and make VWAP usable) for instruments that have volume. Volume is the sum per bar; indices report no volume (null, not 0); gap-filled seconds are 0; older cached files without the column still load.
+2. **B2 (later, gated):** live volume for real and paper trading. First a read-only probe of the real Kite (quote mode), Breeze, Kotak and Fyers payloads during market hours; findings are written here before any code. Real-trading orders, stoplosses and square-offs never depend on volume. Not promoted to `preprod` without the user's real-session test.
+
+Status: B1 planned. B2 waits for the live probe.
