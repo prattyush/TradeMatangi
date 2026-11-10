@@ -65,7 +65,24 @@ Add the stocks in NIFTY MIDCAP 50, NIFTY AUTO, NIFTY FMCG, NIFTY IT, NIFTY BANK,
 3. **Options.** A stock gets options only if the current Kite/Breeze derivative masters list it; lot size and strike step come from them. Nothing is guessed. The cached Kite list showed no F&O for UBL, HINDCOPPER, JSL, LLOYDSME, ATGL, AEGISLOG, AEGISVOPAK, CASTROLIND, CHENNPETRO, IGL and MGL; the script re-downloads the masters before deciding.
 4. **Broker validation (read-only, no orders).** Kite and ICICI Breeze: instrument mapping, a quote and one day of 1-minute history for the new symbols (tokens from DDB Local). Kotak Neo: the same check for every symbol in the list (the five originals, the Nifty 100 and the 72 new ones) against Kotak's `nse_cm` master. Anything Kotak lacks is recorded below as a limitation (Kotak trading or streaming is not offered for it; Kite and Breeze still work); it is never left to fail silently.
 
-Status: planned. Results of the broker validation are added here when it has been run.
+##### Broker validation results (2026-11-10, market open, read-only)
+Run with `scripts/check-nifty100-providers.py --catalogue extras|all` (mapping and live quote) and `scripts/check-history-volume-probe.py` (one day of 1-minute candles, 2026-11-09). Raw output is in `.cache/index-extras/`.
+
+| Check | Kite | ICICI Breeze | Kotak Neo |
+|---|---|---|---|
+| Instrument mapping, 72 new stocks | 72 / 72 | 72 / 72 (matched by ISIN) | covered by the quote check |
+| Live quote, 72 new stocks | 72 / 72 | 72 / 72 | 72 / 72 |
+| Live quote or token, **every** symbol in the list (2 indices, Nifty 100, 72 new = 174) | - | - | 174 / 174 |
+| 1-minute history, sample of 9 (NIFTY, NAUKRI, UBL, SAIL, IGL, SONACOMS, COFORGE, AUBANK, RELIND) | 9 / 9 | 8 / 9 verified, 1 not completed (see below) | 8 / 9 (NIFTY not supported) |
+
+- **Kotak supports every symbol in the list** for instrument lookup and quotes. No symbol had to be removed or remapped.
+- **Kotak history does not support the NIFTY index** (`Invalid neosymbol` for `nse_cm|26000`). This is how Kotak's history API behaves for indices, not a catalogue problem; the history policy already falls back from Kotak to Kite and Breeze. Stocks work (NAUKRI, UBL, SAIL, IGL, SONACOMS, COFORGE, AUBANK, RELIND all returned about 352 to 360 candles). Kotak throttles history at roughly one request every few seconds (HTTP 429); the production pacer handles it.
+- **Breeze history:** IGL, NAUKRI, UBL, SAIL, SONACOMS, COFORGE, AUBANK, RELIND and NIFTY returned candles. Connections from this machine to `breezeapi.icicidirect.com` timed out intermittently during the run; MGL's history call did not complete for that reason (its mapping and quote passed).
+- **Volume is returned by all three providers** for stocks (non-zero in 351 to 361 of about 360 candles) and is zero for the NIFTY index, which is what the volume work below relies on.
+- **Options:** 61 of the 72 have options (Kite lists a stock option and Breeze lists the same stock code). Without options: UBL, HINDCOPPER, JSL, LLOYDSME, ATGL, AEGISLOG, AEGISVOPAK, CASTROLIND, CHENNPETRO, IGL, MGL (none was listed by Kite's current F&O master).
+- **Symbol picker:** the shared `SymbolSearch` (website, desktop, webapp) already searches by name and NSE symbol, so about 177 entries need no UI change.
+
+Status: built on `dev` (`index_extras.json`, `scripts/update_index_extras.py`, `config.py`, tests in `backend/tests/test_index_extras_catalogue.py`). Re-run the update script to refresh; there is no automatic refresh.
 
 
 #### Volume in OHLC data

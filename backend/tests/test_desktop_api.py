@@ -23,12 +23,13 @@ def test_capabilities_are_versioned_and_advertise_stepwise_trading():
     assert "flatten" in data["trading_capabilities"]
 
 
-def test_catalogue_has_nifty100_and_preserves_legacy_chart_keys():
+def test_catalogue_has_nifty100_index_constituents_and_preserves_legacy_chart_keys():
     response = client.get("/api/desktop/v1/catalogue", headers=HEADERS)
     assert response.status_code == 200
     instruments = response.json()["instruments"]
-    assert len(instruments) == 102
-    assert {"NIFTY", "BSESEN", "TATPOW", "TATMOT", "RELIND", "HDFCBANK", "INFY"} <= {item["symbol"] for item in instruments}
+    assert len(instruments) == 174  # 2 indices + Nifty 100 (incl. 3 legacy stocks) + 72 Midcap 50 / sectoral extras
+    assert {"NIFTY", "BSESEN", "TATPOW", "TATMOT", "RELIND", "HDFCBANK", "INFY", "NAUKRI", "SAIL", "UBL"} <= {item["symbol"] for item in instruments}
+    assert next(item for item in instruments if item["symbol"] == "UBL")["option_eligible"] is False
     assert next(item for item in instruments if item["symbol"] == "NIFTY")["chart_type"] == "index"
 
 
