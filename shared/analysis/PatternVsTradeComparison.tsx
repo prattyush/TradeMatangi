@@ -69,13 +69,13 @@ export default function PatternVsTradeComparison({symbol,date,instrumentType,ses
   if(max && !environment.desktop) return <div style={{position:'fixed',inset:0,zIndex:200,background:'#0d1117',display:'flex',flexDirection:'column'}}><div style={{display:'flex',alignItems:'center',padding:'8px 16px',background:'#161b22',borderBottom:'1px solid #30363d'}}><span style={{fontSize:14,fontWeight:700,color:'#e6edf3'}}>{symbol} · {date}</span><div style={{flex:1}}/><Btn onClick={()=>smax(null)}>⤡ Restore</Btn></div><div style={{flex:1,padding:8,overflow:'auto'}}>{max==='trades-underlying'&&<TradesChart symbol={symbol} date={date} trades={allTrades} getMarkerText={gmt} strikeTabs={strikeTabs} isOpt={isOpt}/>}{max==='patterns-underlying'&&<PatternChart symbol={symbol} date={date} annotations={pAnn} topPatterns={tp} activeStrategy={astr||null} activeCategory={acat||null} instFilter={instFilter} setInstFilter={sif} isOpt={isOpt} patternStrike={pStrike}/>}</div></div>
 
   return <div className={`analysis-comparison-view ${max?'comparison-maximized':''}`} data-max={max??''} role="dialog" aria-label="Pattern comparison" style={{position:'fixed',inset:0,zIndex:99,background:'#0d1117',display:'flex',flexDirection:'column'}}>
-    <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 20px',borderBottom:'1px solid #21262d',flexShrink:0}}>
-      <div><div style={{fontSize:18,color:'#e6edf3',fontWeight:600}}>📊 Pattern vs Trade: {symbol} · {date}</div><div style={{fontSize:12,color:'#484f58',marginTop:4}}>Compare actual trades against saved pattern annotations</div></div>
-      <div style={{width:1,height:24,background:'#30363d',margin:'0 8px'}}/><span style={{fontSize:11,color:'#8b949e'}}>Filter:</span>
+    <div className="analysis-comparison-head" style={{display:'flex',alignItems:'center',gap:12,padding:'12px 20px',borderBottom:'1px solid #21262d',flexShrink:0}}>
+      <div><div className="analysis-comparison-title" style={{fontSize:18,color:'#e6edf3',fontWeight:600}}>📊 Pattern vs Trade: {symbol} · {date}</div><div className="analysis-comparison-subtitle" style={{fontSize:12,color:'#484f58',marginTop:4}}>Compare actual trades against saved pattern annotations</div></div>
+      <div className="analysis-comparison-divider" style={{width:1,height:24,background:'#30363d',margin:'0 8px'}}/><span className="analysis-comparison-filter-label" style={{fontSize:11,color:'#8b949e'}}>Filter:</span>
       <select value={acat} onChange={e=>sac(e.target.value)} style={sel}><option value="">All categories</option>{categories.map(c=><option key={c} value={c}>{c}</option>)}</select>
       <select value={astr} onChange={e=>sas(e.target.value)} style={sel}><option value="">All strategies</option>{strategies.map(s=><option key={s} value={s}>{s}</option>)}</select>
-      <div style={{flex:1}}/><span style={{fontSize:11,color:'#484f58'}}>{pAnn.length} annotations · {labelMap.size} labeled trades</span>
-      <button onClick={onClose} style={{background:'none',border:'1px solid #30363d',borderRadius:6,color:'#8b949e',fontSize:13,cursor:'pointer',padding:'6px 16px'}}>✕ Close</button>
+      <div style={{flex:1}}/><span className="analysis-comparison-counts" style={{fontSize:11,color:'#484f58'}}>{pAnn.length} annotations · {labelMap.size} labeled trades</span>
+      <button className="analysis-comparison-close" onClick={onClose} style={{background:'none',border:'1px solid #30363d',borderRadius:6,color:'#8b949e',fontSize:13,cursor:'pointer',padding:'6px 16px'}}>✕ Close</button>
     </div>
     {error&&<p role="alert">{error}<button onClick={()=>setRetry(n=>n+1)}>Retry comparison</button></p>}
     {loading&&<p role="status">Loading comparison…</p>}

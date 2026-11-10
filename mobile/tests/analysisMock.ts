@@ -143,10 +143,13 @@ export interface AnalysisMockState extends StatsMockState {
   /** Saved videos per session id. */
   /** Make the saved-videos list answer 404 like an older server. */
   videosOld?: boolean
+  /** Compare: saved pattern annotations exist for the day. */
+  patterns?: boolean
+  patternRequests: URLSearchParams[]
   videos: Record<string, Array<{ video_id: string; title: string; privacy: string; url: string; chapters: string; uploaded_at: string; session_id: string }>>
 }
 
-export const newAnalysisState = (): AnalysisMockState => ({ sessions: 'ok', failedOnce: false, performanceRequests: [], ledgerRequests: [], sessionsRequests: [], videos: {}, labels: {}, labelPosts: [], marks: {}, markPosts: [] })
+export const newAnalysisState = (): AnalysisMockState => ({ sessions: 'ok', failedOnce: false, performanceRequests: [], ledgerRequests: [], patternRequests: [], sessionsRequests: [], videos: {}, labels: {}, labelPosts: [], marks: {}, markPosts: [] })
 
 export interface MockResponse { status: number; body?: unknown }
 
@@ -236,6 +239,19 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
     return { status: 200, body: session ? snapshotsFor(session) : [] }
   }
   if (/^snapshots\/[A-Za-z0-9_-]+\/candle$/.test(route)) return { status: 200, body: { candle: null } }
-  if (route === 'pattern/chart/by-date') return { status: 404, body: { detail: 'No chart' } }
+  if (route === 'pattern/chart/by-date') {
+    if (!state.patterns) return { status: 404, body: { detail: 'No chart' } }
+    const date = query.get('date') ?? '2026-11-09'
+    state.patternRequests.push(query)
+    return { status: 200, body: {
+      chart_id: 'pc1', user_id: 'u1', symbol: query.get('symbol'), date, instrument_type: query.get('instrument_type'), strike: 24500, notes: '',
+      annotations: [
+        { id: 'a1', time: epoch(date, 10, 5), price: 24420, type: 'entry', instrument: 'underlying', strategy_name: 'Opening Range', category: 'Breakout', text: 'Opening Range entry' },
+        { id: 'a2', time: epoch(date, 10, 40), price: 24480, type: 'exit', instrument: 'underlying', strategy_name: 'Opening Range', category: 'Breakout', text: 'Opening Range exit' },
+      ],
+      top_patterns: {},
+    } }
+  }
+  if (route === 'data/expiry') return { status: 200, body: { symbol: query.get('symbol'), date: query.get('date'), expiry: '2026-11-13' } }
   return { status: 404, body: { detail: 'Not Found' } }
 }

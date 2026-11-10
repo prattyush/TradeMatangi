@@ -151,7 +151,10 @@ Reserved room: Alerts, Swing orders (biometric confirm; guardrails stay on the s
 - **Requests are date-bounded** (7 days, 30 days default, 90 days, 1 year, or a custom range of at most 400 days).
 - **Shared-code changes made for the phone, additive and unchanged for other hosts:** the Analysis chart passes `volume` to the chart (it was dropped) and skips VOL and VWAP when the data has none; `toolbarStart` slot; `chartInfo` environment option.
 - **Control sizes.** The list rows and the rail are 44+ px. The controls in the chart row are 36 px tall so the candles keep the height (checked by the UI tests).
-- **Not in this sprint:** snapshots, Compare, day journey and execution details (S3b); per-day label progress (S4); the swing review screens (S5).
+- **Not in this sprint:** snapshots, day journey and execution details (S3b), Compare (S3c); per-day label progress (S4); the swing review screens (S5).
+
+## Sprint 3c notes (Compare)
+- The view menu has **Compare** (intraday days). It mounts the shared `PatternVsTradeComparison` full screen (`compare/CompareOverlay.tsx`, Back closes) and restyles it in `compare.css`: one header row (title, category and strategy filters, Close), each pane with its own button row and chart header, safe-area padding. The shared component's header parts got additive class names (`analysis-comparison-*`) so the phone can restyle inline-styled elements; its behavior is unchanged for other hosts.
 
 ## Sprint 3b notes (Snapshots, Day journey, execution details)
 

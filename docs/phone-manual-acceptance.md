@@ -16,6 +16,7 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 8. Airplane mode, then tap another day: a clear message with Try again. On a server without the analysis routes: "Sessions is not available on this server".
 9. **Snapshots** (view menu > Snapshots, on a day that has them): one strip at the top with ◀ ▶ and the current event (number, time, what happened); ◀ ▶ step through the events and the chart shows the candles and your position and orders as they were at that moment. Tap the event name for the list: search it (`fill*`, `stop*`) and tap one to jump. **Details** shows wallet, open P&L, session P&L, open orders and positions. On an options day the chart row has **Underlying | CE | PE**. A day with no snapshots says so.
 10. **Day journey** (view menu) shows the day's cumulative P&L, one dot per completed trade. In **Trades**, tap a row for the execution details (a panel on the right; Back closes it).
+12. **Compare** (view menu > Compare, intraday days): full screen, the day's trades on the left (Underlying and each traded contract) and the saved pattern annotations for the same day on the right (Underlying, CE, PE); the two dropdowns filter the annotations by category and strategy. A day with no saved pattern chart still opens (the right side is just the plain chart). Close or Back returns to the session.
 11. Volume: in the chart's indicators menu (fx) switch on **Volume**: a volume pane appears for an option or a stock; for the NIFTY underlying it does nothing.
 
 ## C. Trade labeling (S4)

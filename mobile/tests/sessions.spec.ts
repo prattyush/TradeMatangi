@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { chooseView, mockServer, openSessions, VIEWPORTS } from './fixtures'
 
 const rows = (page: import('@playwright/test').Page) => page.locator('.session-row')
@@ -408,5 +408,58 @@ test.describe('execution details and day journey', () => {
     await rows(page).filter({ hasText: 'Swing' }).click()
     await page.getByRole('button', { name: /^View:/ }).click()
     await expect(page.getByRole('menuitemradio', { name: 'Day journey' })).toHaveCount(0)
+  })
+})
+
+test.describe('Compare', () => {
+  const compare = (page: Page) => page.getByRole('dialog', { name: 'Pattern comparison' })
+
+  test('opens from the view menu: trades on one side, the saved pattern annotations on the other', async ({ page }) => {
+    const state = await mockServer(page)
+    state.analysis.patterns = true
+    await openSessions(page)
+    await rows(page).first().click()
+    await page.getByRole('button', { name: /^View:/ }).click()
+    await page.getByRole('menuitemradio', { name: /^Compare/ }).click()
+    const dialog = compare(page)
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('Pattern vs Trade')
+    await expect(dialog.locator('.comparison-trades-pane .desktop-analysis-chart')).toBeVisible()
+    await expect(dialog.locator('.comparison-pattern-pane .desktop-analysis-chart')).toBeVisible()
+    expect(state.analysis.patternRequests.length).toBeGreaterThan(0)
+    const box = (await dialog.boundingBox())!
+    expect(box.y).toBe(0)
+    expect(box.height).toBe(page.viewportSize()!.height)
+    await page.screenshot({ path: 'test-results/sessions-compare.png' })
+    await page.keyboard.press('Escape') // Android back
+    await expect(dialog).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /^View:/ })).toBeVisible()
+  })
+
+  test('Close returns to the session; a day without saved patterns still opens', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await page.getByRole('button', { name: /^View:/ }).click()
+    await page.getByRole('menuitemradio', { name: /^Compare/ }).click()
+    await expect(compare(page)).toBeVisible()
+    await expect(compare(page)).toContainText('Pattern vs Trade')
+    await compare(page).getByRole('button', { name: /Close/ }).click()
+    await expect(compare(page)).toHaveCount(0)
+  })
+
+  test('the header fits one row and the controls are tappable', async ({ page }) => {
+    const state = await mockServer(page)
+    state.analysis.patterns = true
+    await openSessions(page)
+    await rows(page).first().click()
+    await page.getByRole('button', { name: /^View:/ }).click()
+    await page.getByRole('menuitemradio', { name: /^Compare/ }).click()
+    const head = (await compare(page).locator('.analysis-comparison-head').boundingBox())!
+    expect(head.height).toBeLessThanOrEqual(56)
+    const close = (await compare(page).getByRole('button', { name: /Close/ }).boundingBox())!
+    expect(close.height).toBeGreaterThanOrEqual(40)
+    expect(close.x + close.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+    for (const select of await compare(page).locator('.analysis-comparison-head select').all()) expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(40)
   })
 })
