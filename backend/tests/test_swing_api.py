@@ -207,6 +207,8 @@ def test_legacy_session_controls_cannot_end_or_pause_a_portfolio_child(client):
 def test_exact_contract_lot_validation_and_invalid_master_do_not_create_context(
     client, monkeypatch
 ):
+    # The option expires 2026-11-03; entries close once the portfolio date passes it.
+    monkeypatch.setattr("app.services.swing_market.today", lambda: "2026-11-02")
     path = start(client)
     headers = {"X-User-Id": "u"}
 
