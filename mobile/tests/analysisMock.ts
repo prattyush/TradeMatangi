@@ -55,7 +55,56 @@ function tradesFor(session: MockSession) {
   return rows
 }
 
+/** Three captured events for an options day: an order placed, filled, and its stoploss edited. */
+export function snapshotsFor(session: MockSession) {
+  if (session.instrument_type !== 'options' || session.session_type === 'sim' || session.trading_style === 'swing') return []
+  const flat = { side: 'FLAT', quantity: 0, avg_entry_price: 0, pnl: 0, pnl_pct: 0 }
+  const long = { side: 'LONG', quantity: 75, avg_entry_price: 120, pnl: 150, pnl_pct: 1.7 }
+  const make = (i: number, type: string, description: string, hour: number, minute: number, second: number, open: boolean, stoploss: boolean) => {
+    const timestamp = epoch(session.date, hour, minute, second)
+    return {
+      event_id: `${session.session_id}-e${i}`, session_id: session.session_id, user_id: 'u1', symbol: session.symbol, date: session.date,
+      instrument_type: 'options', session_type: session.session_type, timestamp,
+      event: { type, description, details: {} },
+      snapshot: {
+        current_price: 24410, current_price_ce: 118, current_price_pe: 96, bar_time: Math.floor(timestamp / 180) * 180,
+        bar_ohlc: { open: 24400, high: 24420, low: 24395, close: 24410 }, bar_observation_resolution_seconds: 1,
+        position: flat, position_ce: open ? long : flat, position_pe: flat,
+        combined_pnl: open ? 150 : 0, combined_pnl_pct: open ? 0.03 : 0, session_pnl: open ? 130 : 0, session_pnl_pct: open ? 0.026 : 0,
+        wallet_balance: open ? 491000 : 500000, session_capital: 500000, wallet_used_pct: open ? 1.8 : 0, active_positions: open ? 1 : 0,
+        open_orders: stoploss ? [{ order_id: `${session.session_id}-sl`, session_id: session.session_id, side: 'SELL', order_type: 'STOP', trigger_price: 110, limit_price: 0, quantity: 75, is_stoploss: true, right: 'CE' }] : [],
+        strike_ce: session.strike, strike_pe: session.session_id === 's-0911-a' ? session.strike : null, expiry: session.expiry,
+        event_timestamp: timestamp, quantity_mode: 'quantity', filled_trades: open ? [{ trade_id: `${session.session_id}-b0`, side: 'BUY', price: 120, timestamp: epoch(session.date, 10, 5), right: 'CE', strike: session.strike, expiry: session.expiry, quantity: 75, kotak_order_id: null }] : [],
+        seq: i, capture_v: 2,
+      },
+    }
+  }
+  return [
+    make(1, 'order_placed', 'BUY LIMIT placed @ 120', 10, 4, 40, false, false),
+    make(2, 'order_filled', 'BUY order filled @ 120', 10, 5, 0, true, false),
+    make(3, 'order_edited', 'Stoploss edited to 110', 10, 20, 0, true, true),
+  ]
+}
+
+/** One closed round trip per BUY/SELL pair, shaped like the server's cycles (what the journey and the inspector read). */
+function cyclesFor(session: MockSession, trades: ReturnType<typeof tradesFor>) {
+  const cycles = []
+  for (let i = 0; i + 1 < trades.length; i += 2) {
+    const entry = trades[i], exit = trades[i + 1]
+    const pnl = Math.round((exit.price - entry.price) * entry.quantity)
+    cycles.push({
+      user_id: 'u1', cycle_id: `${session.session_id}-c${i / 2}`, session_id: session.session_id, symbol: session.symbol, right: entry.right, strike: entry.strike, expiry: entry.expiry,
+      date: session.date, mode: session.session_type, direction: 'long', state: 'closed', entry_time: entry.timestamp, exit_time: exit.timestamp, exit_sort_time: null,
+      entry_count: 1, exit_count: 1, net_pnl: pnl, pnl_pct: +(pnl / session.session_capital * 100).toFixed(2), fees: 40, open_quantity: 0, matches: [],
+      executions: [{ trade_id: entry.trade_id, role: 'entry', quantity: entry.quantity, price: entry.price, timestamp: entry.timestamp }, { trade_id: exit.trade_id, role: 'exit', quantity: exit.quantity, price: exit.price, timestamp: exit.timestamp }],
+    })
+  }
+  return cycles
+}
+
 export interface AnalysisMockState {
+  /** Make the snapshots endpoint answer 404 like an older server. */
+  snapshotsOld?: boolean
   /** What the sessions endpoint should do: normal, return nothing, fail once with 500, or 404 like an old server. */
   sessions: 'ok' | 'empty' | 'fail-once' | 'old'
   failedOnce: boolean
@@ -88,7 +137,7 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
   const detail = route.match(/^sessions\/([A-Za-z0-9_-]+)$/)
   if (detail) {
     const session = SESSIONS.find(s => s.session_id === detail[1])
-    return session ? { status: 200, body: { ...session, trades: tradesFor(session), orders: [], cycles: [] } } : { status: 404, body: { detail: 'Session not found' } }
+    return session ? { status: 200, body: { ...session, trades: tradesFor(session), orders: [], cycles: cyclesFor(session, tradesFor(session)) } } : { status: 404, body: { detail: 'Session not found' } }
   }
   if (route === 'data/historical') {
     const date = query.get('trading_date') ?? '2026-11-09'
@@ -103,7 +152,12 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
     return { status: 200, body: { symbol: query.get('symbol'), dates: [date], candles: dayCandles(date, +(query.get('interval_minutes') ?? 3), 120) } }
   }
   if (route === 'video-links') return { status: 200, body: { links: state.videos[query.get('session_id') ?? ''] ?? [] } }
-  if (route === 'snapshots') return { status: 200, body: [] }
+  if (route === 'snapshots') {
+    if (state.snapshotsOld) return { status: 404, body: { detail: 'Not Found' } }
+    const session = SESSIONS.find(item => item.session_id === query.get('session_id'))
+    return { status: 200, body: session ? snapshotsFor(session) : [] }
+  }
+  if (/^snapshots\/[A-Za-z0-9_-]+\/candle$/.test(route)) return { status: 200, body: { candle: null } }
   if (route === 'pattern/chart/by-date') return { status: 404, body: { detail: 'No chart' } }
   return { status: 404, body: { detail: 'Not Found' } }
 }

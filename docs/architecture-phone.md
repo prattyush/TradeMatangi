@@ -153,6 +153,13 @@ Reserved room: Alerts, Swing orders (biometric confirm; guardrails stay on the s
 - **Control sizes.** The list rows and the rail are 44+ px. The controls in the chart row are 36 px tall so the candles keep the height (checked by the UI tests).
 - **Not in this sprint:** snapshots, Compare, day journey and execution details (S3b); per-day label progress (S4); the swing review screens (S5).
 
+## Sprint 3b notes (Snapshots, Day journey, execution details)
+
+- **Snapshots** (`mobile/src/screens/sessions/snapshots/`): `SnapshotsView` loads `getSnapshots` for every session of the day and orders them with the shared `sortSnapshots`. One 44 px strip steps through the events (◀ ▶, or the event button which opens `EventListSheet`: time, description, type and the session or position result, with `filterSnapshots` search where `*` is a wildcard) and has a **Details** button (`SnapshotDetailsSheet`: wallet and capital in use, open and session P&L, open orders with stoploss marks, positions per contract). `PhoneSnapshotChart` is the shared Analysis chart with the same props the website's viewer gives it, and the Days and view-menu controls plus **Underlying | CE strike | PE strike** go in the chart's own header row (only the contracts the snapshot has are offered). The chart stays mounted from event to event, so the zoom and scroll position are kept. No delete on the phone.
+- **Shared module** `shared/analysis/snapshotModel.ts` (`sortSnapshots`, `filterSnapshots`, `eventIcon`): the website's viewer now uses it too, so the event ordering and search are one implementation (unit tests in `windowsapp/src/analysisSnapshotModel.test.ts`).
+- **Day journey:** the shared `DayJourneyChart` over `sessionJourney(cycles, capitals)`; day sessions only.
+- **Execution details:** tapping a trade row opens the desktop's `ExecutionInspector` as a panel over the right edge of the pane (Back closes it). Its "Open cycle" button is hidden until the phone has Stats.
+
 ---
 
 ## Status by sprint

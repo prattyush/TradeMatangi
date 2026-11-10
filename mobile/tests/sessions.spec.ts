@@ -353,3 +353,43 @@ test('chart details can be chosen in More and are remembered', async ({ page }) 
   await nav.getByRole('button', { name: 'More' }).click()
   await expect(page.getByRole('group', { name: 'Chart details' }).getByRole('button', { name: 'Never' })).toHaveAttribute('aria-pressed', 'true')
 })
+
+test.describe('execution details and day journey', () => {
+  test('tapping a trade opens its execution details; Back closes them', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await chooseView(page, 'Trades')
+    await page.getByRole('button', { name: 'Inspect BUY 75 at 120.00' }).first().click()
+    const inspector = page.getByRole('dialog', { name: 'Execution inspector' })
+    await expect(inspector).toBeVisible()
+    await expect(inspector).toContainText('BUY 75 @ 120')
+    await expect(inspector).toContainText('CE 24500')
+    const box = await inspector.boundingBox()
+    expect(box!.y).toBeLessThanOrEqual(page.viewportSize()!.height) // inside the pane
+    await page.screenshot({ path: 'test-results/sessions-inspector.png' })
+    await page.keyboard.press('Escape')
+    await expect(inspector).toHaveCount(0)
+    await expect(page.locator('.trades-table')).toBeVisible()
+  })
+
+  test('the Day journey view draws the cumulative P&L of the day', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await chooseView(page, 'Day journey')
+    const chart = page.getByRole('region', { name: 'Day P&L journey' })
+    await expect(chart).toBeVisible()
+    await expect(chart.locator('svg circle')).toHaveCount(2) // the two closed round trips of this day
+    await expect(chart).toContainText('2 completed trades')
+    await page.screenshot({ path: 'test-results/sessions-journey.png' })
+  })
+
+  test('a swing day has no Day journey', async ({ page }) => {
+    await mockServer(page)
+    await openSessions(page)
+    await rows(page).filter({ hasText: 'Swing' }).click()
+    await page.getByRole('button', { name: /^View:/ }).click()
+    await expect(page.getByRole('menuitemradio', { name: 'Day journey' })).toHaveCount(0)
+  })
+})
