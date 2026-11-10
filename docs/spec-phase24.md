@@ -82,7 +82,7 @@ Run with `scripts/check-nifty100-providers.py --catalogue extras|all` (mapping a
 - **Options:** 61 of the 72 have options (Kite lists a stock option and Breeze lists the same stock code). Without options: UBL, HINDCOPPER, JSL, LLOYDSME, ATGL, AEGISLOG, AEGISVOPAK, CASTROLIND, CHENNPETRO, IGL, MGL (none was listed by Kite's current F&O master).
 - **Symbol picker:** the shared `SymbolSearch` (website, desktop, webapp) already searches by name and NSE symbol, so about 177 entries need no UI change.
 
-Status: built on `dev` (`index_extras.json`, `scripts/update_index_extras.py`, `config.py`, tests in `backend/tests/test_index_extras_catalogue.py`). Re-run the update script to refresh; there is no automatic refresh.
+Status: merged to `dev` (#800: `index_extras.json`, `scripts/update_index_extras.py`, `config.py`, tests in `backend/tests/test_index_extras_catalogue.py`). Re-run the update script to refresh; there is no automatic refresh. Not yet promoted to `preprod` (it comes with the `dev` promotion). Manual check: `docs/phase24-manual-acceptance.md` section F.
 
 
 #### Volume in OHLC data
@@ -107,4 +107,7 @@ Evaluate and add volume to the historical data fetched from Kite and ICICI Breez
 - Website and desktop: `VOL` ("Volume") in the shared indicator list; `VOL` and `VWAP` appear only when the data has volume. Replay and stepwise bars built from ticks sum the seconds' volume. Tests: `windowsapp/src/liveCandles.test.ts`, `phase22Charts.test.ts`.
 - Not done in B1: live volume, the older Lightweight Chart, and volume on the paper-session gap-fill ticks (`simulation._historical_gap_ticks`).
 
-Status: B1 built on `dev` (PR pending). B2 waits for the live probe.
+Status: B1 merged to `dev` (#801). Still to do by hand: the `VOL` pane and a replay or stepwise session on a stock and an option (`docs/phase24-manual-acceptance.md` section F). B2 waits for the live probe and is not started.
+
+##### Test housekeeping (2026-11-10)
+Three Swing tests (`test_swing_api::test_exact_contract_lot_validation...`, `test_swing_paper_runtime::test_expiry_quote_closes...`, `test_swing_stream_valuation::...[True]`) had started failing on every branch once the real date passed their hardcoded option expiry (2026-11-03): the Swing portfolio date came from the wall clock and Swing correctly refused the entry. They now pin `swing_market.today` as `test_swing_futures.py` does (#802, tests only). Rule for new Swing tests: pin `swing_market.today`; never rely on the real date next to a hardcoded expiry.
