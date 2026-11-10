@@ -95,7 +95,8 @@ export function groupSavedVideos(links: SavedLink[]): SavedVideo[] {
  */
 export async function loadSavedVideos(source: Pick<VideoLinksSource, 'list'>, sessionIds: string[]): Promise<{ videos: SavedVideo[]; error: string }> {
   const settled = await Promise.allSettled(sessionIds.map(id => source.list(id)))
-  const rows = settled.flatMap(r => (r.status === 'fulfilled' ? r.value : []))
+  // A host or server that answers without a list (an older server, a stub) counts as "no links", never as a crash.
+  const rows = settled.flatMap(r => (r.status === 'fulfilled' && Array.isArray(r.value) ? r.value : []))
   const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected' && !/\b404\b/.test(String(r.reason?.message ?? r.reason)))
   return { videos: groupSavedVideos(rows), error: failed ? String(failed.reason?.message ?? failed.reason) : '' }
 }
