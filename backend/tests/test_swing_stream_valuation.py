@@ -16,6 +16,8 @@ from tests.test_swing_paper_runtime import db, entry, tick
 @pytest.mark.asyncio
 @pytest.mark.parametrize("option", [False, True])
 async def test_last_known_paper_valuation_survives_restart_without_executing_orders(db, monkeypatch, option):
+    # The option expires 2026-11-03; entries close once the portfolio date passes it.
+    monkeypatch.setattr("app.services.swing_market.today", lambda: "2026-11-02")
     parent = store.create("u", "paper", 100000)
     pid = parent["session_id"]
     fields = {"right": "CE", "strike": 125.5, "expiry": "2026-11-03"} if option else {}
