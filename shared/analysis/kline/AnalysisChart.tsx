@@ -21,6 +21,13 @@ interface Props {
    * fetches nothing itself. Candles that only change in the last bar are pushed incrementally.
    */
   liveCandles?: OHLCCandle[]
+  /** What If: while true a click or tap on the chart reports the time and price under it (and is not passed on to the chart). Escape cancels. */
+  pickMode?: boolean
+  onPick?: (point: { time: number; price: number }) => void
+  onPickCancel?: () => void
+  pickHint?: string
+  /** What If: edited legs drawn as hollow rings; those whose option side and strike match this chart (or equity on the underlying) show. */
+  whatIfMarkers?: Array<{ key: string; time: number; price: number; side: 'BUY' | 'SELL'; text: string; removed: boolean; right: string | null; strike: number | null }>
   symbol: string; date: string; trades?: AnalysisTrade[]; historicalDays?: number
   exchange?: string; product?: string;
   strike?: number; expiry?: string; right?: string; title?: string; isMaximized?: boolean
@@ -45,6 +52,12 @@ function registerAnalysisOverlays() {
       ...(marker.text ? [{type:'text',attrs:{x:point.x,y:point.y-9,text:marker.text,align:'center',baseline:'bottom'},styles:{color:marker.color,size:11,weight:'bold'},ignoreEvent:false}] : []),
     ] },
   })
+  registerOverlay({ name: 'analysisWhatIf', totalStep: 1, needDefaultPointFigure: false, needDefaultXAxisFigure: false, needDefaultYAxisFigure: false,
+    createPointFigures: ({coordinates,overlay}) => { const point=coordinates[0]; if(!point) return []; const marker=overlay.extendData as {color:string;text:string;removed:boolean}; return [
+      {type:'circle',attrs:{x:point.x,y:point.y,r:marker.removed?5:8},styles:{color:'transparent',borderColor:marker.color,borderSize:2,style:marker.removed?'stroke_fill':'stroke',borderStyle:marker.removed?'dashed':'solid'},ignoreEvent:true},
+      {type:'text',attrs:{x:point.x,y:point.y+11,text:marker.text,align:'center',baseline:'top'},styles:{color:marker.color,size:11,weight:'bold'},ignoreEvent:true},
+    ] },
+  })
   registerOverlay({ name:'analysisAnnotation', totalStep:1, needDefaultPointFigure:false, needDefaultXAxisFigure:false, needDefaultYAxisFigure:false,
     createPointFigures:({coordinates,overlay})=>{ const p=coordinates[0]; if(!p) return []; const data=overlay.extendData as {color:string;text:string}; return [{type:'text',attrs:{x:p.x,y:p.y,text:data.text,align:'center',baseline:'bottom'},styles:{color:data.color,size:11},ignoreEvent:true}] },
   })
@@ -63,6 +76,8 @@ export default function DesktopAnalysisChart(props: Props) {
   const intervalMinutes=environment.intervalMinutes??3
   const historicalDays=props.historicalDays??environment.historicalDays??2
   const container=useRef<HTMLDivElement>(null); const chartRef=useRef<Chart|null>(null)
+  const pickRef=useRef({active:false,onPick:props.onPick,onCancel:props.onPickCancel}); pickRef.current={active:!!props.pickMode,onPick:props.onPick,onCancel:props.onPickCancel}
+  const whatIfOverlays=useRef<string[]>([])
   const candlesRef=useRef<OHLCCandle[]>([]); const overlays=useRef<string[]>([])
   const [candles,setCandles]=useState<OHLCCandle[]>([]); const [error,setError]=useState(''); const [loading,setLoading]=useState(true); const [refresh,setRefresh]=useState(0)
   const [filter,setFilter]=useState('all'); const [chooser,setChooser]=useState<ExecutionMarker|null>(null)
@@ -117,7 +132,18 @@ export default function DesktopAnalysisChart(props: Props) {
     }); observer.observe(container.current)
     chart.subscribeAction('onScroll',saveViewport); chart.subscribeAction('onZoom',saveViewport)
     const owner=container.current
-    return ()=>{ generation.current++; saveViewport(); observer.disconnect(); chart.unsubscribeAction('onScroll',saveViewport); chart.unsubscribeAction('onZoom',saveViewport); dispose(owner); chartRef.current=null }
+    // What If: while picking, a click reports the time and price under it, before the chart's own handlers (marker chooser) see it.
+    const onPickClick=(event:MouseEvent)=>{
+      const pick=pickRef.current; if(!pick.active||!pick.onPick)return
+      const box=owner.getBoundingClientRect()
+      const converted=chart.convertFromPixel([{x:event.clientX-box.left,y:event.clientY-box.top}],{paneId:'candle_pane'})
+      const point=Array.isArray(converted)?converted[0]:converted
+      if(!point||typeof point.value!=='number'||!Number.isFinite(point.value)||point.value<=0)return
+      event.stopPropagation();event.preventDefault()
+      pick.onPick({time:Math.round((point.timestamp??0)/1000),price:Math.round(point.value*100)/100})
+    }
+    owner.addEventListener('click',onPickClick,true)
+    return ()=>{ owner.removeEventListener('click',onPickClick,true); generation.current++; saveViewport(); observer.disconnect(); chart.unsubscribeAction('onScroll',saveViewport); chart.unsubscribeAction('onZoom',saveViewport); dispose(owner); chartRef.current=null }
   },[])
   // Drawing tools + indicators. Declared after the chart-creation effect so chartRef is set when they first run.
   // undefined = resolving, null = no resolver (use defaults), false = lookup failed (tools disabled rather than saved under a guessed key)
@@ -228,6 +254,23 @@ export default function DesktopAnalysisChart(props: Props) {
     if(first)requestAnimationFrame(()=>{if(chartRef.current!==chart)return;chart.setBarSpace(Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,live.length))));chart.scrollToRealTime(0)})
     else chart.resetData()
   },[props.liveCandles,chartKey])
+  useEffect(()=>{
+    if(!props.pickMode)return
+    const escape=(event:KeyboardEvent)=>{ if(event.key==='Escape'){ event.stopPropagation(); pickRef.current.onCancel?.() } }
+    window.addEventListener('keydown',escape,true); return()=>window.removeEventListener('keydown',escape,true)
+  },[props.pickMode])
+  useEffect(()=>{
+    const chart=chartRef.current;if(!chart)return
+    whatIfOverlays.current.forEach(id=>chart.removeOverlay({id}));whatIfOverlays.current=[]
+    if(!candles.length)return
+    const slot=intervalMinutes*60
+    for(const marker of props.whatIfMarkers??[]){
+      const here=props.right?marker.right===props.right&&marker.strike===(props.strike??null):marker.right==null
+      if(!here)continue
+      const id=chart.createOverlay({name:'analysisWhatIf',lock:true,points:[{timestamp:Math.floor(marker.time/slot)*slot*1000,value:marker.price}],extendData:{color:marker.side==='BUY'?'#f0b429':'#d36bff',text:marker.text,removed:marker.removed}})
+      if(typeof id==='string')whatIfOverlays.current.push(id)
+    }
+  },[candles,props.whatIfMarkers,props.right,props.strike,intervalMinutes])
   // Re-centre when the requested time changes on an already loaded chart (Prev/Next in Label Trades).
   useEffect(()=>{
     const chart=chartRef.current
@@ -263,7 +306,7 @@ export default function DesktopAnalysisChart(props: Props) {
     const levels=[...(props.openOrders??[]).map(order=>({price:order.trigger_price||order.limit_price,text:`${order.side} ${order.order_type} ${order.quantity}`})), ...(props.position?[{price:props.position.avg_entry_price,text:`Captured ${props.position.side} ${props.position.quantity}`}]:[]), ...(props.barTime!=null&&props.currentPrice!=null?[{price:props.currentPrice,text:'Captured current price'}]:[])]
     for(const order of levels){const price=order.price;if(!price||!candles.length)continue;const id=chart.createOverlay({name:'analysisLevel',lock:true,points:[{timestamp:candles[candles.length-1].time*1000,value:price}],extendData:{text:order.text}});if(typeof id==='string')overlays.current.push(id)}
   },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.openOrders,props.position,props.currentPrice,intervalMinutes])
-  return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''} ${toolsAvailable&&toolsVisible?'has-tools-rail':''}`} onPointerEnter={()=>setHovered(true)} onPointerLeave={()=>setHovered(false)}>
+  return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''} ${props.pickMode?'picking':''} ${toolsAvailable&&toolsVisible?'has-tools-rail':''}`} onPointerEnter={()=>setHovered(true)} onPointerLeave={()=>setHovered(false)}>
     <header>{props.toolbarStart}<strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · {intervalMinutes}m · IST</strong>
       {!props.right&&trades.some(t=>t.right)&&<select aria-label="Underlying markers" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option>CE</option><option>PE</option></select>}
       <CandleInterval />
@@ -273,6 +316,7 @@ export default function DesktopAnalysisChart(props: Props) {
       {(props.onMaximize||props.onMax)&&<button title={props.isMaximized?'Restore chart':'Maximize chart'} aria-label={props.isMaximized?'Restore chart':'Maximize chart'} onClick={props.onMaximize??props.onMax}><ToolbarIcon name={props.isMaximized?'Restore':'Maximize'} /></button>}
     </header>
     {toolsAvailable&&toolsVisible&&<KLineToolsRail drawings={drawings} />}
+    {props.pickMode&&<div className="analysis-pick-hint" role="status">{props.pickHint??'Click the chart to set the price'} · Esc cancels</div>}
     <div ref={container} className="analysis-kline" />
     {barTime!=null&&intervalMinutes!==3&&<small>Full historical event candle</small>}
     {loading&&<div role="status">Loading candles…</div>}{error&&<div role="alert">{error}<button onClick={()=>setRefresh(n=>n+1)}>Retry</button></div>}

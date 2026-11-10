@@ -106,7 +106,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return () => window.removeEventListener('keydown', escape, true)
   }, [active, trade])
   const environment: AnalysisEnvironment = useMemo(() => ({
-    swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, whatIf, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
+    swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, whatIf, chartPicking: true, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
     onDataChanged: () => setDataRevision(n => n + 1),
     onLabelSavingChange: saving => { labelSaving.current = saving; if(!saving)setNavigationMessage('') },
     charts: { SwingChart:swingRenderer,AnalysisChartPanel: AnalysisPanels, LabelCharts: AnalysisPanels, AnalysisChart: DesktopAnalysisChart, OptionsChart: DesktopAnalysisChart, SnapshotChart: DesktopAnalysisChart, SnapshotOptionsChart: DesktopAnalysisChart, TradesChart: ComparisonChart, PatternChart: ComparisonChart },

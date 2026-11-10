@@ -34,7 +34,7 @@ export function withWebsiteAnalysis<T extends ComponentType<any>>(Component: T) 
     const pnlDisplayMode = useAnalysisPnlMode()
     const kline = useMemo(() => ({
       ...base, charts: { SwingChart, ...klineAnalysisCharts },
-      drawingRequest: desktopDrawingRequest, resolveSymbolInstrument, accountKey: rendererAccountKey(),
+      drawingRequest: desktopDrawingRequest, resolveSymbolInstrument, accountKey: rendererAccountKey(), chartPicking: true,
     }), [])
     const labels = useMemo(() => ({ labelView, onLabelViewChange, pnlDisplayMode }), [labelView, onLabelViewChange, pnlDisplayMode])
     const klineValue = useMemo(() => ({ ...kline, ...labels }), [kline, labels])

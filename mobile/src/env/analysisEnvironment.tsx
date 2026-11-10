@@ -54,6 +54,7 @@ export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
       performance: adapter.performance,
       videoLinks: { list: links.list, listMine: links.listMine, save: links.save, remove: links.remove, open: video => { void openVideo(video) } },
       whatIf,
+      chartPicking: true,
       active: true,
       desktop: false,
       historicalDays: 2,

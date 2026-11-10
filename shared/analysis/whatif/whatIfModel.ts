@@ -22,6 +22,9 @@ export interface WhatIfTrip {
   /** The round trip number (its label index): what a saved scenario calls it. */
   roundTrip: number
   contract: string
+  /** The option side and strike (null for equity), so a marker lands on the right chart. */
+  right: string | null
+  strike: number | null
   direction: 'LONG' | 'SHORT'
   capital: number | null
   /** Capital used per unit of value: 0.2 for equity intraday, 1 otherwise. */
@@ -67,7 +70,7 @@ export function buildWhatIfTrips(trips: LabeledRoundTrip[], cycles: PerformanceC
     out.push({
       key: tripKey(trip), sessionId: trip.session_id, cycleId: cycle.cycle_id, roundTrip: trip.index,
       contract: cycle.right ? [cycle.right, cycle.strike].filter(value => value != null).join(' ') : 'EQ',
-      direction, capital: num(cycle.capital) && Number(cycle.capital) > 0 ? Number(cycle.capital) : null,
+      right: cycle.right ?? null, strike: num(cycle.strike), direction, capital: num(cycle.capital) && Number(cycle.capital) > 0 ? Number(cycle.capital) : null,
       marginRate: num(cycle.entries?.[0]?.analytics?.margin_rate) || 1,
       netPnl: cycle.net_pnl, sessionType: sessionTypes.get(trip.session_id) ?? 'sim', fills,
     })
@@ -245,4 +248,27 @@ export function fromSavedEdits(trips: WhatIfTrip[], saved: WhatIfEdit[], session
     edits.set(trip.key, tripEdits)
   }
   return { edits, missing }
+}
+
+/** A what-if leg drawn on a chart beside the real markers: where the edited fill would have been. */
+export interface WhatIfMarker {
+  key: string
+  time: number
+  price: number
+  side: TradeSide
+  /** "B75" / "S40", or "✕" for a removed leg (drawn where the real fill was). */
+  text: string
+  removed: boolean
+  right: string | null
+  strike: number | null
+}
+
+/** The changed legs of one trade as chart markers. Unchanged legs are the real markers already on the chart. */
+export function whatIfMarkers(result: TripResult): WhatIfMarker[] {
+  return result.legs.filter(leg => leg.changed).map(leg => ({
+    key: `${result.trip.key}:${legKey(leg.fill)}`,
+    time: leg.fill.time, price: leg.removed ? leg.fill.price : leg.price, side: leg.fill.side,
+    text: leg.removed ? '✕' : `${leg.fill.side === 'BUY' ? 'B' : 'S'}${leg.quantity}`,
+    removed: leg.removed, right: result.trip.right, strike: result.trip.strike,
+  }))
 }

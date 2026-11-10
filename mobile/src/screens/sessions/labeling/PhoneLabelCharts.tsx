@@ -1,5 +1,6 @@
 import type { AnalysisTrade } from '../../../../../shared/analysis/api'
 import { PhoneChartPanel } from '../PhoneChartPanel'
+import type { WhatIfChartExtras } from '../../../../../shared/analysis/whatif/chartExtras'
 import { useLabelingHost } from './context'
 
 /**
@@ -7,14 +8,15 @@ import { useLabelingHost } from './context'
  * It is the session chart (Underlying | Option, strike menu, all in the chart's header row) with a Back button in front,
  * centred on the viewed trade and marking only its executions.
  */
-export default function PhoneLabelCharts({ symbol, date, allTrades, historicalDays, getMarkerText, focusTime, labelContractMarkers }: {
+export default function PhoneLabelCharts({ symbol, date, allTrades, historicalDays, getMarkerText, focusTime, labelContractMarkers, pickTarget, onPick, onPickCancel, pickHint, whatIfMarkers }: {
   symbol: string; date: string; allTrades: AnalysisTrade[]; historicalDays: number; getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
   focusTime?: number; labelContractMarkers?: boolean; layout?: 'single' | 'split'
-}) {
+} & WhatIfChartExtras) {
   const { requestClose } = useLabelingHost()
   return (
     <PhoneChartPanel symbol={symbol} date={date} trades={allTrades} historicalDays={historicalDays}
       getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers={labelContractMarkers} allowMaximize={false}
+      pickTarget={pickTarget} onPick={onPick} onPickCancel={onPickCancel} pickHint={pickHint} whatIfMarkers={whatIfMarkers}
       toolbarLead={<button type="button" className="back-button" aria-label="Close labeling" onClick={requestClose}>←</button>} />
   )
 }

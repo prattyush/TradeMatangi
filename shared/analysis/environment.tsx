@@ -25,6 +25,8 @@ export interface AnalysisEnvironment {
   api: AnalysisApi
   /** YouTube videos uploaded for a session (owner only). Absent => Analysis shows no videos. */
   videoLinks?: VideoLinksSource
+  /** True when this host's Analysis charts can take a price by clicking them (KLine): What If then offers "pick on chart". */
+  chartPicking?: boolean
   /** Saved What If scenarios (owner only). Absent => What If is a playground that is lost on refresh. */
   whatIf?: WhatIfSource
   performance: {
