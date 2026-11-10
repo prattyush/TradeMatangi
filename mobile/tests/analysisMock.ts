@@ -141,6 +141,8 @@ export interface AnalysisMockState extends StatsMockState {
   failedOnce: boolean
   sessionsRequests: URLSearchParams[]
   /** Saved videos per session id. */
+  /** Make the saved-videos list answer 404 like an older server. */
+  videosOld?: boolean
   videos: Record<string, Array<{ video_id: string; title: string; privacy: string; url: string; chapters: string; uploaded_at: string; session_id: string }>>
 }
 
@@ -222,6 +224,10 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
       return { status: 200, body: { marks: rows } }
     }
     return { status: 200, body: { marks: state.marks[query.get('session_id') ?? ''] ?? [] } }
+  }
+  if (route === 'video-links/mine') {
+    if (state.videosOld) return { status: 404, body: { detail: 'Not Found' } }
+    return { status: 200, body: { links: Object.values(state.videos).flat().sort((a, b) => (a.uploaded_at < b.uploaded_at ? 1 : -1)) } }
   }
   if (route === 'video-links') return { status: 200, body: { links: state.videos[query.get('session_id') ?? ''] ?? [] } }
   if (route === 'snapshots') {

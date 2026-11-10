@@ -41,7 +41,15 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 9. Point the app at a server without Stats or Habits (older branch): the screen says "This feature is not available on this server." with Retry; nothing crashes.
 
 ## E. Videos (S6)
-(Filled in when S6 lands.)
+1. Open **Videos**: every video saved with your sessions (the desktop Video Maker, or "Add a link" in a session) appears once, newest first, under its upload day, with a privacy badge.
+2. Tap an **Unlisted** or **Public** video: the player area shows a Play button and nothing has been sent to YouTube yet. Tap **Play**: the video plays inline in the landscape pane (the largest 16:9 the height allows); the screen stays on while it plays.
+3. Tap a **chapter**: the video restarts at that time and keeps playing (it reloads the player, so allow a second).
+4. Try the player's own fullscreen button: it should fill the screen in landscape and come back. (Not verified on a phone yet; if it fails, use "YouTube".)
+5. A **Private** video shows why it cannot play here; "Open on YouTube" opens the YouTube app. **YouTube** and **Copy** in the side column do the same for any video.
+6. **← Videos**, the Android back button, or tapping Videos again returns to the list; leaving the tab and coming back finds the same video.
+7. The side column shows the session(s) the video belongs to ("NIFTY · 09 Nov").
+8. Adding or removing a link stays in Sessions > Videos (the Videos tab only reads).
+9. Against a server without saved videos the tab says "Videos is not available on this server".
 
 ## F. Browse (S7)
 (Filled in when S7 lands.)

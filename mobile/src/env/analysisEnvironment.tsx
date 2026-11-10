@@ -50,7 +50,7 @@ export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
     const environment: AnalysisEnvironment = {
       api: adapter.api,
       performance: adapter.performance,
-      videoLinks: { list: links.list, save: links.save, remove: links.remove, open: video => { void openVideo(video) } },
+      videoLinks: { list: links.list, listMine: links.listMine, save: links.save, remove: links.remove, open: video => { void openVideo(video) } },
       active: true,
       desktop: false,
       historicalDays: 2,

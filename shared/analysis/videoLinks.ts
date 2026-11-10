@@ -23,6 +23,8 @@ export interface SavedVideo {
 /** Analysis shows saved videos only when the host gives it this (website and desktop do; nothing else needs to). */
 export interface VideoLinksSource {
   list(sessionId: string): Promise<SavedLink[]>
+  /** Every saved video of the signed-in user, newest first (the phone's Videos tab). Absent => only per-session lists. */
+  listMine?(): Promise<SavedLink[]>
   /** Opens the video on YouTube in the system browser. */
   open(video: { videoId: string; url: string }): void
   /** Saving and removing links by hand. Absent => Analysis only shows links, it cannot add them. */
