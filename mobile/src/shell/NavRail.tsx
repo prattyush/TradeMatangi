@@ -1,7 +1,6 @@
 import { useNav, type Tab } from '../app/Nav'
 import { TabIcon } from './icons'
 
-// Positions is planned for phase 2 (docs/spec-phase24-android-plan.md); its Tab id stays reserved.
 export const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'sessions', label: 'Sessions' },
   { id: 'stats', label: 'Stats' },

@@ -86,6 +86,7 @@ test('CE shows the option chart for the day\'s expiry at the strike nearest the 
   const state = await openBrowse(page)
   await page.getByRole('button', { name: 'CE', exact: true }).click()
   await expect(page.getByRole('button', { name: /^Strike:/ })).toBeVisible()
+  await expect.poll(() => dataRequests(state).filter(r => r.path.endsWith('data/options-historical')).length).toBeGreaterThan(0)
   const first = dataRequests(state).filter(r => r.path.endsWith('data/options-historical')).at(-1)!
   expect(first.query.get('right')).toBe('CE')
   expect(first.query.get('expiry')).toBe('2026-11-13')
