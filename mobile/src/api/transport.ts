@@ -60,6 +60,11 @@ export interface ApiClient {
   post<T = unknown>(path: string, body?: unknown, options?: RequestOptions): Promise<T>
   put<T = unknown>(path: string, body?: unknown, options?: RequestOptions): Promise<T>
   del<T = unknown>(path: string, options?: RequestOptions): Promise<T>
+  /**
+   * Open a server-sent-events response with the Bearer token (refreshed once on 401). The caller reads `response.body`
+   * and aborts through `signal`; there is no overall timeout, only the wait for the response headers.
+   */
+  stream(path: string, options?: { query?: Query; signal?: AbortSignal }): Promise<Response>
   /** Exchange the refresh token for a new bundle. Shared: concurrent callers wait for the same refresh. */
   refresh(): Promise<void>
   /** Store a bundle obtained by sign-in. */
@@ -197,8 +202,40 @@ export function createApiClient(options: TransportOptions): ApiClient {
     }
   }
 
+  async function stream(path: string, opts: { query?: Query; signal?: AbortSignal } = {}): Promise<Response> {
+    let token = options.tokens.accessToken()
+    if (!token) {
+      if (!options.tokens.hasSession()) throw await lost('Not signed in.')
+      await refresh()
+      token = options.tokens.accessToken()
+      if (!token) throw await lost('Could not obtain an access token.')
+    }
+    for (let attempt = 0; ; attempt++) {
+      let response: Response
+      try {
+        response = await fetchImpl(buildUrl(await base(), path, opts.query), {
+          method: 'GET', headers: { Accept: 'text/event-stream', Authorization: `Bearer ${token}` }, signal: opts.signal, cache: 'no-store',
+        })
+      } catch (error) {
+        if (error instanceof ApiError) throw error
+        if (opts.signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError')
+        log.record(`network GET ${path.split('?')[0]}`)
+        throw new ApiError('network', 'Could not reach the server.')
+      }
+      if (response.status === 401 && attempt === 0) {
+        if (options.tokens.accessToken(0) === token || options.tokens.accessToken(0) === null) await refresh()
+        token = options.tokens.accessToken()
+        if (!token) throw await lost('Could not obtain an access token.')
+        continue
+      }
+      if (!response.ok || !response.body) throw await failure(response, path)
+      return response
+    }
+  }
+
   return {
     request,
+    stream,
     get: (path, query, extra) => request(path, { ...extra, method: 'GET', query }),
     post: (path, body, extra) => request(path, { ...extra, method: 'POST', body }),
     put: (path, body, extra) => request(path, { ...extra, method: 'PUT', body }),

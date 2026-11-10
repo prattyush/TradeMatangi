@@ -60,7 +60,8 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 5. A day with no listed options explains why instead of drawing an empty chart; Spot still works.
 6. Pan and pinch the chart; press and hold for the candle details (time, OHLC, volume when the instrument has it). Turn on the **VOL** indicator for volume bars.
 7. Leave Browse and come back: the same symbol, day and side are shown.
-8. There are no order, buy/sell or drawing controls (read-only). Older days beyond the loaded context are not fetched while panning in this version; step the day instead.
+8. **Live (today only):** step the day to today (›). A **Live** button appears in the control row. Turn it on: the dot is amber while it connects, then green and the chart keeps updating with the live ticks (spot, or the CE/PE you chose). Change the strike, the symbol, CE/PE or Spot and the stream follows. Changing the candle interval reloads the candles at that interval and keeps the ticks. Turn Live off (or leave Browse, or put the app in the background): the stream is stopped on the server; coming back to the app starts it again. On a server without live data it says so with Try again. (Needs the server's live feed, the same one the desktop uses.)
+9. There are no order, buy/sell or drawing controls (read-only). Older days beyond the loaded context are not fetched while panning in this version; step the day instead.
 
 ## G. Positions (S8)
 (Filled in when S8 lands.)

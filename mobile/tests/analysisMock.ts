@@ -10,7 +10,7 @@ export interface MockSession {
   trading_style: 'intraday' | 'swing'; portfolio_id?: string; shared?: boolean
 }
 
-const epoch = (date: string, hour: number, minute: number, second = 0) =>
+export const epoch = (date: string, hour: number, minute: number, second = 0) =>
   Date.UTC(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10), hour, minute, second) / 1000
 
 /** Deterministic wavy candles for one trading day (IST wall clock stored as UTC, like the backend). */

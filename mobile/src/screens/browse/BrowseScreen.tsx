@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import AnalysisChart from '../../../../shared/analysis/kline/AnalysisChart'
-import { useAnalysisApi } from '../../../../shared/analysis/environment'
+import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import { describeError, isNotAvailable } from '../../api/errors'
 import { useServices } from '../../app/AppContext'
 import { useLoad } from '../../app/useLoad'
@@ -9,9 +9,11 @@ import { ErrorState, NotAvailable, Spinner } from '../../shell/States'
 import { DateSheet } from './DateSheet'
 import { SymbolSheet } from './SymbolSheet'
 import {
-  FALLBACK_INSTRUMENTS, RECENTS_KEY, formatBrowseDate, latestBrowseDate, shiftTradingDay, strikeLadder, withRecent,
+  FALLBACK_INSTRUMENTS, RECENTS_KEY, formatBrowseDate, isWeekday, latestBrowseDate, shiftTradingDay, strikeLadder, withRecent,
   type Instrument, type OptionMetadata,
 } from './browseModel'
+import { marketDate, optionInstrument, spotInstrument } from './live/liveModel'
+import { useLiveBrowse } from './live/useLiveBrowse'
 import '../sessions/sessions.css'
 import './browse.css'
 
@@ -39,12 +41,17 @@ function writeRecents(recents: string[]) {
 export function BrowseScreen() {
   const { client } = useServices()
   const api = useAnalysisApi()
-  const latest = useMemo(() => latestBrowseDate(), [])
+  const environment = useAnalysisEnvironment()
+  // The last completed day is where Browse opens; today is selectable too (and is the only day with Live).
+  const today = useMemo(() => marketDate(), [])
+  const latest = useMemo(() => (isWeekday(today) ? today : shiftTradingDay(today, -1)), [today])
+  const opening = useMemo(() => latestBrowseDate(), [])
   const [symbol, setSymbol] = useState(remembered.symbol)
-  const [date, setDate] = useState(remembered.date ?? latest)
+  const [date, setDate] = useState(remembered.date ?? opening)
   const [kind, setKind] = useState<Kind>(remembered.kind)
   const [strike, setStrike] = useState<number | null>(remembered.strike)
   const [sheet, setSheet] = useState<'symbol' | 'date' | null>(null)
+  const [liveOn, setLiveOn] = useState(false)
   const [recents, setRecents] = useState<string[]>(readRecents)
   useEffect(() => { Object.assign(remembered, { symbol, date, kind, strike }) }, [symbol, date, kind, strike])
 
@@ -74,6 +81,17 @@ export function BrowseScreen() {
     setStrike(current => (current !== null && ladder.includes(current) ? current : ladder[Math.floor(ladder.length / 2)]))
   }, [ladder])
 
+  // Live: only for today, for the spot or the chosen option, with the desktop's live flow.
+  const isToday = date === today && isWeekday(today)
+  const liveWanted = liveOn && isToday
+  useEffect(() => { if (!isToday) setLiveOn(false) }, [isToday])
+  const liveInstrument = useMemo(() => {
+    if (!instrument) return null
+    if (!wantOption) return spotInstrument(symbol, instrument.exchange, instrument.chart_type)
+    return strike !== null && expiry ? optionInstrument(symbol, instrument.exchange, expiry, strike, kind as 'CE' | 'PE') : null
+  }, [instrument, wantOption, symbol, strike, expiry, kind])
+  const live = useLiveBrowse({ enabled: liveWanted, instrument: liveInstrument, intervalMinutes: environment.intervalMinutes ?? 3 })
+
   function choose(next: string) {
     const known = instruments.find(item => item.symbol === next)
     setSymbol(next); setStrike(null)
@@ -99,6 +117,12 @@ export function BrowseScreen() {
         <button type="button" aria-pressed={kind === 'CE'} disabled={!optionEligible} onClick={() => setKind('CE')}>CE</button>
         <button type="button" aria-pressed={kind === 'PE'} disabled={!optionEligible} onClick={() => setKind('PE')}>PE</button>
       </div>
+      {isToday && (
+        <button type="button" className={`live-button${liveWanted ? ' on' : ''}`} aria-pressed={liveWanted} data-phase={liveWanted ? live.phase : 'off'}
+          aria-label={liveWanted ? `Live: ${live.message}` : 'Live'} title={liveWanted ? live.message : 'Stream live ticks for today'} onClick={() => setLiveOn(value => !value)}>
+          <span className="live-dot" aria-hidden="true" />Live
+        </button>
+      )}
       {wantOption && ladder && ladder.length > 0 && strike !== null && (
         <PopoverMenu ariaLabel="Strike" value={String(strike)} onChange={value => setStrike(Number(value))}
           items={ladder.map(value => ({ id: String(value), label: String(value) }))} buttonLabel={`${strike}${expiry ? ` · ${expiry.slice(5)}` : ''}`} />
@@ -116,17 +140,26 @@ export function BrowseScreen() {
     body = <div className="browse-state"><p role="status">{option.data.metadata.unavailable_reason ?? 'No option contracts are available for this day.'}</p></div>
   } else if (wantOption && (strike === null || !expiry)) body = <div className="browse-state"><Spinner label="Choosing a strike" /></div>
   else if (wantOption) {
-    body = <AnalysisChart key={`${symbol}:${kind}:${strike}:${expiry}:${date}`} symbol={symbol} date={date} historicalDays={CONTEXT_DAYS}
-      right={kind} strike={strike!} expiry={expiry!} toolbarStart={controls} />
+    body = <AnalysisChart key={`${symbol}:${kind}:${strike}:${expiry}:${date}:${liveWanted}`} symbol={symbol} date={date} historicalDays={CONTEXT_DAYS}
+      right={kind} strike={strike!} expiry={expiry!} toolbarStart={controls} liveCandles={liveWanted ? live.candles : undefined} />
   } else {
-    body = <AnalysisChart key={`${symbol}:${date}`} symbol={symbol} date={date} historicalDays={CONTEXT_DAYS} title={symbol} toolbarStart={controls} />
+    body = <AnalysisChart key={`${symbol}:${date}:${liveWanted}`} symbol={symbol} date={date} historicalDays={CONTEXT_DAYS} title={symbol} toolbarStart={controls}
+      liveCandles={liveWanted ? live.candles : undefined} />
   }
 
   const chart = body !== null && !(wantOption && (option.loading || option.error != null || !option.data?.metadata.available || strike === null || !expiry))
   return (
     <section className="screen browse" aria-label="Browse">
       {!chart && <div className="browse-bar">{controls}</div>}
-      <div className="phone-chart browse-chart">{body}</div>
+      <div className="phone-chart browse-chart">
+        {body}
+        {liveWanted && live.phase !== 'live' && (
+          <div className="live-status" role="status" data-phase={live.phase}>
+            <span>{live.message}</span>
+            {live.phase === 'error' && <button type="button" className="btn" onClick={live.retry}>Try again</button>}
+          </div>
+        )}
+      </div>
       {sheet === 'symbol' && <SymbolSheet instruments={instruments} current={symbol} recents={recents} onPick={choose} onClose={() => setSheet(null)} />}
       {sheet === 'date' && <DateSheet date={date} latest={latest} onPick={changeDay} onClose={() => setSheet(null)} />}
     </section>
