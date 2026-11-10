@@ -60,7 +60,8 @@ export default function PatternVsTradeComparison({symbol,date,instrumentType,ses
     return()=>{cancelled=true}
   },[api,symbol,date,isOpt,sessionKey,retry])
   useEffect(()=>{if(!max)return;const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')smax(null)};window.addEventListener('keydown',escape);return()=>window.removeEventListener('keydown',escape)},[max])
-  const gmt=useCallback((trade:AnalysisTrade):string=>{
+  const gmt=useCallback((trade:AnalysisTrade,forOption?:boolean):string=>{
+    if(forOption)return ''
     const found=[...new Map([trade.trade_id,trade.execution_id,trade.stored_trade_id].filter(Boolean).flatMap(identity=>labelMap.get(`${trade.session_id}:${identity}`)??[]).map(label=>[label.round_trip_index,label])).values()]
     const names=found.map(label=>{const strategy=label.expected_strategy||label.actual_strategy;return strategy?`${label.expected_category?label.expected_category.slice(0,5)+'/':''}${strategy.slice(0,10)}`:''}).filter(Boolean)
     return names.length?[...new Set(names)].join(' / '):trade.side==='BUY'?'B':'S'

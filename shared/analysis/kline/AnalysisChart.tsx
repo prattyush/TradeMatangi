@@ -24,7 +24,7 @@ interface Props {
   symbol: string; date: string; trades?: AnalysisTrade[]; historicalDays?: number
   exchange?: string; product?: string;
   strike?: number; expiry?: string; right?: string; title?: string; isMaximized?: boolean
-  onMaximize?: () => void; onMax?: () => void; getMarkerText?: (trade: AnalysisTrade) => string
+  onMaximize?: () => void; onMax?: () => void; getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
   /** Epoch seconds to centre the chart on (e.g. the round trip being labeled). Zoom is kept. */
   focusTime?: number
   /** Show `getMarkerText` on option-contract markers (they are unlabeled by default). */

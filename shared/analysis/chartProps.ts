@@ -10,7 +10,8 @@ export type AnalysisChartProps = {
   title?: string
   isMaximized?: boolean
   onMaximize?: () => void
-  getMarkerText?: (trade: AnalysisTrade) => string
+  /** Marker text for an execution; `forOption` is true on an option-contract (CE / PE) chart, where the marker colour already says buy or sell. */
+  getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
   /** Fill the parent's height instead of the width-derived default (Label Trades stacked panes). */
   fill?: boolean
   /** Epoch seconds (candle clock) to centre the chart on, e.g. the entry of the round trip being labeled. */
@@ -28,7 +29,7 @@ export type OptionsChartProps = {
   historicalDays?: number
   isMaximized?: boolean
   onMaximize?: () => void
-  getMarkerText?: (trade: AnalysisTrade) => string
+  getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
   fill?: boolean
   focusTime?: number
   labelContractMarkers?: boolean
@@ -69,6 +70,6 @@ export type SnapshotOptionsChartProps = {
   filledTrades: { trade_id: string; side: 'BUY' | 'SELL'; price: number; timestamp: number; right?: string; strike?: number; underlying_price?: number; quantity: number }[]
 }
 
-export type TradesChartProps = {symbol:string;date:string;trades:AnalysisTrade[];getMarkerText:(t:AnalysisTrade)=>string;strikeTabs:StrikeTab[];isOpt:boolean;onMax?:()=>void}
+export type TradesChartProps = {symbol:string;date:string;trades:AnalysisTrade[];getMarkerText:(t:AnalysisTrade,forOption?:boolean)=>string;strikeTabs:StrikeTab[];isOpt:boolean;onMax?:()=>void}
 
 export type PatternChartProps = {symbol:string;date:string;annotations:PatternAnnotation[];topPatterns:TopPatterns;activeStrategy:string|null;activeCategory:string|null;instFilter:InstFilter;setInstFilter:(f:InstFilter)=>void;isOpt:boolean;patternStrike:{ce:number|null;pe:number|null;exp:string|null};onMax?:()=>void}

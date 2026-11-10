@@ -8,7 +8,7 @@ import { useLabelingHost } from './context'
  * centred on the viewed trade and marking only its executions.
  */
 export default function PhoneLabelCharts({ symbol, date, allTrades, historicalDays, getMarkerText, focusTime, labelContractMarkers }: {
-  symbol: string; date: string; allTrades: AnalysisTrade[]; historicalDays: number; getMarkerText?: (trade: AnalysisTrade) => string
+  symbol: string; date: string; allTrades: AnalysisTrade[]; historicalDays: number; getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
   focusTime?: number; labelContractMarkers?: boolean; layout?: 'single' | 'split'
 }) {
   const { requestClose } = useLabelingHost()

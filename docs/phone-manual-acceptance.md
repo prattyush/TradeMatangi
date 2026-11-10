@@ -20,6 +20,7 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 11. Volume: in the chart's indicators menu (fx) switch on **Volume**: a volume pane appears for an option or a stock; for the NIFTY underlying it does nothing.
 
 ## C. Trade labeling (S4)
+0. On a CE or PE chart (also in Label trades) the markers carry no BUY/SELL text: white is a buy, blue is a sell. Label trades still numbers them (`#3`, `#2/#3`); the Underlying chart keeps its text.
 1. Open a day, then the view menu > **Label trades** (the count of labeled trades is shown beside it). Labeling opens full screen: the chart on the left (centred on the trade, with only that trade's buy and sell marked), the form on the right.
 2. At the top of the form: **◀ Prev**, "Trade 1 of N", **Next ▶**. They stay in place while you scroll the form. The trade (contract, P&L) and a row of numbered trade chips (a green dot once a pattern is chosen) scroll with the form. Tap a chip to jump.
 3. Choose an Expected category and strategy from the lists (type a new name to add one). Type an Entry tag and an Exit tag (suggestions appear). Switch the entry and exit behavior questions Yes or No.

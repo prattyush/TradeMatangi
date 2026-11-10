@@ -15,7 +15,7 @@ type Pane = 'underlying' | 'option'
 export function PhoneChartPanel({ symbol, date, trades, historicalDays, toolbarLead, getMarkerText, focusTime, labelContractMarkers, allowMaximize = true }: {
   symbol: string; date: string; trades: AnalysisTrade[]; historicalDays: number; toolbarLead: ReactNode
   /** Label Trades: marker text for each execution, the time to centre on, and whether option markers carry text. */
-  getMarkerText?: (trade: AnalysisTrade) => string; focusTime?: number; labelContractMarkers?: boolean
+  getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string; focusTime?: number; labelContractMarkers?: boolean
   /** The maximize button of the chart header. Off where the chart shares the screen with a form. */
   allowMaximize?: boolean
 }) {

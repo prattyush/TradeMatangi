@@ -206,7 +206,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
   const displayedStrategies = useMemo(() => [...new Set([...strategies, ...[...labels.values()].flatMap(label => [label.expected_strategy, label.actual_strategy]).filter(Boolean)])].sort(), [strategies, labels])
 
   const current = view === 'one_by_one' ? roundTrips[index] : undefined
-  const getMarkerText = useCallback((trade: AnalysisTrade) => roundTripMarkerText(roundTrips, trade), [roundTrips])
+  const getMarkerText = useCallback((trade: AnalysisTrade, forOption?: boolean) => roundTripMarkerText(roundTrips, trade, !forOption), [roundTrips])
   // Centre the charts on the viewed trade's entry.
   const focusTime = current?.entry_trades[0]?.timestamp ?? current?.exit_trades[0]?.timestamp
   // One at a time: the chart shows only the viewed trade's executions (unless "All markers" is on).
