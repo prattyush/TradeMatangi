@@ -27,7 +27,7 @@ Phase 1 (this PR): shell and password sign-in, Sessions with Snapshots, Day jour
 | S4 | One-at-a-time trade labeling (landscape) | Built on the branch: reuses the shared Label Trades screen with a phone chart and a landscape layout; 15 UI tests (4 sizes, keyboard-up case); accepted on a phone (2026-11-10) |
 | S5 | Stats and Habits | Built on the branch: the shared performance dashboard (all six sections including Habits and Swing) in a phone layout, filters in a panel, read-only, "Open cycle" from execution details wired; 18 UI tests (4 sizes); not yet tried on a phone |
 | S6 | Videos tab and embedded player (with fallback) | Built on the branch: list of all saved videos by upload day, Play-to-load inline player sized by the pane height, chapter list that restarts the player at that time, Private notice with Open on YouTube, wake lock while playing; 13 UI tests (4 sizes) and 9 unit tests; not yet tried on a phone (player fullscreen unverified) |
-| S7 | Browse (read-only) | Not started |
+| S7 | Browse (read-only) | Built on the branch: reuses the shared analysis chart (volume, VOL, EMA, intervals) fed by the analysis data routes; symbol search sheet with recents, day stepper and date sheet, Spot / CE / PE with the day's expiry and a 43-strike menu around the money; 14 UI tests (4 sizes) and 10 unit tests; not yet tried on a phone. Panning to older days beyond the 2-day context is not in this version |
 | S8 | Positions (swing and day, read-only) | **Moved to phase 2 (user decision 2026-11-10)** |
 | S9 | Hardening, release signing, acceptance, final docs, PR into `dev` | Not started |
 

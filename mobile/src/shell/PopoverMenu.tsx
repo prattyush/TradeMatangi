@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useBackHandler } from '../app/Nav'
 
 export interface MenuItem<T extends string> { id: T; label: string; detail?: string }
@@ -11,6 +11,11 @@ export function PopoverMenu<T extends string>({ ariaLabel, value, items, onChang
   ariaLabel: string; value: T; items: Array<MenuItem<T>>; onChange: (next: T) => void; buttonLabel?: string; align?: 'left' | 'right'
 }) {
   const [open, setOpen] = useState(false)
+  const list = useRef<HTMLUListElement>(null)
+  // A long list (the strikes) opens with the current choice in view.
+  useEffect(() => {
+    if (open) list.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.scrollIntoView?.({ block: 'center' })
+  }, [open])
   useBackHandler(open ? () => { setOpen(false); return true } : null)
   const current = items.find(item => item.id === value)
   return (
@@ -22,7 +27,7 @@ export function PopoverMenu<T extends string>({ ariaLabel, value, items, onChang
       {open && (
         <>
           <div className="menu-backdrop" onClick={() => setOpen(false)} />
-          <ul className={`menu-list menu-${align}`} role="menu" aria-label={ariaLabel}>
+          <ul ref={list} className={`menu-list menu-${align}`} role="menu" aria-label={ariaLabel}>
             {items.map(item => (
               <li key={item.id} role="none">
                 <button type="button" role="menuitemradio" aria-checked={item.id === value} onClick={() => { onChange(item.id); setOpen(false) }}>

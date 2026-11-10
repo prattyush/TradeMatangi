@@ -19,7 +19,17 @@ export interface MockServer {
   oldServer: boolean
   /** The analysis endpoints' behaviour and what they were asked. */
   analysis: AnalysisMockState
+  /** Browse: make the catalogue answer 404 (older server), or report options unavailable on the day. */
+  catalogueOld?: boolean
+  optionsUnavailable?: string
 }
+
+export const INSTRUMENTS = [
+  { symbol: 'NIFTY', display_name: 'NIFTY 50', exchange: 'NSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] },
+  { symbol: 'BSESEN', display_name: 'S&P BSE SENSEX', exchange: 'BSE', chart_type: 'index', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] },
+  { symbol: 'RELIND', display_name: 'Reliance Industries', exchange: 'NSE', chart_type: 'equity', option_eligible: true, supported_intervals: [1, 3, 5, 15, 30, 60] },
+  { symbol: 'TATMOT', display_name: 'Tata Motors', exchange: 'NSE', chart_type: 'equity', option_eligible: false, supported_intervals: [1, 3, 5, 15, 30, 60] },
+]
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -49,6 +59,11 @@ export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co
       if (url.pathname === '/api/desktop/v1/capabilities') {
         if (state.oldServer) return answer(route, 404, { detail: 'Not Found' })
         return answer(route, 200, { api_version: 'v1', features: ['catalogue', 'historical-candles'], trading_capabilities: ['trade-labels', 'behavior-labels'] })
+      }
+      if (url.pathname === '/api/desktop/v1/catalogue') return state.catalogueOld ? answer(route, 404, { detail: 'Not Found' }) : answer(route, 200, { version: 1, instruments: INSTRUMENTS })
+      if (url.pathname === '/api/desktop/v1/option-metadata') {
+        const available = !state.optionsUnavailable
+        return answer(route, 200, { version: 1, symbol: url.searchParams.get('symbol'), as_of_date: url.searchParams.get('as_of_date'), expiries: available ? ['2026-11-13'] : [], strike_interval: 50, available, unavailable_reason: state.optionsUnavailable ?? null })
       }
       const analysisPrefix = '/api/desktop/v1/analysis/'
       if (url.pathname.startsWith(analysisPrefix)) {

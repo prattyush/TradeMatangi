@@ -7,11 +7,12 @@ import { More } from './screens/More'
 import { Placeholder } from './screens/Placeholder'
 import { SessionsScreen } from './screens/sessions/SessionsScreen'
 import { StatsScreen } from './screens/stats/StatsScreen'
+import { BrowseScreen } from './screens/browse/BrowseScreen'
 import { VideosScreen } from './screens/videos/VideosScreen'
 import { PhoneAnalysisProvider } from './env/analysisEnvironment'
 
-const TITLES: Record<Exclude<Tab, 'more' | 'sessions' | 'stats' | 'videos'>, string> = {
-  browse: 'Browse', positions: 'Positions',
+const TITLES: Record<Exclude<Tab, 'more' | 'sessions' | 'stats' | 'videos' | 'browse'>, string> = {
+  positions: 'Positions',
 }
 
 function Screens() {
@@ -19,7 +20,7 @@ function Screens() {
   return (
     <PhoneAnalysisProvider>
       <Shell>
-        {tab === 'more' ? <More /> : tab === 'sessions' ? <SessionsScreen /> : tab === 'stats' ? <StatsScreen /> : tab === 'videos' ? <VideosScreen /> : <Placeholder title={TITLES[tab]} />}
+        {tab === 'more' ? <More /> : tab === 'sessions' ? <SessionsScreen /> : tab === 'stats' ? <StatsScreen /> : tab === 'videos' ? <VideosScreen /> : tab === 'browse' ? <BrowseScreen /> : <Placeholder title={TITLES[tab]} />}
       </Shell>
     </PhoneAnalysisProvider>
   )

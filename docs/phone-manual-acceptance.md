@@ -52,7 +52,14 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 9. Against a server without saved videos the tab says "Videos is not available on this server".
 
 ## F. Browse (S7)
-(Filled in when S7 lands.)
+1. Open **Browse**: the NIFTY chart of the last completed trading day (never today) with the previous days before it. One control row at the top: **symbol**, **‹ day ›**, **Spot | CE | PE**, then the chart's own interval, indicators (VOL, EMA...) and fit.
+2. **Symbol** opens a search: type part of a name or symbol; recent symbols are listed first. Choose one: the chart reloads. Symbols without options have CE and PE greyed out.
+3. **‹ ›** step to the previous or next weekday (the next button is off on the latest day). Tap the day to open the date picker; a weekend is refused. Exchange holidays show the server's "no data" message: step to another day.
+4. **CE** or **PE**: the option for that day's expiry at the strike nearest the underlying; the strike button lists 43 strikes and opens at the current one. Changing day keeps the strike when it is still listed. Switching CE/PE keeps the strike.
+5. A day with no listed options explains why instead of drawing an empty chart; Spot still works.
+6. Pan and pinch the chart; press and hold for the candle details (time, OHLC, volume when the instrument has it). Turn on the **VOL** indicator for volume bars.
+7. Leave Browse and come back: the same symbol, day and side are shown.
+8. There are no order, buy/sell or drawing controls (read-only). Older days beyond the loaded context are not fetched while panning in this version; step the day instead.
 
 ## G. Positions (S8)
 (Filled in when S8 lands.)
