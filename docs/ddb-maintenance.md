@@ -44,7 +44,7 @@ is automatically selected or deduplicated. Separate fills with identical display
 prices/times remain separate.
 
 Deletion creates and verifies a mandatory session backup first, then deletes that
-session's trades, orders, strategies, labels, snapshots and AI records, plus its
+session's trades, orders, strategies, labels, behavior marks, snapshots and AI records, plus its
 protection recovery and administrative heartbeat records. Exclusive broker
 projection revisions/archives are included. Shared projections remain available;
 if needed, their ownership moves to a retained referencing session, and original

@@ -30,6 +30,13 @@ it.each(['CE', 'PE'])('suppresses %s option text including custom labels, keepin
   const markers = analysisMarkers([fill({right}), fill({right,trade_id:'sell',side:'SELL',price:101})], [], {right,strike:25000,expiry:'2026-10-08'}, 'all', () => 'custom label')
   expect(markers.map(marker => [marker.color,marker.text])).toEqual([['#FFFFFF',''],['#00AAFF','']])
 })
+it('labels option-contract markers only when the host opts in, merging coincident fills', () => {
+  const contract = {right:'CE',strike:25000,expiry:'2026-10-08'}
+  const trades = [fill({right:'CE'}), fill({right:'CE',trade_id:'sell',side:'SELL',price:101}), fill({right:'CE',trade_id:'again',price:100})]
+  const text = (trade: {trade_id:string;side:string}) => `#${trade.trade_id === 'sell' ? 2 : 1} ${trade.side}`
+  expect(analysisMarkers(trades, [], contract, 'all', text, 3, true).map(marker => marker.text)).toEqual(['#1 BUY', '#2 SELL'])
+  expect(analysisMarkers(trades, [], contract, 'all', text, 3, false).map(marker => marker.text)).toEqual(['', ''])
+})
 it('preserves underlying CE/PE labels and coincident counts', () => {
   const markers = analysisMarkers([fill({underlying_price:25001}), fill({trade_id:'pe',right:'PE',side:'SELL',underlying_price:25002})], [])
   expect(markers.map(marker => marker.text)).toEqual(['CE B','PE S'])

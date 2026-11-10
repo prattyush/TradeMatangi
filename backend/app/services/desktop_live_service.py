@@ -37,6 +37,7 @@ class DesktopStream:
     tile_activation_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     tile_history_generations: dict[str, int] = field(default_factory=dict)
     history_cache: dict[str, list[dict]] = field(default_factory=dict)
+    history_gaps: dict[str, list[str]] = field(default_factory=dict)
     subscriber_drops: dict[int, int] = field(default_factory=dict)
     observed_seconds: dict[str, deque] = field(default_factory=dict)
     feed_group: object | None = None
@@ -218,7 +219,13 @@ def _completed_current_candles(frame, interval_minutes: int) -> list[dict]:
 
 
 async def _load_history(tile: dict) -> list[dict]:
-    """Fetch chart history without changing in-memory live tile state."""
+    """Fetch chart history without changing in-memory live tile state.
+
+    A prior day the provider cannot supply (e.g. a newly listed option strike
+    that Kite has no candles for) is skipped and recorded in
+    ``tile["history_gaps"]`` -- the same tolerance as the website's options
+    history and non-live Browse.  Today's data stays required.
+    """
     from app.services.historical_data_service import historical_operation
     with historical_operation(mode="live"):
         instrument, interval = tile["instrument"], tile["interval_minutes"]
@@ -227,25 +234,42 @@ async def _load_history(tile: dict) -> list[dict]:
         from app.utils import prior_trading_days
         dates = prior_trading_days(today, int(tile.get("context_days", 5))) + [today]
         candles: list[dict] = []
-        if instrument.get("kind") == "option":
+        gaps: list[str] = []
+        is_option = instrument.get("kind") == "option"
+        if is_option:
             from app.services.options_service import fetch_options_historical, load_options_dataframe
-            for day in (day for day in dates if day <= instrument["expiry"]):
-                await run_history(fetch_options_historical, instrument["underlying"], day, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
-                frame = await run_history(load_options_dataframe, instrument["underlying"], day, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
-                if day == today:
-                    candles.extend(_completed_current_candles(frame, interval))
-                else:
-                    candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+            dates = [day for day in dates if day <= instrument["expiry"]]
         else:
             from app.routers.data import _ensure_data
             from app.services.data_loader import load_dataframe
-            for day in dates:
-                await run_history(_ensure_data, instrument["symbol"], day)
-                frame = await run_history(load_dataframe, instrument["symbol"], day)
+
+        async def load_day(day: str):
+            if is_option:
+                args = (instrument["underlying"], day, strike_number(instrument["strike"]), instrument["expiry"], instrument["right"])
+                await run_history(fetch_options_historical, *args)
+                return await run_history(load_options_dataframe, *args)
+            await run_history(_ensure_data, instrument["symbol"], day)
+            return await run_history(load_dataframe, instrument["symbol"], day)
+
+        for day in dates:
+            try:
+                frame = await load_day(day)
+            except Exception as error:
                 if day == today:
-                    candles.extend(_completed_current_candles(frame, interval))
-                else:
-                    candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+                    raise
+                gaps.append(day)
+                logger.warning(
+                    "desktop_live_history_gap tile_id=%s instrument=%s date=%s error=%s",
+                    tile.get("tile_id"), instrument, day, error,
+                )
+                continue
+            if day == today:
+                candles.extend(_completed_current_candles(frame, interval))
+            else:
+                candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+        if not candles:
+            raise RuntimeError(f"No historical data available for {instrument.get('symbol') or instrument.get('underlying')}")
+        tile["history_gaps"] = gaps
         return sorted({candle["timestamp"]: candle for candle in candles}.values(), key=lambda candle: candle["timestamp"])
 
 
@@ -298,8 +322,14 @@ async def _seed(stream: DesktopStream, tile: dict) -> None:
                 stream.stream_id, tile.get("tile_id"), tile.get("instrument"), tile.get("interval_minutes"),
             )
             stream.history_cache[key] = await _load_history(requested)
+            stream.history_gaps[key] = list(requested.get("history_gaps", []))
         candles = [candle.copy() for candle in stream.history_cache[key]]
+        gaps = list(stream.history_gaps.get(key, []))
     except Exception as error:
+        logger.warning(
+            "desktop_live_provider_error stage=seed stream_id=%s tile_id=%s instrument=%s error=%s",
+            stream.stream_id, tile.get("tile_id"), tile.get("instrument"), error,
+        )
         async with _tile_lock(stream, tile["tile_id"]):
             if (stream.tile_history_generations.get(tile["tile_id"], 0) == history_generation
                 and tile.get("interval_minutes") == requested["interval_minutes"] and tile.get("instrument") == requested["instrument"]):
@@ -311,6 +341,7 @@ async def _seed(stream: DesktopStream, tile: dict) -> None:
             or tile.get("interval_minutes") != requested["interval_minutes"] or tile.get("instrument") != requested["instrument"]):
             return
         tile["candles"] = candles
+        tile["history_gaps"] = gaps
         tile["availability"] = "available"
         tile.pop("reason", None)
 
@@ -384,6 +415,10 @@ async def activate(stream: DesktopStream) -> None:
             tile["subscribed"] = True
             await _seed(stream, tile)
         except Exception as error:
+            logger.warning(
+                "desktop_live_provider_error stage=activate stream_id=%s tile_id=%s instrument=%s error=%s",
+                stream.stream_id, tile.get("tile_id"), tile.get("instrument"), error,
+            )
             tile["subscribed"] = False
             tile["availability"], tile["reason"] = "provider_error", str(error)
     async def activate_tile(tile):
@@ -417,6 +452,10 @@ async def refresh(stream: DesktopStream) -> None:
                     continue
                 if isinstance(result, Exception):
                     # The existing stream/task and candle cache stay usable.
+                    logger.warning(
+                        "desktop_live_provider_error stage=refresh stream_id=%s tile_id=%s instrument=%s error=%s",
+                        stream.stream_id, tile.get("tile_id"), tile.get("instrument"), result,
+                    )
                     tile["availability"] = "provider_error"
                     tile["reason"] = str(result)
                     continue
@@ -426,6 +465,7 @@ async def refresh(stream: DesktopStream) -> None:
                 # reached yet, without ever replacing timestamps the provider did
                 # return.
                 tile["candles"] = candles
+                tile["history_gaps"] = list(request.get("history_gaps", []))
                 tile["current_date_seconds"] = current_date_seconds
                 tile["availability"] = "available"
                 tile.pop("reason", None)

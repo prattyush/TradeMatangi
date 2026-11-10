@@ -50,6 +50,8 @@ from app.models.schemas import (
     UserSettingsUpdateRequest,
 )
 from app.routers import simulation as simulation_router
+from app.routers import behavior as behavior_api
+from app.services import behavior_service as behavior_svc
 from app.services import order_service, options_service, paper_wallet, simulation as sim_svc, strategy_service, trading as trading_service, wallet_service
 from app.services.user_settings_service import get_settings, update_settings
 
@@ -79,6 +81,10 @@ _saved_snapshot_cache: dict[str, tuple[tuple, "DesktopTradingSnapshot"]] = {}
 
 
 class DesktopTradingSnapshot(ContractModel):
+    broker_state_version: int | None = None
+    broker_state_generation: str | None = None
+    broker_orders: list[dict] | None = None
+    broker_snapshot_revision: str | None = None
     version: int = 1
     created_for_request: bool | None = None
     event_cursor: int = 0
@@ -627,19 +633,8 @@ def _seed_underlying_options_request_impl(req: SimulationStartRequest) -> None:
 
 def _strategy_response(instance) -> StrategyResponse:
     metadata = instance.metadata
-    price = None
-    if instance.strategy_type in ("TargetProfit", "UnderlyingTargetProfit"):
-        value = metadata.get("target_profit_value")
-        if value is not None and not metadata.get("target_profit_is_pct", False):
-            price = float(value)
-    elif instance.strategy_type == "LockProfit":
-        value = metadata.get("lock_profit_price", metadata.get("lock_profit_value"))
-        if value is not None and not metadata.get("lock_profit_is_pct", False):
-            price = float(value)
-    elif instance.strategy_type == "UnderlyingStoploss":
-        value = metadata.get("underlying_sl_price")
-        if value is not None:
-            price = float(value)
+    from app.services.strategy_presentation import strategy_line_price
+    price = strategy_line_price(instance)
     return StrategyResponse(
         strategy_id=instance.strategy_id,
         strategy_type=instance.strategy_type,
@@ -863,6 +858,7 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "desktop_hide_chart_labels": settings.get("desktop_hide_chart_labels", False),
             "desktop_order_size_mode": settings.get("desktop_order_size_mode", "quantity"),
             "desktop_pnl_display_mode": settings.get("desktop_pnl_display_mode", "currency"),
+            "pnl_target_levels": settings.get("pnl_target_levels", ""),
             "desktop_confirm_flatten": settings.get("desktop_confirm_flatten", True),
             "context_menu_sl_mode": settings.get("context_menu_sl_mode", "longOnly"),
             "target_deviation_pct": settings.get("target_deviation_pct", 0.01),
@@ -977,11 +973,18 @@ def _mark_desktop_checkpoint(session) -> None:
 
 def _desktop_label_state(session) -> dict:
     """Expose in-session, contract-aware label slots for desktop trading sessions."""
-    if session.session_type not in ("stepwise", "sim", "paper"):
+    if session.session_type not in ("stepwise", "sim", "paper", "real"):
         raise HTTPException(status_code=409, detail="Trade labels are unavailable for this desktop session")
     from app.services import trade_label_service
-    trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
-    completed, open_trips = trade_label_service.compute_round_trip_state(trades)
+    if session.session_type == "real":
+        # Real books are cycle-based and read from the committed broker projection.
+        try:
+            completed, open_trips = trade_label_service.real_round_trip_state(session.session_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail="Real-session round trips are updating; retry shortly") from exc
+    else:
+        trades = [trade.model_dump(mode="json") for trade in trading_service.get_trades(session.session_id)]
+        completed, open_trips = trade_label_service.compute_round_trip_state(trades)
     return {
         "completed": completed,
         "open": open_trips,
@@ -1934,6 +1937,58 @@ async def save_trade_label(session_id: str, req: DesktopTradeLabelRequest, user_
     return {"label": saved[0] if saved else None, **_desktop_label_state(session)}
 
 
+# ── Phase 23 behavior questions / marks (in-session + Settings) ───────────────
+# Same service as /api/behavior; desktop uses the bearer identity and the
+# in-session ownership rules of the label routes above.
+
+class DesktopBehaviorMarksRequest(ContractModel):
+    round_trip_index: int = Field(ge=0)
+    answers: dict[str, bool]
+
+
+@router.get("/behavior/questions", response_model=behavior_api.QuestionsResponse)
+async def desktop_behavior_questions(include_archived: bool = False, user_id: str = Depends(get_desktop_user_id)):
+    return {"questions": await behavior_api._run(behavior_svc.list_questions, user_id, include_archived)}
+
+
+@router.post("/behavior/questions", response_model=behavior_api.QuestionOut)
+async def desktop_add_behavior_question(req: behavior_api.QuestionIn, user_id: str = Depends(get_desktop_user_id)):
+    return await behavior_api._run(behavior_svc.add_question, user_id, req.text, req.kind)
+
+
+@router.post("/behavior/questions/{question_id}/update", response_model=behavior_api.QuestionOut)
+async def desktop_update_behavior_question(question_id: str, req: behavior_api.QuestionUpdateIn, user_id: str = Depends(get_desktop_user_id)):
+    return await behavior_api._run(behavior_svc.update_question, user_id, question_id, req.text)
+
+
+@router.post("/behavior/questions/{question_id}/archive", response_model=behavior_api.QuestionOut)
+async def desktop_archive_behavior_question(question_id: str, user_id: str = Depends(get_desktop_user_id)):
+    return await behavior_api._run(behavior_svc.archive_question, user_id, question_id)
+
+
+@router.post("/behavior/questions/{question_id}/restore", response_model=behavior_api.QuestionOut)
+async def desktop_restore_behavior_question(question_id: str, user_id: str = Depends(get_desktop_user_id)):
+    return await behavior_api._run(behavior_svc.restore_question, user_id, question_id)
+
+
+@router.get("/{session_id}/behavior-marks", response_model=behavior_api.MarksResponse)
+async def desktop_behavior_marks(session_id: str, user_id: str = Depends(get_desktop_user_id)):
+    _readable_session(session_id, user_id)
+    return {"marks": await behavior_api._run(behavior_svc.get_marks, session_id)}
+
+
+@router.post("/{session_id}/behavior-marks", response_model=behavior_api.MarksResponse)
+async def desktop_save_behavior_marks(session_id: str, req: DesktopBehaviorMarksRequest, user_id: str = Depends(get_desktop_user_id)):
+    session = _readable_session(session_id, user_id)
+    if session.session_type not in ("stepwise", "sim", "paper", "real"):
+        raise HTTPException(status_code=409, detail="Behavior labels are unavailable for this desktop session")
+    from app.services import trade_label_service
+    record = await asyncio.to_thread(trade_label_service._load_session, session_id)
+    if not record or record.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"marks": await behavior_api._run(behavior_svc.set_marks, user_id, record, req.round_trip_index, req.answers)}
+
+
 @router.get("/settings/current")
 async def get_desktop_settings(user_id: str = Depends(get_desktop_user_id)):
     return get_settings(user_id, strict=True)
@@ -2005,8 +2060,13 @@ async def refresh_real(session_id: str, user_id: str = Depends(preparation_user_
     session = _require_session(session_id, user_id)
     if session.session_type != 'real':
         raise HTTPException(400, 'Real session required')
-    await real_broker_state.refresh(session, execution_broker.get_service(session))
-    return _snapshot(session, user_id)
+    evidence = await real_broker_state.refresh(session, execution_broker.get_service(session))
+    snapshot = _snapshot(session, user_id)
+    snapshot.broker_state_version = evidence.get("state_version")
+    snapshot.broker_state_generation = evidence.get("state_generation")
+    snapshot.broker_orders = evidence["orders"]
+    snapshot.broker_snapshot_revision = evidence["snapshot_revision"]
+    return snapshot
 
 @router.get("/{session_id}/close-summary")
 async def real_summary(session_id: str, user_id: str = Depends(preparation_user_id)):

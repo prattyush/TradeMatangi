@@ -77,6 +77,7 @@ def initialize_guardrails(session: "SimulationSession", user_id: str) -> None:
     session.high_tier_pnl_threshold_pct = float(settings.get("high_tier_pnl_threshold_pct", 0.0))
     session.guardrail_cooldown_enabled = bool(settings.get("guardrail_cooldown_enabled", False))
     session.guardrail_maxsize_enabled = bool(settings.get("guardrail_maxsize_enabled", False))
+    session.guardrail_maxsize_alert_enabled = bool(settings.get("guardrail_maxsize_alert_enabled", False))
     session.guardrail_maxsize_mode = str(settings.get("guardrail_maxsize_mode", "percentage"))
     session.guardrail_maxsize_pct = float(settings.get("guardrail_maxsize_pct", 20.0))
     session.guardrail_maxsize_value = float(settings.get("guardrail_maxsize_value", 0.0))

@@ -1,3 +1,5 @@
+import BehaviorQuestionsManager from '../../shared/analysis/behavior/BehaviorQuestionsManager'
+import type { BehaviorApi } from '../../shared/analysis/behavior/types'
 import RealBrokerRestrictionSetting from '../../shared/RealBrokerRestrictionSetting'
 import KotakLoginDialog from './KotakLoginDialog'
 import RealSessionList, { type RealBookRequest } from '../../shared/RealSessionList'
@@ -52,6 +54,8 @@ interface Props {
     settings: Record<string, unknown>
   ) => Promise<Record<string, unknown>>
   accountRequest: AccountRequest
+  /** Behavior questions (Settings → Analytics). Absent => the section is hidden. */
+  behaviorApi?: BehaviorApi
   resetWallet: (amount: number) => Promise<void>
   walletResetDisabled: boolean
   walletResetContext?: string
@@ -81,7 +85,11 @@ const optionLabels: Record<string, string> = {
   button: 'Button',
   '120': '2 min',
   '180': '3 min',
-  '300': '5 min'
+  '300': '5 min',
+  '1': '1 min',
+  '10': '10 min',
+  '15': '15 min',
+  '30': '30 min'
 }
 const tokenLabels: Record<string, string> = {
   icici_session: 'ICICI session token',
@@ -125,7 +133,8 @@ function SettingControl({
           value={String(value ?? '')}
           onChange={(e) =>
             onChange(
-              field.key === 'strategy_interval_secs'
+              field.key === 'strategy_interval_secs' ||
+                field.key === 'candle_alert_interval_min'
                 ? Number(e.target.value)
                 : e.target.value
             )
@@ -173,6 +182,7 @@ export function DesktopSettingsModal({
   onSaveTradingSettings,
   saveGuardrails,
   accountRequest,
+  behaviorApi,
   resetWallet,
   walletResetDisabled,
   walletResetContext,
@@ -325,7 +335,14 @@ export function DesktopSettingsModal({
       }
     }
     await action(async () => {
-      if (tab === 'Drawing & Display') await onSave(draft)
+      if (tab === 'Drawing & Display') {
+        await onSave(draft)
+        setUserDraft(
+          await onSaveTradingSettings({
+            pnl_target_levels: String(userDraft.pnl_target_levels ?? '')
+          })
+        )
+      }
       else if (tab === 'GuardRails') {
         const saved = await saveGuardrails(
           Object.fromEntries(
@@ -342,10 +359,19 @@ export function DesktopSettingsModal({
   const brokerControls = (
     <section className="settings-section">
       <strong>Broker connection</strong>
+      <div className="settings-section-body">
       <p>Execution: {String(userDraft.real_execution_broker ?? 'kotak') === 'kite' ? `Kite · ${brokerStatus.kite === undefined ? 'Checking…' : brokerStatus.kite ? 'Connected' : 'Not connected; check the Kite token in Admin'}` : 'Kotak Neo'}</p>
+      </div>
+      <div className="picker-fields">
       <label>Real execution broker<select value={String(userDraft.real_execution_broker ?? 'kotak')} disabled={loading || loadFailed || saving} onChange={event => { const broker = event.target.value; void onSaveTradingSettings({ real_execution_broker: broker }).then(value => setUserDraft(current => ({ ...current, ...value }))).catch(error => setBrokerError(String(error))) }}><option value="kotak">Kotak Neo</option><option value="kite">Kite (Zerodha)</option></select></label>
+      </div>
+      <div className="settings-section-body">
       {realActiveSession && <small>Changing the default broker affects new sessions. Existing sessions keep their broker.</small>}
-      <RealSessionList key={String(userDraft.real_execution_broker)} request={realBookRequest} />
+      </div>
+      <div className="settings-section-pad">
+        <RealSessionList key={String(userDraft.real_execution_broker)} request={realBookRequest} />
+      </div>
+      <div className="settings-section-body">
       <p>
         Kotak Neo:{' '}
         {brokerStatus.kotak === undefined
@@ -363,18 +389,18 @@ export function DesktopSettingsModal({
       </p>
       {brokerError && <p role="alert">{brokerError}</p>}
       <button type="button" disabled={loading || loadFailed || saving} onClick={()=>setShowKotakLogin(true)}>Connect Kotak Neo</button>
+      </div>
       {showKotakLogin && <KotakLoginDialog request={accountRequest} onCancel={()=>setShowKotakLogin(false)} onConnected={()=>{setShowKotakLogin(false);setBrokerStatus(current=>({...current,kotak:true}));setBrokerError('');setStatus('Kotak connected')}}/>}
     </section>
   )
   const tabs = [
     ...Object.keys(sharedSettingsSections),
-    'History sharing',
     'GuardRails',
     'Drawing & Display',
     ...(profile?.is_admin ? ['Admin'] : []),
     'Profile'
   ]
-  const preferenceTab = tab !== 'Admin' && tab !== 'Profile' && tab !== 'History sharing'
+  const preferenceTab = tab !== 'Admin' && tab !== 'Profile'
   return (
     <div className="modal-backdrop">
       <section
@@ -667,6 +693,28 @@ export function DesktopSettingsModal({
                   </span>
                 </label>
               </section>
+              <section
+                hidden={tab !== 'Drawing & Display'}
+                className="settings-section"
+              >
+                <strong>Target P&amp;L levels indicator</strong>
+                <div className="picker-fields">
+                  <label title="Comma-separated numbers, e.g. 0,3,6,10,15,18. Percent of session capital when P&L display is Percentage, rupees when Currency. Each line marks the price where exiting the whole position makes the day's net P&L equal that value. Shown only while a position is open.">
+                    Target P&amp;L values
+                    <input
+                      aria-label="Target P&L values"
+                      placeholder="0,3,6,10,15,18"
+                      value={String(userDraft.pnl_target_levels ?? '')}
+                      onChange={(event) =>
+                        setUserDraft({
+                          ...userDraft,
+                          pnl_target_levels: event.target.value
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+              </section>
               {sharedSettingsSections[tab] && (
                 <section className="settings-section">
                   <strong>{tab}</strong>
@@ -680,6 +728,12 @@ export function DesktopSettingsModal({
                     <p>
                       These preferences are shared with the website. Features
                       without a desktop interface currently apply there.
+                    </p>
+                  )}
+                  {tab === 'Sharing' && (
+                    <p>
+                      Share patterns and fine structures with registered accounts, and
+                      manage who can see your real-trading history below.
                     </p>
                   )}
                   {tab === 'Strategies' && (
@@ -753,6 +807,13 @@ export function DesktopSettingsModal({
                         )
                       })}
                     </div>
+                  )}
+                  {tab === 'Analytics' && behaviorApi && (
+                    <section className="settings-section tl-desktop">
+                      <strong>Behavior questions</strong>
+                      <p>Yes/no questions you answer per trade: entry questions when you label an entry, exit questions when you label a closed trade. Archive a question to stop asking it; its past answers stay in your stats.</p>
+                      <BehaviorQuestionsManager api={behaviorApi} />
+                    </section>
                   )}
                   {tab === 'General' && (
                     <>
@@ -984,7 +1045,7 @@ export function DesktopSettingsModal({
                   {profile.real_trading_enabled && brokerControls}
                 </section>
               )}
-              {tab === 'History sharing' && <HistorySharingSettings request={sharingRequest} />}
+              {tab === 'Sharing' && <div className="settings-section-pad"><HistorySharingSettings request={sharingRequest} /></div>}
               {tab === 'Profile' && (
                 <section className="settings-section">
                   <strong>{profile?.email}</strong>

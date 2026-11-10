@@ -1,8 +1,11 @@
+import { AppWindowControls } from '../../../shared/AppWindowControls'
+import { InstallAppControl } from '../../../webapp/src/InstallApp'
 import { useFlashError } from '../hooks/useFlashError'
 import { useState, useEffect, useCallback } from 'react'
 import api from '../services/api'
 
 interface Props {
+  showInstall?: boolean
   onLogin: (userId: string, email: string, isAdmin?: boolean, accountName?: string) => void
 }
 
@@ -27,7 +30,7 @@ declare global {
   }
 }
 
-export default function LoginScreen({ onLogin }: Props) {
+export default function LoginScreen({ onLogin, showInstall = false }: Props) {
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -147,7 +150,7 @@ export default function LoginScreen({ onLogin }: Props) {
       <div style={{
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        height: '100vh', background: '#0d1117',
+        height: 'var(--app-height, 100vh)', background: '#0d1117',
       }}>
         <div style={{
           width: 360, padding: 32,
@@ -156,7 +159,7 @@ export default function LoginScreen({ onLogin }: Props) {
           borderRadius: 12,
         }}>
           <div style={{ textAlign: 'center', marginBottom: 24 }}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: '#58a6ff' }}>Welcome to TradeMatangi</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: '#58a6ff' }}>Welcome to TradeMatangi <AppWindowControls /></div>
             <div style={{ fontSize: 13, color: '#484f58', marginTop: 8 }}>
               Please choose an account name to continue
             </div>
@@ -189,7 +192,7 @@ export default function LoginScreen({ onLogin }: Props) {
     <div style={{
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      height: '100vh', background: '#0d1117',
+      height: 'var(--app-height, 100vh)', background: '#0d1117',
     }}>
       <div style={{
         width: 360, padding: 32,
@@ -198,7 +201,7 @@ export default function LoginScreen({ onLogin }: Props) {
         borderRadius: 12,
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: '#58a6ff' }}>TradeMatangi <AppWindowControls /></div>
           <div style={{ fontSize: 13, color: '#484f58', marginTop: 4 }}>
             {mode === 'login' ? 'Sign in to your account' : 'Create a new account'}
           </div>
@@ -297,6 +300,7 @@ export default function LoginScreen({ onLogin }: Props) {
           )}
         </div>
 
+        {showInstall && <div style={{ marginTop: 16, textAlign: 'center' }}><InstallAppControl /></div>}
       </div>
     </div>
   )

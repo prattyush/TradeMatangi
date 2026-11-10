@@ -3,11 +3,13 @@ import {
   DEFAULT_RECT_STYLE, hexToRgba, mergeRectSettings, normalizeRectStyle,
 } from '../indicators/rectangleMath'
 import { CHART_APPEARANCE_EVENT, requestChartSettings } from '../indicators/rectangleStyle'
+import { rendererAccountKey } from '../services/websiteChartPreferences'
 
 /**
  * Settings -> Display. Chart drawing appearance, stored in the per-user chart-settings
- * record (`drawingFillColor` / `drawingFillOpacity`, shared with the desktop app).
- * Saving does a read-modify-write so other chart-settings keys are preserved.
+ * record (`drawingFillColor` / `drawingFillOpacity`, shared with the desktop app and the
+ * KLine chart). Saving does a read-modify-write so other chart-settings keys (KLine
+ * appearance, desktop colours) are preserved, then notifies open charts for this account.
  */
 export default function DisplaySettings() {
   const [loaded, setLoaded] = useState(false)
@@ -18,9 +20,10 @@ export default function DisplaySettings() {
 
   useEffect(() => {
     let active = true
+    const owner = rendererAccountKey()
     requestChartSettings()
       .then(settings => {
-        if (!active) return
+        if (!active || owner !== rendererAccountKey()) return
         const style = normalizeRectStyle(settings)
         setColor(style.fillColor)
         setOpacity(style.opacity)
@@ -32,12 +35,15 @@ export default function DisplaySettings() {
 
   async function save() {
     if (busy) return
+    const owner = rendererAccountKey()
     setBusy(true)
     setMessage(null)
     try {
       const latest = await requestChartSettings()
+      if (owner !== rendererAccountKey()) return
       const saved = await requestChartSettings(mergeRectSettings(latest, { fillColor: color, opacity }))
-      window.dispatchEvent(new CustomEvent(CHART_APPEARANCE_EVENT, { detail: { settings: saved } }))
+      if (owner !== rendererAccountKey()) return
+      window.dispatchEvent(new CustomEvent(CHART_APPEARANCE_EVENT, { detail: { owner, settings: saved } }))
       setMessage({ text: 'Saved. Rectangles on open charts updated.', error: false })
     } catch (error) {
       setMessage({ text: String(error), error: true })
@@ -47,11 +53,11 @@ export default function DisplaySettings() {
   }
 
   return (
-    <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
-      <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>RECTANGLE DRAWING</div>
-      <fieldset disabled={!loaded || busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#e6edf3' }}>
-          <span style={{ width: 110 }}>Shaded fill colour</span>
+    <div className="settings-block">
+      <div className="settings-block-title">Rectangle drawing</div>
+      <fieldset disabled={!loaded || busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+        <label className="settings-field-row">
+          <span>Shaded fill colour</span>
           <input
             type="color" aria-label="Rectangle fill colour" value={color}
             onChange={e => setColor(e.target.value)}
@@ -59,23 +65,20 @@ export default function DisplaySettings() {
           />
           <code style={{ fontSize: 11, color: '#8b949e' }}>{color}</code>
         </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#e6edf3' }}>
-          <span style={{ width: 110 }}>Fill opacity</span>
+        <label className="settings-field-row">
+          <span>Fill opacity</span>
           <input
             type="range" aria-label="Rectangle fill opacity" min={0.02} max={1} step={0.02} value={opacity}
             onChange={e => setOpacity(parseFloat(e.target.value))}
             style={{ width: 160 }}
           />
-          <span style={{ fontSize: 11, color: '#8b949e', width: 36 }}>{Math.round(opacity * 100)}%</span>
+          <span style={{ flex: '0 0 auto', fontSize: 11 }}>{Math.round(opacity * 100)}%</span>
         </label>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: '#e6edf3' }}>
-          <span style={{ width: 110 }}>Preview</span>
+        <div className="settings-field-row">
+          <span>Preview</span>
           <div
             aria-label="Rectangle preview"
-            style={{
-              width: 160, height: 36, borderRadius: 3, background: '#0d1117',
-              position: 'relative', border: '1px solid #21262d', overflow: 'hidden',
-            }}
+            style={{ width: 160, height: 36, borderRadius: 3, background: '#0d1117', position: 'relative', border: '1px solid #21262d', overflow: 'hidden' }}
           >
             <div style={{
               position: 'absolute', inset: '6px 24px',
@@ -84,15 +87,12 @@ export default function DisplaySettings() {
             }} />
           </div>
         </div>
+        <small className="settings-note">
+          Used by the Rectangle tool on the Lightweight trading, Analysis, Pattern Library and Fine Structures charts. Shared with desktop and the KLine rectangle.
+        </small>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button
-            type="button" onClick={() => void save()}
-            style={{
-              padding: '5px 16px', fontSize: 12, fontWeight: 600, borderRadius: 6, cursor: 'pointer',
-              border: '1px solid #1f6feb', background: '#1f3a5f', color: '#79c0ff',
-            }}
-          >
-            {busy ? 'Saving…' : 'Save'}
+          <button type="button" className="settings-primary-btn" onClick={() => void save()}>
+            {busy ? 'Saving…' : 'Save rectangle fill'}
           </button>
           <button
             type="button" onClick={() => { setColor(DEFAULT_RECT_STYLE.fillColor); setOpacity(DEFAULT_RECT_STYLE.opacity) }}
@@ -107,9 +107,6 @@ export default function DisplaySettings() {
           )}
         </div>
       </fieldset>
-      <div style={{ fontSize: 11, color: '#484f58', marginTop: 6 }}>
-        Used by the Rectangle tool on the trading, Pattern Library and Fine Structures charts. Shared with the desktop app.
-      </div>
     </div>
   )
 }

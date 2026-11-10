@@ -2,6 +2,7 @@ import { flashError, getNotificationContext, getNotificationScope } from './noti
 import { BACKEND_URL } from "../config";
 import { _authHeaders } from "./api";
 import type { PerformanceFilters, PerformanceReport, PerformanceCycle, RealFeesDay } from '../../../shared/analysis/performance'
+import type { HabitLedger } from '../../../shared/analysis/habits/types'
 export * from '../../../shared/analysis/performance'
 async function rawRequest<T>(
   path: string,
@@ -50,6 +51,20 @@ export const getPerformanceDetail = (
     { session_id: cycle.session_id, enrich: String(enrich) },
     signal,
   );
+
+/** Habit ledger: own closed trades with their behavior marks, for the same filters as the Stats overview. */
+export async function getHabitLedger(filters: PerformanceFilters, signal?: AbortSignal): Promise<HabitLedger> {
+  const scope = getNotificationScope(); const context = getNotificationContext()
+  try {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => Boolean(value)))
+    const response = await fetch(`${BACKEND_URL}/api/behavior/habit-ledger?${params}`, { headers: _authHeaders(), signal })
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => null))?.detail
+      throw new Error(typeof detail === 'string' ? detail : `Habit statistics could not load (${response.status}). Retry when the backend is available.`)
+    }
+    return await response.json() as HabitLedger
+  } catch (error) { if (scope === getNotificationScope()) flashError(error, 'Analysis', context); throw error }
+}
 
 async function realFeesRequest(date: string, method = 'GET', account = '', amount?: number, signal?: AbortSignal, execution_broker?: "kotak" | "kite"): Promise<RealFeesDay> {
   const params = new URLSearchParams({date, ...(method === 'DELETE' ? {account_id: account, ...(execution_broker ? {execution_broker} : {})} : {})})

@@ -419,3 +419,15 @@ def test_real_aliases_are_counted_once(database, monkeypatch):
         database.Table("Trades").put_item(Item={**row, "session_id": "partition"})
     rows = perf.load_cycles("alice")
     assert len(rows) == 1 and rows[0]["session_id"] == "session"
+
+
+def test_round_trips_endpoint_returns_pnl_pct_and_peak_capital_pct(database):
+    """The response model must not strip the Label Trades P&L % and peak capital % fields."""
+    seed(database)
+    with TestClient(app) as client:
+        response = client.get("/api/analysis/round-trips?session_id=session", headers={"X-User-Id": "alice"})
+    assert response.status_code == 200
+    trip = response.json()[0]
+    assert trip["pnl"] == 398
+    assert trip["pnl_pct"] == pytest.approx(3.98)
+    assert trip["max_capital_pct"] == pytest.approx(40.0)

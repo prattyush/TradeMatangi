@@ -1,0 +1,136 @@
+/* Label Trades — one-at-a-time panel. Variables default to the website palette; the desktop overrides them below. */
+.tl-root {
+  --tl-bg: #0d1117; --tl-card: #161b22; --tl-border: #30363d; --tl-soft: #21262d;
+  --tl-text: #e6edf3; --tl-muted: #8b949e; --tl-dim: #6e7681;
+  --tl-accent: #58a6ff; --tl-good: #3fb950; --tl-bad: #f85149; --tl-save: #238636;
+  color: var(--tl-text);
+}
+.tl-desktop .tl-root, .desktop-label-workflow .tl-root {
+  --tl-bg: #10131a; --tl-card: #141924; --tl-border: #293142; --tl-soft: #252c39;
+  --tl-text: #e2e8f0; --tl-muted: #94a3b8; --tl-dim: #64748b; --tl-accent: #60a5fa;
+}
+.tl-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+.tl-head { position: sticky; top: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--tl-card); border: 1px solid var(--tl-border); border-radius: 8px; }
+.tl-nav { display: flex; align-items: center; gap: 8px; }
+.tl-nav-button { min-width: 84px; min-height: 36px; padding: 0 12px; border: 1px solid var(--tl-border); border-radius: 6px; background: var(--tl-soft); color: var(--tl-text); font-size: 13px; font-weight: 600; cursor: pointer; }
+.tl-nav-button:hover:not(:disabled) { border-color: var(--tl-accent); }
+.tl-nav-button:disabled { opacity: .4; cursor: default; }
+.tl-nav-button.primary { background: var(--tl-accent); border-color: var(--tl-accent); color: #0d1117; }
+.tl-counter { flex: 1; text-align: center; font-size: 13px; font-weight: 700; }
+.tl-counter small { display: block; font-size: 11px; font-weight: 500; color: var(--tl-muted); }
+
+.tl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--tl-muted); }
+.tl-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.tl-contract { font-weight: 700; color: var(--tl-text); }
+.tl-pnl { font-weight: 700; }
+.tl-pnl.up { color: var(--tl-good); } .tl-pnl.down { color: var(--tl-bad); }
+.tl-peak { padding: 1px 8px; border: 1px solid var(--tl-border); border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--tl-muted); background: var(--tl-bg); white-space: nowrap; }
+.tl-grow { flex: 1; }
+.tl-ghost { border: 1px solid var(--tl-border); background: transparent; color: var(--tl-muted); border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.tl-ghost:hover { color: var(--tl-text); border-color: var(--tl-accent); }
+
+.tl-strip { display: flex; flex-wrap: wrap; gap: 4px; max-height: 64px; overflow-y: auto; }
+.tl-chip { position: relative; width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 1px solid var(--tl-border); background: var(--tl-soft); color: var(--tl-muted); font-size: 10px; font-weight: 700; cursor: pointer; }
+.tl-chip.up { border-color: var(--tl-good); } .tl-chip.down { border-color: var(--tl-bad); }
+.tl-chip.current { background: var(--tl-accent); color: #0d1117; border-color: var(--tl-accent); }
+.tl-chip.done::after { content: ''; position: absolute; right: 1px; top: 1px; width: 5px; height: 5px; border-radius: 50%; background: var(--tl-good); }
+
+.tl-summary { padding: 10px; background: var(--tl-bg); border: 1px solid var(--tl-border); border-radius: 8px; font-size: 12px; line-height: 1.6; color: var(--tl-muted); }
+.tl-summary strong { color: var(--tl-text); font-weight: 600; }
+.tl-card { padding: 10px; background: var(--tl-bg); border: 1px solid var(--tl-soft); border-radius: 8px; }
+.tl-card + .tl-card { margin-top: 8px; }
+
+.tl-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; }
+.tl-field { min-width: 0; }
+.tl-field > label, .tl-field > .tl-label { display: block; margin-bottom: 3px; font-size: 11px; color: var(--tl-muted); }
+.tl-field-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.tl-input { width: 100%; box-sizing: border-box; background: var(--tl-bg); border: 1px solid var(--tl-border); color: var(--tl-text); border-radius: 4px; padding: 5px 7px; font-size: 12px; }
+
+.tl-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 22px; font-size: 12px; color: var(--tl-muted); }
+.tl-status .ok { color: var(--tl-good); } .tl-status .bad { color: var(--tl-bad); }
+.tl-status button { border: 1px solid var(--tl-border); background: var(--tl-soft); color: var(--tl-text); border-radius: 4px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
+.tl-empty { padding: 24px 12px; text-align: center; color: var(--tl-muted); font-size: 13px; }
+
+.tl-mode { display: inline-flex; border: 1px solid var(--tl-border); border-radius: 6px; overflow: hidden; }
+.tl-mode button { border: 0; background: transparent; color: var(--tl-muted); padding: 4px 10px; font-size: 12px; cursor: pointer; }
+.tl-mode button[aria-pressed='true'] { background: var(--tl-accent); color: #0d1117; font-weight: 700; }
+.tl-mode button:disabled { opacity: .5; cursor: default; }
+
+/* Phones and narrow windows: one column (the sticky bottom Prev/Next bar arrives with the responsive sprint). */
+@media (max-width: 900px) {
+  .tl-form { grid-template-columns: 1fr; }
+  .tl-input, .tl-root select { min-height: 36px; font-size: 14px; }
+}
+
+/* Page layout: chart column + label column (replaces the former inline flex styles). */
+.tl-layout { display: flex; gap: 12px; min-height: 400px; }
+.tl-layout.maximized { min-height: 0; flex: 1; overflow: hidden; }
+.tl-chart-col { flex: 3; min-width: 0; display: flex; flex-direction: column; }
+.tl-side-col { flex: 2; min-width: 0; display: flex; flex-direction: column; gap: 10px; max-height: 640px; overflow-y: auto; }
+.tl-layout.maximized .tl-side-col { max-height: none; flex: 0 0 clamp(360px, 30vw, 460px); }
+.tl-layout.maximized .tl-chart-col { flex: 1 1 0; }
+
+/* One chart + switcher below it (default), or Underlying and strike stacked (maximized) */
+.tl-panes { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 640px; }
+.tl-layout.maximized .tl-panes { min-height: 0; }
+.tl-pane { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--tl-border); border-radius: 8px; overflow: hidden; background: var(--tl-bg); }
+.tl-pane-chart { flex: 1; min-height: 0; position: relative; }
+.tl-pane-chart > * { height: 100%; }
+.tl-pane-tabs { display: flex; flex-wrap: wrap; gap: 6px; flex: none; }
+.tl-pane-tabs button, .tl-contracts button { border: 1px solid var(--tl-border); background: var(--tl-soft); color: var(--tl-muted); border-radius: 12px; padding: 3px 10px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.tl-pane-tabs button[aria-pressed='true'], .tl-contracts button[aria-pressed='true'] { background: var(--tl-accent); border-color: var(--tl-accent); color: #0d1117; }
+.tl-contracts { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--tl-border); }
+.tl-bottom-nav { display: none; }
+
+@media (max-width: 900px) {
+  .tl-layout.maximized .tl-side-col { flex: none; }
+  .tl-layout { flex-direction: column; }
+  .tl-layout:not(.maximized) { min-height: 0; }
+  .tl-side-col { max-height: none; overflow: visible; }
+  .tl-panes { height: 46vh; min-height: 320px; flex: none; }
+  .tl-head { position: static; }
+  .tl-head .tl-nav .tl-nav-button { display: none; }
+  /* Fixed to the screen bottom: sticky does not engage inside the Analysis modal's padded, clipped scroll containers. */
+  .tl-panel { padding-bottom: 84px; }
+  .tl-bottom-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 2100; display: flex; align-items: center; gap: 8px; padding: 8px 72px calc(8px + env(safe-area-inset-bottom, 0px)) 8px; background: var(--tl-card); border-top: 1px solid var(--tl-border); box-shadow: 0 -4px 12px rgba(0, 0, 0, .35); }
+  .tl-bottom-nav .tl-nav-button { flex: 1; min-height: 44px; font-size: 15px; }
+  .tl-bottom-nav .tl-count { min-width: 56px; text-align: center; font-size: 13px; font-weight: 700; }
+}
+
+/* Behavior questions: manager and per-trade checklist */
+.bq { display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.bq-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bq-add .tl-input { flex: 1 1 220px; }
+.bq-error { margin: 0; color: var(--tl-bad); font-size: 12px; }
+.bq-section h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--tl-muted); }
+.bq-section h4 small { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--tl-dim); }
+.bq ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bq-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 8px; border: 1px solid var(--tl-border); border-radius: 6px; background: var(--tl-bg); }
+.bq-row .bq-text { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.bq-row.archived { opacity: .7; }
+.bq-row em, .bq-toggle em { font-style: normal; color: var(--tl-dim); font-size: 11px; }
+.bq-empty, .bq-count { margin: 0; color: var(--tl-dim); font-size: 12px; }
+.tl-ghost.danger { border-color: var(--tl-bad); color: var(--tl-bad); }
+
+.bq-checklist { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.bq-checklist .tl-label { display: block; font-size: 11px; color: var(--tl-muted); }
+.bq-checklist .tl-label small { color: var(--tl-dim); }
+.bq-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 5px 8px; text-align: left; border: 1px solid var(--tl-border); border-radius: 6px; background: var(--tl-bg); color: var(--tl-text); font-size: 12px; cursor: pointer; }
+.bq-toggle:hover:not(:disabled) { border-color: var(--tl-accent); }
+.bq-toggle:disabled { opacity: .55; cursor: default; }
+.bq-toggle .bq-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bq-switch { position: relative; flex: none; width: 28px; height: 16px; border-radius: 8px; background: var(--tl-soft); border: 1px solid var(--tl-border); }
+.bq-switch::after { content: ''; position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--tl-muted); transition: transform .12s; }
+.bq-toggle.on { border-color: var(--tl-accent); }
+.bq-toggle.on .bq-switch { background: var(--tl-accent); border-color: var(--tl-accent); }
+.bq-toggle.on .bq-switch::after { transform: translateX(12px); background: #0d1117; }
+.bq-state { flex: none; font-size: 11px; font-weight: 700; color: var(--tl-muted); }
+.bq-toggle.on .bq-state { color: var(--tl-accent); }
+
+/* Modal used to open the manager from Label Trades */
+.tl-modal { position: fixed; inset: 0; z-index: 2400; display: flex; align-items: center; justify-content: center; padding: 12px; background: rgba(0, 0, 0, .6); }
+.tl-modal-card { width: min(640px, 100%); max-height: 88vh; overflow: auto; padding: 14px; border-radius: 10px; border: 1px solid var(--tl-border); background: var(--tl-card); }
+.tl-modal-card > header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.tl-modal-card > header h3 { flex: 1; margin: 0; font-size: 15px; }
+.bq-empty-picker { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--tl-muted); }

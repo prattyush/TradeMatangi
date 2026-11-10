@@ -302,3 +302,120 @@ async def test_refresh_retries_failed_live_subscription(monkeypatch):
     assert attempts == [None]
     assert current["subscribed"] is True
     assert current["availability"] == "available"
+
+
+# --- _load_history: prior-day gaps (e.g. a newly listed option strike) ---------
+
+def _day_frame(day):
+    index = pd.date_range(f"{day} 09:15:00", f"{day} 09:20:59", freq="1s", tz="UTC")
+    return pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1}, index=index)
+
+
+def _option_tile(expiry="2099-01-01"):
+    return {
+        "tile_id": "pe", "interval_minutes": 1, "context_days": 3,
+        "instrument": {"kind": "option", "underlying": "BSESEN", "symbol": "BSESEN", "strike": 78200,
+                       "right": "PE", "expiry": expiry},
+    }
+
+
+def _today_and_priors(n=3):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from app.utils import prior_trading_days
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    return today, prior_trading_days(today, n)
+
+
+def _patch_option_history(monkeypatch, failing_days):
+    from app.services import options_service
+
+    def fetch(symbol, day, *args):
+        if day in failing_days:
+            raise RuntimeError("kite returned no historical data")
+
+    monkeypatch.setattr(options_service, "fetch_options_historical", fetch)
+    monkeypatch.setattr(options_service, "load_options_dataframe", lambda symbol, day, *args: _day_frame(day))
+
+
+@pytest.mark.asyncio
+async def test_load_history_skips_prior_days_the_provider_cannot_supply(monkeypatch, caplog):
+    today, priors = _today_and_priors()
+    _patch_option_history(monkeypatch, {priors[0], priors[1]})
+    request = _option_tile()
+
+    with caplog.at_level("WARNING"):
+        candles = await live._load_history(request)
+
+    assert request["history_gaps"] == [priors[0], priors[1]]
+    assert candles and candles == sorted(candles, key=lambda item: item["timestamp"])
+    assert caplog.text.count("desktop_live_history_gap") == 2
+
+
+@pytest.mark.asyncio
+async def test_load_history_still_fails_when_today_fails(monkeypatch):
+    today, _ = _today_and_priors()
+    _patch_option_history(monkeypatch, {today})
+
+    with pytest.raises(RuntimeError, match="kite returned no historical data"):
+        await live._load_history(_option_tile())
+
+
+@pytest.mark.asyncio
+async def test_load_history_fails_clearly_when_no_day_has_candles(monkeypatch):
+    today, priors = _today_and_priors()
+    from app.services import options_service
+    monkeypatch.setattr(options_service, "fetch_options_historical", lambda *args: None)
+    monkeypatch.setattr(options_service, "load_options_dataframe", lambda *args: _day_frame(today).iloc[0:0])
+
+    with pytest.raises(RuntimeError, match="No historical data available for BSESEN"):
+        await live._load_history(_option_tile())
+
+
+@pytest.mark.asyncio
+async def test_load_history_equity_tile_tolerates_a_failing_prior_day(monkeypatch):
+    today, priors = _today_and_priors()
+    from app.routers import data as data_router
+    from app.services import data_loader
+
+    def ensure(symbol, day):
+        if day == priors[0]:
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(data_router, "_ensure_data", ensure)
+    monkeypatch.setattr(data_loader, "load_dataframe", lambda symbol, day: _day_frame(day))
+    request = {"tile_id": "eq", "interval_minutes": 1, "context_days": 3,
+               "instrument": {"kind": "index", "symbol": "NIFTY"}}
+
+    candles = await live._load_history(request)
+
+    assert request["history_gaps"] == [priors[0]]
+    assert candles
+
+
+@pytest.mark.asyncio
+async def test_seed_publishes_history_gaps_and_stays_available(monkeypatch):
+    today, priors = _today_and_priors()
+    _patch_option_history(monkeypatch, {priors[0]})
+    current = _option_tile()
+    stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[current])
+
+    await live._seed(stream, current)
+
+    assert current["availability"] == "available"
+    assert current["history_gaps"] == [priors[0]]
+    assert current["candles"]
+
+
+@pytest.mark.asyncio
+async def test_seed_logs_provider_error_when_history_fails(monkeypatch, caplog):
+    today, _ = _today_and_priors()
+    _patch_option_history(monkeypatch, {today})
+    current = _option_tile()
+    stream = live.DesktopStream(stream_id="stream", user_id="user", generation=1, tiles=[current])
+
+    with caplog.at_level("WARNING"):
+        await live._seed(stream, current)
+
+    assert current["availability"] == "provider_error"
+    assert "desktop_live_provider_error stage=seed" in caplog.text

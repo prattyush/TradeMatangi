@@ -75,6 +75,7 @@
 ## Admin & Settings UI
 
 - **Settings modal tab structure**: admin users see `[General] [Admin]` tabs (state `activeTab`). Non-admin users see no tabs (same single-column layout). Admin tab content: BROKER TOKENS, LIVE STREAMING SOURCE toggle, REAL TRADING ACCESS whitelist, BROKER CONNECTION. General tab: all existing trading/wallet/strategy settings + BROKER section for real trading users. `api.getStreamSource()` / `api.setStreamSource()` → `GET/PUT /api/admin/stream-source`.
+- **Settings → Display tab (website, 2026-11-01)**: the chart-appearance settings were moved out of General into a dedicated `display` tab (state `activeTab` in `frontend/src/components/SettingsModal.tsx`, nav order `general, display, trading, ...`): the **Trading chart** renderer select (Lightweight / KLine), `WebsiteChartAppearanceSettings`, and **TRADING CHART INDICATORS** (ROC ratio mode). P&L Display Mode, Historical Days, Wallet etc. stay in General. Values and persistence are unchanged; only their location moved.
 
 - **Historical request mode**: paper/real chart, indicator and strike-selection requests pass `history_mode=live`; replay, stepwise, analysis and ordinary Browse use the default `replay`. Include mode in frontend chart/indicator cache keys so minute chart history cannot leak into replay after a mode switch.
 
@@ -105,6 +106,11 @@
   position, order or strategy, because the old contract stops receiving ticks. If the live-feed switch itself fails, the server restores the previous strike and price and answers 502 (managed feed: real and website-paper sessions), so the session never stays on a contract that has no ticks; the pane keeps its old strike. The
   App's workspace-reset effect is skipped for the resulting strike change
   (`skipWorkspaceResetKeyRef`, decided by `reselectOutcome` in `strikeRule.ts`) so the user's pane layout is not rebuilt.
+- Adding a CE/PE pane at another strike (and the paper-resume workspace restore) calls
+  `PUT /api/simulation/{id}/update-pane-strike`, which the server refuses (409) when the swap would strand
+  an open position, order or strategy. `api.updatePaneStrike` surfaces the server's reason; add-pane then
+  removes the pane it just added and restore keeps loading the workspace, both via
+  `paneStrikeErrorMessage` in `strikeRule.ts` and the header error.
 - Rectangle drawing (`indicators/rectanglePrimitive.ts`) is an `ISeriesPrimitive` that
   resolves pixel coordinates inside `draw()`; a corner time absent from the loaded
   candles (e.g. past the last bar) is extrapolated from bar spacing, never dropped.
@@ -112,3 +118,28 @@
   `drawingFillOpacity` from `/api/desktop/v1/chart-settings` (shared with the desktop
   app) and re-publishes on the `website-chart-appearance` window event. Settings ->
   Display must save with read-modify-write so other chart-settings keys survive.
+
+## Analysis & Patterns charts
+
+- Analysis charts get their renderer from `AnalysisEnvironment.charts`. On the website
+  the map is chosen by the separate `website_analysis_chart_renderer` setting; never
+  reuse the trading `website_chart_renderer` for it.
+- KLine and Lightweight tool sets are intentionally different. KLine drawings persist
+  to the backend under the same instrument identity as the trading charts
+  (`analysisDrawingInstrument` + `drawingIdentity(..., shareDayDrawings=true)`); keep
+  those two in lockstep with `WebsiteKLineChart.tsx` and desktop `App.tsx`, or
+  Analysis drawings stop appearing on the trading chart. Lightweight Analysis drawings
+  are local only.
+- The Lightweight Analysis Rectangle uses the same `attachRectangle` primitive and `{type:'rect', p1, p2}` persisted shape as `Chart.tsx`; keep both in lockstep. Legacy `channel` entries are skipped on restore (an unhandled entry would abort the whole restore).
+- Lightweight Analysis charts are recreated when maximized (`[isMaximized]`); anything
+  drawn must be restorable from storage at chart creation.
+- Website KLine Analysis styles live in `klineAnalysisSite.css`, scoped by
+  `.kline-analysis-site`; do not import the desktop `desktopAnalysis.css` there.
+- Label Trades (`shared/analysis/TradeLabeling.tsx` + `shared/analysis/labeling/`) is shared by website, webapp and desktop. Its layout is chosen by `AnalysisEnvironment.labelView` (user setting `analysis_label_view`; default one at a time); each host supplies `labelView`/`onLabelViewChange`. One-at-a-time mode auto-saves only edited trades through `LabelSaver` (never overlapping saves, flush before navigating); all-together mode keeps the explicit Save. Styling uses `tl-` classes with CSS variables, imported by the component itself, so it works without `desktopAnalysis.css`.
+- Label Trades chart layout: one chart + switcher when not maximized, both charts when maximized (`LabelChartPanes` `maximized` prop on the website, `AnalysisPanels` `layout` prop and `.is-single` CSS on desktop). Keep the switcher DOM (`nav[aria-label="Chart pane"]`) and pane labels — the browser checks rely on them.
+- Label Trades chart panes (`labeling/LabelChartPanes.tsx`): charts receive `focusTime`, `fill` and — for strike charts — `labelContractMarkers` (option-contract markers are unlabeled by default; do not change that for other screens). The phone bottom bar is `position: fixed`; do not return it to `sticky` (it does not engage inside the Analysis modal). The Analysis group card uses `overflow: clip` for the same reason.
+- Behavior questions/marks (Phase 23): the manager and checklists are shared (`shared/analysis/behavior/`) and take an injected `BehaviorApi`; there are three transports (website `/api/behavior`, desktop Analysis proxy via `createAnalysisApi`, desktop trading routes via `createDesktopBehaviorApi`) — keep their method shapes identical. Marks are saved by `MarkSaver`, never by the Save Labels button, and must be flushed together with the label saver before navigating. An archived question is shown on a trade only when that trade already has its mark. The desktop proxy `behavior/*` routes are in all three allowlists (`desktop_analysis.py`, `analysisApi.ts`, `lib.rs`).
+- In-session labels are keyed by `(session_id, round_trip_index)` and the backend numbers a round trip when it **opens** (`build_cycles`: `index = len(cycles)`). The website must assign the same number at open time and keep it until the leg closes (`hooks/roundTripIndexer.ts`; never renumber at close). The desktop takes its slots from the server. Behavior answers in the live popups are sent only after the label saved and only when changed (`diffAnswers`); the popup must stay open on failure.
+- Habits (Stats → Habits): every statistic is computed in `shared/analysis/habits/habitStats.ts` from the backend ledger rows — never from the dashboard's paged `cycles`. A % total over trades with no P&L % is unavailable (null → "—"), not 0, and must sort last. Which value a column shows for the selected unit/statistic lives only in `metric()`. Verdicts use means and % of capital (₹ fallback); do not change thresholds without updating the in-app help text and spec §10.
+- Habits charts (`MultiLineChart`, `DivergingBars`) draw in real pixels (viewBox = rendered width via `useWidth`), never a fixed 1000-unit viewBox scaled down — that makes text unreadable on a phone. Per-day series: counts/sums are 0 and averages/shares are gaps on days without the habit; never plot a gap as 0. Period-comparison tone/flag rules live only in `habitSeries.ts` (`toneFor`, `compareHabit`) and are documented in the UI footnote and spec §10.9 — change all three together.
+- Do not name a `.ts` module and a `.tsx` component the same apart from case (e.g. `habitDeepDive.ts` vs `HabitDeepDive.tsx`): on the case-insensitive Windows/WSL `/mnt/d` filesystem the import resolves to the wrong file. Habits uses `deepDiveStats.ts` for the logic of `HabitDeepDive.tsx`.
