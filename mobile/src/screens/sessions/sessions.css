@@ -84,7 +84,7 @@
 .trades-table tr.tappable:active { background: var(--panel-2); }
 .phone-inspector .analysis-execution-inspector { top: 0; width: min(440px, 90%); padding-bottom: var(--sai-b); }
 .phone-inspector .analysis-execution-inspector header button { min-height: 40px; min-width: 40px; }
-/* "Open cycle" jumps to the desktop Stats; the phone's Stats arrive in a later sprint. */
-.phone-inspector .analysis-execution-inspector section > button { display: none; }
+/* "Open cycle" opens the trade's details in Stats. */
+.phone-inspector .analysis-execution-inspector section > button { min-height: 40px; }
 .day-journey { background: transparent; border: 0; padding: 0; }
 .day-journey svg { max-height: none; }

@@ -4,7 +4,8 @@ import type { AnalysisTrade } from '../../../../shared/analysis/api'
 import DayJourneyChart from '../../../../shared/analysis/DayJourneyChart'
 import { sessionJourney } from '../../../../shared/analysis/dayJourney'
 import ExecutionInspector from '../../../../windowsapp/src/ExecutionInspector'
-import { useBackHandler } from '../../app/Nav'
+import { useBackHandler, useNav } from '../../app/Nav'
+import { useStatsFocus } from '../../app/StatsFocus'
 import SessionVideos from '../../../../shared/analysis/SessionVideos'
 import StoredOrders from '../../../../shared/analysis/StoredOrders'
 import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analysis/environment'
@@ -28,6 +29,8 @@ const LABELS: Record<Choice, string> = { chart: 'Chart', trades: 'Trades', journ
 /** The right-hand pane: one trading day of one instrument, with the chart, executions, orders and videos. */
 export function SessionDetail({ group, daysOpen, onToggleDays }: { group: SessionGroup; daysOpen: boolean; onToggleDays: () => void }) {
   const api = useAnalysisApi()
+  const statsFocus = useStatsFocus()
+  const { setTab: goToTab } = useNav()
   const environment = useAnalysisEnvironment()
   const isSwing = group.trading_style === 'swing'
   const tabs: View[] = isSwing ? ['trades', 'videos'] : ['chart', 'trades', 'journey', 'orders', 'snapshots', 'videos']
@@ -120,7 +123,8 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
         {inspected && (
           <div className="phone-inspector">
             <ExecutionInspector trade={inspected} detail={details.data?.find(detail => detail.session_id === inspected.session_id) ?? null} error=""
-              onRetry={details.reload} onClose={() => setInspected(null)} onCycle={() => undefined} />
+              onRetry={details.reload} onClose={() => setInspected(null)}
+              onCycle={cycle => { statsFocus.open({ session_id: cycle.session_id, cycle_id: cycle.cycle_id }); setInspected(null); goToTab('stats') }} />
           </div>
         )}
         {tab === 'videos' && (

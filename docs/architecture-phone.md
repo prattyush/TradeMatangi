@@ -96,19 +96,19 @@ Design box 740 to 960 CSS px wide by 340 to 440 px tall (checked at 915x412, 851
 
 Principles: no stacked headers; master-detail panes instead of modals; filters in sheets; summaries first, detail one tap away; horizontal pagers instead of long vertical pages; the Android back button always pops one level.
 
-**Shell.** A 56 px left navigation rail (Sessions, Stats, Browse, Positions, Videos, More) that respects the left safe area. No global top bar; a screen has at most one 36 to 40 px title row.
+**Shell.** A 56 px left navigation rail (Sessions, Stats, Browse, Videos, More; Positions joins in phase 2) that respects the left safe area. No global top bar; a screen has at most one 36 to 40 px title row.
 
 **Sessions.** A list of trading days (one line each: date, symbol and instrument, mode badge, P&L, trades) that gives way to the chosen day: choosing a day hides the list, and the Days button, the Sessions rail item or Back brings it back. Filters live in one side sheet (7 d / 30 d / 90 d / 1 y / custom, Day or Swing, mode, symbol, instrument; default last 30 days). The chosen day has **one control row** (Days, a view menu with Chart, Trades, Orders, Videos and later Snapshots, Compare and Journey, then for the chart Underlying | Option, the strike menu and the chart controls); the candles take everything below it. Chart details over the candles show only while touching.
 
 **Trade labeling** (full screen, rail hidden). Left about 56 %: chart zoomed to the trade window. Right about 44 %: a scrolling form with the header `Trade 3 of 12 - NIFTY 24500 CE - +1,240`, Entry and Exit tag pickers, notes (opens a full-screen sheet so the keyboard cannot squeeze the form), and behavior questions as large Yes / No / N/A rows. A fixed 56 px footer has Prev, the save state, Next and an "Unlabeled only" toggle. Autosave through the shared `LabelSaver`; leaving with an unsaved change is blocked.
 
-**Stats.** A vertical tab strip (Overview, Entries, Exits, Sizing, Behavior, Habits); each tab is a horizontal pager of single-purpose cards with a scrolling KPI row and a filter sheet. Tables become condensed lists. Habits goes scorecard to deep-dive.
+**Stats.** The shared `PerformanceDashboard` itself (so every number, section and fix stays identical to the website and desktop) re-laid out by `mobile/src/screens/stats/stats.css` through the dashboard's own class names: a vertical tab strip (Overview, Entries, Exits, Sizing, Behavior, Habits) on the left with a Filters button under it; one scrolling pane with a sideways-scrolling KPI row; the filters open as a panel over the pane; a trade's story opens over the pane too. Back closes the details drawer first, then the filters. Swing keeps its own header. The phone wraps the data calls (`phoneStatsEnvironment`) so errors read as sentences ("not available on this server") and drops the writers (actual-charges editor); three additive classNames in shared code (`pa-export`, `hb-manage`) let the phone hide Export CSV and "Manage questions". "Open cycle" in the execution details hands the cycle identity to Stats through `StatsFocus`.
 
 **Videos.** Left list grouped by date; right a 16:9 player sized to the available height with the chapters beside it. Tapping a chapter seeks. Private videos show the existing note to make them Unlisted; Open in YouTube is always available. The player is the shared `youtube-nocookie` iframe; a device spike showed it plays from the app origin `https://app.tradematangi.co.in` (see the sprint plan), which is why the app is served from that origin and not from `localhost`.
 
 **Browse** (read-only). A full-bleed chart with an auto-hiding slim control bar: symbol (full-screen search), date (calendar sheet, previous / next day), interval chips, Spot / CE / PE with expiry and strike, indicators. Long-press shows an OHLC and volume read-out. No trading menu, no drawings.
 
-**Positions** (read-only). Swing and Day columns, each with a mode badge, as-of time, total P&L, wallet and a list of positions with open-order counts.
+**Positions** (read-only; phase 2, not in the first release). Swing and Day columns, each with a mode badge, as-of time, total P&L, wallet and a list of positions with open-order counts.
 
 **More.** Account, logout, Server URL, app lock, keep-screen-on for video, immersive toggle, clear cache, About / diagnostics (copy diagnostics: versions and recent errors, no secrets).
 

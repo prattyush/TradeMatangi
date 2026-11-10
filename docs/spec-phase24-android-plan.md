@@ -11,21 +11,24 @@ Branch: `feat/android-phone-app` (off `dev`), **one PR into `dev`** with a merge
 - **Read and review in v1**; the only writes are labels and behavior marks. No orders from the phone.
 - The server-branch situation does **not** change the design. Promoting `preprod` to `main` and `dev` to `preprod` first is optional (it would only simplify testing) and stays the user's release decision.
 
+## Phase 1 and phase 2 (user decision 2026-11-10)
+Phase 1 (this PR): shell and password sign-in, Sessions with Snapshots, Day journey and execution details, Label trades, Compare, Stats and Habits, Videos, Browse, hardening. **Phase 2** (a later PR): Google sign-in with optional app lock (S2), read-only Positions for swing and day (S8), then alerts and swing actions.
+
 ## Status
 
 | Sprint | Scope | Status |
 |---|---|---|
 | S0 | Requirements, plan, architecture doc; spikes (toolchain, YouTube embed, Google token, chart performance) | Docs written; toolchain and embed spikes done; Google token spike waits for the Android OAuth client; chart performance is measured with the real chart in S3 |
 | S1 | `mobile/` shell, auth core (password), server URL, capabilities, offline/error states, CI | Built on the branch: 30 unit tests, 17 landscape UI tests (4 sizes), debug and release (R8) APKs build locally; CI workflow written, not yet run on GitHub; not yet installed on a phone |
-| S2 | Google sign-in, first-time account name, optional app lock, setup doc | Not started |
-| S3 | Sessions list and session detail (Chart / Trades / Orders / Videos) | Built on the branch; first phone test (2026-11-10) found it working; feedback applied: the list hides once a day is chosen (Days button, Sessions tab, Back), one control row with a view menu replaces the tab row and carries Underlying / Option and a strike menu so the chart gets the height, maximize fixed (one chart, full screen, Back restores), chart details only while touching (setting in More). 37 unit and 45 landscape UI tests |
-| S3b | Snapshots, day journey, execution details (the rest of the session view) | Built on the branch: 14 snapshot UI tests (4 sizes), 3 journey/inspector tests, 3 shared snapshot-model tests; not yet tried on a phone. **Compare** (trades vs pattern annotations) is a separate follow-up, S3c |
+| S2 | Google sign-in, first-time account name, optional app lock, setup doc | **Moved to phase 2 (user decision 2026-11-10)**; email and password sign-in is the way in for phase 1 |
+| S3 | Sessions list and session detail (Chart / Trades / Orders / Videos) | Built and accepted on a phone (2026-11-10); first phone test (2026-11-10) found it working; feedback applied: the list hides once a day is chosen (Days button, Sessions tab, Back), one control row with a view menu replaces the tab row and carries Underlying / Option and a strike menu so the chart gets the height, maximize fixed (one chart, full screen, Back restores), chart details only while touching (setting in More). 37 unit and 45 landscape UI tests |
+| S3b | Snapshots, day journey, execution details (the rest of the session view) | Built on the branch: 14 snapshot UI tests (4 sizes), 3 journey/inspector tests, 3 shared snapshot-model tests; accepted on a phone. **Compare** (trades vs pattern annotations) is a separate follow-up, S3c |
 | S3c | Compare (trades vs saved pattern annotations) | Not started |
-| S4 | One-at-a-time trade labeling (landscape) | Built on the branch: reuses the shared Label Trades screen with a phone chart and a landscape layout; 15 UI tests (4 sizes, keyboard-up case); not yet tried on a phone |
-| S5 | Stats and Habits | Not started |
+| S4 | One-at-a-time trade labeling (landscape) | Built on the branch: reuses the shared Label Trades screen with a phone chart and a landscape layout; 15 UI tests (4 sizes, keyboard-up case); accepted on a phone (2026-11-10) |
+| S5 | Stats and Habits | Built on the branch: the shared performance dashboard (all six sections including Habits and Swing) in a phone layout, filters in a panel, read-only, "Open cycle" from execution details wired; 18 UI tests (4 sizes); not yet tried on a phone |
 | S6 | Videos tab and embedded player (with fallback) | Not started |
 | S7 | Browse (read-only) | Not started |
-| S8 | Positions (swing and day, read-only) | Not started |
+| S8 | Positions (swing and day, read-only) | **Moved to phase 2 (user decision 2026-11-10)** |
 | S9 | Hardening, release signing, acceptance, final docs, PR into `dev` | Not started |
 
 ## Sprint scope

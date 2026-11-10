@@ -21,11 +21,11 @@ for (const viewport of VIEWPORTS) {
       await page.screenshot({ path: `test-results/login-${viewport.name}.png` })
     })
 
-    test('after sign-in the rail shows six 44px+ targets and nothing scrolls sideways', async ({ page }) => {
+    test('after sign-in the rail shows five 44px+ targets and nothing scrolls sideways', async ({ page }) => {
       await mockServer(page)
       await signIn(page)
       const items = page.getByRole('navigation', { name: 'Main' }).getByRole('button')
-      await expect(items).toHaveCount(6)
+      await expect(items).toHaveCount(5)
       for (const item of await items.all()) expect((await item.boundingBox())!.height).toBeGreaterThanOrEqual(44)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       await page.screenshot({ path: `test-results/shell-${viewport.name}.png` })

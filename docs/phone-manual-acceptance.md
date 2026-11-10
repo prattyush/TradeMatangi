@@ -2,7 +2,7 @@
 
 Run on a real phone with the signed debug or release APK. Each sprint adds its section; tick items as they pass. Status of the sprints: `docs/spec-phase24-android-plan.md`.
 
-## A. Install and sign in (S1, S2)
+## A. Install and sign in (S1; Google sign-in is phase 2)
 (Filled in when S1 and S2 land.)
 
 ## B. Sessions and session detail (S3)
@@ -30,7 +30,15 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 9. A shared (read-only) day shows the labels but cannot change them.
 
 ## D. Stats and Habits (S5)
-(Filled in when S5 lands.)
+1. Open **Stats**. Overview shows the KPI tiles first (scroll the row sideways), then the cumulative curve; the numbers match the website's Stats for the same last 30 days.
+2. Switch Entries, Exits, Sizing, Behavior: each section scrolls on its own; wide tables scroll sideways inside their card.
+3. **Filters** (bottom of the left strip) opens a panel: dates, Run on, Mode, Origin, Symbol, Instrument, Direction and the Method / labels group. Changing one reloads the numbers. Back (or Hide filters) closes the panel.
+4. Overview, scroll to "Trace the individual trades", tap **Details →**: the trade's story opens over the pane. Back closes it.
+5. **Habits**: the scorecard lists your habits with verdicts; Trends, Compare and Deep dive switch; tap a habit row to deep-dive it. "Manage questions" is not offered on the phone.
+6. In Sessions, tap a trade, then **Open cycle** in the execution details: Stats opens with that trade's story. Leaving and returning does not reopen it.
+7. Switch Filters > Trading style to **Swing**: Swing performance shows its own header; "Close statistics" returns to Sessions.
+8. No Export CSV and no "Actual Real charges" editor appear (the phone writes only labels and behavior marks).
+9. Point the app at a server without Stats or Habits (older branch): the screen says "This feature is not available on this server." with Retry; nothing crashes.
 
 ## E. Videos (S6)
 (Filled in when S6 lands.)
@@ -45,5 +53,5 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 - Server switch between `dev`, `preprod` and the phone branch: features the server lacks show "not available", nothing crashes.
 - Airplane mode: offline banner, no crash, recovers when the network returns.
 - Android back button steps back one level; at the root a second press exits.
-- App lock (if turned on) asks on cold start and after a minute in the background.
+- *(Phase 2)* App lock (if turned on) asks on cold start and after a minute in the background.
 - Token refresh still works the day after signing in.

@@ -373,6 +373,23 @@ test.describe('execution details and day journey', () => {
     await expect(page.locator('.trades-table')).toBeVisible()
   })
 
+  test('Open cycle in the execution details opens that trade in Stats', async ({ page }) => {
+    const state = await mockServer(page)
+    await openSessions(page)
+    await rows(page).first().click()
+    await chooseView(page, 'Trades')
+    await page.getByRole('button', { name: 'Inspect BUY 75 at 120.00' }).first().click()
+    await page.getByRole('dialog', { name: 'Execution inspector' }).getByRole('button', { name: 'Open cycle' }).first().click()
+    await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Stats' })).toHaveAttribute('aria-current', 'page')
+    const drawer = page.getByRole('dialog', { name: 'Trade cycle details' })
+    await expect(drawer).toBeVisible()
+    expect(state.requests.some(r => r.path.startsWith('/api/desktop/v1/analysis/performance/cycles/'))).toBe(true)
+    // Shown once: leaving Stats and coming back does not reopen it.
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Sessions' }).click()
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Stats' }).click()
+    await expect(page.getByRole('dialog', { name: 'Trade cycle details' })).toHaveCount(0)
+  })
+
   test('the Day journey view draws the cumulative P&L of the day', async ({ page }) => {
     await mockServer(page)
     await openSessions(page)

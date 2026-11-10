@@ -125,7 +125,7 @@ An Android phone app for leisure-time analysis. Day trading stays on the desktop
    - Stats and Habits.
    - Session videos with an embedded player, chapters, and Open in YouTube.
    - Browse: search a symbol, pick a day, interval, spot or CE/PE, and read the chart (read-only).
-   - Read-only open positions for swing and day trading.
+   - *Phase 2 (later PR):* read-only open positions for swing and day trading, and Google sign-in with optional app lock.
 3. **Later.** Alerts (push), swing trading actions, exit scenarios, deeper setup review. The navigation and API layer leave room for them.
 4. **Sign-in.** Email and password, and Google (native Android sign-in using the existing Web client ID). The same Bearer token flow as the desktop (`/api/auth/desktop/*`), never the website's `X-User-Id`. Optional app lock (fingerprint or PIN), off by default.
 5. **Server.** All data comes from the server over HTTPS (default `https://tradematangi.co.in`). The server URL can be changed in the app. The app must work against `dev`, `preprod` and the phone branch: a feature the server does not have shows a clear "not available on this server" message, never a crash.
@@ -134,4 +134,4 @@ An Android phone app for leisure-time analysis. Day trading stays on the desktop
 8. **Production quality.** Signed release builds, tokens in the Android Keystore, no cleartext traffic, no tokens in logs, request timeouts and offline handling, date-bounded queries, tests for the token flow and each screen, and a manual acceptance list on a real phone (`docs/phone-manual-acceptance.md`).
 9. **Delivery.** One feature branch (`feat/android-phone-app`) and one pull request into `dev`; the server URL decides which backend is tested.
 
-Status: Sprint 0 (requirements, plan and spikes) in progress. Sprints, decisions and risks: `docs/spec-phase24-android-plan.md`.
+Status: phase 1 in progress (Sessions, Snapshots, Day journey, Label trades accepted on a phone; Compare, Stats and Habits, Videos, Browse and hardening remain). Google sign-in and Positions are phase 2. Sprints, decisions and risks: `docs/spec-phase24-android-plan.md`.

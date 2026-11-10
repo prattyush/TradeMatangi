@@ -5,6 +5,7 @@ import { App } from './App'
 import { AppProviders } from './app/AppContext'
 import { NavProvider } from './app/Nav'
 import { ChartInfoProvider } from './app/ChartInfo'
+import { StatsFocusProvider } from './app/StatsFocus'
 import { createServices } from './app/services'
 import { ToastProvider } from './shell/Toast'
 
@@ -16,7 +17,9 @@ createRoot(document.getElementById('root')!).render(
       <AppProviders services={services}>
         <ChartInfoProvider>
           <NavProvider>
-            <App />
+            <StatsFocusProvider>
+              <App />
+            </StatsFocusProvider>
           </NavProvider>
         </ChartInfoProvider>
       </AppProviders>

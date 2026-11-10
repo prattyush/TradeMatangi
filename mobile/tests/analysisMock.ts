@@ -1,3 +1,5 @@
+import { statsResponse, type StatsMockState } from './statsMock'
+
 /** Mock data for the analysis endpoints (`/api/desktop/v1/analysis/*`), shaped like the real server's responses. */
 
 export interface MockSession {
@@ -121,7 +123,7 @@ export const QUESTIONS = [
   { question_id: 'q-exit-1', kind: 'exit', text: 'Exited too early', status: 'active', sort_order: 1, created_at: '2026-10-03', archived_at: null },
 ]
 
-export interface AnalysisMockState {
+export interface AnalysisMockState extends StatsMockState {
   /** Labels saved so far, per session (what GET labels returns), and every save request received. */
   labels: Record<string, Array<Record<string, unknown>>>
   labelPosts: Array<{ labels: Array<Record<string, unknown>> }>
@@ -142,12 +144,14 @@ export interface AnalysisMockState {
   videos: Record<string, Array<{ video_id: string; title: string; privacy: string; url: string; chapters: string; uploaded_at: string; session_id: string }>>
 }
 
-export const newAnalysisState = (): AnalysisMockState => ({ sessions: 'ok', failedOnce: false, sessionsRequests: [], videos: {}, labels: {}, labelPosts: [], marks: {}, markPosts: [] })
+export const newAnalysisState = (): AnalysisMockState => ({ sessions: 'ok', failedOnce: false, performanceRequests: [], ledgerRequests: [], sessionsRequests: [], videos: {}, labels: {}, labelPosts: [], marks: {}, markPosts: [] })
 
 export interface MockResponse { status: number; body?: unknown }
 
 /** `route` is the path after `/api/desktop/v1/analysis/`. */
 export function analysisResponse(route: string, query: URLSearchParams, state: AnalysisMockState, method = 'GET', body?: unknown): MockResponse {
+  const stats = statsResponse(route, query, state)
+  if (stats) return stats
   if (route === 'sessions') {
     state.sessionsRequests.push(query)
     if (state.sessions === 'old') return { status: 404, body: { detail: 'Not Found' } }
