@@ -111,3 +111,27 @@ Status: B1 merged to `dev` (#801). Still to do by hand: the `VOL` pane and a rep
 
 ##### Test housekeeping (2026-11-10)
 Three Swing tests (`test_swing_api::test_exact_contract_lot_validation...`, `test_swing_paper_runtime::test_expiry_quote_closes...`, `test_swing_stream_valuation::...[True]`) had started failing on every branch once the real date passed their hardcoded option expiry (2026-11-03): the Swing portfolio date came from the wall clock and Swing correctly refused the entry. They now pin `swing_market.today` as `test_swing_futures.py` does (#802, tests only). Rule for new Swing tests: pin `swing_market.today`; never rely on the real date next to a hardcoded expiry.
+
+
+#### Android phone app
+
+##### Requirement (2026-11-10)
+An Android phone app for leisure-time analysis. Day trading stays on the desktop, website or a tablet; the phone is for reviewing and learning.
+
+1. **Platform.** Android phones, landscape only. Built with Capacitor around a new phone-first React entry (`mobile/`) that reuses `shared/` and the Tauri-free desktop modules, so changes to shared code reach the phone, the website, the webapp and the desktop. Installed as an APK (sideload first; Play Store later). Why Capacitor and not a Tauri Android build of the desktop app: `docs/architecture-phone.md`.
+2. **First version (read and review).**
+   - Sessions and the whole Analysis section: session list with filters, session chart with trade markers, trades, orders.
+   - One-at-a-time trade labeling, including behavior questions and tags.
+   - Stats and Habits.
+   - Session videos with an embedded player, chapters, and Open in YouTube.
+   - Browse: search a symbol, pick a day, interval, spot or CE/PE, and read the chart (read-only).
+   - Read-only open positions for swing and day trading.
+3. **Later.** Alerts (push), swing trading actions, exit scenarios, deeper setup review. The navigation and API layer leave room for them.
+4. **Sign-in.** Email and password, and Google (native Android sign-in using the existing Web client ID). The same Bearer token flow as the desktop (`/api/auth/desktop/*`), never the website's `X-User-Id`. Optional app lock (fingerprint or PIN), off by default.
+5. **Server.** All data comes from the server over HTTPS (default `https://tradematangi.co.in`). The server URL can be changed in the app. The app must work against `dev`, `preprod` and the phone branch: a feature the server does not have shows a clear "not available on this server" message, never a crash.
+6. **UI.** Designed for a landscape phone (about 740 to 960 by 340 to 440 px): a left navigation rail, list-and-detail panes instead of modals, filters in sheets, one chart per screen page, 44 px touch targets, and the Android back button steps back one level. It is not the website layout shrunk down. Sessions, trade labeling, Stats, Videos and Browse each have their own phone layout (see `docs/architecture-phone.md`).
+7. **Safety.** Read-only for trading in the first version: labels and behavior marks are the only writes. No order can be placed from the phone. Real positions appear only for users with real-trading access.
+8. **Production quality.** Signed release builds, tokens in the Android Keystore, no cleartext traffic, no tokens in logs, request timeouts and offline handling, date-bounded queries, tests for the token flow and each screen, and a manual acceptance list on a real phone (`docs/phone-manual-acceptance.md`).
+9. **Delivery.** One feature branch (`feat/android-phone-app`) and one pull request into `dev`; the server URL decides which backend is tested.
+
+Status: Sprint 0 (requirements, plan and spikes) in progress. Sprints, decisions and risks: `docs/spec-phase24-android-plan.md`.
