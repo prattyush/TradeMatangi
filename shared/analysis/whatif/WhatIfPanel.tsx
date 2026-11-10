@@ -30,7 +30,7 @@ function Figures({ title, before, after, pctBefore, pctAfter, delta, deltaPct, m
   const sub = (money: number, p: number | null) => (percent ? signedMoney(money) : signedPct(p))
   return (
     <section className={`wi-figures${strong ? ' wi-day' : ''}`} aria-label={title}>
-      <div className="wi-step" aria-label={`${title}: actual`}><small>{title} · actual</small><strong className={tone(before)}>{main(before, pctBefore)}</strong><small>{sub(before, pctBefore)}</small></div>
+      <div className="wi-step" aria-label={`${title}: actual`}><small>{title === 'This trade' ? 'Trade' : title} actual</small><strong className={tone(before)}>{main(before, pctBefore)}</strong><small>{sub(before, pctBefore)}</small></div>
       <span className="wi-arrow" aria-hidden="true">→</span>
       <div className="wi-step wi-this" aria-label={`${title}: what-if`}><small>What-if</small><strong className={tone(after)}>{main(after, pctAfter)}</strong><small>{sub(after, pctAfter)}</small></div>
       <div className="wi-step wi-delta" aria-label={`${title}: difference`}><small>Difference</small><strong className={tone(delta)}>{main(delta, deltaPct)}</strong><small>{sub(delta, deltaPct)}</small></div>
@@ -42,19 +42,18 @@ function LegRow({ leg, picking, canPick, onEdit, onPick }: { leg: LegResult; pic
   const what = `${leg.fill.role} at ${clock24(leg.fill.time)}`
   const capitalChange = leg.capitalPct !== null && leg.originalCapitalPct !== null ? leg.capitalPct - leg.originalCapitalPct : null
   return (
-    <tr className={`wi-leg ${leg.fill.side === 'BUY' ? 'buy' : 'sell'}${leg.changed ? ' changed' : ''}${leg.removed ? ' removed' : ''}`}>
-      <td>{clock24(leg.fill.time)}</td>
-      <td className="wi-side">{leg.fill.role === 'entry' ? 'In' : 'Out'} {leg.fill.side === 'BUY' ? 'B' : 'S'}</td>
-      <td><NumberField value={leg.price} step="0.05" label={`Price of ${what}`} onCommit={price => onEdit({ price, quantity: leg.quantity })} /></td>
-      <td><NumberField value={leg.quantity} step="1" integer label={`Quantity of ${what}`} onCommit={quantity => onEdit({ price: leg.price, quantity })} /></td>
-      <td className="num">
+    <div role="group" aria-label={`Fill: ${what}`} className={`wi-leg ${leg.fill.side === 'BUY' ? 'buy' : 'sell'}${leg.changed ? ' changed' : ''}${leg.removed ? ' removed' : ''}`}>
+      <div className="wi-cell wi-label"><span>{clock24(leg.fill.time)}</span> <span className="wi-side">{leg.fill.role === 'entry' ? 'In' : 'Out'} {leg.fill.side === 'BUY' ? 'B' : 'S'}</span></div>
+      <label className="wi-cell wi-price"><span className="wi-field-name">Price</span><NumberField value={leg.price} step="0.05" label={`Price of ${what}`} onCommit={price => onEdit({ price, quantity: leg.quantity })} /></label>
+      <label className="wi-cell wi-qty"><span className="wi-field-name">Qty</span><NumberField value={leg.quantity} step="1" integer label={`Quantity of ${what}`} onCommit={quantity => onEdit({ price: leg.price, quantity })} /></label>
+      <div className="wi-cell wi-cap" aria-label={`Capital of ${what}`}>
         {leg.removed ? <span className="wi-removed">removed</span> : <>{pct(leg.capitalPct)}{capitalChange !== null && Math.abs(capitalChange) >= 0.005 && <small className={capitalChange > 0 ? 'down' : 'up'}> {capitalChange > 0 ? '+' : '−'}{Math.abs(capitalChange).toFixed(2)}</small>}</>}
-      </td>
-      <td className="wi-actions">
+      </div>
+      <div className="wi-cell wi-actions">
         {canPick && <button type="button" className={`wi-tool${picking ? ' on' : ''}`} aria-pressed={picking} aria-label={`Pick the price of ${what} on the chart`} title="Click the chart to set this price" onClick={onPick}>⌖</button>}
         {leg.changed && <button type="button" className="wi-tool" aria-label={`Reset ${what}`} title="Back to the real fill" onClick={() => onEdit(null)}>↺</button>}
-      </td>
-    </tr>
+      </div>
+    </div>
   )
 }
 
@@ -76,22 +75,18 @@ export default function WhatIfPanel({ result, day, pnlMode, canPick, picking, on
   const table = (title: string, legs: LegResult[]) => legs.length > 0 && (
     <section className="wi-block" aria-label={title}>
       <h4>{title}</h4>
-      <table className="wi-table">
-        <thead><tr><th>Time</th><th /><th>Price</th><th>Qty</th><th className="num">Capital</th><th /></tr></thead>
-        <tbody>
-          {legs.map(leg => {
-            const key = legKey(leg.fill)
-            return <LegRow key={key} leg={leg} picking={picking === key} canPick={canPick} onEdit={edit => onEdit(key, edit)} onPick={() => onPick(picking === key ? null : key)} />
-          })}
-        </tbody>
-      </table>
+      <div className="wi-legs-head" aria-hidden="true"><span>Time</span><span>Price</span><span>Qty</span><span>Capital</span><span /></div>
+      {legs.map(leg => {
+        const key = legKey(leg.fill)
+        return <LegRow key={key} leg={leg} picking={picking === key} canPick={canPick} onEdit={edit => onEdit(key, edit)} onPick={() => onPick(picking === key ? null : key)} />
+      })}
     </section>
   )
   return (
     <div className="wi-panel">
       {header}
       <Figures title="Day" strong before={day.actual} after={day.whatif} pctBefore={day.actualPct} pctAfter={day.whatifPct} delta={day.delta} deltaPct={day.deltaPct} mode={pnlMode} />
-      <div className="wi-facts" role="group" aria-label="What-if summary">
+      <div className="wi-facts wi-summary" role="group" aria-label="What-if summary" data-edited={day.tripsEdited} data-warnings={day.warnings}>
         <span><b>{day.tripsEdited}</b> {day.tripsEdited === 1 ? 'trade' : 'trades'} edited</span>
         {day.warnings > 0 && <span className="wi-warn-count">{day.warnings} with a warning</span>}
       </div>

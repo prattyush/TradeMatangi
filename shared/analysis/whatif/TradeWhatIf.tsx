@@ -27,7 +27,7 @@ interface Status { text: string; kind: 'ok' | 'bad' | '' }
  * against what-if, and that trade's fills (price and quantity to change, price also by clicking the chart). A what-if can be
  * saved under a name for the day, loaded again later, reverted, deleted, and compared across days. Nothing here touches a trade.
  */
-export default function TradeWhatIf({ symbol, date, sessionIds, allTrades, historicalDays, cycles, capitals, sessionTypes, readOnly = false }: {
+export default function TradeWhatIf({ symbol, date, sessionIds, allTrades, historicalDays, cycles, capitals, sessionTypes, readOnly = false, compact = false, onPickingChange }: {
   symbol: string
   date: string
   sessionIds: string[]
@@ -38,6 +38,10 @@ export default function TradeWhatIf({ symbol, date, sessionIds, allTrades, histo
   sessionTypes: Map<string, string>
   /** Shared history: edits work as a playground, but nothing can be saved. */
   readOnly?: boolean
+  /** A phone: the saved what-ifs bar starts collapsed to one line so the fills get the height. */
+  compact?: boolean
+  /** Told when a price is being picked on the chart (so a host's Back button can cancel the pick first). */
+  onPickingChange?: (picking: boolean) => void
 }) {
   const api = useAnalysisApi()
   const environment = useAnalysisEnvironment()
@@ -182,6 +186,8 @@ export default function TradeWhatIf({ symbol, date, sessionIds, allTrades, histo
 
   // ── editing ──
   const [picking, setPicking] = useState<string | null>(null)
+  const [barOpen, setBarOpen] = useState(!compact)
+  useEffect(() => { onPickingChange?.(picking !== null); return () => onPickingChange?.(false) }, [picking, onPickingChange])
   const canPick = environment.chartPicking === true
   const setLeg = useCallback((fillKey: string, edit: LegEdit | null) => {
     if (!currentKey) return
@@ -214,7 +220,13 @@ export default function TradeWhatIf({ symbol, date, sessionIds, allTrades, histo
       aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): one chart with a switcher' : 'Maximize: larger view, Underlying and strike charts stacked'}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
   )
   const scenarioBar = source ? (
-    <div className="wi-scenarios" role="group" aria-label="Saved what-ifs">
+    <>
+    {compact && (
+      <button type="button" className="wi-scn-toggle" aria-expanded={barOpen} onClick={() => setBarOpen(open => !open)}>
+        What-if: {selectedId ? names.find(([id]) => id === selectedId)?.[1] ?? selectedId : 'not saved'}{dirty ? ' · unsaved' : ''} {barOpen ? '▴' : '▾'}
+      </button>
+    )}
+    {barOpen && <div className="wi-scenarios" role="group" aria-label="Saved what-ifs">
       <select aria-label="Saved what-ifs" value={selectedId} disabled={busy || !savedLoaded} onChange={event => select(event.target.value)}>
         <option value="">{names.length ? 'New what-if…' : 'No saved what-ifs yet'}</option>
         {names.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
@@ -227,7 +239,8 @@ export default function TradeWhatIf({ symbol, date, sessionIds, allTrades, histo
       {readOnly && <span className="wi-status">Shared history: edits are a playground and cannot be saved.</span>}
       {status.text && <span className={`wi-status ${status.kind}`} role="status">{status.text}</span>}
       {dirty && <span className="wi-status">Unsaved changes.</span>}
-    </div>
+    </div>}
+    </>
   ) : (
     <p className="wi-muted">Saving what-ifs is not available here; your edits are lost when you leave this tab.</p>
   )

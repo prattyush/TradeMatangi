@@ -29,14 +29,14 @@ const session = { session_id: 's1', user_id: 'alice', symbol: 'NIFTY', date: '20
 
 interface Mock { writes: string[]; saved: Array<Record<string, any>> }
 
-async function mockAnalysis(page: Page, renderer: 'kline' | 'lightweight', state: Mock, options: { whatIf?: boolean } = {}) {
+async function mockAnalysis(page: Page, renderer: 'kline' | 'lightweight', state: Mock, options: { whatIf?: boolean; shared?: boolean } = {}) {
   await mockWorkspace(page)
   const bars = Array.from({ length: 200 }, (_, i) => ({ time: 1791447300 + i * 180, open: 100 + i / 4, high: 102 + i / 4, low: 99 + i / 4, close: 101 + i / 4 }))
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url()), path = url.pathname, method = route.request().method()
     if (method !== 'GET' && !path.endsWith('/users/settings')) state.writes.push(`${method} ${path}`)
-    if (path.endsWith('/analysis/sessions')) return route.fulfill({ json: [session] })
-    if (path.endsWith('/analysis/sessions/s1')) return route.fulfill({ json: { ...session, trades, orders: [], cycles: [cycle('c0', trips[0], legs0), cycle('c1', trips[1], legs1)] } })
+    if (path.endsWith('/analysis/sessions')) return route.fulfill({ json: [{ ...session, shared: options.shared ?? false }] })
+    if (path.endsWith('/analysis/sessions/s1')) return route.fulfill({ json: { ...session, shared: options.shared ?? false, trades, orders: [], cycles: [cycle('c0', trips[0], legs0), cycle('c1', trips[1], legs1)] } })
     if (path.endsWith('/analysis/round-trips')) return route.fulfill({ json: trips })
     if (path.endsWith('/analysis/labels')) return route.fulfill({ json: [] })
     if (path.endsWith('/analysis/entry-tags') || path.endsWith('/analysis/exit-tags')) return route.fulfill({ json: { tags: [] } })
@@ -107,7 +107,7 @@ test('a changed exit price recalculates the trade and the day, charges included,
   expect(amount).toBeLessThan(130)
   await expect(figure(page, 'Day: difference').locator('strong')).toHaveText(delta) // the other trade is untouched
   await expect(page.getByRole('group', { name: 'What-if summary' })).toContainText('1 trade edited')
-  await expect(page.locator('tr.wi-leg.changed')).toHaveCount(1)
+  await expect(page.locator('div.wi-leg.changed')).toHaveCount(1)
   // The other trade is unchanged.
   await page.getByRole('button', { name: 'Next trade' }).click()
   await expect(page.getByText('Trade 2 of 2', { exact: true })).toBeVisible()
@@ -130,10 +130,10 @@ test('a quantity that does not match warns that the P&L is uneven; quantity 0 re
   await expect(page.getByRole('alert').filter({ hasText: 'uneven' })).toContainText('40')
   await expect(page.getByRole('group', { name: 'What-if summary' })).toContainText('1 with a warning')
   await expect(figure(page, 'This trade: what-if').locator('strong')).toContainText('−') // 25 units bought and never sold
-  await expect(page.locator('tr.wi-leg.changed').first()).toContainText('−2.58') // 25 fewer units: 25 x 103 / 100000 = 2.58% less capital
+  await expect(page.locator('div.wi-leg.changed').first()).toContainText('−2.58') // 25 fewer units: 25 x 103 / 100000 = 2.58% less capital
   await entryQty(page).fill('0')
-  await expect(page.locator('tr.wi-leg.removed')).toHaveCount(1)
-  await expect(page.locator('tr.wi-leg.removed')).toContainText('removed')
+  await expect(page.locator('div.wi-leg.removed')).toHaveCount(1)
+  await expect(page.locator('div.wi-leg.removed')).toContainText('removed')
 })
 
 test('an invalid typed value is ignored and the real value comes back on leaving the box', async ({ page }) => {
@@ -253,7 +253,7 @@ test('KLine: Pick sets the price from the chart click, Escape cancels, and the e
   expect(picked).not.toBe(103)
   expect(picked).toBeGreaterThan(95)
   expect(picked).toBeLessThan(140) // within the candle range the chart shows
-  await expect(page.locator('tr.wi-leg.changed')).toHaveCount(1)
+  await expect(page.locator('div.wi-leg.changed')).toHaveCount(1)
   expect(errors).toEqual([])
   await page.screenshot({ path: 'test-results/whatif-kline.png' })
 })
@@ -268,4 +268,17 @@ test('other tabs still open, and leaving a changed what-if asks first', async ({
   await expect(exitPrice(page)).toHaveValue('103')
   await page.getByRole('button', { name: 'Label Trades', exact: true }).click()
   await expect(page.locator('.tl-status')).toContainText('Changes save automatically')
+})
+
+test('shared history: edits work as a playground, but nothing can be saved or deleted', async ({ page }) => {
+  const state: Mock = { writes: [], saved: [] }
+  await mockAnalysis(page, 'lightweight', state, { shared: true })
+  await openWhatIf(page)
+  await exitPrice(page).fill('105')
+  await expect(figure(page, 'Day: difference').locator('strong')).toContainText('+')
+  await expect(page.getByText('Shared history: edits are a playground and cannot be saved.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled()
+  await expect(page.getByLabel('What-if name')).toBeDisabled()
+  expect(state.writes).toEqual([])
 })

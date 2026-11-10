@@ -101,7 +101,8 @@ function cyclesFor(session: MockSession, trades: ReturnType<typeof tradesFor>) {
       capital: session.session_capital, peak_capital_pct: 1.8, holding_seconds: exit.timestamp - entry.timestamp,
       entries: [{ entry_id: `${session.session_id}-e${i / 2}`, entry_method: 'MARKET', client: 'desktop', timestamp: entry.timestamp, quantity: entry.quantity, matched_quantity: entry.quantity, open_quantity: 0, average_price: entry.price, net_pnl: pnl, pnl_pct: 0, sizing_method: 'CAPITAL', requested_pct: 2, r_multiple: null, analytics: { effective_allocation_pct: 1.8, effective_risk_pct: 0.3, margin_rate: 1, capital: session.session_capital, initial_stop: +(entry.price * 0.9).toFixed(2) } }],
       exits: [{ exit_id: `${session.session_id}-x${i / 2}`, exit_method: pnl < 0 ? 'STOPLOSS' : 'TargetProfit', quantity: exit.quantity, price: exit.price, timestamp: exit.timestamp, analytics: {} }],
-      executions: [{ trade_id: entry.trade_id, role: 'entry', quantity: entry.quantity, price: entry.price, timestamp: entry.timestamp }, { trade_id: exit.trade_id, role: 'exit', quantity: exit.quantity, price: exit.price, timestamp: exit.timestamp }],
+      label_index: i / 2,
+      executions: [{ trade_id: entry.trade_id, execution_id: entry.trade_id, role: 'entry', side: entry.side, quantity: entry.quantity, price: entry.price, timestamp: entry.timestamp, commission: 20 }, { trade_id: exit.trade_id, execution_id: exit.trade_id, role: 'exit', side: exit.side, quantity: exit.quantity, price: exit.price, timestamp: exit.timestamp, commission: 20 }],
     })
   }
   return cycles
@@ -148,6 +149,9 @@ export interface AnalysisMockState extends StatsMockState {
   videosOld?: boolean
   /** The round-trips endpoint lists the trades in reverse (the walkthrough must still go by entry time). */
   tripsReversed?: boolean
+  /** Saved what-ifs, as the server stores them, and a switch to answer 404 like an older server. */
+  whatIfSaved: Array<Record<string, any>>
+  whatIfOld?: boolean
   /** The session detail carries no cycles (an older server: no entry and exit details). */
   cyclesOld?: boolean
   /** Compare: saved pattern annotations exist for the day. */
@@ -156,7 +160,7 @@ export interface AnalysisMockState extends StatsMockState {
   videos: Record<string, Array<{ video_id: string; title: string; privacy: string; url: string; chapters: string; uploaded_at: string; session_id: string }>>
 }
 
-export const newAnalysisState = (): AnalysisMockState => ({ sessions: 'ok', failedOnce: false, performanceRequests: [], ledgerRequests: [], patternRequests: [], sessionsRequests: [], videos: {}, labels: {}, labelPosts: [], marks: {}, markPosts: [] })
+export const newAnalysisState = (): AnalysisMockState => ({ sessions: 'ok', failedOnce: false, performanceRequests: [], ledgerRequests: [], patternRequests: [], whatIfSaved: [], sessionsRequests: [], videos: {}, labels: {}, labelPosts: [], marks: {}, markPosts: [] })
 
 export interface MockResponse { status: number; body?: unknown }
 
@@ -235,6 +239,23 @@ export function analysisResponse(route: string, query: URLSearchParams, state: A
       return { status: 200, body: { marks: rows } }
     }
     return { status: 200, body: { marks: state.marks[query.get('session_id') ?? ''] ?? [] } }
+  }
+  if (route === 'whatif' || route === 'whatif/range') {
+    if (state.whatIfOld) return { status: 404, body: { detail: 'Not Found' } }
+    if (route === 'whatif/range') return { status: 200, body: { scenarios: state.whatIfSaved.map(({ edits, ...rest }) => rest) } }
+    if (method === 'POST') {
+      const posted = body as { session_id: string; name: string; edits: unknown[]; summary: Record<string, unknown> }
+      const id = posted.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+      const session = SESSIONS.find(item => item.session_id === posted.session_id)!
+      const row = { session_id: posted.session_id, scenario_id: id, name: posted.name, date: session.date, symbol: session.symbol, session_type: session.session_type, instrument_type: session.instrument_type, summary: posted.summary, edits: posted.edits, version: 1, updated_at: new Date().toISOString() }
+      state.whatIfSaved = [...state.whatIfSaved.filter(item => !(item.session_id === posted.session_id && item.scenario_id === id)), row]
+      return { status: 200, body: row }
+    }
+    if (method === 'DELETE') {
+      state.whatIfSaved = state.whatIfSaved.filter(item => !(item.session_id === query.get('session_id') && item.scenario_id === query.get('scenario_id')))
+      return { status: 200, body: { deleted: true } }
+    }
+    return { status: 200, body: { scenarios: state.whatIfSaved.filter(item => item.session_id === query.get('session_id')) } }
   }
   if (route === 'video-links/mine') {
     if (state.videosOld) return { status: 404, body: { detail: 'Not Found' } }

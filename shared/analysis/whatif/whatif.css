@@ -22,26 +22,40 @@
 .wi-facts b { color: #c9d1d9; font-weight: 600; margin-right: 3px; }
 .wi-warn-count { color: #d29922; }
 .wi-block h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #8b949e; }
-.wi-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.wi-table th { text-align: left; font-weight: 500; font-size: 11px; color: #6e7681; padding: 2px 3px; border-bottom: 1px solid #21262d; }
-.wi-table td { padding: 4px 3px; border-bottom: 1px solid #161b22; white-space: nowrap; }
-.wi-table .num { text-align: right; }
-.wi-leg.changed td { background: #1b1708; }
-.wi-leg.removed td:not(.wi-actions) { opacity: 0.6; }
+.wi-legs-head, .wi-leg { display: grid; grid-template-columns: 74px minmax(0, 1fr) minmax(0, 1fr) 84px auto; gap: 4px 8px; align-items: center; }
+.wi-legs-head { font-size: 11px; color: #6e7681; padding: 2px 3px; border-bottom: 1px solid #21262d; }
+.wi-leg { padding: 4px 3px; border-bottom: 1px solid #161b22; font-variant-numeric: tabular-nums; }
+.wi-leg.changed { background: #1b1708; }
+.wi-leg.removed .wi-cell:not(.wi-actions):not(.wi-cap) { opacity: 0.6; }
 .wi-leg.removed .wi-input { text-decoration: line-through; }
+.wi-cell { min-width: 0; }
+.wi-field-name { display: none; font-size: 11px; color: #8b949e; }
+.wi-label { white-space: nowrap; }
 .wi-side { color: #8b949e; }
 .wi-leg.buy .wi-side { color: #e6edf3; }
 .wi-leg.sell .wi-side { color: #58a6ff; }
-.wi-input { width: 100%; min-width: 54px; max-width: 92px; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px; padding: 4px 6px; font: inherit; }
+.wi-cap { text-align: right; white-space: nowrap; }
+.wi-input { width: 100%; min-width: 0; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px; padding: 4px 6px; font: inherit; }
 .wi-input:focus { outline: 2px solid #58a6ff; outline-offset: 0; }
 .wi-leg.changed .wi-input { border-color: #d29922; }
-.wi-table small.up { color: #3fb950; }
-.wi-table small.down { color: #f85149; }
+.wi-cap small.up { color: #3fb950; }
+.wi-cap small.down { color: #f85149; }
 .wi-removed { color: #f85149; }
 .wi-actions { white-space: nowrap; text-align: right; }
 .wi-tool { background: none; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; cursor: pointer; min-width: 28px; height: 28px; font-size: 14px; margin-left: 2px; }
 .wi-tool.on { background: #3d331e; border-color: #d29922; color: #f2cc60; }
+/* A narrow column (a phone): the fill's label and capital on one line, price and quantity under them. */
+@container (max-width: 400px) {
+  .wi-legs-head { display: none; }
+  .wi-leg { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; grid-template-areas: "label cap actions" "price qty qty"; row-gap: 6px; padding: 8px 3px; }
+  .wi-label { grid-area: label; } .wi-cap { grid-area: cap; text-align: left; } .wi-actions { grid-area: actions; }
+  .wi-price { grid-area: price; } .wi-qty { grid-area: qty; }
+  .wi-price, .wi-qty { display: flex; flex-direction: column; gap: 2px; }
+  .wi-field-name { display: block; }
+  .wi-input { min-height: 36px; font-size: 14px; }
+}
 .wi-warnings p, .wi-note { margin: 3px 0; color: #d29922; }
+.wi-scn-toggle { width: 100%; text-align: left; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; cursor: pointer; padding: 6px 10px; font: inherit; }
 .wi-muted { color: #6e7681; margin: 0; }
 .wi-link { margin-left: auto; }
 
