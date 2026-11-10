@@ -14,7 +14,9 @@ Run on a real phone with the signed debug or release APK. Each sprint adds its s
 6. Pinch and drag to zoom and scroll, in the underlying and in the option chart. **Maximize** shows one chart over the whole screen (Underlying / Option and the strike menu stay); Android back or the restore button returns.
 7. The view menu: **Trades** shows each execution (time, side, quantity, price, contract, value; a day with two sessions has a Session 1 / Session 2 divider); **Orders** and **Videos** open without errors; a day with a saved video lists it, and Open takes you to the YouTube app. A swing day offers only Trades and Videos.
 8. Airplane mode, then tap another day: a clear message with Try again. On a server without the analysis routes: "Sessions is not available on this server".
-9. Volume: in the chart's indicators menu (fx) switch on **Volume**: a volume pane appears for an option or a stock; for the NIFTY underlying it does nothing.
+9. **Snapshots** (view menu > Snapshots, on a day that has them): one strip at the top with ◀ ▶ and the current event (number, time, what happened); ◀ ▶ step through the events and the chart shows the candles and your position and orders as they were at that moment. Tap the event name for the list: search it (`fill*`, `stop*`) and tap one to jump. **Details** shows wallet, open P&L, session P&L, open orders and positions. On an options day the chart row has **Underlying | CE | PE**. A day with no snapshots says so.
+10. **Day journey** (view menu) shows the day's cumulative P&L, one dot per completed trade. In **Trades**, tap a row for the execution details (a panel on the right; Back closes it).
+11. Volume: in the chart's indicators menu (fx) switch on **Volume**: a volume pane appears for an option or a stock; for the NIFTY underlying it does nothing.
 
 ## C. Trade labeling (S4)
 (Filled in when S4 lands.)
