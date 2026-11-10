@@ -135,3 +135,65 @@ An Android phone app for leisure-time analysis. Day trading stays on the desktop
 9. **Delivery.** One feature branch (`feat/android-phone-app`) and one pull request into `dev`; the server URL decides which backend is tested.
 
 Status: phase 1 in progress (Sessions, Snapshots, Day journey, Label trades accepted on a phone; Compare, Stats and Habits, Videos, Browse and hardening remain). Google sign-in and Positions are phase 2. Sprints, decisions and risks: `docs/spec-phase24-android-plan.md`.
+
+
+### TRADE WALKTHROUGH
+This will be another tab in the analysis section, very similar to label trades in UI, but just read only.
+
+It will on left panel the charts similar to label trades but on the right side it will show the entries and exits and before and after P&L for that roundtrip trade. Basically, it will going through each trade entries and exits if possible there details like risk% entry or capital % entry and exits are stoploss or stop limit or take profit strategy exits or likewise. And also what effect that trade had on the P&L Story before and after.
+
+For UI, you can create efficient way to show entry and exit order details, the right panel space if it is becoming a concern.
+
+When adding this same feature in phone app, again you can creative in UI. Major important points to be necessary displayed at front.
+1. Before and After P&L Story
+2. Capital % and size entry and time.
+3. Capital % and size exit and time.
+4. Total Peak Capital of the trade.
+
+For phone you can show the exact entry details or exit details as a color or short cut or More Info button. Coloring like Stoploss exit, and SELL LImit or (Sell Target exit) or Take Profit Strategy Exit. You can use accronyms as well like , BL (Buy limit), BUy Target, SELL LIMIT (SL) or SELL stoploss (SS) or Take Profit Strategy (TP). Your wish, UI is not my forte these all are just suggestions.
+
+
+##### Decisions (2026-11-10, planning)
+1. **Where.** A new **Walkthrough** tab in the Analysis section next to Label Trades, in the website (Lightweight and KLine), the desktop app, the webapp and the phone app (a **Walkthrough** entry in the day's view menu, full screen like Label trades). Intraday sessions, like Label Trades.
+2. **All session types.** Real, paper, replay (sim) and stepwise. Real sessions also show how the charges were counted (estimated or allocated actual).
+3. **Contents (per round trip).** Entries (time, size, price, capital %, risk %, sizing method), exits (time, size, price, capital %, how it happened), the trade's peak capital %, and the **P&L story before and after**: the day's realised P&L (money and % of capital) before this trade and after it, with the trade's own P&L between. Realised only; trades that overlap in time are noted.
+4. **How an exit happened** is shown with a colour and a short code (details in `docs/spec-phase24-walkthrough-whatif-plan.md`): stoploss, limit, target, take-profit strategy, other strategy exits, market, session close.
+5. **Read-only.** Nothing is saved or sent. It reuses the Label Trades layout (charts left, one round trip right, Prev / Next).
+
+Status: planned. Sprints W0 to W4 in `docs/spec-phase24-walkthrough-whatif-plan.md` (first pull request).
+
+### WHAT IF
+
+This is a interesting requirement. This requirement is another tab in analysis section, it also shows left panel and right panel, left panel are the charts and the right panel is the rountrip trade entry and exits and P&L before and after. Trick is here we can calculate WHAT IF.
+
+What if the exit was at this price, What if quantity waas less. What if only one entry.
+
+So, this section will allow for each entry, changes in price, changes in quantity.
+And for exit changes in price and changes in quantity. Now, the system should showthing to notify the user, if the entries and exits don't match.
+
+
+The restrictions are:-
+1. Entry and exit quantities should match in What-If at the end of the day. I mean it cannot happen that user adds a buy and doesn't give a sell. If the does, the net P&L would be negative. So, maybe this can just a notification, as it will show as net P&L would be uneven. 
+
+Another restriction what if the user, extends the price till next 2 bars and we already had trades there. I would suggest leave it, they are only for evaluation, open playground for user to evaluate all possibilities, It can or can not be stored, so suggestions. If stored I think it would be better to have separate table. 
+
+Some  of the ways What If can used:-
+1. The user has a habit of exiting trades in between a bar before its closed. What if they started taking exits at close of each bar, the same bar they exited. User just changes the exit prices, what happens at days P&L. 
+2. The user always averages their entries when in loss, what if the user stops doing it, what happens to end of day P&L.
+3. What if the user exited at end of the move, instead of taking 3 trades in teh same move. Swing instead of scalp.
+
+Allow the user to choose the price from chart by clicking or enter directly. Quantity when changed should show the %capital change.
+
+For UI in phone app, feel free to innovate. I am not good in UI.
+
+##### Decisions (2026-11-10, planning)
+1. **Where.** A new **What If** tab beside Walkthrough, in the website, desktop, webapp and phone app, for real, paper, replay (sim) and stepwise sessions. Intraday sessions only.
+2. **What can be changed.** The price and quantity of each **existing** entry and exit (not new legs). Quantity 0 removes a leg ("what if only one entry", "what if I stopped averaging"). The price is typed or **clicked on the chart** (KLine charts: desktop, webapp, phone, website with the KLine renderer; the website's Lightweight renderer can type values only). A quantity change shows the change in % of capital.
+3. **Result.** The trade's and the **day's** P&L, actual against what-if, recalculated for every trade with an edit. P&L is cash flow (sells minus buys minus charges, by direction). When the entry and exit quantities of a trade do not match, a notice says the P&L is uneven; it is not blocked. Edits that reach into the next bars or overlap other trades are allowed: it is an open playground for evaluation. Charges are recalculated with the platform's fee formula; for real sessions they are an estimate (actual broker charges cannot be reproduced).
+4. **Saved per day.** A what-if is saved (so a refresh does not erase it, the day can be revisited or undone, and days can be compared): named scenarios, several per day (for example "exit at bar close", "no averaging"), each holding the edits of every trade of that day, in a separate table (`WhatIfScenarios`, owner only). **Revert day** clears all edits; a scenario can be deleted. A **Compare days** view lists saved scenarios over a date range with actual against what-if per day and the total, grouped by scenario name.
+5. **Never trades.** What If sends no order and changes no trade, label or session; it only reads the day and writes its own scenarios.
+
+Status: planned. Sprints F0 to F5 in `docs/spec-phase24-walkthrough-whatif-plan.md` (second pull request, after Walkthrough).
+
+### ANDROID PHONE APP: PHASE 2 (TODO, next after Walkthrough and What If)
+Google sign-in with optional app lock (needs an Android OAuth client in Google Cloud for package `in.co.tradematangi.phone` and the debug key's SHA-1), then read-only Positions for swing and day. Not started; see `docs/spec-phase24-android-plan.md`.
