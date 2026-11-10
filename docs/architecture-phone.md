@@ -118,7 +118,7 @@ Reserved room: Alerts, Swing orders (biometric confirm; guardrails stay on the s
 
 ## Build, signing and CI
 
-- Toolchain: JDK 21 (Capacitor 8 line; confirm against the Capacitor docs in Sprint 0), Android SDK command-line tools on the Linux filesystem (not `/mnt/d`), Gradle. Install on a USB phone with Windows `adb.exe` from WSL, or download the APK from the CI artifact.
+- Toolchain (verified in Sprint 0): JDK 21, Node 22 or newer, Capacitor 8.6 (minSdk 24, compile and target SDK 36, Gradle 8.14.3), Android SDK command-line tools plus `platform-tools`, `platforms;android-36` and `build-tools;36.0.0` in `~/Android/Sdk` on the Linux filesystem (not `/mnt/d`). Install on a USB phone with Windows `adb.exe` from WSL, or download the APK from the CI artifact.
 - `npm install --no-bin-links` (WSL `/mnt/d` rule); Capacitor CLI is run as `node node_modules/@capacitor/cli/bin/capacitor`.
 - GitHub Actions `android-phone.yml` (ubuntu): debug APK for every push touching `mobile/**`, `shared/**`, `frontend/src/services/**` or `windowsapp/src/analysisApi.ts`; a signed release APK when the signing secrets exist. The keystore and passwords live in GitHub secrets only.
 

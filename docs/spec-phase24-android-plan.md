@@ -15,7 +15,7 @@ Branch: `feat/android-phone-app` (off `dev`), **one PR into `dev`** with a merge
 
 | Sprint | Scope | Status |
 |---|---|---|
-| S0 | Requirements, plan, architecture doc; spikes (toolchain, YouTube embed, Google token, chart performance) | In progress: docs written; toolchain and device spikes pending |
+| S0 | Requirements, plan, architecture doc; spikes (toolchain, YouTube embed, Google token, chart performance) | In progress: docs written; toolchain spike done; embed, Google and performance spikes need a phone |
 | S1 | `mobile/` shell, auth core (password), server URL, capabilities, offline/error states, CI | Not started |
 | S2 | Google sign-in, first-time account name, optional app lock, setup doc | Not started |
 | S3 | Sessions list and session detail (Chart / Trades / Orders / Videos row) | Not started |
@@ -44,11 +44,29 @@ Later (not in this PR; the design leaves room): alerts (device-token table, regi
 ## Your actions (outside the code)
 1. **Google Cloud:** create an OAuth client of type *Android* with package `in.co.tradematangi.phone` and the SHA-1 of the debug keystore (the release keystore SHA-1 later); if the consent screen is in Testing, add your Google account as a test user. Changes can take up to a few hours to apply. Exact steps arrive in S2 (`docs/phone-google-signin-setup.md`).
 2. **Server:** confirm `DESKTOP_JWT_SECRET` is set on the EC2 host (the repository default would let anyone forge a token).
-3. **Windows:** install the Android platform-tools (`adb`) and enable USB debugging on the phone, or plan to install the APK from the CI artifact.
+3. **Embed spike:** copy `D:\TradeMatangi-spike\SpikeEmbed-localhost.apk` and `SpikeEmbed-domain.apk` to the phone (USB file copy), allow installing unknown apps, open each, rotate to landscape, and try the four buttons. Report, per app, which variant plays, which shows an error (and the code). Both can stay installed side by side.
+3b. **Windows (later):** install the Android platform-tools (`adb`) and enable USB debugging on the phone for faster installs, or use the CI artifact.
 4. **Phone:** note the model / screen size so the layouts are checked on it.
 
 ## Spike results
-(To be filled in as each spike finishes.)
+
+**(a) Toolchain, 2026-11-10: works in WSL.**
+- Capacitor current stable is **8.6.0** (needs Node 22 or newer; this machine has Node 24). Its Android template uses minSdk **24**, compile and target SDK **36**, **Java 21** and Gradle **8.14.3**.
+- Installed on the Linux filesystem: JDK 21 (already present), Android command-line tools, `platform-tools`, `platforms;android-36`, `build-tools;36.0.0` in `~/Android/Sdk` (about 460 MB). `ANDROID_HOME=$HOME/Android/Sdk`.
+- A throwaway Capacitor app built with `./gradlew assembleDebug` in about 2 minutes (first run, includes the Gradle download) and produced a 4 MB debug APK with the expected package, min and target SDK.
+- Not yet done: installing on a phone (needs `adb` on Windows or a manual copy of the APK) and running the same build on GitHub Actions (Sprint 1).
+- Plugin versions on npm today: `@capgo/capacitor-social-login` 8.7.7, `@aparajita/capacitor-biometric-auth` 10.0.0, `@aparajita/capacitor-secure-storage` 8.0.1, `@capacitor/app|keyboard|browser|status-bar|screen-orientation|preferences` 8.x. Compatibility with Capacitor 8 is re-checked when each is added.
+
+**(b) YouTube embed matrix: waiting for a phone test.** Two spike APKs were built from the same page (four variants on a left menu: the production iframe, nocookie + `enablejsapi` + `origin`, `youtube.com/embed` + `enablejsapi` + `origin`, and Open in YouTube through the Capacitor Browser plugin). They differ only in the app origin: A runs at `https://localhost`, B at `https://app.tradematangi.co.in`. The page shows the origin and any player error code. Results are written here once tested.
+
+| Origin | 1. production iframe | 2. nocookie + origin | 3. youtube.com + origin | 4. Open in YouTube |
+|---|---|---|---|---|
+| A `https://localhost` | not tested | not tested | not tested | not tested |
+| B `https://app.tradematangi.co.in` | not tested | not tested | not tested | not tested |
+
+**(c) Google token accepted by `/api/auth/desktop/google-token`:** needs the Android OAuth client (user action 1). Not started.
+
+**(d) KLine chart performance on the phone:** measured in Sprint 1 / 3 with the real chart bundle. Not started.
 
 ## Risks
 - Embedded YouTube can fail in a WebView (error 153) when the referrer or origin is missing. Mitigation: the S0 matrix; a relay page on the server's own https origin; Open in YouTube always visible.
