@@ -72,8 +72,9 @@ test('tapping Pick, then the chart, sets the price from where it was tapped', as
   const box = (await chart.boundingBox())!
   await page.mouse.click(box.x + box.width * 0.4, box.y + box.height * 0.35)
   await expect(overlay(page).getByText('Click the chart to set the exit price')).toHaveCount(0)
+  // The price box follows the edit one render after the pick hint goes away: wait for it instead of reading it at once.
+  await expect.poll(async () => Number(await exitPrice(page).inputValue())).not.toBe(before)
   const picked = Number(await exitPrice(page).inputValue())
-  expect(picked).not.toBe(before)
   expect(picked).toBeGreaterThan(50) // inside the option series the mock draws (a tap near the top of the chart)
   expect(picked).toBeLessThan(400)
   await expect(overlay(page).locator('.wi-leg.changed')).toHaveCount(1)
@@ -166,8 +167,7 @@ for (const [row, type] of SESSION_TYPES) {
     await expect(figure(page, 'Day: difference').locator('strong')).toContainText('₹0.00')
     const price = Number(await exitPrice(page).inputValue())
     await exitPrice(page).fill(String(Math.round(price * 0.9 * 100) / 100))
-    const delta = await figure(page, 'This trade: difference').locator('strong').innerText()
-    expect(delta).not.toContain('₹0.00')
+    await expect(figure(page, 'This trade: difference').locator('strong')).not.toContainText('₹0.00')
     await expect(figure(page, 'Day: actual').locator('strong')).toHaveText(actual) // the actual figure does not move
     await expect(overlay(page).locator('.wi-leg.changed')).toHaveCount(1)
     await overlay(page).getByRole('button', { name: 'Reset this trade' }).click()
