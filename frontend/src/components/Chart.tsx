@@ -1693,7 +1693,7 @@ export default function Chart({
       }}
     >
       {/* Pane toolbar — paddingRight leaves room for the absolute-positioned ✕ remove button */}
-      <div style={{
+      <div data-chart-toolbar style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px',
         paddingRight: 36,
         background: '#161b22', borderBottom: '1px solid #21262d', flexWrap: 'wrap',

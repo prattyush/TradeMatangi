@@ -132,3 +132,25 @@ export function parseState(raw: string | null, fallbackDate: string): BrowseStat
     return defaultState(fallbackDate)
   }
 }
+
+/** A month as weeks of ISO dates, Monday first; days outside the month are null. */
+export function monthGrid(year: number, month: number): Array<Array<string | null>> {
+  const first = new Date(Date.UTC(year, month, 1))
+  const days = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+  const lead = (first.getUTCDay() + 6) % 7
+  const cells: Array<string | null> = [...Array(lead).fill(null), ...Array.from({ length: days }, (_, i) => new Date(Date.UTC(year, month, i + 1)).toISOString().slice(0, 10))]
+  while (cells.length % 7) cells.push(null)
+  return Array.from({ length: cells.length / 7 }, (_, week) => cells.slice(week * 7, week * 7 + 7))
+}
+
+/** The month `delta` months from (year, month); month is 0 to 11. */
+export function shiftMonth(year: number, month: number, delta: number): { year: number; month: number } {
+  const index = year * 12 + month + delta
+  return { year: Math.floor(index / 12), month: ((index % 12) + 12) % 12 }
+}
+
+/** A day the calendar offers: a weekday, not after `latest`. (Exchange holidays are answered by the server, as everywhere in Browse.) */
+export function pickableDay(iso: string, latest: string): boolean {
+  const weekday = new Date(`${iso}T00:00:00Z`).getUTCDay()
+  return weekday !== 0 && weekday !== 6 && iso <= latest
+}
