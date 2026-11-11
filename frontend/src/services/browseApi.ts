@@ -1,5 +1,5 @@
 import { BACKEND_URL } from '../config'
-import api, { _authHeaders, type HistoricalDataResponse, type OHLCCandle } from './api'
+import { _authHeaders, type HistoricalDataResponse, type OHLCCandle } from './api'
 import { desktopDrawingRequest } from './desktopDrawingRequest'
 import { maxPriceRequest, readMaxPrice, type OptionMetadata, type OptionRight, type PreparedPane } from '../../../shared/browse/browseModel'
 
@@ -21,9 +21,8 @@ const history = (symbol: string, tradingDate?: string, intervalMinutes?: number,
   return params
 }
 
-/** The history calls the shared analysis chart makes, answered from minute data. Everything else is the website's api. */
+/** The history calls Browse makes, all answered from minute data. */
 export const browseApi = {
-  ...api,
   async getHistorical(symbol = 'NIFTY', tradingDate?: string, intervalMinutes?: number, historicalDays?: number): Promise<HistoricalDataResponse> {
     const res = await fetch(`${BACKEND_URL}/api/data/historical?${history(symbol, tradingDate, intervalMinutes, historicalDays)}`, { headers: _authHeaders() })
     if (!res.ok) throw await failure(res, 'Historical data fetch')

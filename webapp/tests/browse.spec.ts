@@ -8,8 +8,11 @@ const bars = (count = 120, from = start) => Array.from({ length: count }, (_, i)
 interface Seen { path: string; query: URLSearchParams; method: string; headers: Record<string, string>; body: unknown }
 
 /** The Browse routes, recorded: history, option metadata, the paged scroll-back route and the max price search. */
-async function mockBrowse(page: Page) {
+async function mockBrowse(page: Page, renderer: 'lightweight' | 'kline' = 'lightweight') {
   await mockWorkspace(page)
+  // Browse follows the Trading Chart setting (Settings): the same renderer the trading screen would use.
+  await page.route('**/api/users/settings', route => route.fulfill({ json: { website_chart_renderer: renderer } }))
+  await page.addInitScript(value => localStorage.setItem('website-chart-renderer::alice', value), renderer)
   const seen: Seen[] = []
   await page.route('**/api/**', async route => {
     const request = route.request()
@@ -28,21 +31,6 @@ async function mockBrowse(page: Page) {
 }
 const pane = (page: Page, index: number) => page.locator('[data-pane]').nth(index)
 const history = (seen: Seen[]) => seen.filter(item => item.path.endsWith('/data/historical'))
-
-test('Browse is where the website opens, two panes, each its own symbol, on minute data', async ({ page }) => {
-  const seen = await mockBrowse(page)
-  const errors: string[] = []
-  page.on('pageerror', error => errors.push(error.message))
-  await page.goto(app)
-  await expect(page.getByRole('region', { name: 'Browse' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /^Pane: NIFTY/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /^Pane: BSESEN/ })).toBeVisible()
-  await expect(page.locator('canvas').first()).toBeVisible()
-  await expect.poll(() => history(seen).length).toBeGreaterThanOrEqual(2)
-  expect([...new Set(history(seen).map(item => item.query.get('symbol')))].sort()).toEqual(['BSESEN', 'NIFTY'])
-  expect(history(seen).every(item => item.query.get('granularity') === 'minute' && item.query.get('historical_days') === '2')).toBe(true)
-  expect(errors).toEqual([])
-})
 
 test('the header Browse button goes to Trading and back, and the layout choice lives in that same header row', async ({ page }) => {
   await mockBrowse(page)
@@ -83,98 +71,167 @@ test('the layouts are the website\'s: 1, 2, 3, 4, 5 equal, 5 wide right, 4 as 1+
   expect(Math.abs(top[1].width - top[2].width)).toBeLessThan(3)
 })
 
-test('each pane has its own symbol and its own day: comparing two symbols across days', async ({ page }) => {
-  const seen = await mockBrowse(page)
-  await page.goto(app)
-  await page.getByRole('button', { name: /^Pane: BSESEN/ }).click()
-  const menu = page.getByRole('dialog', { name: 'Pane settings' })
-  await menu.getByRole('combobox', { name: 'Symbol' }).click()
-  await menu.getByRole('combobox', { name: 'Symbol' }).fill('reliance')
-  await page.getByRole('option', { name: 'Reliance Industries' }).click()
-  await menu.getByLabel('Day', { exact: true }).fill('2026-10-01')
-  await expect(page.getByRole('button', { name: /^Pane: RELIND · / })).toBeVisible()
-  await expect.poll(() => history(seen).some(item => item.query.get('symbol') === 'RELIND' && item.query.get('trading_date') === '2026-10-01')).toBe(true)
-  // The first pane is untouched: same symbol, its own day.
-  const first = history(seen).filter(item => item.query.get('symbol') === 'NIFTY')
-  expect(first.every(item => item.query.get('trading_date') !== '2026-10-01')).toBe(true)
-})
 
-test('an option pane picks a strike from the day\'s ladder and loads about three days of that contract', async ({ page }) => {
-  const seen = await mockBrowse(page)
-  await page.goto(app)
-  await page.getByRole('button', { name: /^Pane: NIFTY/ }).click()
-  const menu = page.getByRole('dialog', { name: 'Pane settings' })
-  await menu.getByRole('button', { name: 'CE', exact: true }).click()
-  await expect(menu.getByLabel('Strike', { exact: true })).toBeVisible()
-  await expect.poll(() => seen.filter(item => item.path.endsWith('/option-metadata')).length).toBeGreaterThan(0)
-  await expect(menu.getByLabel('Strike', { exact: true }).locator('option')).not.toHaveCount(1)
-  const strikes = await menu.getByLabel('Strike', { exact: true }).locator('option').allTextContents()
-  await menu.getByLabel('Strike', { exact: true }).selectOption(strikes[strikes.length - 3])
-  await expect.poll(() => seen.some(item => item.path.endsWith('/data/options-historical'))).toBe(true)
-  const request = seen.find(item => item.path.endsWith('/data/options-historical'))!
-  expect(request.query.get('symbol')).toBe('NIFTY')
-  expect(request.query.get('right')).toBe('CE')
-  expect(request.query.get('expiry')).toBe('2026-10-13')
-  expect(request.query.get('granularity')).toBe('minute')
-  expect(request.query.get('historical_days')).toBe('2')
-  await expect(page.getByRole('button', { name: /^Pane: NIFTY · .* · CE \d+/ })).toBeVisible()
-})
+// Browse uses the Trading Chart setting: Lightweight when that is Lightweight, KLine when it is KLine. The same scenarios on both.
+for (const renderer of ['lightweight', 'kline'] as const) {
+  test.describe(`Browse on the ${renderer} chart`, () => {
+    test('opens with the setting\'s own chart renderer in every pane', async ({ page }) => {
+      await mockBrowse(page, renderer)
+      await page.goto(app)
+      await expect(page.getByRole('region', { name: 'Browse' })).toBeVisible()
+      await expect(page.locator('[data-pane]')).toHaveCount(2)
+      await expect(page.locator('[data-pane] canvas').first()).toBeVisible()
+      // KLine panes are the website's KLine host (`.website-kline`); Lightweight panes are not.
+      await expect(page.locator('[data-pane] .website-kline')).toHaveCount(renderer === 'kline' ? 2 : 0)
+    })
 
-test('Max price finds the strike on the server with the website\'s own header, and the pane loads that contract', async ({ page }) => {
-  const seen = await mockBrowse(page)
-  await page.goto(app)
-  await page.getByRole('button', { name: /^Pane: NIFTY/ }).click()
-  const menu = page.getByRole('dialog', { name: 'Pane settings' })
-  await menu.getByRole('button', { name: 'PE', exact: true }).click()
-  await menu.getByRole('button', { name: 'Max price', exact: true }).click()
-  await expect.poll(() => seen.some(item => item.path.endsWith('/option-metadata'))).toBe(true)
-  await menu.getByRole('button', { name: '50', exact: true }).click()
-  await expect.poll(() => seen.some(item => item.path.endsWith('/prepare-session'))).toBe(true)
-  const prepare = seen.find(item => item.path.endsWith('/prepare-session'))!
-  expect(prepare.headers['x-user-id']).toBe('alice')
-  expect(prepare.headers['authorization']).toBeUndefined()
-  expect(prepare.body).toMatchObject({ mode: 'browse', reference_time: '09:30:00', panes: [{ kind: 'option', symbol: 'NIFTY', right: 'PE', selection_mode: 'max_price', max_price: 50 }] })
-  await expect(page.getByRole('button', { name: /PE 24650/ })).toBeVisible()
-  await expect.poll(() => seen.some(item => item.path.endsWith('/data/options-historical') && item.query.get('strike') === '24650')).toBe(true)
-})
+  test('Browse is where the website opens, two panes, each its own symbol, on minute data', async ({ page }) => {
+    const seen = await mockBrowse(page, renderer)
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    await page.goto(app)
+    await expect(page.getByRole('region', { name: 'Browse' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Pane: NIFTY/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^Pane: BSESEN/ })).toBeVisible()
+    await expect(page.locator('canvas').first()).toBeVisible()
+    await expect.poll(() => history(seen).length).toBeGreaterThanOrEqual(2)
+    expect([...new Set(history(seen).map(item => item.query.get('symbol')))].sort()).toEqual(['BSESEN', 'NIFTY'])
+    expect(history(seen).every(item => item.query.get('granularity') === 'minute' && item.query.get('historical_days') === '2')).toBe(true)
+    expect(errors).toEqual([])
+  })
 
-test('the panes, symbols, days, strikes and intervals come back after a reload', async ({ page }) => {
-  await mockBrowse(page)
-  await page.goto(app)
-  await page.getByLabel('Browse layout').selectOption({ label: '3 panes' })
-  await page.getByRole('button', { name: /^Pane: BSESEN/ }).click()
-  const menu = page.getByRole('dialog', { name: 'Pane settings' })
-  await menu.getByRole('combobox', { name: 'Symbol' }).click()
-  await menu.getByRole('combobox', { name: 'Symbol' }).fill('tata power')
-  await page.getByRole('option', { name: 'Tata Power' }).click()
-  await menu.getByLabel('Day', { exact: true }).fill('2026-10-02')
-  await page.keyboard.press('Escape')
-  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('tradematangi_browse_alice')!))
-  expect(saved.layout).toBe(3)
-  expect(saved.panes[1]).toMatchObject({ symbol: 'TATPOW', date: '2026-10-02' })
-  await page.reload()
-  await expect(page.locator('[data-pane]')).toHaveCount(3)
-  await expect(page.getByRole('button', { name: /^Pane: TATPOW · .*/ })).toBeVisible()
-  await expect(page.getByLabel('Browse layout')).toHaveValue('3')
-})
+  test('each pane has its own symbol and its own day: comparing two symbols across days', async ({ page }) => {
+    const seen = await mockBrowse(page, renderer)
+    await page.goto(app)
+    await page.getByRole('button', { name: /^Pane: BSESEN/ }).click()
+    const menu = page.getByRole('dialog', { name: 'Pane settings' })
+    await menu.getByRole('combobox', { name: 'Symbol' }).click()
+    await menu.getByRole('combobox', { name: 'Symbol' }).fill('reliance')
+    await page.getByRole('option', { name: 'Reliance Industries' }).click()
+    await menu.getByLabel('Day', { exact: true }).fill('2026-10-01')
+    await expect(page.getByRole('button', { name: /^Pane: RELIND · / })).toBeVisible()
+    await expect.poll(() => history(seen).some(item => item.query.get('symbol') === 'RELIND' && item.query.get('trading_date') === '2026-10-01')).toBe(true)
+    // The first pane is untouched: same symbol, its own day.
+    const first = history(seen).filter(item => item.query.get('symbol') === 'NIFTY')
+    expect(first.every(item => item.query.get('trading_date') !== '2026-10-01')).toBe(true)
+  })
 
-test('scrolling an index chart to its left edge asks the paged route for older days; an option chart does not', async ({ page }) => {
-  const seen = await mockBrowse(page)
-  await page.goto(app)
-  const chart = pane(page, 0)
-  await expect(chart.locator('canvas').first()).toBeVisible()
-  const box = (await chart.boundingBox())!
-  const drag = async () => {
-    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5)
-    await page.mouse.down()
-    await page.mouse.move(box.x + box.width * 0.95, box.y + box.height * 0.5, { steps: 12 })
-    await page.mouse.up()
+  test('an option pane picks a strike from the day\'s ladder and loads about three days of that contract', async ({ page }) => {
+    const seen = await mockBrowse(page, renderer)
+    await page.goto(app)
+    await page.getByRole('button', { name: /^Pane: NIFTY/ }).click()
+    const menu = page.getByRole('dialog', { name: 'Pane settings' })
+    await menu.getByRole('button', { name: 'CE', exact: true }).click()
+    await expect(menu.getByLabel('Strike', { exact: true })).toBeVisible()
+    await expect.poll(() => seen.filter(item => item.path.endsWith('/option-metadata')).length).toBeGreaterThan(0)
+    await expect(menu.getByLabel('Strike', { exact: true }).locator('option')).not.toHaveCount(1)
+    const strikes = await menu.getByLabel('Strike', { exact: true }).locator('option').allTextContents()
+    await menu.getByLabel('Strike', { exact: true }).selectOption(strikes[strikes.length - 3])
+    await expect.poll(() => seen.some(item => item.path.endsWith('/data/options-historical'))).toBe(true)
+    const request = seen.find(item => item.path.endsWith('/data/options-historical'))!
+    expect(request.query.get('symbol')).toBe('NIFTY')
+    expect(request.query.get('right')).toBe('CE')
+    expect(request.query.get('expiry')).toBe('2026-10-13')
+    expect(request.query.get('granularity')).toBe('minute')
+    expect(request.query.get('historical_days')).toBe('2')
+    await expect(page.getByRole('button', { name: /^Pane: NIFTY · .* · CE \d+/ })).toBeVisible()
+  })
+
+  test('Max price finds the strike on the server with the website\'s own header, and the pane loads that contract', async ({ page }) => {
+    const seen = await mockBrowse(page, renderer)
+    await page.goto(app)
+    await page.getByRole('button', { name: /^Pane: NIFTY/ }).click()
+    const menu = page.getByRole('dialog', { name: 'Pane settings' })
+    await menu.getByRole('button', { name: 'PE', exact: true }).click()
+    await menu.getByRole('button', { name: 'Max price', exact: true }).click()
+    await expect.poll(() => seen.some(item => item.path.endsWith('/option-metadata'))).toBe(true)
+    await menu.getByRole('button', { name: '50', exact: true }).click()
+    await expect.poll(() => seen.some(item => item.path.endsWith('/prepare-session'))).toBe(true)
+    const prepare = seen.find(item => item.path.endsWith('/prepare-session'))!
+    expect(prepare.headers['x-user-id']).toBe('alice')
+    expect(prepare.headers['authorization']).toBeUndefined()
+    expect(prepare.body).toMatchObject({ mode: 'browse', reference_time: '09:30:00', panes: [{ kind: 'option', symbol: 'NIFTY', right: 'PE', selection_mode: 'max_price', max_price: 50 }] })
+    await expect(page.getByRole('button', { name: /PE 24650/ })).toBeVisible()
+    await expect.poll(() => seen.some(item => item.path.endsWith('/data/options-historical') && item.query.get('strike') === '24650')).toBe(true)
+  })
+
+  test('the panes, symbols, days, strikes and intervals come back after a reload', async ({ page }) => {
+    await mockBrowse(page, renderer)
+    await page.goto(app)
+    await page.getByLabel('Browse layout').selectOption({ label: '3 panes' })
+    await page.getByRole('button', { name: /^Pane: BSESEN/ }).click()
+    const menu = page.getByRole('dialog', { name: 'Pane settings' })
+    await menu.getByRole('combobox', { name: 'Symbol' }).click()
+    await menu.getByRole('combobox', { name: 'Symbol' }).fill('tata power')
+    await page.getByRole('option', { name: 'Tata Power' }).click()
+    await menu.getByLabel('Day', { exact: true }).fill('2026-10-02')
+    await page.keyboard.press('Escape')
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('tradematangi_browse_alice')!))
+    expect(saved.layout).toBe(3)
+    expect(saved.panes[1]).toMatchObject({ symbol: 'TATPOW', date: '2026-10-02' })
+    await page.reload()
+    await expect(page.locator('[data-pane]')).toHaveCount(3)
+    await expect(page.getByRole('button', { name: /^Pane: TATPOW · .*/ })).toBeVisible()
+    await expect(page.getByLabel('Browse layout')).toHaveValue('3')
+  })
+
+  test('scrolling an index chart to its left edge asks the paged route for older days; an option chart does not', async ({ page }) => {
+    const seen = await mockBrowse(page, renderer)
+    await page.goto(app)
+    const chart = pane(page, 0)
+    await expect(chart.locator('canvas').first()).toBeVisible()
+    const box = (await chart.boundingBox())!
+    const drag = async () => {
+      await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5)
+      await page.mouse.down()
+      await page.mouse.move(box.x + box.width * 0.95, box.y + box.height * 0.5, { steps: 12 })
+      await page.mouse.up()
+    }
+    for (let attempt = 0; attempt < 8 && !seen.some(item => item.path.endsWith('/browse/history')); attempt++) await drag()
+    await expect.poll(() => seen.filter(item => item.path.endsWith('/browse/history')).length).toBeGreaterThan(0)
+    const request = seen.find(item => item.path.endsWith('/browse/history'))!
+    expect(request.query.get('symbol')).toBe('NIFTY')
+    expect(request.query.get('interval')).toBe('3')
+    expect(Number(request.query.get('before'))).toBeGreaterThan(0)
+    expect(request.headers['x-user-id']).toBe('alice')
+  })
+  })
+}
+
+/** Colour counts on the canvases of the Browse panes: where a saved drawing of that colour was painted. */
+const paintedRows = (page: Page, rgb: [number, number, number]) => page.evaluate(([red, green, blue]) => {
+  const near = (a: number, b: number) => Math.abs(a - b) < 40
+  for (const canvas of document.querySelectorAll('[data-pane] canvas')) {
+    const c = canvas as HTMLCanvasElement, ctx = c.getContext('2d')
+    if (!ctx || !c.width || !c.height) continue
+    const data = ctx.getImageData(0, 0, c.width, c.height).data
+    for (let y = 0; y < c.height; y++) {
+      let hits = 0
+      for (let x = 0; x < c.width; x++) { const i = (y * c.width + x) * 4; if (near(data[i], red) && near(data[i + 1], green) && near(data[i + 2], blue) && data[i + 3] > 100) hits++ }
+      if (hits > c.width * 0.5) { const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + y * r.height / c.height } }
+    }
   }
-  for (let attempt = 0; attempt < 8 && !seen.some(item => item.path.endsWith('/browse/history')); attempt++) await drag()
-  await expect.poll(() => seen.filter(item => item.path.endsWith('/browse/history')).length).toBeGreaterThan(0)
-  const request = seen.find(item => item.path.endsWith('/browse/history'))!
-  expect(request.query.get('symbol')).toBe('NIFTY')
-  expect(request.query.get('interval')).toBe('3')
-  expect(Number(request.query.get('before'))).toBeGreaterThan(0)
-  expect(request.headers['x-user-id']).toBe('alice')
+  return null
+}, rgb)
+
+test('KLine in Browse draws the saved support/resistance lines of its instrument and saves a delete', async ({ page }) => {
+  const calls: string[] = []
+  await mockBrowse(page, 'kline')
+  await page.route('**/api/desktop/v1/drawings**', async route => {
+    const url = new URL(route.request().url())
+    calls.push(`${route.request().method()} ${url.pathname}${route.request().method() === 'GET' ? `?${new URLSearchParams(url.search).get('instrument')}` : ''}`)
+    if (route.request().method() === 'GET') return route.fulfill({ json: { drawings: [{ drawing_id: 'd1', revision: 1, drawing: { tool: 'Horizontal', points: [{ timestamp: start + 60 * 180, price: 105 }], style: { color: '#ff00ff', width: 3 } } }] } })
+    return route.fulfill({ json: { drawing_id: 'd1', revision: 2, drawing: {} } })
+  })
+  await page.goto(app)
+  await expect(page.locator('[data-pane] .website-kline')).toHaveCount(2)
+  // The same instrument identity the trading and Analysis charts use, so a line drawn there shows here.
+  await expect.poll(() => calls.includes('GET /api/desktop/v1/drawings?{"exchange":"NSE","kind":"index","symbol":"NIFTY"}')).toBe(true)
+  await expect.poll(() => paintedRows(page, [255, 0, 255])).not.toBeNull()
+  const line = (await paintedRows(page, [255, 0, 255]))!
+  await page.mouse.move(line.x, line.y)
+  await page.mouse.click(line.x, line.y)
+  await page.waitForTimeout(400) // the chart selects the line on the click; Delete acts on the selection
+  await page.keyboard.press('Delete')
+  await expect.poll(() => calls.some(call => call === 'DELETE /api/desktop/v1/drawings/d1')).toBe(true)
 })

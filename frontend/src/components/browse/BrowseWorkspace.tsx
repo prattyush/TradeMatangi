@@ -29,6 +29,8 @@ export default function BrowseWorkspace({ userId }: { userId: string }) {
   const [symbols, setSymbols] = useState<Array<SymbolChoice & { strike_interval?: number }>>([])
   const [top, setTop] = useState(0)
   const [slot, setSlot] = useState<HTMLElement | null>(null)
+  const [left, setLeft] = useState(0)
+  const [activeId, setActiveId] = useState<number | null>(null)
 
   useEffect(() => { try { localStorage.setItem(storageKey(userId), JSON.stringify(state)) } catch { /* private mode: not remembered */ } }, [state, userId])
   useEffect(() => {
@@ -39,12 +41,21 @@ export default function BrowseWorkspace({ userId }: { userId: string }) {
   // Sit right under the website header, whatever its height (it wraps on narrow screens).
   useLayoutEffect(() => {
     const header = document.querySelector('.website-header') as HTMLElement | null
-    const measure = () => { setTop(header?.getBoundingClientRect().bottom ?? 0); setSlot(document.getElementById(BROWSE_HEADER_SLOT)) }
+    // The shared drawing/indicator rail (KLine) sits at the left of the page: Browse starts beside it, not over it.
+    const tools = document.querySelector('.website-chart-tools') as HTMLElement | null
+    const measure = () => {
+      setTop(header?.getBoundingClientRect().bottom ?? 0)
+      setSlot(document.getElementById(BROWSE_HEADER_SLOT))
+      setLeft(tools && !tools.hidden ? tools.getBoundingClientRect().right : 0)
+    }
     measure()
-    const observer = header ? new ResizeObserver(measure) : null
-    if (header) observer?.observe(header)
+    const observer = new ResizeObserver(measure)
+    if (header) observer.observe(header)
+    if (tools) observer.observe(tools)
+    const mutations = tools ? new MutationObserver(measure) : null
+    mutations?.observe(tools!, { attributes: true, attributeFilter: ['hidden', 'class'] })
     window.addEventListener('resize', measure)
-    return () => { observer?.disconnect(); window.removeEventListener('resize', measure) }
+    return () => { observer.disconnect(); mutations?.disconnect(); window.removeEventListener('resize', measure) }
   }, [])
 
   const onPatch = useCallback((id: number, change: Partial<Pane>) => setState(current => updatePane(current, id, change)), [])
@@ -63,7 +74,7 @@ export default function BrowseWorkspace({ userId }: { userId: string }) {
   return (
     <>
       {slot && createPortal(layoutSelect, slot)}
-      <section aria-label="Browse" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, top, zIndex: 20, background: '#0d1117', display: 'flex', flexDirection: 'column', gap: 4, padding: 4, boxSizing: 'border-box' }}>
+      <section aria-label="Browse" style={{ position: 'fixed', left, right: 0, bottom: 0, top, zIndex: 20, background: '#0d1117', display: 'flex', flexDirection: 'column', gap: 4, padding: 4, boxSizing: 'border-box' }}>
         {rows.map((row, index) => {
           const rowHidden = maximized !== null && !row.panes.some(i => state.panes[i]?.id === maximized)
           return (
@@ -75,7 +86,7 @@ export default function BrowseWorkspace({ userId }: { userId: string }) {
                 return (
                   <div key={pane.id} data-pane={pane.id} style={{ flex: row.flex[at], display: hidden ? 'none' : 'flex', minWidth: 0, minHeight: 0, border: '1px solid #30363d', overflow: 'hidden', position: 'relative' }}>
                     <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
-                      <BrowsePane pane={pane} symbols={symbols.length ? symbols : [{ symbol: pane.symbol, display_name: pane.symbol }]} today={today} onPatch={onPatch}
+                      <BrowsePane pane={pane} active={(activeId ?? state.panes[0]?.id) === pane.id} onActivate={() => setActiveId(pane.id)} symbols={symbols.length ? symbols : [{ symbol: pane.symbol, display_name: pane.symbol }]} today={today} onPatch={onPatch}
                         onMaximize={() => toggleMaximize(pane.id)} isMaximized={maximized === pane.id} />
                     </div>
                   </div>

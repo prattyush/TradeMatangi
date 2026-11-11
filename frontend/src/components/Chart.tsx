@@ -54,7 +54,9 @@ export interface Props {
   candleAnchorSeconds?:number
   defaultShowAllMarkers?:boolean
   externalTradeMarkers?: boolean
-  externalCandles?: { time: number; open: number; high: number; low: number; close: number }[]
+  externalCandles?: { time: number; open: number; high: number; low: number; close: number; volume?: number }[]
+  /** Browse: a control placed first in the pane toolbar (no row of its own). */
+  headerStart?: React.ReactNode
   externalLoading?: boolean
   externalMessage?: string
   externalLoadOlder?: (before: number) => Promise<unknown>
@@ -452,7 +454,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 
 export default function Chart({
   lightweightState,
-  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
+  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey, headerStart,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right, onReselectStrike,
@@ -1697,6 +1699,7 @@ export default function Chart({
         background: '#161b22', borderBottom: '1px solid #21262d', flexWrap: 'wrap',
       }}>
         <ChartMenuButton chart={containerRef} visible={Boolean(onContextMenu)} />
+        {headerStart}
         <span style={{ fontSize: 11, color: isActive ? '#58a6ff' : '#79c0ff', marginRight: 4 }}>
           {paneLabel}
         </span>
