@@ -8,7 +8,13 @@ export async function mockWorkspace(page: Page) {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith('/auth/me')) return route.fulfill({ json: { user_id: 'alice', email: 'alice@example.com', account_name: 'Alice', is_admin: true } })
     if (path.endsWith('/groups/active')) return route.fulfill({ status: 204 })
-    if (path.endsWith('/data/symbols')) return route.fulfill({ json: { symbols: [{ symbol: 'TATPOW', name: 'Tata Power' }, { symbol: 'NIFTY', name: 'NIFTY' }] } })
+    if (path.endsWith('/data/symbols')) return route.fulfill({ json: { symbols: [
+      { symbol: 'NIFTY', name: 'NIFTY', display_name: 'NIFTY 50', chart_type: 'index', option_eligible: true, strike_interval: 50 },
+      { symbol: 'BSESEN', name: 'SENSEX', display_name: 'S&P BSE SENSEX', chart_type: 'index', option_eligible: true, strike_interval: 100 },
+      { symbol: 'TATPOW', name: 'Tata Power', display_name: 'Tata Power', chart_type: 'equity', option_eligible: true, strike_interval: 5 },
+      { symbol: 'RELIND', name: 'Reliance', display_name: 'Reliance Industries', chart_type: 'equity', option_eligible: true, strike_interval: 10 },
+      { symbol: 'TATMOT', name: 'Tata Motors', display_name: 'Tata Motors', chart_type: 'equity', option_eligible: false, strike_interval: 5 },
+    ] } })
     if (path.endsWith('/data/available-dates')) return route.fulfill({ json: { dates: ['2026-10-08'] } })
     if (path.endsWith('/data/historical')) return route.fulfill({ json: { candles, symbol: 'TATPOW' } })
     if (path.endsWith('/wallet')) return route.fulfill({ json: { user_id: 'alice', balance: 150000, ledger_kind: 'paper', reset_allowed: true } })

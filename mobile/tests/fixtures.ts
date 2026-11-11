@@ -30,6 +30,9 @@ export interface MockServer {
   google: { known: boolean; reject: boolean }
   /** Swing trading: the portfolio the swing routes answer from, and what the phone sent them. */
   swing: SwingMock
+  /** Browse scroll-back (`browse/history`): pages given out so far and whether the server says there is more. */
+  browsePages: Array<{ query: URLSearchParams }>
+  browseMore: boolean
   /** Browse Live: what the live routes were asked, and how they behave. */
   live: LiveMock
 }
@@ -72,7 +75,7 @@ const bundle = { access_token: 'access-token-1', refresh_token: 'refresh-token-1
 
 /** Stand in for the TradeMatangi server on the given hosts (the app talks to an absolute https URL). */
 export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co.in']): Promise<MockServer> {
-  const state: MockServer = { requests: [], rejectLogin: false, oldServer: false, google: { known: true, reject: false }, swing: newSwingState(), analysis: newAnalysisState(), live: { starts: [], puts: [], stops: [], eventRequests: [], nextId: 1 } }
+  const state: MockServer = { requests: [], rejectLogin: false, oldServer: false, google: { known: true, reject: false }, swing: newSwingState(), browsePages: [], browseMore: true, analysis: newAnalysisState(), live: { starts: [], puts: [], stops: [], eventRequests: [], nextId: 1 } }
   const answer = (route: Route, status: number, body?: unknown) =>
     route.fulfill({ status, headers: { ...CORS, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
 
@@ -135,6 +138,15 @@ export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co
         const result = swingResponse(url.pathname, request.method(), url.searchParams, body, state.swing)
         if (result.stream !== undefined) return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'text/event-stream' }, body: result.stream })
         return answer(route, result.status, result.body)
+      }
+      if (url.pathname === '/api/desktop/v1/browse/history') {
+        state.browsePages.push({ query: url.searchParams })
+        // Three older trading days per page, going back from the mock's oldest context day (2026-11-05).
+        const interval = +(url.searchParams.get('interval') ?? 3)
+        const pages = [['2026-11-02', '2026-11-03', '2026-11-04'], ['2026-10-28', '2026-10-29', '2026-10-30'], ['2026-10-21', '2026-10-22', '2026-10-23']]
+        const days = pages[Math.min(state.browsePages.length, pages.length) - 1]
+        const candles = days.flatMap(day => dayCandles(day, interval))
+        return answer(route, 200, { candles, more: state.browseMore, before: candles[0]?.time ?? null, oldest_date: days[0], interval, provider: 'kite', partial: false, stale: false })
       }
       const analysisPrefix = '/api/desktop/v1/analysis/'
       if (url.pathname.startsWith(analysisPrefix)) {

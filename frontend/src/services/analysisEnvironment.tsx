@@ -43,3 +43,14 @@ export function withWebsiteAnalysis<T extends ComponentType<any>>(Component: T) 
     return <AnalysisProvider value={lightweightValue}><Component {...props} /></AnalysisProvider>
   }
 }
+
+/** The KLine Analysis environment for a single chart host outside Analysis itself (Browse panes): same transport, drawings and indicators. */
+export function useWebsiteKLineEnvironment() {
+  const [labelView, onLabelViewChange] = useAnalysisLabelView()
+  const pnlDisplayMode = useAnalysisPnlMode()
+  return useMemo(() => ({
+    ...base, charts: { SwingChart, ...klineAnalysisCharts },
+    drawingRequest: desktopDrawingRequest, resolveSymbolInstrument, accountKey: rendererAccountKey(), chartPicking: false,
+    labelView, onLabelViewChange, pnlDisplayMode, active: true,
+  }), [labelView, onLabelViewChange, pnlDisplayMode])
+}

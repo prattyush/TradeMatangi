@@ -95,6 +95,14 @@ input { width: 160px; }
 .chart-actions { display: flex; align-items: center; gap: 5px; }
 .candle-close { color: #93c5fd; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chart-actions button { font-size: .62rem; padding: 3px 5px; }
+.chart-dropdown { position: relative; display: inline-flex; }
+.chart-dropdown .dropdown-toggle { color: #c9d1d9; background: #161b22; border: 1px solid #30363d; border-radius: 4px; padding: 3px 6px; font-size: .62rem; cursor: pointer; white-space: nowrap; }
+.chart-dropdown .dropdown-toggle[aria-expanded="true"] { border-color: #f0883e; color: #f0883e; }
+/* The candle interval and indicator lists open as a dropdown under their button (right-aligned: the buttons sit at the right end of the chart header, and the chart clips what leaves it). */
+.chart-dropdown-menu { position: absolute; top: 100%; right: 0; z-index: 30; margin-top: 2px; display: flex; flex-direction: column; gap: 2px; min-width: 100%; width: max-content; max-height: 60vh; overflow-y: auto; padding: 4px; background: #161b22; border: 1px solid #30363d; border-radius: 4px; box-shadow: 0 10px 28px rgb(0 0 0 / .35); }
+.chart-dropdown-menu label, .chart-dropdown-menu button { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: .72rem; color: #c9d1d9; background: none; border: none; border-radius: 3px; text-align: left; white-space: nowrap; cursor: pointer; }
+.chart-dropdown-menu button:hover, .chart-dropdown-menu label:hover { background: #21262d; }
+.chart-dropdown-menu button[aria-selected="true"] { color: #58a6ff; font-weight: 600; }
 .icon-button { width: 25px; height: 23px; padding: 0 !important; font-size: 1rem !important; line-height: 1; }
 .kline-container { min-height: 0; position: relative; }
 .kline { height: 100%; min-height: 0; width: 100%; }

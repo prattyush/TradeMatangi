@@ -459,3 +459,44 @@ test.describe('Live', () => {
     expect(new Set(writes)).toEqual(new Set(['POST /api/desktop/v1/live/start']))
   })
 })
+
+test('scrolling the spot chart to its left edge loads older pages from the paged history route, and stops when the server says no more', async ({ page }) => {
+  const state = await openBrowse(page)
+  await expect(chart(page)).toBeVisible()
+  const box = (await chart(page).boundingBox())!
+  const pan = async () => {
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * 0.95, box.y + box.height * 0.5, { steps: 12 })
+    await page.mouse.up()
+  }
+  for (let attempt = 0; attempt < 8 && state.browsePages.length === 0; attempt++) await pan()
+  await expect.poll(() => state.browsePages.length).toBeGreaterThan(0)
+  const first = state.browsePages[0].query
+  expect(first.get('symbol')).toBe('NIFTY')
+  expect(first.get('interval')).toBe('3')
+  expect(first.get('date')).toBe('2026-11-09')
+  expect(Number(first.get('before'))).toBeGreaterThan(0)
+  const asked = state.browsePages.length
+  state.browseMore = false
+  for (let attempt = 0; attempt < 10 && state.browsePages.length === asked; attempt++) await pan()
+  // After a page with more=false the chart never asks again.
+  const stopped = state.browsePages.length
+  for (let i = 0; i < 4; i++) await pan()
+  expect(state.browsePages.length).toBe(stopped)
+  expect(state.requests.filter(r => r.path === '/api/desktop/v1/browse/history').every(r => r.authorization === 'Bearer access-token-1')).toBe(true)
+})
+
+test('an option chart does not scroll back: it keeps its few days', async ({ page }) => {
+  const state = await openBrowse(page)
+  await page.getByRole('button', { name: 'CE', exact: true }).click()
+  await expect(chart(page)).toBeVisible()
+  const box = (await chart(page).boundingBox())!
+  for (let i = 0; i < 4; i++) {
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * 0.95, box.y + box.height * 0.5, { steps: 12 })
+    await page.mouse.up()
+  }
+  expect(state.browsePages).toHaveLength(0)
+})

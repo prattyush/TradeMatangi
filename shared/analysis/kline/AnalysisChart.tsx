@@ -21,6 +21,11 @@ interface Props {
    * fetches nothing itself. Candles that only change in the last bar are pushed incrementally.
    */
   liveCandles?: OHLCCandle[]
+  /**
+   * Browse: scroll-back. Asked for the candles older than `before` (epoch seconds of the oldest candle held) when the user
+   * pans to the left edge; `more` false stops asking. Absent = the chart shows what it fetched, as before.
+   */
+  loadOlder?: (before: number) => Promise<{ candles: OHLCCandle[]; more: boolean }>
   /** What If: while true a click or tap on the chart reports the time and price under it (and is not passed on to the chart). Escape cancels. */
   pickMode?: boolean
   onPick?: (point: { time: number; price: number }) => void
@@ -77,6 +82,8 @@ export default function DesktopAnalysisChart(props: Props) {
   const historicalDays=props.historicalDays??environment.historicalDays??2
   const container=useRef<HTMLDivElement>(null); const chartRef=useRef<Chart|null>(null)
   const pickRef=useRef({active:false,onPick:props.onPick,onCancel:props.onPickCancel}); pickRef.current={active:!!props.pickMode,onPick:props.onPick,onCancel:props.onPickCancel}
+  const loadOlderRef=useRef(props.loadOlder); loadOlderRef.current=props.loadOlder
+  const olderMore=useRef(true)
   const whatIfOverlays=useRef<string[]>([])
   const candlesRef=useRef<OHLCCandle[]>([]); const overlays=useRef<string[]>([])
   const [candles,setCandles]=useState<OHLCCandle[]>([]); const [error,setError]=useState(''); const [loading,setLoading]=useState(true); const [refresh,setRefresh]=useState(0)
@@ -164,6 +171,25 @@ export default function DesktopAnalysisChart(props: Props) {
   const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`,{hasVolume:candles.some(c=>c.volume!=null)})
   const [toolsVisible,toggleTools]=useToolsRailVisible()
   const toolsAvailable=Boolean(environment.drawingRequest)
+  // The bars the chart asks for: everything fetched on init, and (Browse) older pages on the left edge via `loadOlder`.
+  const analysisLoader=()=>({getBars:async({type,timestamp,callback}:{type:string;timestamp:number|null;callback:(rows:KLineData[],more?:{forward:boolean;backward:boolean})=>void})=>{
+    const toBar=(c:OHLCCandle):KLineData=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})})
+    const older=loadOlderRef.current
+    if(type==='init'){callback(candlesRef.current.map(toBar),{forward:Boolean(older)&&olderMore.current,backward:false});return}
+    if(type!=='forward'||!older||timestamp==null||!olderMore.current){callback([],{forward:false,backward:false});return}
+    const owner=chartRef.current
+    try{
+      const page=await older(timestamp/1000)
+      if(chartRef.current!==owner)return
+      const rows=page.candles.filter(c=>c.time*1000<timestamp)
+      candlesRef.current=[...rows,...candlesRef.current];setCandles(candlesRef.current);setError('')
+      olderMore.current=page.more
+      callback(rows.map(toBar),{forward:page.more,backward:false})
+    }catch(cause){
+      if(chartRef.current!==owner)return
+      setError(String(cause)); callback([],{forward:true,backward:false})
+    }
+  }})
   useEffect(()=>{
     if(props.liveCandles)return
     const controller=new AbortController()
@@ -207,7 +233,7 @@ export default function DesktopAnalysisChart(props: Props) {
       if(!continuing){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:intervalMinutes,type:'minute'})}
       // Reuse the loader on event changes so KLine also retains a manual price scale.
       if(continuing)chart.resetData()
-      else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})} satisfies KLineData)):[],{forward:false,backward:false})})
+      else { olderMore.current=true; chart.setDataLoader(analysisLoader()) }
       const restoreViewport=()=>{
         if(request!==generation.current||chartRef.current!==chart)return
         chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length))))

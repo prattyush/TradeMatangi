@@ -28,8 +28,11 @@ import { applyRecoveryEvent, pruneRecoveryNotices, RecoveryNotices } from './ser
 import { IndicatorHistoryRequests } from './services/tradingChartState'
 import { startPerformanceDiagnostics, recordPerformance } from './services/performanceDiagnostics'
 import { formatPnl } from './pnlFormat'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
+import { BROWSE_HEADER_SLOT } from './components/browse/browseSlot'
+// Browse (read-only charts, a symbol per pane) is the landing view when no session is running; loaded on first use.
+const BrowseWorkspace = lazy(() => import('./components/browse/BrowseWorkspace'))
 import PatternLibrary from './pages/PatternLibrary'
 import ChartStructures from './pages/ChartStructures'
 import type { ChartVisibleRange, PaneType } from './components/Chart'
@@ -317,6 +320,12 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [swingAnalysisPortfolio,setSwingAnalysisPortfolio]=useState<string|undefined>()
   const [showAnalysis, setShowAnalysis] = useState(false)
+  // Browse is where a visit starts unless a session was running when the page was last used (decided for certain by the restore below).
+  const [showBrowse, setShowBrowse] = useState(() => {
+    try { return !JSON.parse(localStorage.getItem(`tradematangi_workspace_${authUser.userId}`) ?? '{}')?.sessionId } catch { return true }
+  })
+  // Starting or attaching a session always leaves Browse for the trading screen.
+  useEffect(() => { if (sim.sessionState !== 'idle' && sim.sessionState !== 'ended') setShowBrowse(false) }, [sim.sessionState])
 
   // ── Pattern Library page ─────────────────────────────────────────────────────
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
@@ -633,10 +642,13 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         if (!attached) {
           resetWorkspaceToIdle()
           localStorage.removeItem(workspaceStorageKey)
+          // No session is running: open on Browse. (With a live session the screen stays on Trading, as before.)
+          if (!cancelled) setShowBrowse(true)
           return
         }
 
         if (cancelled) return
+        setShowBrowse(false) // a session is running: Trading, never hidden behind Browse
         if (saved.view === 'patterns') setShowPatternLibrary(true)
         if (saved.view === 'structures') setShowChartStructures(true)
         if (saved.analysisOpen || saved.view === 'analysis') setShowAnalysis(true)
@@ -660,6 +672,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         }
       } catch (error) {
         failed = true
+        if (!cancelled) setShowBrowse(false)
         if (!cancelled) setWorkspaceRestoreError(`Session restoration needs attention: ${String(error)}`)
       } finally {
         if (!cancelled && !failed) workspaceRestoredRef.current = true
@@ -2255,6 +2268,19 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           </div>
         )}
         <button
+          onClick={() => setShowBrowse(value => !value)}
+          title="Browse — read-only charts: any symbol, any day, side by side"
+          aria-pressed={showBrowse}
+          style={{
+            background: showBrowse ? '#1f6feb' : '#161b22', border: `1px solid ${showBrowse ? '#1f6feb' : '#30363d'}`,
+            color: showBrowse ? '#fff' : '#8b949e', borderRadius: 6, padding: '4px 10px',
+            fontSize: 12, cursor: 'pointer',
+          }}
+        >
+          {showBrowse ? '← Trading' : <><span aria-hidden="true">📈</span> Browse</>}
+        </button>
+        <span id={BROWSE_HEADER_SLOT} style={{ display: 'inline-flex' }} />
+        <button
           onClick={() => setShowSwing(true)}
           title="Swing portfolio — hold positions across days"
           style={{
@@ -2519,6 +2545,10 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         </div>
       </div>
 
+      {/* Browse: read-only charts, a symbol and a day per pane (the landing view when no session is running) */}
+      {/* (Not mounted while Analysis is open on top of it: one set of charts on screen at a time.) */}
+      {showBrowse && !showAnalysis && <Suspense fallback={null}><BrowseWorkspace userId={authUser.userId} /></Suspense>}
+
       {/* Trade Analysis modal */}
       {showAnalysis && (
         <TradeAnalysis onClose={() => setShowAnalysis(false)} historicalDays={historicalDays} />
@@ -2676,7 +2706,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         <div
           style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 12px' }}
         >
-          {renderLayout()}
+          {/* While Browse covers an idle trading screen its charts are not mounted, so they download nothing in the background. */}
+          {showBrowse && idle ? null : renderLayout()}
         </div>
 
         {/* Right sidebar — collapsible */}

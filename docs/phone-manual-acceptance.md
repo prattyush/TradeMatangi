@@ -63,6 +63,7 @@ Setup first: `docs/phone-google-signin-setup.md` (Android OAuth client for `in.c
 9. Against a server without saved videos the tab says "Videos is not available on this server".
 
 ## F. Browse (S7)
+0b. **A year back:** on NIFTY or a share at 3 minutes, drag the chart to the right until the left edge: older days appear (a short pause per page) and keep appearing back to about a year; change the interval to 15 minutes or 1 hour and scroll back again. An option (CE/PE) chart keeps its few days and does not scroll back.
 0. Minute data: open Browse on a past day, and on an option of an already expired expiry. The chart appears within a few seconds (no long wait, no time-out and retry). Open the same day in a Replay or Stepwise session afterwards: it still replays (second-level data is untouched).
 1. Open **Browse**: the NIFTY chart of the last completed trading day (never today) with the previous days before it. One control row at the top: **symbol**, **‹ day ›**, **Spot | CE | PE**, then the chart's own interval, indicators (VOL, EMA...) and fit.
 2. **Symbol** opens a search: type part of a name or symbol; recent symbols are listed first. Choose one: the chart reloads. Symbols without options have CE and PE greyed out.
