@@ -10,10 +10,11 @@ import { DateSheet } from './DateSheet'
 import { MaxPriceSheet } from './MaxPriceSheet'
 import { SymbolSheet } from './SymbolSheet'
 import {
-  FALLBACK_INSTRUMENTS, PREPARE_PATH, RECENTS_KEY, emptyPicks, formatBrowseDate, isWeekday, keepStrike, latestBrowseDate, maxPriceRequest, readMaxPrice,
+  BROWSE_HISTORY_PATH, FALLBACK_INSTRUMENTS, PREPARE_PATH, RECENTS_KEY, emptyPicks, formatBrowseDate, isWeekday, keepStrike, latestBrowseDate, maxPriceRequest, readMaxPrice,
   shiftTradingDay, strikeLadder, withRecent,
   type Instrument, type OptionMetadata, type OptionRight, type PreparedPane, type RightPick,
 } from './browseModel'
+import type { OHLCCandle } from '../../../../frontend/src/services/api'
 import { marketDate, optionInstrument, spotInstrument } from './live/liveModel'
 import { useLiveBrowse } from './live/useLiveBrowse'
 import '../sessions/sessions.css'
@@ -59,6 +60,12 @@ export function BrowseScreen() {
   const [liveOn, setLiveOn] = useState(false)
   const [recents, setRecents] = useState<string[]>(readRecents)
   useEffect(() => { Object.assign(remembered, { symbol, date, kind, picks }) }, [symbol, date, kind, picks])
+  // Scroll-back for the underlying: pages of whole trading days from the paged history route, back to a year or more.
+  const intervalMinutes = environment.intervalMinutes ?? 3
+  const loadOlder = useMemo(() => async (before: number): Promise<{ candles: OHLCCandle[]; more: boolean }> => {
+    const page = await client.get<{ candles: OHLCCandle[]; more: boolean }>(BROWSE_HISTORY_PATH, { symbol, interval: intervalMinutes, date, before }, { timeoutMs: 60_000 })
+    return { candles: page.candles, more: page.more }
+  }, [client, symbol, intervalMinutes, date])
 
   // The catalogue decides which symbols exist and which have options. An older server without it still offers NIFTY.
   const catalogue = useLoad(async signal => (await client.get<{ instruments: Instrument[] }>('/api/desktop/v1/catalogue', undefined, { signal })).instruments, [client])
@@ -180,7 +187,7 @@ export function BrowseScreen() {
       right={kind} strike={strike!} expiry={expiry!} toolbarStart={controls} liveCandles={liveWanted ? live.candles : undefined} />
   } else {
     body = <AnalysisChart key={`${symbol}:${date}:${liveWanted}`} symbol={symbol} date={date} historicalDays={CONTEXT_DAYS} title={symbol} toolbarStart={controls}
-      liveCandles={liveWanted ? live.candles : undefined} />
+      liveCandles={liveWanted ? live.candles : undefined} loadOlder={liveWanted ? undefined : loadOlder} />
   }
 
   const chart = body !== null && !(wantOption && (option.loading || option.error != null || !option.data?.metadata.available || strike === null || !expiry || (cap !== null && found.error != null)))

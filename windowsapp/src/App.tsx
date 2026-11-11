@@ -24,7 +24,7 @@ import { useRecording } from "../../shared/useRecording"
 import { desktopRecordingSessions } from "../../shared/recordingClocks"
 import { requiredContracts, primaryLinkedScreen } from "./sessionContracts"
 import { premiumPresetsFor } from '../../shared/optionPremiumPresets'
-import { BoundedHistoryCache, mergeHistory, oldestDate, type UnderlyingHistoryPage } from './historyPaging'
+import { BoundedHistoryCache, browseCandles, browseHistoryPath, browseHorizonDays, mergeHistory, oldestDate, type BrowseHistoryPage, type UnderlyingHistoryPage } from './historyPaging'
 import { strategySettingsPayload, settingsWalletContext } from './settingsFields'
 import { accountSettingsRequest } from './desktopSettingsRequest'
 import { parseGuardrailError } from './guardrailFeedback'
@@ -456,11 +456,20 @@ function DesktopTile({ minuteHistory, refreshVersion, contextDays, config, catal
     [subscribedTile, liveTicks, config.interval, candles, replayCursor, replayCandle],
   )
   const displayedCandles = useMemo(
-    () => config.kind === 'spot' ? mergeHistory(olderCandles, visibleCandles, historyAnchor) : visibleCandles,
-    [config.kind, olderCandles, visibleCandles, historyAnchor],
+    () => config.kind === 'spot' ? mergeHistory(olderCandles, visibleCandles, historyAnchor, minuteHistory && !liveTile ? browseHorizonDays(Number(config.interval)) : undefined) : visibleCandles,
+    [config.kind, olderCandles, visibleCandles, historyAnchor, minuteHistory, liveTile, config.interval],
   )
   const loadOlder = config.kind !== 'spot' ? undefined : async (beforeTimestamp: number): Promise<{ candles: Candle[]; more: boolean }> => {
     const generation = historyGeneration.current
+    if (minuteHistory && !subscribedTile) {
+      // Browse: pages of whole trading days from the paged history route, back to a year or more (interval dependent).
+      const intervalMinutes = Number(config.interval)
+      const page = await drawingRequest(browseHistoryPath(config.symbol, intervalMinutes, historyAnchor, beforeTimestamp), 'GET') as BrowseHistoryPage
+      if (generation !== historyGeneration.current) return { candles: [], more: true }
+      const rows = browseCandles(page)
+      setOlderCandles(current => mergeHistory(current, rows, historyAnchor, browseHorizonDays(intervalMinutes)))
+      return { candles: rows, more: page.more }
+    }
     if (pageCursor.current === null) return { candles: [], more: false }
     const before = pageCursor.current ?? oldestDate([{ timestamp: beforeTimestamp } as Candle], historyAnchor)
     const params = new URLSearchParams({ symbol: config.symbol, trading_date: historyAnchor, interval_minutes: config.interval, before_date: before, history_mode: subscribedTile ? 'live' : 'replay' })
