@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBrowseDate, isWeekday, latestBrowseDate, nearestStrike, searchInstruments, shiftTradingDay, strikeLadder, withRecent, type Instrument } from './browseModel'
+import { emptyPicks, formatBrowseDate, isWeekday, keepStrike, latestBrowseDate, maxPriceRequest, nearestStrike, parseCap, readMaxPrice, searchInstruments, shiftTradingDay, strikeLadder, withRecent, type Instrument, type PreparedPane } from './browseModel'
 
 describe('trading days', () => {
   it('skips weekends in both directions', () => {
@@ -63,5 +63,41 @@ describe('withRecent', () => {
   it('moves a symbol to the front without duplicates and keeps six', () => {
     expect(withRecent(['A', 'B', 'C'], 'B')).toEqual(['B', 'A', 'C'])
     expect(withRecent(['1', '2', '3', '4', '5', '6'], '7')).toEqual(['7', '1', '2', '3', '4', '5'])
+  })
+})
+
+describe('CE and PE picks', () => {
+  it('start manual with no strike on either side', () => {
+    expect(emptyPicks()).toEqual({ CE: { mode: 'manual', strike: null, cap: null }, PE: { mode: 'manual', strike: null, cap: null } })
+    expect(emptyPicks().CE).not.toBe(emptyPicks().CE) // never shared between sides or calls
+  })
+  it('keeps a listed strike and otherwise falls to the middle of the ladder', () => {
+    const ladder = [100, 150, 200, 250, 300]
+    expect(keepStrike(150, ladder)).toBe(150)
+    expect(keepStrike(999, ladder)).toBe(200)
+    expect(keepStrike(null, ladder)).toBe(200)
+    expect(keepStrike(150, [])).toBe(150)
+  })
+  it('accepts only a positive number as a premium cap', () => {
+    expect(parseCap('50')).toBe(50)
+    expect(parseCap(' 62.5 ')).toBe(62.5)
+    expect(parseCap('62.456')).toBe(62.46)
+    for (const bad of ['', ' ', '0', '-5', 'abc', 'Infinity', '1e999']) expect(parseCap(bad)).toBeNull()
+  })
+  it('asks the server for one option pane with the cap, at the ladder\'s reference time', () => {
+    expect(maxPriceRequest('NIFTY', '2026-11-09', '2026-11-13', 'PE', 60)).toEqual({
+      mode: 'browse', date: '2026-11-09', reference_time: '09:30:00',
+      panes: [{ id: 'browse', kind: 'option', symbol: 'NIFTY', interval: '3', tradingDate: '2026-11-09', expiry: '2026-11-13', strike: '', right: 'PE', selection_mode: 'max_price', max_price: 60 }],
+    })
+  })
+  it('reads the strike the server found, or throws its reason', () => {
+    const pane = (availability: PreparedPane['availability'], strike = '24600', reason: string | null = null) => ({ panes: [{ pane: { strike }, availability, reason, premium: 48.5 }] })
+    expect(readMaxPrice(pane('available'))).toEqual({ strike: 24600, premium: 48.5 })
+    expect(readMaxPrice(pane('waiting'))).toEqual({ strike: 24600, premium: 48.5 })
+    expect(() => readMaxPrice(pane('error', '', 'No observed premium at or below the cap within 30 strikes'))).toThrow('No observed premium')
+    expect(() => readMaxPrice(pane('unavailable', '24600', 'No data is available for this contract/date'))).toThrow('No data')
+    expect(() => readMaxPrice(pane('available', ''))).toThrow()
+    expect(() => readMaxPrice({ panes: [] })).toThrow('no strike')
+    expect(() => readMaxPrice(null)).toThrow()
   })
 })

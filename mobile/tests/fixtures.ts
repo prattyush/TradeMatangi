@@ -22,6 +22,9 @@ export interface MockServer {
   /** Browse: make the catalogue answer 404 (older server), or report options unavailable on the day. */
   catalogueOld?: boolean
   optionsUnavailable?: string
+  /** Browse Max Price (`prepare-session`): fail with this reason, or answer 404 like an older server. */
+  maxPriceFail?: string
+  maxPriceOld?: boolean
   /** Browse Live: what the live routes were asked, and how they behave. */
   live: LiveMock
 }
@@ -87,6 +90,15 @@ export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co
       if (url.pathname === '/api/desktop/v1/option-metadata') {
         const available = !state.optionsUnavailable
         return answer(route, 200, { version: 1, symbol: url.searchParams.get('symbol'), as_of_date: url.searchParams.get('as_of_date'), expiries: available ? ['2026-11-13'] : [], strike_interval: 50, available, unavailable_reason: state.optionsUnavailable ?? null })
+      }
+      if (url.pathname === '/api/desktop/v1/trading/prepare-session' && request.method() === 'POST') {
+        if (state.maxPriceOld) return answer(route, 404, { detail: 'Not Found' })
+        const pane = (body as { panes: Array<Record<string, unknown>> }).panes[0]
+        const cap = Number(pane.max_price)
+        if (state.maxPriceFail) return answer(route, 200, { version: 1, panes: [{ pane, availability: 'error', reason: state.maxPriceFail, premium: null }] })
+        // CE and PE land on different strikes for the same cap, and a day with a different date a different one again.
+        const strike = (pane.right === 'CE' ? 24600 : 24200) + (String(pane.tradingDate).endsWith('09') ? 0 : 50)
+        return answer(route, 200, { version: 1, date: pane.tradingDate, reference_time: '09:30:00', panes: [{ pane: { ...pane, strike: String(strike) }, availability: 'available', reason: null, premium: cap - 5 }] })
       }
       if (url.pathname === '/api/desktop/v1/live/start' && request.method() === 'POST') {
         const posted = body as LiveMock['starts'][number]

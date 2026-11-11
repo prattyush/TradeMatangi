@@ -7,10 +7,12 @@ import { useLoad } from '../../app/useLoad'
 import { PopoverMenu } from '../../shell/PopoverMenu'
 import { ErrorState, NotAvailable, Spinner } from '../../shell/States'
 import { DateSheet } from './DateSheet'
+import { MaxPriceSheet } from './MaxPriceSheet'
 import { SymbolSheet } from './SymbolSheet'
 import {
-  FALLBACK_INSTRUMENTS, RECENTS_KEY, formatBrowseDate, isWeekday, latestBrowseDate, shiftTradingDay, strikeLadder, withRecent,
-  type Instrument, type OptionMetadata,
+  FALLBACK_INSTRUMENTS, PREPARE_PATH, RECENTS_KEY, emptyPicks, formatBrowseDate, isWeekday, keepStrike, latestBrowseDate, maxPriceRequest, readMaxPrice,
+  shiftTradingDay, strikeLadder, withRecent,
+  type Instrument, type OptionMetadata, type OptionRight, type PreparedPane, type RightPick,
 } from './browseModel'
 import { marketDate, optionInstrument, spotInstrument } from './live/liveModel'
 import { useLiveBrowse } from './live/useLiveBrowse'
@@ -22,7 +24,9 @@ type Kind = 'spot' | 'CE' | 'PE'
 const CONTEXT_DAYS = 2
 
 /** What Browse was showing when the user left it (another tab), so coming back finds the same chart. */
-const remembered: { symbol: string; date: string | null; kind: Kind; strike: number | null } = { symbol: 'NIFTY', date: null, kind: 'spot', strike: null }
+const remembered: { symbol: string; date: string | null; kind: Kind; picks: Record<OptionRight, RightPick> } = { symbol: 'NIFTY', date: null, kind: 'spot', picks: emptyPicks() }
+/** The server searches up to 30 strikes, and may have to download their histories first. */
+const MAX_PRICE_TIMEOUT_MS = 120_000
 
 function readRecents(): string[] {
   try {
@@ -49,18 +53,19 @@ export function BrowseScreen() {
   const [symbol, setSymbol] = useState(remembered.symbol)
   const [date, setDate] = useState(remembered.date ?? opening)
   const [kind, setKind] = useState<Kind>(remembered.kind)
-  const [strike, setStrike] = useState<number | null>(remembered.strike)
-  const [sheet, setSheet] = useState<'symbol' | 'date' | null>(null)
+  // CE and PE each keep their own strike (or Max Price cap), so switching side does not move the other one.
+  const [picks, setPicks] = useState<Record<OptionRight, RightPick>>(remembered.picks)
+  const [sheet, setSheet] = useState<'symbol' | 'date' | 'max' | null>(null)
   const [liveOn, setLiveOn] = useState(false)
   const [recents, setRecents] = useState<string[]>(readRecents)
-  useEffect(() => { Object.assign(remembered, { symbol, date, kind, strike }) }, [symbol, date, kind, strike])
+  useEffect(() => { Object.assign(remembered, { symbol, date, kind, picks }) }, [symbol, date, kind, picks])
 
   // The catalogue decides which symbols exist and which have options. An older server without it still offers NIFTY.
   const catalogue = useLoad(async signal => (await client.get<{ instruments: Instrument[] }>('/api/desktop/v1/catalogue', undefined, { signal })).instruments, [client])
   const instruments = catalogue.data ?? FALLBACK_INSTRUMENTS
   const instrument = instruments.find(item => item.symbol === symbol) ?? instruments[0]
   const optionEligible = instrument?.option_eligible === true
-  useEffect(() => { if (kind !== 'spot' && catalogue.data && !optionEligible) { setKind('spot'); setStrike(null) } }, [kind, catalogue.data, optionEligible])
+  useEffect(() => { if (kind !== 'spot' && catalogue.data && !optionEligible) { setKind('spot'); setPicks(emptyPicks()) } }, [kind, catalogue.data, optionEligible])
 
   // Options need the day's expiry, the strike gap and where the underlying was, to offer strikes near it.
   const wantOption = kind !== 'spot' && optionEligible
@@ -75,11 +80,26 @@ export function BrowseScreen() {
   }, [client, api, wantOption, symbol, date])
   const ladder = option.data?.ladder
   const expiry = option.data?.metadata.expiries[0]
+  const right: OptionRight | null = kind === 'spot' ? null : kind
+  const pick = right ? picks[right] : null
+  const patchPick = (side: OptionRight, patch: Partial<RightPick>) => setPicks(current => ({ ...current, [side]: { ...current[side], ...patch } }))
   useEffect(() => {
     if (!ladder?.length) return
-    // Keep the strike across days when it is still listed; otherwise the one nearest the money.
-    setStrike(current => (current !== null && ladder.includes(current) ? current : ladder[Math.floor(ladder.length / 2)]))
+    // Keep each side's strike across days when it is still listed; otherwise the one nearest the money.
+    setPicks(current => ({
+      CE: current.CE.mode === 'manual' ? { ...current.CE, strike: keepStrike(current.CE.strike, ladder) } : current.CE,
+      PE: current.PE.mode === 'manual' ? { ...current.PE, strike: keepStrike(current.PE.strike, ladder) } : current.PE,
+    }))
   }, [ladder])
+
+  // Max Price: the server finds the strike for this day and side (the desktop picker's search); it is searched again for each day.
+  const cap = wantOption && pick?.mode === 'max_price' ? pick.cap : null
+  const found = useLoad(async signal => {
+    if (cap === null || !expiry || !right) return null
+    const response = await client.post<{ panes?: PreparedPane[] }>(PREPARE_PATH, maxPriceRequest(symbol, date, expiry, right, cap), { signal, timeoutMs: MAX_PRICE_TIMEOUT_MS, retries: 0 })
+    return readMaxPrice(response)
+  }, [client, symbol, date, right, cap, expiry])
+  const strike = pick ? (pick.mode === 'max_price' ? found.data?.strike ?? null : pick.strike) : null
 
   // Live: only for today, for the spot or the chosen option, with the desktop's live flow.
   const isToday = date === today && isWeekday(today)
@@ -94,7 +114,7 @@ export function BrowseScreen() {
 
   function choose(next: string) {
     const known = instruments.find(item => item.symbol === next)
-    setSymbol(next); setStrike(null)
+    setSymbol(next); setPicks(emptyPicks())
     if (!known?.option_eligible) setKind('spot')
     const updated = withRecent(recents, next)
     setRecents(updated); writeRecents(updated)
@@ -123,9 +143,15 @@ export function BrowseScreen() {
           <span className="live-dot" aria-hidden="true" />Live
         </button>
       )}
-      {wantOption && ladder && ladder.length > 0 && strike !== null && (
-        <PopoverMenu ariaLabel="Strike" value={String(strike)} onChange={value => setStrike(Number(value))}
-          items={ladder.map(value => ({ id: String(value), label: String(value) }))} buttonLabel={`${strike}${expiry ? ` · ${expiry.slice(5)}` : ''}`} />
+      {wantOption && ladder && ladder.length > 0 && strike !== null && right && (
+        <PopoverMenu ariaLabel="Strike" value={String(strike)} onChange={value => patchPick(right, { mode: 'manual', strike: Number(value) })}
+          items={[...new Set([...ladder, strike])].sort((a, b) => a - b).map(value => ({ id: String(value), label: String(value) }))}
+          actions={[{ id: 'max', label: 'Max price…', detail: pick?.mode === 'max_price' && pick.cap !== null ? `≤ ₹${pick.cap}` : undefined, onSelect: () => setSheet('max') }]}
+          buttonLabel={pick?.mode === 'max_price' && pick.cap !== null ? `≤₹${pick.cap} · ${strike}` : `${strike}${expiry ? ` · ${expiry.slice(5)}` : ''}`} />
+      )}
+      {/* While Max price is still searching (or failed) there is no strike to list, but the cap can still be changed. */}
+      {wantOption && right && strike === null && cap !== null && (
+        <button type="button" className="menu-button" aria-haspopup="dialog" aria-label={`Max price: ${cap}`} onClick={() => setSheet('max')}>≤₹{cap}</button>
       )}
     </div>
   )
@@ -138,7 +164,17 @@ export function BrowseScreen() {
       : <ErrorState message={describeError(option.error)} onRetry={option.reload} />}</div>
   } else if (wantOption && option.data && !option.data.metadata.available) {
     body = <div className="browse-state"><p role="status">{option.data.metadata.unavailable_reason ?? 'No option contracts are available for this day.'}</p></div>
-  } else if (wantOption && (strike === null || !expiry)) body = <div className="browse-state"><Spinner label="Choosing a strike" /></div>
+  } else if (wantOption && cap !== null && found.error != null) {
+    body = (
+      <div className="browse-state browse-max-error">
+        {isNotAvailable(found.error)
+          ? <NotAvailable what="Max price" />
+          : <><p role="alert">{describeError(found.error)}</p><div className="sheet-actions"><button type="button" className="btn" onClick={found.reload}>Try again</button>
+            <button type="button" className="btn" onClick={() => right && patchPick(right, { mode: 'manual', strike: keepStrike(null, ladder ?? []) })}>Manual strike</button></div></>}
+      </div>
+    )
+  } else if (wantOption && cap !== null && strike === null) body = <div className="browse-state"><Spinner label={`Finding the ${right} strike at or below ₹${cap}`} /></div>
+  else if (wantOption && (strike === null || !expiry)) body = <div className="browse-state"><Spinner label="Choosing a strike" /></div>
   else if (wantOption) {
     body = <AnalysisChart key={`${symbol}:${kind}:${strike}:${expiry}:${date}:${liveWanted}`} symbol={symbol} date={date} historicalDays={CONTEXT_DAYS}
       right={kind} strike={strike!} expiry={expiry!} toolbarStart={controls} liveCandles={liveWanted ? live.candles : undefined} />
@@ -147,7 +183,7 @@ export function BrowseScreen() {
       liveCandles={liveWanted ? live.candles : undefined} />
   }
 
-  const chart = body !== null && !(wantOption && (option.loading || option.error != null || !option.data?.metadata.available || strike === null || !expiry))
+  const chart = body !== null && !(wantOption && (option.loading || option.error != null || !option.data?.metadata.available || strike === null || !expiry || (cap !== null && found.error != null)))
   return (
     <section className="screen browse" aria-label="Browse">
       {!chart && <div className="browse-bar">{controls}</div>}
@@ -161,6 +197,11 @@ export function BrowseScreen() {
         )}
       </div>
       {sheet === 'symbol' && <SymbolSheet instruments={instruments} current={symbol} recents={recents} onPick={choose} onClose={() => setSheet(null)} />}
+      {sheet === 'max' && right && pick && (
+        <MaxPriceSheet symbol={symbol} right={right} cap={pick.cap} active={pick.mode === 'max_price'}
+          onUse={value => { patchPick(right, { mode: 'max_price', cap: value }); setSheet(null) }}
+          onManual={() => { patchPick(right, { mode: 'manual', strike: strike ?? keepStrike(null, ladder ?? []) }); setSheet(null) }} onClose={() => setSheet(null)} />
+      )}
       {sheet === 'date' && <DateSheet date={date} latest={latest} onPick={changeDay} onClose={() => setSheet(null)} />}
     </section>
   )
