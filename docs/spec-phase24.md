@@ -161,7 +161,7 @@ For phone you can show the exact entry details or exit details as a color or sho
 5. **Order.** Trades are walked in time order by their **first entry**: with overlapping trades, the one opened first comes first, then the next one opened, and so on (not by exit time or label number).
 6. **Read-only.** Nothing is saved or sent. It reuses the Label Trades layout (charts left, one round trip right, Prev / Next).
 
-Status: built on branch `feat/trade-walkthrough` (website, desktop, webapp, phone); not yet seen on a phone or in the Windows app. Sprints W0 to W4 in `docs/spec-phase24-walkthrough-whatif-plan.md` (first pull request).
+Status: merged to `dev` (#808; website, desktop, webapp, phone). Seen on the phone and the website; the Windows app is still to be checked. Sprints W0 to W4 in `docs/spec-phase24-walkthrough-whatif-plan.md`. Since the first try-out, the option-chart markers carry no text in Walkthrough (KLine charts, every host; the Lightweight renderer is unchanged), see What If below.
 
 ### WHAT IF
 
@@ -194,7 +194,14 @@ For UI in phone app, feel free to innovate. I am not good in UI.
 4. **Saved per day.** A what-if is saved (so a refresh does not erase it, the day can be revisited or undone, and days can be compared): named scenarios, several per day (for example "exit at bar close", "no averaging"), each holding the edits of every trade of that day, in a separate table (`WhatIfScenarios`, owner only). **Revert day** clears all edits; a scenario can be deleted. A **Compare days** view lists saved scenarios over a date range with actual against what-if per day and the total, grouped by scenario name.
 5. **Never trades.** What If sends no order and changes no trade, label or session; it only reads the day and writes its own scenarios.
 
-Status: built on branch `feat/what-if` (website, desktop, webapp, phone); not yet seen on a phone or in the Windows app. Sprints F0 to F5 in `docs/spec-phase24-walkthrough-whatif-plan.md` (second pull request, after Walkthrough).
+Status: merged to `dev` (#809; website, desktop, webapp, phone). Tried by the user on the website and the phone; the Windows app is still to be checked. The server needs the `WhatIfScenarios` table (`scripts/setup-dynamodb-tables.py`). Sprints F0 to F5 in `docs/spec-phase24-walkthrough-whatif-plan.md`.
+Decisions taken after the first try-out: the option (CE/PE) chart's markers carry **no text** in Walkthrough and What If (one trade is shown and the colour says buy or sell), on every host with KLine charts; on the **phone** that holds for Label trades too. Label Trades on the website, desktop and webapp keeps its round-trip numbers there. On the phone, What If sets **Entries** and **Exits** apart with a coloured title band, a thick bar on each fill row and a thick line between the blocks.
+
+### PHONE BROWSE: SEPARATE CE / PE STRIKES AND MAX PRICE
+Status: merged to `dev` (#811). In the phone's Browse, CE and PE each keep their own strike (switching side no longer moves the other one). The strike menu's pinned first command **Max price…** opens a sheet (the symbol's premium presets or a typed cap); the server picks, for that side and day, the strike closest to the money whose premium at 9:30 is at or below the cap (the desktop picker's `prepare-session` search, mode `browse`), asked again for each day. A failed search offers Try again or Manual strike; an older server says it is not available. Checks in `docs/phone-manual-acceptance.md` section F.
+
+### MARKET HOLIDAYS ADDED AT RUN TIME
+Status: merged to `dev` (#810). The built-in `NSE_HOLIDAYS` list is still edited by hand each year; an admin can also add a closure without a deploy: `POST /api/admin/holidays {date, note}` (`DELETE /api/admin/holidays/{date}`, `GET` lists both), stored in `DATA_DIR/holidays.json` and re-read when the file changes. Nothing fetches the NSE calendar automatically. See `docs/architecture-backend.md`.
 
 ### ANDROID PHONE APP: PHASE 2 (TODO, next after Walkthrough and What If)
 Google sign-in with optional app lock (needs an Android OAuth client in Google Cloud for package `in.co.tradematangi.phone` and the debug key's SHA-1), then read-only Positions for swing and day. Not started; see `docs/spec-phase24-android-plan.md`.
