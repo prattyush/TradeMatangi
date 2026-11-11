@@ -143,12 +143,14 @@ async def historical_page(
     trading_date: str = Query(...),
     interval_minutes: int = Query(default=1, ge=1, le=60),
     context_days: int = Query(default=5, ge=0, le=5),
+    granularity: str | None = Query(default=None, pattern="^minute$"),
     _: str = Depends(get_desktop_user_id),
 ) -> HistoricalPage:
     """One Browse page: selected day plus up to five prior trading days.
 
     Fetch/cache rules remain in the existing data router's ``_ensure_data``
     helper; this endpoint only supplies a versioned desktop payload.
+    ``granularity=minute`` (Browse) answers from minute data (``minute_history``) instead of Breeze seconds.
     """
     if symbol not in SUPPORTED_SYMBOLS:
         raise HTTPException(status_code=404, detail="Desktop instrument is not supported")
@@ -159,14 +161,18 @@ async def historical_page(
     if not is_trading_day(requested_date):
         raise HTTPException(status_code=422, detail="The selected date is not a trading day")
 
-    from app.routers.data import _ensure_data
+    from app.routers.data import _ensure_data, _load_minute
     dates = prior_trading_days(trading_date, context_days) + [trading_date]
     candles: list[DesktopCandle] = []
     loaded_dates: list[str] = []
     for page_date in dates:
         try:
-            await run_history(_ensure_data, symbol, page_date)
-            records = candles_to_records(resample_to_candles(load_dataframe(symbol, page_date), interval_minutes))
+            if granularity == "minute":
+                frame = (await run_history(_load_minute, symbol, page_date)).frame
+            else:
+                await run_history(_ensure_data, symbol, page_date)
+                frame = load_dataframe(symbol, page_date)
+            records = candles_to_records(resample_to_candles(frame, interval_minutes))
             candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"], volume=item.get("volume")) for item in records)
             loaded_dates.append(page_date)
         except HTTPException as exc:
@@ -189,6 +195,7 @@ async def option_historical_page(
     right: str = Query(...),
     interval_minutes: int = Query(default=1, ge=1, le=60),
     context_days: int = Query(default=5, ge=0, le=5),
+    granularity: str | None = Query(default=None, pattern="^minute$"),
     _: str = Depends(get_desktop_user_id),
 ) -> OptionHistoricalPage:
     """Desktop option history with explicit unavailable states, never substitution."""
@@ -212,10 +219,15 @@ async def option_historical_page(
     loaded_dates: list[str] = []
     for page_date in dates:
         try:
-            await run_history(fetch_options_historical, symbol, page_date, strike, expiry, right.upper())
-            frame = await run_history(load_options_dataframe, symbol, page_date, strike, expiry, right.upper())
-            from app.services.desktop_preparation import trim_leading_option_frame
-            frame = await run_history(trim_leading_option_frame, frame, symbol, page_date, strike, expiry, right.upper())
+            if granularity == "minute":
+                from app.routers.data import _load_minute
+                # Minute rows are all real provider bars: nothing to trim.
+                frame = (await run_history(_load_minute, symbol, page_date, strike, expiry, right.upper())).frame
+            else:
+                await run_history(fetch_options_historical, symbol, page_date, strike, expiry, right.upper())
+                frame = await run_history(load_options_dataframe, symbol, page_date, strike, expiry, right.upper())
+                from app.services.desktop_preparation import trim_leading_option_frame
+                frame = await run_history(trim_leading_option_frame, frame, symbol, page_date, strike, expiry, right.upper())
             records = candles_to_records(resample_to_candles(frame, interval_minutes))
             candles.extend(DesktopCandle(timestamp=item["time"], open=item["open"], high=item["high"], low=item["low"], close=item["close"], volume=item.get("volume")) for item in records)
             loaded_dates.append(page_date)
@@ -269,6 +281,7 @@ async def underlying_history_page(
     before_date: str | None = Query(None),
     interval_minutes: int = Query(1, ge=1, le=60),
     history_mode: str = Query("replay", pattern="^(live|replay)$"),
+    granularity: str | None = Query(None, pattern="^minute$"),
     _: str = Depends(get_desktop_user_id),
 ):
     """Two calendar dates strictly before the cursor, bounded to D-13..D."""
@@ -289,7 +302,7 @@ async def underlying_history_page(
     loaded = []
     unavailable = []
     candles = []
-    from app.routers.data import _ensure_data
+    from app.routers.data import _ensure_data, _load_minute
 
     with historical_operation(mode=history_mode):
         day = cursor - timedelta(days=1)
@@ -300,11 +313,13 @@ async def underlying_history_page(
                 try:
 
                     def load_day():
-                        _ensure_data(symbol, value)
+                        if granularity == "minute":
+                            frame = _load_minute(symbol, value).frame
+                        else:
+                            _ensure_data(symbol, value)
+                            frame = load_dataframe(symbol, value)
                         return candles_to_records(
-                            resample_to_candles(
-                                load_dataframe(symbol, value), interval_minutes
-                            )
+                            resample_to_candles(frame, interval_minutes)
                         )
 
                     rows = await run_history(load_day)

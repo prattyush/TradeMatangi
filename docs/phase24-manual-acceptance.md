@@ -56,3 +56,8 @@ Volume (#801):
 6. Same replay on the desktop (Indicators > Volume); also check a Swing chart on a stock (Volume appears with the daily candles).
 7. Live and real sessions show history volume only; the forming candle has no volume yet (B2, not built). If a live candle shows a huge or zero-only volume, report it.
 
+
+## G. Browse on minute-level data (added 2026-11-11; Windows app)
+1. Mode **Browse**, a past day, NIFTY spot and an option of an expired expiry: the charts appear in seconds, with no long wait. Scroll left for older days: they load too.
+2. In Browse, **Max price** for a strike: the search answers without a long wait.
+3. Switch to **Replay** (or Stepwise) on the same day and start it: it replays normally (replay still uses second-level data; nothing from Browse changes it).

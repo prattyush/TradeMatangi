@@ -58,6 +58,23 @@ def _ensure_data(symbol: str, date: str) -> None:
         raise HTTPException(status_code=500, detail=f"Data fetch failed: {e}")
 
 
+def _load_minute(symbol: str, date: str, strike=None, expiry: str | None = None, right: str | None = None):
+    """Minute-level candles (``granularity=minute``) with the same error contract as ``_ensure_data``.
+
+    ``FileNotFoundError`` (no data that day) passes through for the callers that skip a context day.
+    """
+    from app.services import minute_history
+
+    try:
+        return minute_history.load(symbol, date, strike, expiry, right)
+    except BreezeTokenError as e:
+        logger.error("_load_minute: Breeze token error for %s %s — %s", symbol, date, e)
+        raise HTTPException(status_code=503, detail=str(e))
+    except RuntimeError as e:
+        logger.error("_load_minute: %s %s — %s", symbol, date, e)
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.get("/symbols", response_model=SymbolsResponse)
 async def get_symbols():
     """Return all supported symbols with display names."""
@@ -95,9 +112,12 @@ async def get_historical(
     trading_date: str = Query(default="2026-05-06"),
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
     historical_days: int = Query(default=2, ge=1, le=5),
+    granularity: str | None = Query(default=None, pattern="^minute$"),
 ):
     """
     Return OHLC candles for the N trading days prior to trading_date.
+    granularity=minute answers from minute data (read-only screens such as the phone's Browse) instead of
+    Breeze second-level data; the default is unchanged.
     historical_days controls how many prior days to fetch (default 2, max 5).
     Fetches from Breeze if a local parquet is not cached.
     """
@@ -110,8 +130,11 @@ async def get_historical(
 
     for date in prior_dates:
         try:
-            await run_data_history(_ensure_data, symbol, date)
-            df = await run_data_history(load_dataframe, symbol, date)
+            if granularity == "minute":
+                df = (await run_data_history(_load_minute, symbol, date)).frame
+            else:
+                await run_data_history(_ensure_data, symbol, date)
+                df = await run_data_history(load_dataframe, symbol, date)
             candles = resample_to_candles(df, interval_minutes)
             records = candles_to_records(candles)
             all_candles.extend(OHLCCandle(**r) for r in records)
@@ -144,9 +167,11 @@ async def get_pre_session(
     trading_date: str = Query(...),
     start_time: str = Query(default="09:15"),
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
+    granularity: str | None = Query(default=None, pattern="^minute$"),
 ):
     """
     Return candles for trading_date from market open (09:15) up to start_time.
+    granularity=minute answers from minute data instead of Breeze second-level data.
     Used to fill the chart gap when replay starts mid-session.
     start_time format: HH:MM or HH:MM:SS
     """
@@ -160,10 +185,13 @@ async def get_pre_session(
     if len(start_time) == 5:
         start_time = start_time + ":00"
 
-    await run_data_history(_ensure_data, symbol, trading_date)
-
+    frame = None
     try:
-        candles = await run_data_history(pre_session_candles, symbol, trading_date, start_time, interval_minutes)
+        if granularity == "minute":
+            frame = (await run_data_history(_load_minute, symbol, trading_date)).frame
+        else:
+            await run_data_history(_ensure_data, symbol, trading_date)
+        candles = await run_data_history(pre_session_candles, symbol, trading_date, start_time, interval_minutes, frame)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -194,6 +222,7 @@ async def get_options_historical(
     interval_minutes: int = Query(default=CANDLE_INTERVAL_MINUTES, ge=1, le=60),
     historical_days: int = Query(default=2, ge=1, le=5),
     as_of_time: str | None = Query(default=None, pattern=r"^\d{2}:\d{2}(:\d{2})?$"),
+    granularity: str | None = Query(default=None, pattern="^minute$"),
 ):
     """
     Return OHLC candles for an options contract for the N trading days prior to date
@@ -246,11 +275,14 @@ async def get_options_historical(
             # A session-start fetch only guarantees the selected date.  Fetch
             # every requested context day here so an empty local cache does not
             # silently omit previous-day option candles.
-            await run_data_history(
-                fetch_options_historical,
-                symbol, prior_date, strike, expiry, right.upper(),
-            )
-            df = await run_data_history(load_options_dataframe, symbol, prior_date, strike, expiry, right.upper())
+            if granularity == "minute":
+                df = (await run_data_history(_load_minute, symbol, prior_date, strike, expiry, right.upper())).frame
+            else:
+                await run_data_history(
+                    fetch_options_historical,
+                    symbol, prior_date, strike, expiry, right.upper(),
+                )
+                df = await run_data_history(load_options_dataframe, symbol, prior_date, strike, expiry, right.upper())
             if cutoff is not None and prior_date == date:
                 # Filter raw seconds BEFORE resampling: the current candle must
                 # not inherit high/low/close values from later replay prices.
@@ -262,6 +294,11 @@ async def get_options_historical(
             loaded_dates.append(prior_date)
         except BreezeTokenError as e:
             raise HTTPException(status_code=503, detail=str(e))
+        except HTTPException as e:
+            # Minute path: the same contract as a Breeze token error (503 ends the request), anything else skips the day.
+            if e.status_code == 503:
+                raise
+            logger.warning("Options data unavailable for %s %s %s on %s: %s", symbol, right.upper(), strike, prior_date, e.detail)
         except FileNotFoundError:
             logger.warning(
                 "Options data unavailable for %s %s %s on %s - skipping context day",

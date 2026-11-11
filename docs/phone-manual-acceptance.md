@@ -63,6 +63,7 @@ Setup first: `docs/phone-google-signin-setup.md` (Android OAuth client for `in.c
 9. Against a server without saved videos the tab says "Videos is not available on this server".
 
 ## F. Browse (S7)
+0. Minute data: open Browse on a past day, and on an option of an already expired expiry. The chart appears within a few seconds (no long wait, no time-out and retry). Open the same day in a Replay or Stepwise session afterwards: it still replays (second-level data is untouched).
 1. Open **Browse**: the NIFTY chart of the last completed trading day (never today) with the previous days before it. One control row at the top: **symbol**, **‹ day ›**, **Spot | CE | PE**, then the chart's own interval, indicators (VOL, EMA...) and fit.
 2. **Symbol** opens a search: type part of a name or symbol; recent symbols are listed first. Choose one: the chart reloads. Symbols without options have CE and PE greyed out.
 3. **‹ ›** step to the previous or next weekday (the next button is off on the latest day). Tap the day to open the date picker; a weekend is refused. Exchange holidays show the server's "no data" message: step to another day.

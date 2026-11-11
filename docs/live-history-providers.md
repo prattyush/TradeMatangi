@@ -30,6 +30,10 @@ The website data API accepts an optional `history_mode=live|replay` query parame
 
 Breeze, Kite and Kotak files remain separate. Kotak uses the same identity format as Kite with a `-kotak1m.parquet` suffix. Native minute candles are neither expanded to seconds nor exported into desktop raw-second caches. Replay/stepwise tick iterators reject minute frames. History is presentation data; live quote/order-execution routes remain independent.
 
+## Minute flow for Browse
+
+Browse (phone and Windows app) only draws candles of one minute or more, and Breeze second-level data is slow (calls are paced 1.5 s apart, about 25 per option day). With `granularity=minute` the data routes use `app/services/minute_history.py` instead: a complete second-level cache if one already exists, otherwise Kite minute candles, otherwise Breeze `1minute`, cached under `OHLCDATA_DIR/minute/`. **Kite cannot supply expired option contracts** (its instrument list only holds live contracts), so expired options go straight to Breeze `1minute` (about three years of data). The fixed order does not follow the admin source policy, which defaults to Breeze without fallback. Replay and stepwise are not affected: they never use this module and reject minute frames.
+
 ## Kotak SDK
 
 The pinned `kotakneoapi==3.0.7` exposes `historical_data(neosymbol, interval, from_date, to_date)`. History uses a separate read-only client initialized with the configured Kotak consumer key. It does not run TOTP login or touch trading sockets. Instrument lookup shares the existing master cache; a read-only master refresh can use this client without authenticating the trading service. Read-only errors cannot log out an existing trading connection.

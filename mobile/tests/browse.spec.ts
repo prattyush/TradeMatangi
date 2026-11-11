@@ -17,6 +17,16 @@ async function openBrowse(page: Page, setup?: (state: MockServer) => void) {
 const dataRequests = (state: MockServer) => state.requests.filter(r => r.path.startsWith('/api/desktop/v1/analysis/data/'))
 const chart = (page: Page) => page.locator('.desktop-analysis-chart')
 
+test('every candle request asks for minute-level data, not the second-level data replay needs', async ({ page }) => {
+  const state = await openBrowse(page)
+  await expect(chart(page)).toBeVisible()
+  await expect.poll(() => dataRequests(state).filter(r => /data\/(historical|pre-session)$/.test(r.path)).length).toBeGreaterThan(0)
+  const history = dataRequests(state).filter(r => /data\/(historical|pre-session|options-historical)$/.test(r.path))
+  expect(history.every(r => r.query.get('granularity') === 'minute')).toBe(true)
+  // Other data routes (expiry and so on) are untouched.
+  expect(dataRequests(state).filter(r => /data\/expiry$/.test(r.path)).every(r => !r.query.has('granularity'))).toBe(true)
+})
+
 test('opens on the last completed trading day with the NIFTY chart', async ({ page }) => {
   const state = await openBrowse(page)
   await expect(chart(page)).toBeVisible()

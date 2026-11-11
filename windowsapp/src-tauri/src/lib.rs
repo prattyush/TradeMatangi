@@ -663,21 +663,26 @@ async fn desktop_historical_page(
     trading_date: String,
     interval_minutes: u32,
     context_days: Option<u32>,
+    granularity: Option<String>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
     let token = host.access_token(&base_url).await?;
+    let mut query = vec![
+        ("symbol", symbol),
+        ("trading_date", trading_date),
+        ("interval_minutes", interval_minutes.to_string()),
+        ("context_days", context_days.unwrap_or(5).min(5).to_string()),
+    ];
+    if let Some(granularity) = minute_granularity(granularity) {
+        query.push(("granularity", granularity));
+    }
     let response = reqwest::Client::new()
         .get(format!(
             "{}/api/desktop/v1/historical/pages",
             base_url.trim_end_matches('/')
         ))
         .bearer_auth(token)
-        .query(&[
-            ("symbol", symbol),
-            ("trading_date", trading_date),
-            ("interval_minutes", interval_minutes.to_string()),
-            ("context_days", context_days.unwrap_or(5).min(5).to_string()),
-        ])
+        .query(&query)
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -750,23 +755,27 @@ async fn desktop_option_historical_page(
     strike: f64,
     right: String,
     interval_minutes: u32,
+    granularity: Option<String>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    desktop_get(
-        base_url,
-        "options/historical/pages",
-        vec![
-            ("symbol", symbol),
-            ("trading_date", trading_date),
-            ("expiry", expiry),
-            ("strike", strike.to_string()),
-            ("right", right),
-            ("interval_minutes", interval_minutes.to_string()),
-            ("context_days", "5".into()),
-        ],
-        host,
-    )
-    .await
+    let mut query = vec![
+        ("symbol", symbol),
+        ("trading_date", trading_date),
+        ("expiry", expiry),
+        ("strike", strike.to_string()),
+        ("right", right),
+        ("interval_minutes", interval_minutes.to_string()),
+        ("context_days", "5".into()),
+    ];
+    if let Some(granularity) = minute_granularity(granularity) {
+        query.push(("granularity", granularity));
+    }
+    desktop_get(base_url, "options/historical/pages", query, host).await
+}
+
+/// Browse asks for minute-level candles (`granularity=minute`); nothing else is ever forwarded to the server.
+fn minute_granularity(value: Option<String>) -> Option<String> {
+    value.filter(|value| value == "minute")
 }
 
 #[tauri::command]
@@ -2478,6 +2487,14 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn only_minute_granularity_is_forwarded_to_the_history_routes() {
+        assert_eq!(minute_granularity(Some("minute".into())), Some("minute".into()));
+        assert_eq!(minute_granularity(Some("second".into())), None);
+        assert_eq!(minute_granularity(Some(String::new())), None);
+        assert_eq!(minute_granularity(None), None);
+    }
 
     #[test]
     fn snapshot_candle_route_is_read_only_and_exact() {
