@@ -16,10 +16,24 @@ import '../../../shared/analysis/kline/desktopAnalysis.css'
  * The analysis requests the shared screens make, sent through the phone's Bearer transport.
  * The path allowlist is the desktop's: nothing outside the analysis routes can be reached from here.
  */
+/** Candle history the phone only draws. Minute candles are enough, and unlike the second-level data replay needs they download fast. */
+const HISTORY_PATH = /^data\/(historical|pre-session|options-historical)(\?|$)/
+/** A cold minute download is a handful of provider calls, far less than second-level data, but still more than the default 20 s on a slow link. */
+export const HISTORY_TIMEOUT_MS = 60_000
+
+/** The same path asking for minute-level candles (`granularity=minute`); every other path is unchanged. */
+export function withMinuteGranularity(path: string): string {
+  if (!HISTORY_PATH.test(path) || /[?&]granularity=/.test(path)) return path
+  return `${path}${path.includes('?') ? '&' : '?'}granularity=minute`
+}
+
 export function createAnalysisRequest(client: ApiClient): AnalysisRequest {
   return async <T,>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown, signal?: AbortSignal): Promise<T> => {
     if (!validAnalysisPath(path, method)) throw new Error('Invalid analysis request')
-    const value = await client.request<T>(`/api/desktop/v1/analysis/${path}`, { method, body: method === 'POST' ? body ?? {} : undefined, signal })
+    const history = HISTORY_PATH.test(path)
+    const value = await client.request<T>(`/api/desktop/v1/analysis/${withMinuteGranularity(path)}`, {
+      method, body: method === 'POST' ? body ?? {} : undefined, signal, ...(history ? { timeoutMs: HISTORY_TIMEOUT_MS } : {}),
+    })
     // The shared code expects null (not undefined) for "no content".
     return (value === undefined ? null : value) as T
   }

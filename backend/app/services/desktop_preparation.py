@@ -113,10 +113,22 @@ def _load(*args):
         raise RuntimeError("Historical provider failed") from exc
 
 
+def _load_minute(symbol, date, strike=None, expiry=None, right=None):
+    """Browse reads minute candles: no replay is started from it, so second-level data is not needed."""
+    from app.services import minute_history
+    try:
+        return minute_history.load(symbol, date, strike, expiry, right)
+    except FileNotFoundError:
+        raise
+    except Exception as exc:
+        raise RuntimeError("Historical provider failed") from exc
+
+
 def prepare(mode, date, reference_time, panes):
     requested = calendar_date.fromisoformat(date)
     if not is_trading_day(requested):
         raise ValueError("The selected date is not a trading day")
+    load = _load_minute if mode == "browse" else _load
     reference = pd.Timestamp(f"{date} {reference_time}", tz="UTC")
     results = []
     with historical_operation(mode="live" if mode in ("paper", "real") else "replay"):
@@ -135,7 +147,7 @@ def prepare(mode, date, reference_time, panes):
                     if item["expiry"] != get_expiry_date(symbol, date):
                         raise ValueError("Expiry is outside the supported date-aware option range")
                     if item.get("selection_mode") == "max_price":
-                        underlying = _load(symbol, date)
+                        underlying = load(symbol, date)
                         price = price_before(underlying, date, reference, require_observed=True)
                         if price is None:
                             raise ValueError("No underlying price is available at this reference time")
@@ -147,7 +159,7 @@ def prepare(mode, date, reference_time, panes):
                             if strike <= 0:
                                 break
                             try:
-                                candidate = _load(symbol, date, strike, item["expiry"], item["right"])
+                                candidate = load(symbol, date, strike, item["expiry"], item["right"])
                             except FileNotFoundError:
                                 continue
                             premium = price_before(candidate, date, reference, require_observed=True)
@@ -161,9 +173,9 @@ def prepare(mode, date, reference_time, panes):
                     strike = strike_number(item["strike"])
                     if strike <= 0 or strike % STRIKE_INTERVALS[symbol]:
                         raise ValueError("Strike does not match the instrument interval")
-                    history = history or _load(symbol, date, strike, item["expiry"], item["right"])
+                    history = history or load(symbol, date, strike, item["expiry"], item["right"])
                 else:
-                    history = _load(symbol, date)
+                    history = load(symbol, date)
                 frame = observed_frame(history, date)
                 if frame.empty:
                     status, reason = "unavailable", "No observations are available on the selected date"
