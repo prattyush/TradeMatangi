@@ -69,9 +69,14 @@ export interface AnalysisEnvironment {
   onSelectExecution?: (trade: import('./api').AnalysisTrade) => void
 }
 const Context = createContext<AnalysisEnvironment | null>(null)
-export function AnalysisProvider({ value, children }: { value: AnalysisEnvironment; children: ReactNode }) {
+/**
+ * `initialIntervalMinutes` and `onIntervalChange` let a host that owns one chart (a Browse pane) start it at, and remember,
+ * its own interval; a provider inside another one still uses the outer provider's interval, as before.
+ */
+export function AnalysisProvider({ value, children, initialIntervalMinutes = 3, onIntervalChange }: { value: AnalysisEnvironment; children: ReactNode; initialIntervalMinutes?: number; onIntervalChange?: (minutes: number) => void }) {
   const parent = useContext(Context)
-  const [intervalMinutes, setIntervalMinutes] = useState(3)
+  const [intervalMinutes, setLocalInterval] = useState(initialIntervalMinutes)
+  const setIntervalMinutes = (minutes: number) => { setLocalInterval(minutes); onIntervalChange?.(minutes) }
   return <Context.Provider value={{...value, intervalMinutes: parent?.intervalMinutes ?? intervalMinutes, setIntervalMinutes: parent?.setIntervalMinutes ?? setIntervalMinutes}}>{children}</Context.Provider>
 }
 export function useAnalysisEnvironment(): AnalysisEnvironment {
