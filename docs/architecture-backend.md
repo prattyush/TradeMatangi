@@ -117,7 +117,7 @@ stop_session():
 | `routers/analysis.py` | `/api/analysis` | `GET /sessions`, `GET /sessions/{id}`, `GET /trades`, `GET /ohlc-context` |
 | `routers/auth.py` | `/api/auth` | `POST /login`, `/register`, `/change-password`, `GET /me` |
 | `routers/wallet.py` | `/api/wallet` | `GET /`, `POST /reset` |
-| `routers/admin.py` | `/api/admin` | Tokens, whitelist, stream-source toggle |
+| `routers/admin.py` | `/api/admin` | Tokens, whitelist, stream-source toggle, extra market holidays (`/holidays`) |
 | `routers/kotak.py` | `/api/kotak` | Login, status, funds, order-history, reconcile |
 | `routers/users.py` | `/api/users` | `GET /settings`, `PUT /settings` |
 
@@ -273,6 +273,10 @@ All configuration is read at startup from `data/accesskeys.ini` and environment 
 A single fixed user (`00000000-0000-0000-0000-000000000001`) is seeded at startup. The `X-User-Id` header (set by the frontend from `localStorage`) is the primary auth token. Admin routes additionally check `X-Admin-Token`. bcrypt passwords are stored in the `Users` DynamoDB table.
 
 ---
+
+## Market holidays
+
+`app/utils.py` `is_trading_day` combines weekends, the built-in `NSE_HOLIDAYS` list (updated by hand each year) and holidays added at run time. The added ones live in `DATA_DIR/holidays.json` (`{"holidays": {"2026-11-11": "note"}}`), are re-read whenever the file changes (no restart, a hand edit works), and are managed by an admin with `GET/POST /api/admin/holidays` and `DELETE /api/admin/holidays/{date}`. A missing or unreadable file means no added holidays. Nothing fetches the NSE calendar automatically.
 
 ## Start Commands
 
