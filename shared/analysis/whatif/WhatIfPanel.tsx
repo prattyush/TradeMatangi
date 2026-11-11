@@ -73,7 +73,7 @@ export default function WhatIfPanel({ result, day, pnlMode, canPick, picking, on
   const entries = result?.legs.filter(leg => leg.fill.role === 'entry') ?? []
   const exits = result?.legs.filter(leg => leg.fill.role === 'exit') ?? []
   const table = (title: string, legs: LegResult[]) => legs.length > 0 && (
-    <section className="wi-block" aria-label={title}>
+    <section className="wi-block" aria-label={title} data-role={title === 'Entries' ? 'entry' : 'exit'}>
       <h4>{title}</h4>
       <div className="wi-legs-head" aria-hidden="true"><span>Time</span><span>Price</span><span>Qty</span><span>Capital</span><span /></div>
       {legs.map(leg => {

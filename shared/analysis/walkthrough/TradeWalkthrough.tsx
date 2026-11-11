@@ -67,7 +67,7 @@ export default function TradeWalkthrough({ symbol, date, sessionIds, allTrades, 
   )
   const info = current ? story.get(tripKey(current)) : undefined
   return (
-    <RoundTripSplitLayout symbol={symbol} date={date} historicalDays={historicalDays} chartTrades={chartTrades} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized}>
+    <RoundTripSplitLayout labelContractMarkers={false} symbol={symbol} date={date} historicalDays={historicalDays} chartTrades={chartTrades} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized}>
       <OneByOneLabeling
         trips={trips} index={Math.min(index, Math.max(trips.length - 1, 0))} sessionCount={sessionCount} labels={NO_LABELS}
         busy={false} readOnly save={IDLE} status={null} active={environment.active !== false}

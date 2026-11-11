@@ -24,3 +24,14 @@
 /* The edited-count line adds nothing until something is edited. */
 .phone-whatif .wi-summary[data-edited='0'][data-warnings='0'] { display: none; }
 .phone-whatif .wi-link { min-height: 36px; }
+
+/* Entries and Exits must not be missed on a small screen: each block gets a solid coloured title band, a thick bar down the left of
+   every fill row, and a thick line between the Entries block and the Exits block. Entry is green, exit is orange (the chart's edited-fill
+   rings keep their own colours). */
+.phone-whatif .wi-block { --role: #3fb950; --role-bg: rgba(63, 185, 80, 0.10); margin-top: 10px; }
+.phone-whatif .wi-block + .wi-block { margin-top: 14px; padding-top: 12px; border-top: 4px solid #8b949e; border-radius: 2px; }
+.phone-whatif .wi-block[data-role='exit'] { --role: #f0883e; --role-bg: rgba(240, 136, 62, 0.12); }
+.phone-whatif .wi-block h4 { margin: 0 0 4px; padding: 5px 10px; font-size: 14px; font-weight: 700; letter-spacing: 0.08em; color: #0d1117; background: var(--role); border-radius: 6px; }
+.phone-whatif .wi-leg { border-left: 6px solid var(--role); padding-left: 8px; background: var(--role-bg); }
+.phone-whatif .wi-leg.changed { background: linear-gradient(0deg, rgba(210, 153, 34, 0.18), rgba(210, 153, 34, 0.18)), var(--role-bg); }
+.phone-whatif .wi-leg .wi-side, .phone-whatif .wi-leg.buy .wi-side, .phone-whatif .wi-leg.sell .wi-side { color: var(--role); font-weight: 700; font-size: 14px; }

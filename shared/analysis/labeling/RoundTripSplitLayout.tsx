@@ -10,7 +10,7 @@ import './labeling.css'
  * What If. Desktop gets its workflow wrapper; maximized covers the whole window. `footer` is for modals that live inside
  * the root (the behavior question manager).
  */
-export default function RoundTripSplitLayout({ symbol, date, historicalDays, chartTrades, getMarkerText, focusTime, maximized, children, footer, chartExtras }: {
+export default function RoundTripSplitLayout({ symbol, date, historicalDays, chartTrades, getMarkerText, focusTime, maximized, children, footer, chartExtras, labelContractMarkers = true }: {
   symbol: string
   date: string
   historicalDays: number
@@ -22,6 +22,8 @@ export default function RoundTripSplitLayout({ symbol, date, historicalDays, cha
   footer?: ReactNode
   /** What If: price picking and the edited legs, passed to charts that support them. */
   chartExtras?: WhatIfChartExtras
+  /** Numbers on the option-contract chart's markers. Label Trades keeps them; Walkthrough and What If show one trade, so they turn them off. */
+  labelContractMarkers?: boolean
 }) {
   const environment = useAnalysisEnvironment()
   const LabelCharts = environment.charts?.LabelCharts
@@ -30,8 +32,8 @@ export default function RoundTripSplitLayout({ symbol, date, historicalDays, cha
       {/* Chart */}
       <div className="label-chart-container tl-chart-col">
         {LabelCharts
-          ? <LabelCharts symbol={symbol} date={date} allTrades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers layout={maximized ? 'split' : 'single'} {...chartExtras} />
-          : <LabelChartPanes symbol={symbol} date={date} trades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized} extras={chartExtras} />}
+          ? <LabelCharts symbol={symbol} date={date} allTrades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers={labelContractMarkers} layout={maximized ? 'split' : 'single'} {...chartExtras} />
+          : <LabelChartPanes symbol={symbol} date={date} trades={chartTrades} historicalDays={historicalDays} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized} extras={chartExtras} labelContractMarkers={labelContractMarkers} />}
       </div>
 
       {/* Round-trip panel */}

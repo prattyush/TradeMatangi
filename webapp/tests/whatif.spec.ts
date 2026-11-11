@@ -258,6 +258,24 @@ test('KLine: Pick sets the price from the chart click, Escape cancels, and the e
   await page.screenshot({ path: 'test-results/whatif-kline.png' })
 })
 
+test('KLine: the option chart of a one-trade view has no marker text, while Label Trades keeps its numbers', async ({ page }) => {
+  const state: Mock = { writes: [], saved: [] }
+  await mockAnalysis(page, 'kline', state)
+  await openWhatIf(page)
+  await page.getByRole('button', { name: 'Next trade' }).click()
+  await expect(page.getByText('Trade 2 of 2', { exact: true })).toBeVisible()
+  await page.getByRole('navigation', { name: 'Chart pane' }).getByRole('button', { name: 'CE 25000' }).click()
+  await expect(page.locator('.desktop-analysis-chart[data-contract-labels]').first()).toHaveAttribute('data-contract-labels', 'off')
+  // Label Trades is the one that numbers the option markers.
+  await page.getByRole('button', { name: 'Label Trades', exact: true }).click()
+  await expect(page.getByText(/Trade \d of 2/).first()).toBeVisible()
+  if (!(await page.getByText('Trade 2 of 2', { exact: true }).isVisible())) await page.getByRole('button', { name: 'Next trade' }).click()
+  await expect(page.getByText('Trade 2 of 2', { exact: true })).toBeVisible()
+  const tabs = page.getByRole('navigation', { name: 'Chart pane' })
+  await tabs.getByRole('button', { name: 'CE 25000' }).click()
+  await expect(page.locator('.desktop-analysis-chart[data-contract-labels]').first()).toHaveAttribute('data-contract-labels', 'on')
+})
+
 test('other tabs still open, and leaving a changed what-if asks first', async ({ page }) => {
   const state: Mock = { writes: [], saved: [] }
   await mockAnalysis(page, 'lightweight', state)

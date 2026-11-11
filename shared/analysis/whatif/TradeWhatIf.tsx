@@ -248,7 +248,7 @@ export default function TradeWhatIf({ symbol, date, sessionIds, allTrades, histo
 
   return (
     <>
-      <RoundTripSplitLayout symbol={symbol} date={date} historicalDays={historicalDays} chartTrades={chartTrades} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized} chartExtras={chartExtras}>
+      <RoundTripSplitLayout labelContractMarkers={false} symbol={symbol} date={date} historicalDays={historicalDays} chartTrades={chartTrades} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized} chartExtras={chartExtras}>
         <OneByOneLabeling
           trips={trips} index={Math.min(index, Math.max(trips.length - 1, 0))} sessionCount={sessionCount} labels={NO_LABELS}
           busy={false} readOnly save={IDLE} status={null} active={environment.active !== false}

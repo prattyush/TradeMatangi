@@ -234,3 +234,22 @@ for (const viewport of VIEWPORTS) {
     })
   })
 }
+
+test('Entries and Exits are told apart at a glance: a coloured title band, a thick bar on each fill and a thick line between the blocks', async ({ page }) => {
+  await mockServer(page)
+  await openWhatIf(page)
+  const entries = overlay(page).getByRole('region', { name: 'Entries' })
+  const exits = overlay(page).getByRole('region', { name: 'Exits' })
+  await expect(entries).toBeVisible()
+  await expect(exits).toBeVisible()
+  const style = (locator: ReturnType<typeof entries.locator>, property: string) => locator.evaluate((element, name) => getComputedStyle(element).getPropertyValue(name), property)
+  expect(await style(exits, 'border-top-width')).toBe('4px') // the line between the blocks
+  expect(await style(entries, 'border-top-width')).toBe('0px') // none above the first block
+  expect(await style(entries.locator('h4'), 'background-color')).toBe('rgb(63, 185, 80)') // entry: green band
+  expect(await style(exits.locator('h4'), 'background-color')).toBe('rgb(240, 136, 62)') // exit: orange band
+  expect(await style(entries.locator('.wi-leg').first(), 'border-left-width')).toBe('6px')
+  expect(await style(exits.locator('.wi-leg').first(), 'border-left-color')).toBe('rgb(240, 136, 62)')
+  const bandEntry = (await entries.locator('h4').boundingBox())!
+  const bandExit = (await exits.locator('h4').boundingBox())!
+  expect(bandExit.y).toBeGreaterThan(bandEntry.y + bandEntry.height) // stacked, the exit block below the entry block
+})

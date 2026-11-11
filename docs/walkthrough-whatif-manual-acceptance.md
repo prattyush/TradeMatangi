@@ -34,6 +34,8 @@ Website (Lightweight and KLine), desktop, webapp: the **What If** tab next to Wa
 8. Shared (read-only) history: you can edit as a playground; Save, Delete and the name are disabled.
 9. A server without saved what-ifs: the tab still works (a note says saving is not available). A server that did not send fills for a trade: that trade says it cannot be edited.
 10. No order, trade, label or session changes, ever: only the what-if routes are written.
+Option-chart markers: in **Walkthrough** and **What If** (KLine charts, on the website, desktop and webapp; the Lightweight renderer is unchanged) the CE/PE chart's markers carry no text (the colour says buy or sell, and one trade is shown). Label Trades keeps its round-trip numbers there. On the **phone** the option chart's markers have no text in Label trades, Walkthrough and What If.
+Phone What If: **ENTRIES** and **EXITS** each have a solid coloured title band (green, orange), every fill row has a thick bar of that colour on its left, and a thick grey line separates the two blocks.
 Phone: the saved-what-ifs bar is one line (**What-if: name ▾**) that opens; the fills are two-line rows (label and capital, then price and quantity); Back cancels a pick, then asks before dropping unsaved changes, then closes.
 
 Check on a real, a paper, a replay and a stepwise day; a day with two sessions saves each session's own edits.

@@ -16,6 +16,8 @@ interface Props {
   maximized?: boolean
   /** What If: price picking and the edited legs (KLine charts use them; Lightweight ignores them). */
   extras?: WhatIfChartExtras
+  /** Text on the option-contract chart's markers (the round-trip numbers). Off for views that show one trade at a time. */
+  labelContractMarkers?: boolean
 }
 
 interface Contract { key: string; label: string; right: string; strike: number; expiry: string; trades: AnalysisTrade[] }
@@ -50,7 +52,7 @@ function usePhone() {
  * strike of the viewed trade) so the chart gets the full height; when Label Trades is maximized the Underlying and the
  * strike chart are stacked so every marker of the round trip is visible at once. Phones always use the switcher.
  */
-export default function LabelChartPanes({ symbol, date, trades, historicalDays, getMarkerText, focusTime, maximized = false, extras }: Props) {
+export default function LabelChartPanes({ symbol, date, trades, historicalDays, getMarkerText, focusTime, maximized = false, extras, labelContractMarkers = true }: Props) {
   const contracts = useMemo(() => contractsOf(trades), [trades])
   const [selected, setSelected] = useState('')
   const contract = contracts.find(item => item.key === selected) ?? contracts[0]
@@ -86,7 +88,7 @@ export default function LabelChartPanes({ symbol, date, trades, historicalDays, 
           )}
           <div className="tl-pane-chart">
             <OptionsChart symbol={symbol} date={date} strike={contract.strike} expiry={contract.expiry} right={contract.right}
-              trades={contract.trades} historicalDays={historicalDays} getMarkerText={getMarkerText} labelContractMarkers focusTime={focusTime} fill
+              trades={contract.trades} historicalDays={historicalDays} getMarkerText={getMarkerText} labelContractMarkers={labelContractMarkers} focusTime={focusTime} fill
               pickMode={pickTarget === 'option'} onPick={extras?.onPick} onPickCancel={extras?.onPickCancel} pickHint={extras?.pickHint} whatIfMarkers={extras?.whatIfMarkers} />
           </div>
         </div>
