@@ -75,8 +75,8 @@ Setup first: `docs/phone-google-signin-setup.md` (Android OAuth client for `in.c
 8. **Live (today only):** step the day to today (›). A **Live** button appears in the control row. Turn it on: the dot is amber while it connects, then green and the chart keeps updating with the live ticks (spot, or the CE/PE you chose). Change the strike, the symbol, CE/PE or Spot and the stream follows. Changing the candle interval reloads the candles at that interval and keeps the ticks. Turn Live off (or leave Browse, or put the app in the background): the stream is stopped on the server; coming back to the app starts it again. On a server without live data it says so with Try again. (Needs the server's live feed, the same one the desktop uses.)
 9. There are no order, buy/sell or drawing controls (read-only). Older days beyond the loaded context are not fetched while panning in this version; step the day instead.
 
-## G. Positions (S8)
-(Filled in when S8 lands.)
+## G. Swing trading (S8; paper first, then real)
+(Filled in as the swing screens land: `docs/spec-phase24-phone-swing-plan.md`.)
 
 ## H. Whole-app checks (S9)
 - Server switch between `dev`, `preprod` and the phone branch: features the server lacks show "not available", nothing crashes.
