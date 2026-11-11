@@ -10,6 +10,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Plugins written for this app (not from npm): Google account sign-in and the optional app lock.
+        registerPlugin(GoogleSignInPlugin.class);
+        registerPlugin(AppLockPlugin.class);
         super.onCreate(savedInstanceState);
         hideSystemBars();
     }

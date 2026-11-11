@@ -75,9 +75,18 @@ Rule: compose phone-specific **layout** components around shared **logic / data 
 - **Bearer only.** `POST /api/auth/desktop/token` (email, password, `device_name`), `POST /api/auth/desktop/google-token`, `POST /api/auth/desktop/refresh`, `POST /api/auth/desktop/logout`. Access token about 24 h, refresh token 30 days and rotated on every refresh. The website's `X-User-Id` header is never sent.
 - **Token handling.** The refresh token lives in Android Keystore-backed secure storage; the access token in memory. One in-flight refresh at a time; a `401` triggers one refresh and one retry. Tokens are never logged.
 - **Google.** Native Credential Manager sign-in with the existing **Web** client ID; the ID token's audience is already accepted by the backend (`user_service.py`), so no backend change. A first-time Google user is asked for an `account_name`. Setup steps: `docs/phone-google-signin-setup.md`.
-- **App lock.** Optional BiometricPrompt on cold start and after 60 s in the background; off by default.
+- **App lock.** Optional BiometricPrompt (fingerprint / face, or the screen lock) on cold start and after 30 s in the background (`mobile/src/app/lockPolicy.ts`); off by default, switch in More, turned off by signing out. The screens stay mounted under an opaque, `inert` cover (`mobile/src/app/AppLock.tsx`).
 - **Capabilities and older servers.** The app probes `GET /api/desktop/v1/capabilities` and handles `404` / `403` per feature with a "not available on this server" state (for example Habits when the Phase 23 endpoints are missing). Settings > About shows the app version, server URL and capability summary.
 - **Server prerequisite.** `DESKTOP_JWT_SECRET` must be set on the server. The repository default would let anyone forge a token.
+
+---
+
+## Native plugins written for this app (Sprint 2)
+
+Two small Capacitor plugins live in `mobile/android/app/src/main/java/in/co/tradematangi/phone/` and are registered in `MainActivity` (no third-party sign-in plugin, so no extra provider code ships in the APK):
+- `GoogleSignInPlugin` (`signIn({serverClientId})` → `{idToken, email, name}`): Android Credential Manager with `GetSignInWithGoogleOption`; maps failures to `cancelled`, `no_account`, `provider`, `unsupported`, `failed`. The web side (`mobile/src/native/googleSignIn.ts`) turns them into plain messages, including Google's 28444 as a setup problem.
+- `AppLockPlugin` (`isAvailable()`, `authenticate({title})`): AndroidX BiometricPrompt, strong biometrics or the screen lock (weak biometrics on Android 9 and 10, which cannot combine strong with the screen lock).
+- The web side reaches them through `AppServices.google` and `AppServices.appLock` (replaceable in tests). In a browser the plugins have a web fallback that only works when a UI test provides `window.__TM_GOOGLE_SIGNIN__` / `window.__TM_APP_LOCK__`; the Google button and the App lock switch are hidden or disabled otherwise.
 
 ---
 

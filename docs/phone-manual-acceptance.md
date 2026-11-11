@@ -2,8 +2,17 @@
 
 Run on a real phone with the signed debug or release APK. Each sprint adds its section; tick items as they pass. Status of the sprints: `docs/spec-phase24-android-plan.md`.
 
-## A. Install and sign in (S1; Google sign-in is phase 2)
-(Filled in when S1 and S2 land.)
+## A. Install and sign in (S1, S2)
+Setup first: `docs/phone-google-signin-setup.md` (Android OAuth client for `in.co.tradematangi.phone` and the SHA-1 of the fixed debug key, test user).
+1. Uninstall any older TradeMatangi (once: older builds were signed with another key), install the APK. Open it: sign-in screen, landscape.
+2. Email and password sign-in works; **Sign out…** in More returns to the sign-in screen.
+3. **Continue with Google** opens Google's account chooser. Pick your account: you land in the app, More → Account shows your Google email.
+4. Close the app completely and open it again: still signed in (no new sign-in).
+5. Close the chooser with Back: no error is shown, you stay on the sign-in screen.
+6. (Optional, only if the server does not know a second Google account) Continue with Google with that account: the "has no TradeMatangi account yet" step asks for a name; Back returns to the form; Create account signs in.
+7. More → **App lock** → turn on: the phone asks for fingerprint / screen lock. Press Home, wait 40 seconds, open the app: the lock screen shows and the prompt appears; cancel it and **Unlock** asks again. A quick Home and back (under 30 seconds) does not lock.
+8. On the lock screen **Sign out** returns to the sign-in screen and the lock is off after signing in again.
+9. Install a newer APK over this one (from CI or `scripts/build-android-phone.sh`): it installs without uninstalling, and you stay signed in.
 
 ## B. Sessions and session detail (S3)
 1. Open Sessions: the list shows your trading days, newest first, one row per day and instrument (two sessions on one day are one row marked "2 sessions"). Each row shows the date, symbol, Options or Equity, a mode badge (Replay, Stepwise, Paper, Real, Swing), the net P&L in green or red, and the trade count.

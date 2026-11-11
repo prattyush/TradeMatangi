@@ -5,6 +5,7 @@ import { summarizeCapabilities } from '../api/capabilities'
 import { describeError } from '../api/errors'
 import { ServerUrlError } from '../api/serverConfig'
 import { useToast } from '../shell/Toast'
+import { useAppLock } from '../app/AppLock'
 import { CHART_INFO_LABELS, useChartInfo, type ChartInfo } from '../app/ChartInfo'
 
 export function More() {
@@ -13,6 +14,8 @@ export function More() {
   const { capabilities, checking, refresh } = useCapabilities()
   const toast = useToast()
   const { chartInfo, setChartInfo } = useChartInfo()
+  const lock = useAppLock()
+  const [lockNote, setLockNote] = useState<string | null>(null)
   const [server, setServer] = useState('')
   const [editing, setEditing] = useState(false)
   const [input, setInput] = useState('')
@@ -68,6 +71,22 @@ export function More() {
           ) : (
             <button type="button" className="btn" onClick={() => setConfirmSignOut(true)}>Sign out…</button>
           )}
+        </div>
+        <div className="card">
+          <h3>App lock</h3>
+          <label className="switch-row">
+            <input type="checkbox" role="switch" checked={lock.enabled} disabled={lock.supported === null || (!lock.supported && !lock.enabled)}
+              onChange={event => {
+                setLockNote(null)
+                void lock.setEnabled(event.target.checked).then(result => {
+                  if (result === 'unavailable') setLockNote('Set a screen lock or fingerprint on the phone first.')
+                  else if (result === 'failed') setLockNote('Could not confirm it is you. The lock stays as it was.')
+                })
+              }} />
+            <span>Ask for fingerprint or screen lock when the app opens and after 30 seconds away</span>
+          </label>
+          {lock.supported === false && !lock.enabled && <p className="muted">Not available: this phone has no screen lock or fingerprint set up (or you are in a browser).</p>}
+          {lockNote && <div className="form-error" role="alert">{lockNote}</div>}
         </div>
         <div className="card">
           <h3>Server</h3>
