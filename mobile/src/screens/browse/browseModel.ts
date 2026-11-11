@@ -140,3 +140,6 @@ export function readMaxPrice(response: { panes?: PreparedPane[] } | null | undef
   if ((pane.availability === 'available' || pane.availability === 'waiting') && Number.isFinite(strike) && strike > 0) return { strike, premium: pane.premium }
   throw new Error(pane.reason ?? 'No strike was found for this premium cap')
 }
+
+/** The paged history route (`GET`): pages of whole trading days before `before`, for scroll-back of an index or equity. */
+export const BROWSE_HISTORY_PATH = '/api/desktop/v1/browse/history'

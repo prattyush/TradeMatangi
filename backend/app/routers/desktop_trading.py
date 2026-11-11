@@ -249,10 +249,19 @@ def preparation_user_id(authorization: str | None = Header(default=None)) -> str
     return get_desktop_user_id(authorization=authorization, x_user_id=None)
 
 
+def prepare_identity(request: Request, authorization: str | None = Header(default=None), x_user_id: str | None = Header(default=None)) -> str:
+    """Bearer for everything; the website's X-User-Id header only gets through for Browse (checked in the handler)."""
+    request.state.header_identity = not authorization
+    return get_desktop_user_id(authorization=authorization, x_user_id=x_user_id)
+
+
 @router.post("/prepare-session")
-async def prepare_session(req: PreparationRequest, user_id: str = Depends(preparation_user_id)):
+async def prepare_session(req: PreparationRequest, user_id: str = Depends(prepare_identity), http: Request = None):
     from app.services.desktop_preparation import prepare
     from app.services.history_workers import run_history
+    # Browse only reads candles, so the website may ask with its legacy header; sessions of any kind need a Bearer token.
+    if http is not None and getattr(http.state, "header_identity", False) and req.mode != "browse":
+        raise HTTPException(status_code=401, detail="A Bearer token is required for this mode")
     if len({pane.id for pane in req.panes}) != len(req.panes):
         raise HTTPException(status_code=422, detail="Every pane must have a unique id")
     try:

@@ -60,4 +60,5 @@ Volume (#801):
 ## G. Browse on minute-level data (added 2026-11-11; Windows app)
 1. Mode **Browse**, a past day, NIFTY spot and an option of an expired expiry: the charts appear in seconds, with no long wait. Scroll left for older days: they load too.
 2. In Browse, **Max price** for a strike: the search answers without a long wait.
+2b. **A year back:** in a Browse spot tile at 3 minutes, scroll the chart to the left edge repeatedly: older pages load back to about a year (1-minute stops at 90 days; move the tile's date to look further back). Options tiles keep their few days.
 3. Switch to **Replay** (or Stepwise) on the same day and start it: it replays normally (replay still uses second-level data; nothing from Browse changes it).
