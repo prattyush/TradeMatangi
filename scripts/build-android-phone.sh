@@ -15,6 +15,16 @@ if [ ! -d "$ANDROID_HOME/platforms/android-36" ]; then
   exit 1
 fi
 
+# One fixed debug key for every debug APK, so builds install over each other (see mobile/README.md "Fixed debug key").
+DEBUG_KEY_ENV="${ANDROID_DEBUG_KEY_ENV:-$HOME/.android/tradematangi-debug.env}"
+if [ -z "${ANDROID_DEBUG_KEYSTORE_PATH:-}" ] && [ -f "$DEBUG_KEY_ENV" ]; then
+  # shellcheck disable=SC1090
+  . "$DEBUG_KEY_ENV"
+fi
+if [ -z "${ANDROID_DEBUG_KEYSTORE_PATH:-}" ]; then
+  echo "Note: no fixed debug key ($DEBUG_KEY_ENV); this APK is signed with this machine's default debug key and will not install over CI builds." >&2
+fi
+
 cd "$REPO_ROOT/mobile"
 [ -d node_modules ] || npm install --no-bin-links --no-audit --no-fund
 node node_modules/typescript/bin/tsc --noEmit
@@ -24,7 +34,8 @@ node node_modules/@capacitor/cli/bin/capacitor sync android
 echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
 cd android
-VERSION_CODE="${VERSION_CODE:-$(date +%s)}"
+# Minutes since 1970, as in CI, so a later build (local or CI) always has the higher version code and installs over the earlier one.
+VERSION_CODE="${VERSION_CODE:-$(( $(date +%s) / 60 ))}"
 if [ "${1:-}" = "--release" ]; then
   ./gradlew --no-daemon assembleRelease -PversionCode="$VERSION_CODE"
   echo "Release APK: $REPO_ROOT/mobile/android/app/build/outputs/apk/release/"
