@@ -197,3 +197,41 @@ for (const renderer of ['lightweight', 'kline'] as const) {
   })
   })
 }
+
+/** Colour counts on the canvases of the Browse panes: where a saved drawing of that colour was painted. */
+const paintedRows = (page: Page, rgb: [number, number, number]) => page.evaluate(([red, green, blue]) => {
+  const near = (a: number, b: number) => Math.abs(a - b) < 40
+  for (const canvas of document.querySelectorAll('[data-pane] canvas')) {
+    const c = canvas as HTMLCanvasElement, ctx = c.getContext('2d')
+    if (!ctx || !c.width || !c.height) continue
+    const data = ctx.getImageData(0, 0, c.width, c.height).data
+    for (let y = 0; y < c.height; y++) {
+      let hits = 0
+      for (let x = 0; x < c.width; x++) { const i = (y * c.width + x) * 4; if (near(data[i], red) && near(data[i + 1], green) && near(data[i + 2], blue) && data[i + 3] > 100) hits++ }
+      if (hits > c.width * 0.5) { const r = c.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + y * r.height / c.height } }
+    }
+  }
+  return null
+}, rgb)
+
+test('KLine in Browse draws the saved support/resistance lines of its instrument and saves a delete', async ({ page }) => {
+  const calls: string[] = []
+  await mockBrowse(page, 'kline')
+  await page.route('**/api/desktop/v1/drawings**', async route => {
+    const url = new URL(route.request().url())
+    calls.push(`${route.request().method()} ${url.pathname}${route.request().method() === 'GET' ? `?${new URLSearchParams(url.search).get('instrument')}` : ''}`)
+    if (route.request().method() === 'GET') return route.fulfill({ json: { drawings: [{ drawing_id: 'd1', revision: 1, drawing: { tool: 'Horizontal', points: [{ timestamp: start + 60 * 180, price: 105 }], style: { color: '#ff00ff', width: 3 } } }] } })
+    return route.fulfill({ json: { drawing_id: 'd1', revision: 2, drawing: {} } })
+  })
+  await page.goto(app)
+  await expect(page.locator('[data-pane] .website-kline')).toHaveCount(2)
+  // The same instrument identity the trading and Analysis charts use, so a line drawn there shows here.
+  await expect.poll(() => calls.includes('GET /api/desktop/v1/drawings?{"exchange":"NSE","kind":"index","symbol":"NIFTY"}')).toBe(true)
+  await expect.poll(() => paintedRows(page, [255, 0, 255])).not.toBeNull()
+  const line = (await paintedRows(page, [255, 0, 255]))!
+  await page.mouse.move(line.x, line.y)
+  await page.mouse.click(line.x, line.y)
+  await page.waitForTimeout(400) // the chart selects the line on the click; Delete acts on the selection
+  await page.keyboard.press('Delete')
+  await expect.poll(() => calls.some(call => call === 'DELETE /api/desktop/v1/drawings/d1')).toBe(true)
+})
