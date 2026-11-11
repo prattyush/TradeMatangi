@@ -43,7 +43,7 @@ mobile/
   src/shell/                NavRail, Screen, Sheet, SegmentedTabs, EmptyState, ErrorState, OfflineBanner
   src/api/                  transport, tokenStore, auth, serverConfig, capabilities, polling
   src/env/                  analysisEnvironment (builds the AnalysisEnvironment for shared/analysis)
-  src/screens/              Login, Sessions, SessionDetail, Labeling, Stats, Videos, Browse, Positions, Settings
+  src/screens/              Login, Sessions, SessionDetail, Labeling, Stats, Videos, Browse, Swing, Settings
   src/theme.css             design tokens (CSS variables) and phone density rules
   tests/                    Playwright landscape specs, vitest
 ```
@@ -63,7 +63,7 @@ mobile/
 | Stats and Habits maths | `shared/analysis/performance.ts`, `shared/analysis/habits/{habitStats,habitSeries}.ts`, chart primitives in `habits/` |
 | Videos | `shared/analysis/{SessionVideos,AddVideoLink,videoLinks}`, `windowsapp/src/tools/videoLinks.ts` |
 | Browse | `shared/SymbolSearch.tsx`, `shared/charts/KLineChart.tsx` (read-only via `tradingEnabled=false`), `windowsapp/src/historyPaging.ts` |
-| Positions | request shapes of `shared/SwingPortfolioPanel.tsx` (`Snapshot`) and `DesktopTradingSnapshot` |
+| Swing | request shapes and order rules of `shared/SwingPortfolioPanel.tsx`, `swingOrderPrice.ts`, `swingStream.ts` (the phone has its own screens; the Day-trading `DesktopTradingSnapshot` is not used) |
 
 Rule: compose phone-specific **layout** components around shared **logic / data / chart** pieces. Shared UI components are touched only with small additive props whose default is today's behavior.
 
@@ -105,7 +105,7 @@ Design box 740 to 960 CSS px wide by 340 to 440 px tall (checked at 915x412, 851
 
 Principles: no stacked headers; master-detail panes instead of modals; filters in sheets; summaries first, detail one tap away; horizontal pagers instead of long vertical pages; the Android back button always pops one level.
 
-**Shell.** A 56 px left navigation rail (Sessions, Stats, Browse, Videos, More; Positions joins in phase 2) that respects the left safe area. No global top bar; a screen has at most one 36 to 40 px title row.
+**Shell.** A 56 px left navigation rail (Sessions, Stats, Browse, Swing, Videos, More) that respects the left safe area. No global top bar; a screen has at most one 36 to 40 px title row.
 
 **Sessions.** A list of trading days (one line each: date, symbol and instrument, mode badge, P&L, trades) that gives way to the chosen day: choosing a day hides the list, and the Days button, the Sessions rail item or Back brings it back. Filters live in one side sheet (7 d / 30 d / 90 d / 1 y / custom, Day or Swing, mode, symbol, instrument; default last 30 days). The chosen day has **one control row** (Days, a view menu with Chart, Trades, Orders, Videos and later Snapshots, Compare and Journey, then for the chart Underlying | Option, the strike menu and the chart controls); the candles take everything below it. Chart details over the candles show only while touching.
 
@@ -119,11 +119,11 @@ Principles: no stacked headers; master-detail panes instead of modals; filters i
 
 **Browse Live.** On today (India date, `marketDate()`) the control row shows **Live**, the desktop's flow: `POST /api/desktop/v1/live/start` (one tile, the spot or the chosen option, at the chart's interval), server-sent events from `/live/{id}/events` read with the Bearer token (`ApiClient.stream`; reconnect with `last_event_id`, a 15 s snapshot health check that refreshes a provider error, a restart if the server forgot the stream), and `PUT /live/{id}/tiles/browse` when the interval changes. The candles are the desktop's own aggregation (`windowsapp/src/liveCandles.ts`, `liveStreamState.ts`): the server's history baseline plus every received one-second candle, volume included. They go to the shared `AnalysisChart` through its new optional `liveCandles` prop, which then fetches nothing and pushes only the last bar to the chart while the history is unchanged. The stream is stopped when Live is turned off, the instrument changes, Browse closes or the app leaves the foreground (and restarted on return). It is chart-only and read-only; no order route is touched. Code: `browse/live/{liveModel,useLiveBrowse}.ts`.
 
-**Positions** (read-only; phase 2, not in the first release). Swing and Day columns, each with a mode badge, as-of time, total P&L, wallet and a list of positions with open-order counts.
+**Swing** (phase 2; `docs/spec-phase24-phone-swing-plan.md`). The rail's Swing tab trades the Swing portfolio through the website's own routes at `/api/desktop/v1/swing/portfolios/*` (Bearer): no new trading endpoint; the only server change is the order tag `client: "phone"`. `useSwingPortfolio` loads the active portfolio of the chosen account once (this attaches it on the server, as the website does) and then follows its event stream (`followPortfolio`, `SwingSseDecoder`; the full snapshot arrives on connect and on every change, reconnect with backoff, closed while the app is in the background, no polling). One control row (Paper | Real, mode badge, Live / Reconnecting with the age of the last update, Refresh, Manage), a summary strip (P&L, cash, capital, notices: entries paused, loss limit, funds short, reconciling, prices not live), then Positions and Orders lists; a missing price is "Waiting for prices", never 0. Actions live in sheets: a position (Exit, Add stoploss, Buy more, Chart), a pending order (change price or quantity, cancel with a second tap), Manage (pause or resume entries, close with the acknowledgements the server asks for) and the order ticket. **Ticket rules** (`orderTicket.ts`, the same as the website panel and the server): no market orders; entries are Limit or Target, exits Limit or Stoploss; equity and options are long only; futures go both ways (SELL opens a short or exits a long, BUY covers a short or opens a long, and an order against the open position is an exit); options and futures are entered in lots; capital-% sizing and every futures order get a server `order-preview` first and carry its `capital_revision` (futures also `approved_budget` and `fee_hash`); prices snap to the contract tick; selling more than is free (held minus open exit orders) is refused. A **summary sheet** (PAPER or REAL in large type, instrument, action, units and lots, price, value, margin and fees) must be confirmed before anything is sent. **One request id per set of instructions** (`RequestIdentity`): pressing Confirm again after "no answer" or a broker `502` reuses it, so the server returns the first order instead of a second; writes are never retried by the transport. Errors say what is known (`swingErrors.ts`): `402` funds, `403` paused or no access, `409` changed (refresh), `502` / no answer "may or may not be placed: refresh and look". **Real** needs the real-trading capability **and** the App lock on; the phone's own lock (`AppLockClient.authenticate`) is asked when the user switches to Real and when a real portfolio is closed, and keeps Real open for 5 minutes (`REAL_UNLOCK_MS`); starting a real portfolio also needs the broker session connected (checked with `broker-status`; connecting it is done on the website or desktop). A position's **chart** is the shared `AnalysisChart` fed minute candles from `POST {id}/charts/history` (`liveCandles`), with the average entry and the contract's pending orders drawn; its interval is the chart's own control. Real funding, import, allocation and reconcile controls, Day positions and alerts are not on the phone.
 
 **More.** Account, logout, Server URL, app lock, keep-screen-on for video, immersive toggle, clear cache, About / diagnostics (copy diagnostics: versions and recent errors, no secrets).
 
-Reserved room: Alerts, Swing orders (biometric confirm; guardrails stay on the server), Setups deep-dive.
+Reserved room: Alerts, an email OTP as a second factor for real swing orders, Setups deep-dive.
 
 ---
 

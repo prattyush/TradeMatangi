@@ -26,8 +26,8 @@ The swing routes at `/api/desktop/v1/swing/portfolios/*` are the website's handl
 |---|---|---|
 | SW0 | Docs (this file, spec) | Done |
 | SW1 | Server: order tag `phone` | Done |
-| SW2 | Phone model and API: types, calls, stream, order-ticket rules, error messages (unit tests) | Planned |
-| SW3 | Swing tab: portfolio header, positions, pending orders, start / pause / close | Planned |
-| SW4 | Order ticket and summary sheet (equity, options), edit / cancel | Planned |
-| SW4b | Futures: contracts, margin preview, short / cover, closing acknowledgements | Planned |
-| SW5 | Position chart, 4-size UI tests, acceptance doc, APK, PR | Planned |
+| SW2 | Phone model and API: types, calls, stream, order-ticket rules, error messages (unit tests) | Done |
+| SW3 | Swing tab: portfolio header, positions, pending orders, start / pause / close | Done |
+| SW4 | Order ticket and summary sheet (equity, options), edit / cancel | Done |
+| SW4b | Futures: contracts, margin preview, short / cover, closing acknowledgements | Done |
+| SW5 | Position chart, 4-size UI tests, acceptance doc, APK, PR | Built; waits for the user's try on a phone (paper first, then real on `preprod`) |

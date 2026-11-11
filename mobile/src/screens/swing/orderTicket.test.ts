@@ -30,6 +30,12 @@ describe('entry and exit', () => {
     expect(fixType(draft({ side: 'SELL', type: 'STOPLOSS' }), []).type).toBe('STOPLOSS')
   })
 
+  it('an exit is always sized by quantity, never by capital %', () => {
+    expect(fixType(draft({ side: 'SELL', sizing: 'capital_pct' }), []).sizing).toBe('quantity')
+    expect(fixType(draft({ side: 'BUY', sizing: 'capital_pct' }), []).sizing).toBe('capital_pct')
+    expect(fixType(future({ side: 'BUY', sizing: 'capital_pct' }), [futurePosition('SHORT')]).sizing).toBe('quantity')
+  })
+
   it('words a short and its cover plainly', () => {
     expect(intentLabel(future({ side: 'SELL' }), [])).toBe('Sell to open a short')
     expect(intentLabel(future({ side: 'BUY' }), [futurePosition('SHORT')])).toBe('Buy to cover')

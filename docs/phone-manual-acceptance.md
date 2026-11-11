@@ -76,7 +76,17 @@ Setup first: `docs/phone-google-signin-setup.md` (Android OAuth client for `in.c
 9. There are no order, buy/sell or drawing controls (read-only). Older days beyond the loaded context are not fetched while panning in this version; step the day instead.
 
 ## G. Swing trading (S8; paper first, then real)
-(Filled in as the swing screens land: `docs/spec-phase24-phone-swing-plan.md`.)
+Plan and rules: `docs/spec-phase24-phone-swing-plan.md`. Do **G.1 to G.7 with a paper portfolio first**; G.8 only after paper is accepted, on `preprod`, with the broker session live. Check on the website's Swing screen after each step: it must show the same portfolio.
+1. **Swing** tab (rail): with no portfolio, "Start a paper swing portfolio": capital, prices of Kite or Kotak, optional loss limit. Start: an empty book, **New order** enabled.
+2. **Equity entry:** New order → pick a share → Buy, Limit, a price and a quantity → **Review order**: the summary says PAPER and shows the instrument, "Buy (enter)", quantity and price; nothing has been sent yet (the website shows no order). **Place paper order**: the order shows in Orders (and on the website). Try **% of capital**: the ticket shows the size the server computes.
+3. **Exit and stoploss:** Positions → tap a position → **Exit** (a sell at the last price for what is free), **Add stoploss** (3% below the price; edit it) and **Buy more**. A stoploss shows in Orders. Selling more than is free is refused with a plain reason.
+4. **Option:** New order → Options → expiry, Call or Put, a strike → lots (the summary shows units and lots) → place. Check the lot size and the strike against the website.
+5. **Futures and shorting:** New order → Futures → an expiry → **Sell (short / exit)** with no position: "Sell to open a short", the margin and fees estimate appears, the summary shows the margin. Place it. The position shows **Short**. Tap it: **Buy to cover**, **Add stoploss above** (a buy trigger above the price). Check the margin held and the exposure against the website. Leave it open over a day and look again the next day.
+6. **Orders:** tap a pending order → change the price (and quantity) → Save; the website shows the change. **Cancel order…** asks once more, then cancels. For a futures entry the change is previewed first.
+7. **Portfolio:** Manage → **Pause entries**: a Buy is refused in the ticket ("Entries are paused"), a Sell/exit still works; **Resume entries**. **Close portfolio…** asks to confirm, then ends the portfolio. Close the app and open it again with positions open: the portfolio is still there, still running (closing the app never stops it).
+8. **Real (after paper is accepted):** More → **App lock** on. Swing → **Real**: the phone's lock is asked; cancel it and the app stays on Paper. Without the App lock, Real explains how to turn it on and requests nothing. An account without real-trading access is told so. Starting a real portfolio needs the broker session connected (connect it on the website). Every real order, position and order screen says **REAL MONEY**; the summary button reads **Place REAL order**. Try one small real order, then look at the broker. If the screen says "may or may not be placed" (no answer / broker problem), refresh and look at the broker; pressing Confirm again cannot place it twice.
+9. **Chart:** a position → **Chart**: minute candles of that contract with the average entry and pending orders; change the interval; **Back** returns to the position.
+10. **Network:** switch to airplane mode: the top row says Reconnecting, nothing is sent, and on return the book refreshes by itself.
 
 ## H. Whole-app checks (S9)
 - Server switch between `dev`, `preprod` and the phone branch: features the server lacks show "not available", nothing crashes.

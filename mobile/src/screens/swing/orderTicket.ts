@@ -61,8 +61,10 @@ export function allowedTypes(exit: boolean): OrderKind[] {
 
 /** Order kind that is valid for the current intent (switching to an exit turns a TARGET into a LIMIT, and back). */
 export function fixType(draft: Draft, positions: Position[] | undefined): Draft {
-  const allowed = allowedTypes(isExit(draft, positions))
-  return allowed.includes(draft.type) ? draft : { ...draft, type: 'LIMIT' }
+  const exit = isExit(draft, positions)
+  // Capital-% sizing is for entries only; an exit is always sized by quantity.
+  const sized = exit && draft.sizing !== 'quantity' ? { ...draft, sizing: 'quantity' as const } : draft
+  return allowedTypes(exit).includes(sized.type) ? sized : { ...sized, type: 'LIMIT' }
 }
 
 /** Plain wording for what this order does. */

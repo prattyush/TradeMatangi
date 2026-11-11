@@ -7,6 +7,7 @@ import { More } from './screens/More'
 import { SessionsScreen } from './screens/sessions/SessionsScreen'
 import { StatsScreen } from './screens/stats/StatsScreen'
 import { BrowseScreen } from './screens/browse/BrowseScreen'
+import { SwingScreen } from './screens/swing/SwingScreen'
 import { VideosScreen } from './screens/videos/VideosScreen'
 import { PhoneAnalysisProvider } from './env/analysisEnvironment'
 
@@ -15,7 +16,7 @@ function Screens() {
   return (
     <PhoneAnalysisProvider>
       <Shell>
-        {tab === 'more' ? <More /> : tab === 'sessions' ? <SessionsScreen /> : tab === 'stats' ? <StatsScreen /> : tab === 'videos' ? <VideosScreen /> : <BrowseScreen />}
+        {tab === 'more' ? <More /> : tab === 'sessions' ? <SessionsScreen /> : tab === 'stats' ? <StatsScreen /> : tab === 'videos' ? <VideosScreen /> : tab === 'swing' ? <SwingScreen /> : <BrowseScreen />}
       </Shell>
     </PhoneAnalysisProvider>
   )
