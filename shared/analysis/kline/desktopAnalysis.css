@@ -24,6 +24,18 @@
 .analysis-session-navigator { overflow: auto; padding: 10px; background: #141b28; }
 .analysis-session-navigator button { width: 100%; display: grid; gap: 5px; text-align: left; margin-bottom: 8px; font-size: 12px; }
 .analysis-session-navigator span { color: #b3bfd2; font-size: 11px; }
+/* Winning and losing days, as on the website and the phone: a green or red edge, a faint tint and a coloured P&L. */
+.analysis-session-navigator button.analysis-day { border-left: 4px solid #4b5568; }
+.analysis-session-navigator button.analysis-day.day-win { border-left-color: #26a641; }
+.analysis-session-navigator button.analysis-day.day-loss { border-left-color: #f85149; }
+.analysis-session-navigator button.analysis-day.day-win:not([aria-pressed="true"]) { background: rgb(38 166 65 / .12); }
+.analysis-session-navigator button.analysis-day.day-loss:not([aria-pressed="true"]) { background: rgb(248 81 73 / .12); }
+.analysis-session-navigator .day-pnl { font-weight: 700; font-variant-numeric: tabular-nums; }
+.analysis-session-navigator .day-pnl.win { color: #3fb950; }
+.analysis-session-navigator .day-pnl.loss { color: #ff7b72; }
+.analysis-session-navigator button[aria-pressed="true"] .day-pnl { color: #fff; }
+.analysis-session-navigator > p .day-pnl.win { color: #3fb950; }
+.analysis-session-navigator > p .day-pnl.loss { color: #ff7b72; }
 .analysis-selected-session { overflow: auto; min-width: 0; padding: 12px; }
 .analysis-selected-session table { font-size: 12px; }
 .analysis-selected-session table { display: block; max-height: 240px; overflow: auto; }
@@ -85,6 +97,9 @@
 .analysis-panels.is-single[data-pane="underlying"]:not(.chart-maximized) .analysis-option-pane, .analysis-panels.is-single[data-pane="option"]:not(.chart-maximized) .analysis-underlying-pane { display: none; }
 .analysis-panels.is-single.chart-maximized { grid-template-rows: minmax(0,1fr); }
 .is-single.chart-maximized .analysis-pane-navigation { display: none; }
+/* Walkthrough and What If on the desktop: the window already scrolls, so the right panel grows with the page instead of getting a scroll bar of its own
+   (maximized, the panel is inside a fixed full-window view and keeps its own scroll). */
+.desktop-label-workflow:not(.labels-maximized) .tl-side-col.tl-side-flow { max-height: none; overflow: visible; }
 .desktop-label-workflow .tl-chart-col .analysis-panels { height: max(450px, calc(100vh - 300px)); }
 .desktop-label-workflow.labels-maximized { display: flex; flex-direction: column; }
 .desktop-label-workflow.labels-maximized .tl-chart-col .analysis-panels:not(.chart-maximized) { flex: 1; height: auto; min-height: 0; }

@@ -10,7 +10,7 @@ import './labeling.css'
  * What If. Desktop gets its workflow wrapper; maximized covers the whole window. `footer` is for modals that live inside
  * the root (the behavior question manager).
  */
-export default function RoundTripSplitLayout({ symbol, date, historicalDays, chartTrades, getMarkerText, focusTime, maximized, children, footer, chartExtras, labelContractMarkers = true }: {
+export default function RoundTripSplitLayout({ symbol, date, historicalDays, chartTrades, getMarkerText, focusTime, maximized, children, footer, chartExtras, labelContractMarkers = true, sideScroll = true }: {
   symbol: string
   date: string
   historicalDays: number
@@ -24,6 +24,8 @@ export default function RoundTripSplitLayout({ symbol, date, historicalDays, cha
   chartExtras?: WhatIfChartExtras
   /** Numbers on the option-contract chart's markers. Label Trades keeps them; Walkthrough and What If show one trade, so they turn them off. */
   labelContractMarkers?: boolean
+  /** The right-hand panel scrolls by itself (Label Trades). Walkthrough and What If let it grow with the page, so on the desktop there is one scroll bar, not two. */
+  sideScroll?: boolean
 }) {
   const environment = useAnalysisEnvironment()
   const LabelCharts = environment.charts?.LabelCharts
@@ -37,7 +39,7 @@ export default function RoundTripSplitLayout({ symbol, date, historicalDays, cha
       </div>
 
       {/* Round-trip panel */}
-      <div className="tl-side-col">{children}</div>
+      <div className={`tl-side-col${sideScroll ? '' : ' tl-side-flow'}`}>{children}</div>
       {footer}
     </div>
   )
