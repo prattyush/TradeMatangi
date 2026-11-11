@@ -6,7 +6,7 @@ import type { TokenBundle, TokenStore } from './tokenStore'
 export type Query = Record<string, string | number | boolean | null | undefined>
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   query?: Query
   body?: unknown
   signal?: AbortSignal
