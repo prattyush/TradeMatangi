@@ -1,34 +1,26 @@
-import { lazy, Suspense, useCallback, useMemo, useState } from 'react'
-import { AnalysisProvider, useAnalysisEnvironment } from '../../../../shared/analysis/environment'
+import { useCallback, useState } from 'react'
 import type { SymbolChoice } from '../../../../shared/SymbolSearch'
-import { browseApi, loadOlderPage } from '../../services/browseApi'
-import { useWebsiteKLineEnvironment } from '../../services/analysisEnvironment'
-import { paneTitle, type BrowsePane as Pane } from '../../services/browseWorkspace'
-import { formatBrowseDate } from '../../../../shared/browse/browseModel.ts'
-import { KLineAnalysisScope } from '../analysis/KLineAnalysis'
+import type { BrowsePane as Pane } from '../../services/browseWorkspace'
+import { BrowseChart } from './BrowseChart'
 import { BrowsePaneMenu } from './BrowsePaneMenu'
 import { usePaneContract } from './usePaneContract'
 
-// KLine is loaded the first time Browse opens, not with the trading screen.
-const AnalysisChart = lazy(() => import('../../../../shared/analysis/kline/AnalysisChart'))
-
-/** Days of context an option pane loads before its day: about three days in all, as Browse always showed. */
-const OPTION_CONTEXT_DAYS = 2
-
 type SymbolInfo = SymbolChoice & { strike_interval?: number }
 
-function PaneChart({ pane, symbols, today, onPatch, onMaximize, isMaximized }: {
-  pane: Pane; symbols: SymbolInfo[]; today: string; onPatch: (id: number, change: Partial<Pane>) => void; onMaximize: () => void; isMaximized: boolean
+/**
+ * One Browse pane: the chart (Lightweight or KLine, as the Trading Chart setting says) with the pane's one control in the
+ * chart's own header. An option pane without a contract yet shows the control and what is missing instead of a chart.
+ */
+export function BrowsePane({ pane, symbols, today, active, onActivate, onPatch, onMaximize, isMaximized }: {
+  pane: Pane; symbols: SymbolInfo[]; today: string; active: boolean; onActivate: () => void
+  onPatch: (id: number, change: Partial<Pane>) => void; onMaximize: () => void; isMaximized: boolean
 }) {
-  const environment = useAnalysisEnvironment()
+  // The menu's open state lives here, above the chart: another symbol rebuilds the chart (and the button in its header).
   const [menuOpen, setMenuOpen] = useState(false)
-  const minutes = environment.intervalMinutes ?? 3
   const patch = useCallback((change: Partial<Pane>) => onPatch(pane.id, change), [onPatch, pane.id])
   const contract = usePaneContract(pane, symbols.find(item => item.symbol === pane.symbol)?.strike_interval, patch)
   const spot = pane.kind === 'spot'
   const ready = spot || (pane.strike !== null && pane.expiry !== null)
-  // Index and equity charts scroll back to a year or more through the paged route; option charts keep their few days.
-  const loadOlder = useMemo(() => (spot ? (before: number) => loadOlderPage(pane.symbol, minutes, pane.date, before) : undefined), [spot, pane.symbol, pane.date, minutes])
   const menu = <BrowsePaneMenu pane={pane} symbols={symbols} today={today} contract={contract} onChange={next => patch(next)} open={menuOpen} onOpenChange={setMenuOpen} />
   if (!ready) {
     return (
@@ -41,30 +33,7 @@ function PaneChart({ pane, symbols, today, onPatch, onMaximize, isMaximized }: {
     )
   }
   return (
-    <Suspense fallback={<p role="status" style={{ color: '#8b949e', fontSize: 12, padding: 8 }}>Loading chart…</p>}>
-      <AnalysisChart
-        key={`${pane.symbol}:${pane.kind}:${pane.strike}:${pane.expiry}:${pane.date}`}
-        symbol={pane.symbol} date={pane.date} historicalDays={spot ? 2 : OPTION_CONTEXT_DAYS}
-        title={paneTitle(pane, formatBrowseDate)} toolbarStart={menu} loadOlder={loadOlder}
-        {...(spot ? {} : { right: pane.kind, strike: pane.strike ?? undefined, expiry: pane.expiry ?? undefined })}
-        onMaximize={onMaximize} isMaximized={isMaximized} />
-    </Suspense>
-  )
-}
-
-/** One Browse pane: its own provider (so its own interval, remembered), the minute-data api, and the one control in the chart's header. */
-export function BrowsePane({ pane, symbols, today, onPatch, onMaximize, isMaximized }: {
-  pane: Pane; symbols: SymbolInfo[]; today: string; onPatch: (id: number, change: Partial<Pane>) => void; onMaximize: () => void; isMaximized: boolean
-}) {
-  const base = useWebsiteKLineEnvironment()
-  const value = useMemo(() => ({ ...base, api: browseApi as unknown as typeof base.api }), [base])
-  return (
-    <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
-      <KLineAnalysisScope>
-        <AnalysisProvider value={value} initialIntervalMinutes={pane.interval} onIntervalChange={interval => onPatch(pane.id, { interval })}>
-          <PaneChart pane={pane} symbols={symbols} today={today} onPatch={onPatch} onMaximize={onMaximize} isMaximized={isMaximized} />
-        </AnalysisProvider>
-      </KLineAnalysisScope>
-    </div>
+    <BrowseChart key={`${pane.symbol}:${pane.kind}:${pane.strike}:${pane.expiry}:${pane.date}`} pane={pane} ready={ready} active={active} onActivate={onActivate}
+      onInterval={minutes => patch({ interval: minutes })} onMaximize={onMaximize} isMaximized={isMaximized} header={menu} />
   )
 }
