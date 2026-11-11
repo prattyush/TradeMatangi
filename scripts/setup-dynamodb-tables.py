@@ -470,6 +470,31 @@ TABLES = [
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
+    # ── Phase 24 What If: saved scenarios (one named scenario per day-session) ─
+    {
+        "TableName": "WhatIfScenarios",
+        "KeySchema": [
+            {"AttributeName": "session_id", "KeyType": "HASH"},
+            {"AttributeName": "scenario_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "session_id", "AttributeType": "S"},
+            {"AttributeName": "scenario_id", "AttributeType": "S"},
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "date", "AttributeType": "S"},
+        ],
+        "GlobalSecondaryIndexes": [
+            {
+                "IndexName": "UserIdDateIndex",
+                "KeySchema": [
+                    {"AttributeName": "user_id", "KeyType": "HASH"},
+                    {"AttributeName": "date", "KeyType": "RANGE"},
+                ],
+                "Projection": {"ProjectionType": "ALL"},
+            }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
 ]
 
 

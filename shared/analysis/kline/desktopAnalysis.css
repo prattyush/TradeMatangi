@@ -118,3 +118,7 @@
   .analysis-trades-top-desktop > .analysis-trades-list { contain: size; max-height: none; min-height: 0; }
   .analysis-trades-top-desktop > .day-journey { position: static; overflow: visible; }
 }
+
+/* What If: picking a price on the chart. */
+.desktop-analysis-chart.picking .analysis-kline { cursor: crosshair; }
+.analysis-pick-hint { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); z-index: 6; padding: 4px 10px; border: 1px solid #d29922; border-radius: 6px; background: rgba(13, 17, 23, 0.92); color: #f2cc60; font-size: 12px; pointer-events: none; white-space: nowrap; }

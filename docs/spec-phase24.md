@@ -194,7 +194,7 @@ For UI in phone app, feel free to innovate. I am not good in UI.
 4. **Saved per day.** A what-if is saved (so a refresh does not erase it, the day can be revisited or undone, and days can be compared): named scenarios, several per day (for example "exit at bar close", "no averaging"), each holding the edits of every trade of that day, in a separate table (`WhatIfScenarios`, owner only). **Revert day** clears all edits; a scenario can be deleted. A **Compare days** view lists saved scenarios over a date range with actual against what-if per day and the total, grouped by scenario name.
 5. **Never trades.** What If sends no order and changes no trade, label or session; it only reads the day and writes its own scenarios.
 
-Status: planned. Sprints F0 to F5 in `docs/spec-phase24-walkthrough-whatif-plan.md` (second pull request, after Walkthrough).
+Status: built on branch `feat/what-if` (website, desktop, webapp, phone); not yet seen on a phone or in the Windows app. Sprints F0 to F5 in `docs/spec-phase24-walkthrough-whatif-plan.md` (second pull request, after Walkthrough).
 
 ### ANDROID PHONE APP: PHASE 2 (TODO, next after Walkthrough and What If)
 Google sign-in with optional app lock (needs an Android OAuth client in Google Cloud for package `in.co.tradematangi.phone` and the debug key's SHA-1), then read-only Positions for swing and day. Not started; see `docs/spec-phase24-android-plan.md`.

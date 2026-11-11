@@ -4,6 +4,7 @@ import AnalysisChart from '../../../../shared/analysis/kline/AnalysisChart'
 import { contractTabs } from '../../../../shared/analysis/kline/analysisContracts'
 import { useBackHandler } from '../../app/Nav'
 import { PopoverMenu } from '../../shell/PopoverMenu'
+import type { WhatIfChartExtras } from '../../../../shared/analysis/whatif/chartExtras'
 
 type Pane = 'underlying' | 'option'
 
@@ -12,13 +13,13 @@ type Pane = 'underlying' | 'option'
  * the host's controls (Days, view menu), Underlying | Option, the strike menu when Option is chosen, then the
  * chart's own interval, indicators, fit and maximize. Nothing else takes height from the candles.
  */
-export function PhoneChartPanel({ symbol, date, trades, historicalDays, toolbarLead, getMarkerText, focusTime, labelContractMarkers, allowMaximize = true }: {
+export function PhoneChartPanel({ symbol, date, trades, historicalDays, toolbarLead, getMarkerText, focusTime, labelContractMarkers, allowMaximize = true, pickTarget, onPick, onPickCancel, pickHint, whatIfMarkers }: {
   symbol: string; date: string; trades: AnalysisTrade[]; historicalDays: number; toolbarLead: ReactNode
   /** Label Trades: marker text for each execution, the time to centre on, and whether option markers carry text. */
   getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string; focusTime?: number; labelContractMarkers?: boolean
   /** The maximize button of the chart header. Off where the chart shares the screen with a form. */
   allowMaximize?: boolean
-}) {
+} & WhatIfChartExtras) {
   const contracts = useMemo(() => contractTabs(trades), [trades])
   const [pane, setPane] = useState<Pane>('underlying')
   const [selected, setSelected] = useState('')
@@ -27,6 +28,8 @@ export function PhoneChartPanel({ symbol, date, trades, historicalDays, toolbarL
   const contract = contracts.find(item => item.key === selected) ?? contracts[0]
   const showOption = pane === 'option' && contract !== undefined
   useBackHandler(maximized ? () => { setMaximized(false); return true } : null)
+  // Picking a price: show the chart it is for.
+  useEffect(() => { if (pickTarget === 'option' && contracts.length > 0) setPane('option'); else if (pickTarget === 'underlying') setPane('underlying') }, [pickTarget, contracts.length])
 
   const toolbarStart = (
     <div className="phone-toolbar-start">
@@ -50,10 +53,12 @@ export function PhoneChartPanel({ symbol, date, trades, historicalDays, toolbarL
         <AnalysisChart key={contract.key} symbol={symbol} date={date} trades={contract.trades} right={contract.right} strike={contract.strike}
           expiry={contract.expiry} exchange={contract.exchange} product={contract.product} historicalDays={historicalDays}
           getMarkerText={getMarkerText} focusTime={focusTime} labelContractMarkers={labelContractMarkers}
+          pickMode={pickTarget === 'option'} onPick={onPick} onPickCancel={onPickCancel} pickHint={pickHint} whatIfMarkers={whatIfMarkers}
           isMaximized={maximized} onMaximize={allowMaximize ? () => setMaximized(value => !value) : undefined} toolbarStart={toolbarStart} />
       ) : (
         <AnalysisChart key="underlying" symbol={symbol} date={date} trades={trades} historicalDays={historicalDays} title="Underlying"
           getMarkerText={getMarkerText} focusTime={focusTime}
+          pickMode={pickTarget === 'underlying'} onPick={onPick} onPickCancel={onPickCancel} pickHint={pickHint} whatIfMarkers={whatIfMarkers}
           isMaximized={maximized} onMaximize={allowMaximize ? () => setMaximized(value => !value) : undefined} toolbarStart={toolbarStart} />
       )}
     </div>

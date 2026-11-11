@@ -1,4 +1,14 @@
 import type { AnalysisTrade, PatternAnnotation, TopPatterns } from './api'
+import type { WhatIfMarker } from './whatif/whatIfModel'
+
+/** What If on a chart (KLine only; other renderers ignore these): listen for a price pick and draw the edited legs. */
+export type WhatIfChartProps = {
+  pickMode?: boolean
+  onPick?: (point: { time: number; price: number }) => void
+  onPickCancel?: () => void
+  pickHint?: string
+  whatIfMarkers?: WhatIfMarker[]
+}
 export type InstFilter = 'underlying' | 'CE' | 'PE'
 export interface StrikeTab { key: string; label: string; right: string; strike: number; expiry: string; trades: AnalysisTrade[] }
 
@@ -17,7 +27,7 @@ export type AnalysisChartProps = {
   /** Epoch seconds (candle clock) to centre the chart on, e.g. the entry of the round trip being labeled. */
   focusTime?: number
   labelContractMarkers?: boolean
-}
+} & WhatIfChartProps
 
 export type OptionsChartProps = {
   symbol: string
@@ -33,7 +43,7 @@ export type OptionsChartProps = {
   fill?: boolean
   focusTime?: number
   labelContractMarkers?: boolean
-}
+} & WhatIfChartProps
 
 export type AnalysisChartPanelProps = {
   symbol: string
