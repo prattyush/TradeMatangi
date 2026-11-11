@@ -18,7 +18,18 @@ android {
         }
     }
     signingConfigs {
-        // The keystore never lives in the repository: path and passwords come from the environment (GitHub secrets in CI).
+        // The keystores never live in the repository: path and passwords come from the environment (GitHub secrets in CI).
+        // One fixed debug key signs every debug APK (local and CI), so a newer build installs over the older one and keeps the sign-in.
+        // Without ANDROID_DEBUG_KEYSTORE_PATH the machine's own debug key is used (the APK then only updates builds made on that machine).
+        debug {
+            def debugKeystorePath = System.getenv("ANDROID_DEBUG_KEYSTORE_PATH")
+            if (debugKeystorePath) {
+                storeFile file(debugKeystorePath)
+                storePassword System.getenv("ANDROID_DEBUG_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_DEBUG_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_DEBUG_KEY_PASSWORD")
+            }
+        }
         release {
             def keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
             if (keystorePath) {

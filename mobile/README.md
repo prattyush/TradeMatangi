@@ -37,6 +37,22 @@ bash scripts/build-android-phone.sh            # type-check, tests, web build, s
 
 The APK is `mobile/android/app/build/outputs/apk/debug/app-debug.apk`. Install it by copying the file to the phone (allow installing unknown apps), or with `adb install -r` (USB debugging on; WSL can use the Windows `adb.exe`). The same build runs in GitHub Actions (`android-phone.yml`) and uploads the debug APK as an artifact.
 
+### Fixed debug key (install over the previous build)
+
+Android refuses to install an APK over an app signed with a different key ("App not installed as package conflicts with existing package"). Every debug APK is therefore signed with one fixed key, never committed:
+
+```bash
+# once: create the key and the file the build script reads
+keytool -genkeypair -keystore ~/.android/tradematangi-debug.keystore -alias tradematangi-debug -keyalg RSA -keysize 2048 -validity 10000
+cat > ~/.android/tradematangi-debug.env <<'ENV'
+export ANDROID_DEBUG_KEYSTORE_PATH="$HOME/.android/tradematangi-debug.keystore"
+export ANDROID_DEBUG_KEYSTORE_PASSWORD=...  ANDROID_DEBUG_KEY_ALIAS=tradematangi-debug  ANDROID_DEBUG_KEY_PASSWORD=...
+ENV
+chmod 600 ~/.android/tradematangi-debug.*
+```
+
+`scripts/build-android-phone.sh` sources that file when it exists. For GitHub Actions add the secrets `ANDROID_DEBUG_KEYSTORE_B64` (`base64 -w0 ~/.android/tradematangi-debug.keystore`), `ANDROID_DEBUG_KEYSTORE_PASSWORD`, `ANDROID_DEBUG_KEY_ALIAS`, `ANDROID_DEBUG_KEY_PASSWORD`; without them a CI run warns and signs with a throwaway key. Print the SHA-1 (needed for the Google OAuth client): `keytool -list -v -keystore ~/.android/tradematangi-debug.keystore -alias tradematangi-debug | grep SHA1`. Keep a backup of the keystore: a new key means one uninstall. Version codes are minutes since 1970 in both CI and the script (do not pass a smaller `VERSION_CODE`: Android refuses to install an older version over a newer one).
+
 ### Signed release build
 
 Release builds are signed from the environment; the keystore is never committed.

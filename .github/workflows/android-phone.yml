@@ -75,9 +75,25 @@ jobs:
           npm run build
           node node_modules/@capacitor/cli/bin/capacitor sync android
 
+      # A fixed debug key (secrets) makes every CI debug APK, and the local ones, install over each other.
+      # Without the secrets (a fork, or before they are set) the runner's throwaway debug key is used and the APK needs an uninstall first.
       - name: Debug APK
         working-directory: mobile/android
-        run: ./gradlew --no-daemon assembleDebug -PversionCode=${{ github.run_number }}
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+          ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
+          ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
+          ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
+        run: |
+          if [ -n "$DEBUG_KEYSTORE_B64" ]; then
+            echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/debug.keystore"
+            export ANDROID_DEBUG_KEYSTORE_PATH="$RUNNER_TEMP/debug.keystore"
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE_B64 is not set: this debug APK uses a throwaway key and will not install over another build."
+          fi
+          # Minutes since 1970: the same scheme as scripts/build-android-phone.sh, so a later build (CI or local) always has the higher version code.
+          ./gradlew --no-daemon assembleDebug -PversionCode=$(( $(date +%s) / 60 ))
+          rm -f "$RUNNER_TEMP/debug.keystore"
 
       - name: Signed release APK
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
@@ -91,7 +107,7 @@ jobs:
           if [ -z "$KEYSTORE_B64" ]; then echo "ANDROID_KEYSTORE_B64 secret is not set"; exit 1; fi
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
-          ./gradlew --no-daemon assembleRelease -PversionCode=${{ github.run_number }}
+          ./gradlew --no-daemon assembleRelease -PversionCode=$(( $(date +%s) / 60 ))
           rm -f "$RUNNER_TEMP/release.keystore"
 
       - uses: actions/upload-artifact@v4
