@@ -25,6 +25,8 @@ export interface MockServer {
   /** Browse Max Price (`prepare-session`): fail with this reason, or answer 404 like an older server. */
   maxPriceFail?: string
   maxPriceOld?: boolean
+  /** Google sign-in (`/api/auth/desktop/google-token`): `known` = the server already has the account; `reject` = it refuses the token. */
+  google: { known: boolean; reject: boolean }
   /** Browse Live: what the live routes were asked, and how they behave. */
   live: LiveMock
 }
@@ -67,7 +69,7 @@ const bundle = { access_token: 'access-token-1', refresh_token: 'refresh-token-1
 
 /** Stand in for the TradeMatangi server on the given hosts (the app talks to an absolute https URL). */
 export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co.in']): Promise<MockServer> {
-  const state: MockServer = { requests: [], rejectLogin: false, oldServer: false, analysis: newAnalysisState(), live: { starts: [], puts: [], stops: [], eventRequests: [], nextId: 1 } }
+  const state: MockServer = { requests: [], rejectLogin: false, oldServer: false, google: { known: true, reject: false }, analysis: newAnalysisState(), live: { starts: [], puts: [], stops: [], eventRequests: [], nextId: 1 } }
   const answer = (route: Route, status: number, body?: unknown) =>
     route.fulfill({ status, headers: { ...CORS, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
 
@@ -80,6 +82,11 @@ export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co
       try { body = request.postDataJSON() } catch { body = undefined }
       state.requests.push({ method: request.method(), path: url.pathname, host: url.host, authorization: request.headers().authorization, headers: request.headers(), query: url.searchParams, body })
       if (url.pathname === '/api/auth/desktop/token') return state.rejectLogin ? answer(route, 401, { detail: 'Invalid email or password' }) : answer(route, 200, bundle)
+      if (url.pathname === '/api/auth/desktop/google-token') {
+        const posted = body as { account_name?: string }
+        if (state.google.reject || (!state.google.known && !posted.account_name)) return answer(route, 401, { detail: 'Invalid Google token or account_name required' })
+        return answer(route, 200, bundle)
+      }
       if (url.pathname === '/api/auth/desktop/refresh') return answer(route, 200, bundle)
       if (url.pathname === '/api/auth/desktop/logout') return route.fulfill({ status: 204, headers: CORS })
       if (url.pathname === '/api/desktop/v1/capabilities') {
@@ -152,3 +159,37 @@ export async function chooseView(page: Page, name: string) {
   // Anchored at the start so "Trades" does not also match "Label trades".
   await page.getByRole('menuitemradio', { name: new RegExp(`^${name}`) }).click()
 }
+
+/** Stand in for the native Google chooser (the real one only exists in the APK): `result` is what it returns, `failure` a plugin error code. */
+export async function fakeGoogle(page: Page, behavior: { email?: string; name?: string; failure?: { code: string; message?: string } } = {}) {
+  await page.addInitScript(({ email, name, failure }) => {
+    ;(window as unknown as { __TM_GOOGLE_SIGNIN__: unknown }).__TM_GOOGLE_SIGNIN__ = {
+      async signIn() {
+        if (failure) throw Object.assign(new Error(failure.message ?? failure.code), { code: failure.code })
+        return { idToken: 'google-id-token', email: email ?? 'me@gmail.com', name: name ?? 'Pratt B' }
+      },
+    }
+  }, behavior)
+}
+
+/**
+ * Stand in for the native fingerprint / screen-lock prompt. Every authenticate call is counted in `window.__lockCalls`;
+ * what it answers is `window.__lockMode` ('ok' by default, or 'cancelled'), which a test can change while it runs.
+ */
+export async function fakeAppLock(page: Page, behavior: { available?: boolean } = {}) {
+  await page.addInitScript(({ available }) => {
+    const w = window as unknown as { __TM_APP_LOCK__: unknown; __lockCalls: number; __lockMode: string }
+    w.__lockCalls = 0
+    w.__lockMode = 'ok'
+    w.__TM_APP_LOCK__ = {
+      async isAvailable() { return { available: available ?? true } },
+      async authenticate() {
+        w.__lockCalls++
+        if (w.__lockMode !== 'ok') throw Object.assign(new Error(w.__lockMode), { code: w.__lockMode })
+      },
+    }
+  }, behavior)
+}
+
+export const setLockMode = (page: Page, mode: 'ok' | 'cancelled') =>
+  page.evaluate(value => { (window as unknown as { __lockMode: string }).__lockMode = value }, mode)

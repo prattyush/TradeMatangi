@@ -17,7 +17,7 @@ interface AuthValue {
   status: AuthStatus
   account: string | null
   signInWithPassword(email: string, password: string): Promise<void>
-  signInWithGoogle(idToken: string, accountName?: string): Promise<void>
+  signInWithGoogle(idToken: string, accountName?: string, label?: string): Promise<void>
   signOut(): Promise<void>
 }
 const AuthContext = createContext<AuthValue | null>(null)
@@ -65,8 +65,8 @@ function AuthProvider({ services, children }: { services: AppServices; children:
       setAccount(await services.auth.accountLabel())
       setStatus('signedIn')
     },
-    async signInWithGoogle(idToken, accountName) {
-      await services.auth.signInWithGoogle(idToken, accountName)
+    async signInWithGoogle(idToken, accountName, label) {
+      await services.auth.signInWithGoogle(idToken, accountName, label)
       setAccount(await services.auth.accountLabel())
       setStatus('signedIn')
     },

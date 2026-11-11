@@ -10,12 +10,22 @@ export type SessionState = 'signedIn' | 'signedOut'
 
 export class SignInError extends Error {}
 
+/** A Google account the server does not know yet: it needs a name for the new account (the website asks the same). */
+export class AccountNameRequired extends Error {
+  constructor() { super('Choose a name for your new account.') }
+}
+
 export interface AuthService {
   /** Load the saved session. No network: the first request refreshes the access token. */
   restore(): Promise<SessionState>
   signInWithPassword(email: string, password: string): Promise<void>
-  /** Sign in with a Google ID token from the native Google sign-in (Sprint 2). */
-  signInWithGoogle(idToken: string, accountName?: string): Promise<void>
+  /**
+   * Sign in with a Google ID token from the native Google sign-in. A Google account the server has not seen needs
+   * `accountName`; without it this throws `AccountNameRequired` (the server answers 401 for both "bad token" and
+   * "new account", so the first 401 without a name is read as the second; a 401 with a name is a rejected token).
+   * `label` is the text shown for the account (the Google email).
+   */
+  signInWithGoogle(idToken: string, accountName?: string, label?: string): Promise<void>
   signOut(): Promise<void>
   /** Short text for the signed-in account (the email used to sign in), or null. */
   accountLabel(): Promise<string | null>
@@ -24,13 +34,15 @@ export interface AuthService {
 export function createAuthService(deps: { client: ApiClient; tokens: TokenStore; prefs: KeyValueStore }): AuthService {
   const { client, tokens, prefs } = deps
 
-  async function adoptBundle(request: () => Promise<TokenBundle>, label: string | null): Promise<void> {
+  async function adoptBundle(request: () => Promise<TokenBundle>, label: string | null, rejected?: (error: ApiError) => Error): Promise<void> {
     let bundle: TokenBundle
     try {
       bundle = await request()
     } catch (error) {
-      if (error instanceof ApiError && error.kind === 'http' && error.status === 401)
+      if (error instanceof ApiError && error.kind === 'http' && error.status === 401) {
+        if (rejected) throw rejected(error)
         throw new SignInError(error.detail && error.detail !== 'Not authenticated' ? error.detail : 'Invalid email or password.')
+      }
       if (error instanceof ApiError && error.kind === 'http' && error.status === 422) throw new SignInError('Enter your email and password.')
       throw error
     }
@@ -51,11 +63,16 @@ export function createAuthService(deps: { client: ApiClient; tokens: TokenStore;
         trimmed,
       )
     },
-    signInWithGoogle(idToken, accountName) {
+    signInWithGoogle(idToken, accountName, label) {
+      const name = accountName?.trim()
+      if (accountName !== undefined && !name) return Promise.reject(new SignInError('Enter a name for your account.'))
       return adoptBundle(
         () => client.post<TokenBundle>('/api/auth/desktop/google-token',
-          { id_token: idToken, account_name: accountName, device_name: DEVICE_NAME }, { auth: false, retries: 0 }),
-        null,
+          { id_token: idToken, account_name: name, device_name: DEVICE_NAME }, { auth: false, retries: 0 }),
+        label ?? null,
+        () => name
+          ? new SignInError('The server did not accept this Google sign-in. Try again; if it keeps failing, use your email and password.')
+          : new AccountNameRequired(),
       )
     },
     async signOut() {

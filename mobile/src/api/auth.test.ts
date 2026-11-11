@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createAuthService, SignInError } from './auth'
+import { AccountNameRequired, createAuthService, SignInError } from './auth'
 import { createApiClient } from './transport'
 import { createMemoryStore } from './storage'
 import { createTokenStore } from './tokenStore'
@@ -51,6 +51,34 @@ describe('auth service', () => {
     await auth.signInWithGoogle('google-id-token', 'Pratt')
     expect(calls[0]).toEqual({ url: '/api/auth/desktop/google-token', body: { id_token: 'google-id-token', account_name: 'Pratt', device_name: 'Android phone app' } })
     expect(tokens.hasSession()).toBe(true)
+  })
+
+  it('remembers the Google email as the account label', async () => {
+    const { auth } = setup(() => json(bundle))
+    await auth.signInWithGoogle('google-id-token', undefined, 'me@gmail.com')
+    expect(await auth.accountLabel()).toBe('me@gmail.com')
+  })
+
+  it('asks for an account name when the server does not know the Google account, then signs in with it', async () => {
+    let known = false
+    const { auth, calls, tokens } = setup((_url, init) => {
+      const body = JSON.parse(String(init.body))
+      if (!known && !body.account_name) return json({ detail: 'Invalid Google token or account_name required' }, 401)
+      return json(bundle)
+    })
+    await expect(auth.signInWithGoogle('google-id-token')).rejects.toBeInstanceOf(AccountNameRequired)
+    expect(tokens.hasSession()).toBe(false)
+    await auth.signInWithGoogle('google-id-token', '  Pratt ')
+    expect(calls[1].body).toEqual({ id_token: 'google-id-token', account_name: 'Pratt', device_name: 'Android phone app' })
+    expect(tokens.hasSession()).toBe(true)
+  })
+
+  it('reports a rejected Google token once a name was supplied, and refuses a blank name without calling the server', async () => {
+    const { auth, calls } = setup(() => json({ detail: 'Invalid Google token or account_name required' }, 401))
+    await expect(auth.signInWithGoogle('t', 'Pratt')).rejects.toThrow(/did not accept/)
+    const before = calls.length
+    await expect(auth.signInWithGoogle('t', '   ')).rejects.toThrow(/Enter a name/)
+    expect(calls).toHaveLength(before)
   })
 
   it('restores a saved session without calling the network', async () => {
