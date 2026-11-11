@@ -30,3 +30,7 @@
 .live-status { position: absolute; left: 8px; bottom: 34px; z-index: 5; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 90px); padding: 4px 10px; border-radius: var(--radius); background: rgba(13, 17, 23, 0.88); border: 1px solid var(--border); font-size: 12px; color: var(--muted); }
 .live-status[data-phase='error'] { color: var(--bad); border-color: var(--bad); }
 .live-status .btn { min-height: 32px; padding: 0 10px; }
+
+/* Max Price lives in the strike menu; this is the error state with its two ways out. */
+.browse-max-error { flex-direction: column; gap: 10px; }
+.browse-max-error .sheet-actions { position: static; padding: 0; }

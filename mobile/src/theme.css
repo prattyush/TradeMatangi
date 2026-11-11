@@ -189,6 +189,8 @@ input[type='date'] {
 }
 .menu-list button[aria-checked='true'] { color: var(--accent); font-weight: 600; background: var(--panel-2); }
 .menu-list small { color: var(--muted); font-size: 11px; }
+.menu-list .menu-action { position: sticky; top: -4px; z-index: 1; background: var(--panel); border-bottom: 1px solid var(--border); }
+.menu-list .menu-action button { color: var(--accent); }
 .segmented { display: inline-flex; flex: 0 0 auto; }
 .segmented button {
   min-height: 36px; padding: 0 10px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);

@@ -88,3 +88,55 @@ const MAX_RECENTS = 6
 export function withRecent(recents: string[], symbol: string): string[] {
   return [symbol, ...recents.filter(item => item !== symbol)].slice(0, MAX_RECENTS)
 }
+
+// ── CE and PE each have their own strike ──────────────────────────────────────
+
+export type OptionRight = 'CE' | 'PE'
+
+/** How one side (CE or PE) picks its contract: a strike from the ladder, or the first strike whose premium is at or below a cap. */
+export interface RightPick {
+  mode: 'manual' | 'max_price'
+  strike: number | null
+  /** The premium cap in rupees; only used in Max Price mode. */
+  cap: number | null
+}
+
+export const emptyPicks = (): Record<OptionRight, RightPick> => ({
+  CE: { mode: 'manual', strike: null, cap: null },
+  PE: { mode: 'manual', strike: null, cap: null },
+})
+
+/** Keep `current` while it is still listed; otherwise the strike in the middle of the ladder (nearest the money). */
+export function keepStrike(current: number | null, ladder: number[]): number | null {
+  if (!ladder.length) return current
+  return current !== null && ladder.includes(current) ? current : ladder[Math.floor(ladder.length / 2)]
+}
+
+/** A premium cap typed by the user: a positive number, else null. */
+export function parseCap(text: string): number | null {
+  const value = Number(text.trim())
+  return text.trim() !== '' && Number.isFinite(value) && value > 0 ? Math.round(value * 100) / 100 : null
+}
+
+/** The underlying's price at this time of day picks the strikes searched (as the ladder does), so Max Price uses the same moment. */
+export const MAX_PRICE_REFERENCE_TIME = '09:30:00'
+export const PREPARE_PATH = '/api/desktop/v1/trading/prepare-session'
+
+/** Body for the server's session preparation, the same Max Price search the desktop picker uses (one option pane). */
+export function maxPriceRequest(symbol: string, date: string, expiry: string, right: OptionRight, cap: number) {
+  return {
+    mode: 'browse', date, reference_time: MAX_PRICE_REFERENCE_TIME,
+    panes: [{ id: 'browse', kind: 'option', symbol, interval: '3', tradingDate: date, expiry, strike: '', right, selection_mode: 'max_price', max_price: cap }],
+  }
+}
+
+export interface PreparedPane { pane: { strike: string }; availability: 'available' | 'waiting' | 'unavailable' | 'error'; reason: string | null; premium: number | null }
+
+/** The strike and premium the server found, or an Error carrying its reason. */
+export function readMaxPrice(response: { panes?: PreparedPane[] } | null | undefined): { strike: number; premium: number | null } {
+  const pane = response?.panes?.[0]
+  if (!pane) throw new Error('The server returned no strike')
+  const strike = Number(pane.pane?.strike)
+  if ((pane.availability === 'available' || pane.availability === 'waiting') && Number.isFinite(strike) && strike > 0) return { strike, premium: pane.premium }
+  throw new Error(pane.reason ?? 'No strike was found for this premium cap')
+}

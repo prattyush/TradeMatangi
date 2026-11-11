@@ -107,8 +107,114 @@ test('CE shows the option chart for the day\'s expiry at the strike nearest the 
   await expect.poll(() => dataRequests(state).filter(r => r.path.endsWith('data/options-historical')).at(-1)!.query.get('strike')).toBe(target)
   await page.getByRole('button', { name: 'PE', exact: true }).click()
   await expect.poll(() => dataRequests(state).filter(r => r.path.endsWith('data/options-historical')).at(-1)!.query.get('right')).toBe('PE')
-  // The strike is kept when switching side.
-  expect(dataRequests(state).filter(r => r.path.endsWith('data/options-historical')).at(-1)!.query.get('strike')).toBe(target)
+  // PE has its own strike: it starts nearest the money, not at the CE strike that was just moved up.
+  const optionRequests = () => dataRequests(state).filter(r => r.path.endsWith('data/options-historical'))
+  expect(optionRequests().at(-1)!.query.get('strike')).toBe(first.query.get('strike'))
+  // Moving PE does not move CE, and going back to CE finds the strike chosen there.
+  await page.getByRole('button', { name: /^Strike:/ }).click()
+  const peTarget = String(Number(first.query.get('strike')) - 150)
+  await page.getByRole('menu', { name: 'Strike' }).getByRole('menuitemradio', { name: peTarget, exact: true }).click()
+  await expect.poll(() => optionRequests().at(-1)!.query.get('strike')).toBe(peTarget)
+  // (An already loaded chart comes from the cache, so the proof is the strike shown.)
+  await page.getByRole('button', { name: 'CE', exact: true }).click()
+  await expect(page.getByRole('button', { name: `Strike: ${target}` })).toBeVisible()
+  await page.getByRole('button', { name: 'PE', exact: true }).click()
+  await expect(page.getByRole('button', { name: `Strike: ${peTarget}` })).toBeVisible()
+})
+
+/** Max price lives in the strike menu; while it is still searching (or failed) there is a pill for the cap instead. */
+async function openMax(page: Page) {
+  const pill = page.getByRole('button', { name: /^Max price: / })
+  if (await pill.count()) await pill.click()
+  else {
+    await page.getByRole('button', { name: /^Strike:/ }).click()
+    const item = page.getByRole('menuitem', { name: /^Max price/ })
+    await expect(item).toBeInViewport() // pinned above the 43 strikes, not scrolled away with them
+    await item.click()
+  }
+}
+const maxRequests = (state: MockServer) => state.requests.filter(r => r.path === '/api/desktop/v1/trading/prepare-session')
+const optionRequests = (state: MockServer) => dataRequests(state).filter(r => r.path.endsWith('data/options-historical'))
+
+test('Max price finds the strike for each side from a premium cap, and looks it up again for another day', async ({ page }) => {
+  const state = await openBrowse(page)
+  await page.getByRole('button', { name: 'CE', exact: true }).click()
+  await expect(page.getByRole('button', { name: /^Strike:/ })).toBeVisible()
+  await openMax(page)
+  const sheet = page.getByRole('dialog', { name: 'CE max price' })
+  await expect(sheet.getByRole('group', { name: 'Premium cap presets' }).getByRole('button')).toHaveCount(6) // the NIFTY presets
+  await expect(sheet.getByRole('button', { name: 'Use' })).toBeDisabled()
+  await sheet.getByRole('button', { name: '₹50' }).click()
+  await expect(sheet.getByLabel('Premium cap (₹)')).toHaveValue('50')
+  await sheet.getByRole('button', { name: 'Use' }).click()
+  await expect(sheet).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /^Strike:/ })).toContainText('≤₹50')
+  await expect.poll(() => optionRequests(state).at(-1)!.query.get('strike')).toBe('24600') // the mock's CE answer for 9 Nov
+  const asked = maxRequests(state).at(-1)!
+  expect(asked.authorization).toBe('Bearer access-token-1')
+  expect(asked.body).toMatchObject({ mode: 'browse', reference_time: '09:30:00', panes: [{ kind: 'option', symbol: 'NIFTY', right: 'CE', selection_mode: 'max_price', max_price: 50, expiry: '2026-11-13' }] })
+  // PE is independent: still manual, and its own cap finds its own strike.
+  await page.getByRole('button', { name: 'PE', exact: true }).click()
+  await expect(page.getByRole('button', { name: /^Strike:/ })).not.toContainText('≤')
+  await openMax(page)
+  await page.getByRole('dialog', { name: 'PE max price' }).getByLabel('Premium cap (₹)').fill('75')
+  await page.getByRole('dialog', { name: 'PE max price' }).getByRole('button', { name: 'Use' }).click()
+  await expect.poll(() => optionRequests(state).at(-1)!.query.get('right')).toBe('PE')
+  await expect.poll(() => optionRequests(state).at(-1)!.query.get('strike')).toBe('24200')
+  expect(maxRequests(state).at(-1)!.body).toMatchObject({ panes: [{ right: 'PE', max_price: 75 }] })
+  // Back on CE the cap is still 50; another day is searched again with that cap.
+  await page.getByRole('button', { name: 'CE', exact: true }).click()
+  await expect(page.getByRole('button', { name: /^Strike:/ })).toContainText('≤₹50')
+  const before = maxRequests(state).length
+  await page.getByRole('button', { name: 'Previous day' }).click()
+  await expect.poll(() => maxRequests(state).length).toBeGreaterThan(before)
+  expect(maxRequests(state).at(-1)!.body).toMatchObject({ panes: [{ right: 'CE', max_price: 50 }] })
+  expect((maxRequests(state).at(-1)!.body as { date: string }).date).toBe('2026-11-06')
+})
+
+test('Max price can go back to a manual strike', async ({ page }) => {
+  const state = await openBrowse(page)
+  await page.getByRole('button', { name: 'PE', exact: true }).click()
+  await openMax(page)
+  await page.getByRole('dialog', { name: 'PE max price' }).getByLabel('Premium cap (₹)').fill('30')
+  await page.getByRole('dialog', { name: 'PE max price' }).getByRole('button', { name: 'Use' }).click()
+  await expect.poll(() => optionRequests(state).at(-1)!.query.get('strike')).toBe('24200')
+  // Picking a strike from the menu leaves Max price.
+  await page.getByRole('button', { name: /^Strike:/ }).click()
+  await page.getByRole('menu', { name: 'Strike' }).getByRole('menuitemradio', { name: '24300', exact: true }).click()
+  await expect(page.getByRole('button', { name: /^Strike:/ })).not.toContainText('≤')
+  await expect.poll(() => optionRequests(state).at(-1)!.query.get('strike')).toBe('24300')
+  const calls = maxRequests(state).length
+  await page.getByRole('button', { name: 'Previous day' }).click()
+  await expect.poll(() => optionRequests(state).at(-1)!.query.get('strike')).toBe('24300')
+  expect(maxRequests(state).length).toBe(calls) // manual mode asks nothing
+})
+
+test('Max price says why no strike was found and offers a manual strike', async ({ page }) => {
+  const state = await openBrowse(page, s => { s.maxPriceFail = 'No observed premium at or below the cap within 30 strikes' })
+  await page.getByRole('button', { name: 'CE', exact: true }).click()
+  await openMax(page)
+  await page.getByRole('dialog', { name: 'CE max price' }).getByLabel('Premium cap (₹)').fill('1')
+  await page.getByRole('dialog', { name: 'CE max price' }).getByRole('button', { name: 'Use' }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'No observed premium' })).toBeVisible()
+  await expect(chart(page)).toHaveCount(0)
+  state.maxPriceFail = undefined
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(chart(page)).toBeVisible()
+  state.maxPriceFail = 'No observed premium at or below the cap within 30 strikes'
+  await page.getByRole('button', { name: 'Previous day' }).click()
+  await page.getByRole('button', { name: 'Manual strike' }).click()
+  await expect(chart(page)).toBeVisible()
+  await expect(page.getByRole('button', { name: /^Strike:/ })).not.toContainText('≤')
+})
+
+test('an older server without session preparation says Max price is not available', async ({ page }) => {
+  await openBrowse(page, s => { s.maxPriceOld = true })
+  await page.getByRole('button', { name: 'CE', exact: true }).click()
+  await openMax(page)
+  await page.getByRole('dialog', { name: 'CE max price' }).getByLabel('Premium cap (₹)').fill('50')
+  await page.getByRole('dialog', { name: 'CE max price' }).getByRole('button', { name: 'Use' }).click()
+  await expect(page.getByText('Max price is not available on this server')).toBeVisible()
 })
 
 test('a day without listed options says why instead of showing a chart', async ({ page }) => {
@@ -159,6 +265,25 @@ for (const viewport of VIEWPORTS) {
       const plot = (await page.locator('.analysis-kline').boundingBox())!
       expect(plot.height).toBeGreaterThanOrEqual(viewport.height - 60)
       for (const name of [/^Symbol:/, 'Previous day', /^Day:/, 'Spot', 'CE', 'PE', /^Strike:/]) {
+        const box = (await page.getByRole('button', { name }).first().boundingBox())!
+        expect(box.height).toBeGreaterThanOrEqual(36)
+        expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
+      }
+    })
+
+    test('with Max price on (its cap shown) and Live the control row still fits one row', async ({ page }) => {
+      await openBrowse(page)
+      await page.getByRole('button', { name: 'Next day' }).click()
+      await page.getByRole('button', { name: 'PE', exact: true }).click()
+      await openMax(page)
+      await page.getByRole('dialog', { name: 'PE max price' }).getByLabel('Premium cap (₹)').fill('125.5')
+      await page.getByRole('dialog', { name: 'PE max price' }).getByRole('button', { name: 'Use' }).click()
+      await expect(page.getByRole('button', { name: /^Strike:/ })).toContainText('≤₹125.5')
+      await page.getByRole('button', { name: /^Live/ }).click()
+      await expect(chart(page)).toBeVisible()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0)
+      expect((await page.locator('.desktop-analysis-chart header').boundingBox())!.height).toBeLessThanOrEqual(48)
+      for (const name of [/^Live/, /^Strike:/]) {
         const box = (await page.getByRole('button', { name }).first().boundingBox())!
         expect(box.height).toBeGreaterThanOrEqual(36)
         expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
