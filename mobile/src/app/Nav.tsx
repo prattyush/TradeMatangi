@@ -3,8 +3,8 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { isNativeApp } from '../api/storage'
 import { useToast } from '../shell/Toast'
 
-// Positions joins the rail in phase 2 (docs/spec-phase24-android-plan.md).
-export type Tab = 'sessions' | 'stats' | 'browse' | 'videos' | 'more'
+// Swing joined the rail in phase 2 (docs/spec-phase24-phone-swing-plan.md).
+export type Tab = 'sessions' | 'stats' | 'browse' | 'swing' | 'videos' | 'more'
 export const ROOT_TAB: Tab = 'sessions'
 
 /** A back handler returns true when it dealt with the press (for example a sheet closed). */

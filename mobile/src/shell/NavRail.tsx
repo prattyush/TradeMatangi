@@ -5,6 +5,7 @@ export const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'sessions', label: 'Sessions' },
   { id: 'stats', label: 'Stats' },
   { id: 'browse', label: 'Browse' },
+  { id: 'swing', label: 'Swing' },
   { id: 'videos', label: 'Videos' },
   { id: 'more', label: 'More' },
 ]
