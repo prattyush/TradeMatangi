@@ -747,6 +747,28 @@ for(const right of ['CE','PE'])test(`production ${right} right-click menu and ti
   expect(await page.evaluate(()=>(window as any).submittedTicket)).toMatchObject({ticket:{sessionId:'session',paneId:1,right,strike:24000,expiry:'2026-10-20',orderType:'LIMIT'},quantity:1});
 });
 
+test('production ticket switches between Qty, Capital % and Risk % for one order',async({page})=>{
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({menuHarness:true,paneType:'options',right:'CE',strike:24000,expiry:'2026-10-20',openOrders:[]}));
+  await page.waitForSelector('.website-kline canvas');
+  const open=async()=>{const rect=await page.locator('.kline').boundingBox();await page.mouse.click(rect!.x+250,rect!.y+150,{button:'right'});await page.getByText(/^Use as SL @/).click()};
+  await open();
+  const ticket=page.getByRole('dialog',{name:'Chart entry ticket'});
+  await expect(ticket.getByRole('button',{name:'Use fixed quantity for this order'})).toHaveAttribute('aria-pressed','true');
+  await ticket.getByRole('button',{name:'Use Risk % for this order'}).click();
+  await expect(ticket.getByRole('button',{name:'Risk 2%',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Limit',exact:true}).click();
+  await ticket.getByRole('button',{name:'Risk 2%',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).submittedTicket)).toMatchObject({quantity:null,riskRatioPct:2});
+  await open();
+  await ticket.getByRole('button',{name:'Use Capital % for this order'}).click();
+  await expect(ticket.getByRole('button',{name:'Capital 12%',exact:true})).toBeVisible();
+  await ticket.getByRole('button',{name:'Use fixed quantity for this order'}).click();
+  await page.getByRole('button',{name:'Limit',exact:true}).click();
+  await ticket.getByRole('button',{name:'Qty 5',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).submittedTicket)).toMatchObject({quantity:5});
+});
+
 test('website appearance settings apply two moving averages and hide symbol/OHLC without trading writes', async ({ page }) => {
   await page.goto('/tests/phase22/harness.html');
   await page.waitForSelector('.website-kline canvas');

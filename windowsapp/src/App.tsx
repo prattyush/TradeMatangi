@@ -39,7 +39,7 @@ import { StepInput } from './StepInput'
 import { availableExitQuantity, isStopOrder, orderBusy, orderPosition } from './orderEditing'
 import { retainedPanes, compactLayout, type PreparedSession } from './sessionPreparation'
 import { FloatingOrderWindow, type FloatingOrderDraft } from './FloatingOrderWindow'
-import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing } from './ticketSizing'
+import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing, ticketQuantityTiers, TICKET_SIZING_CHOICES } from './ticketSizing'
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
@@ -2709,7 +2709,7 @@ function ScreenController(props: ScreenControllerProps) {
   },[connection,realDay?.state,realDay?.date,serverUrl,browserToken]);
   useEffect(() => { if (trading?.session.state === 'ended') setRealClosing(false); else if (typeof trading?.session.real_closing === 'boolean') setRealClosing(trading.session.real_closing) }, [trading?.session.state, trading?.session.real_closing])
   useEffect(() => { setSnapshotsActive(Boolean(sharedPreferences.auto_start_event_snapshots) && !companion) }, [trading?.session.session_id, companion, sharedPreferences.auto_start_event_snapshots])
-  const ticketSizeOptions = () => tradeTicket?.orderType !== 'TARGET_PERCENT' && tradeTicket?.settings?.desktop_order_size_mode === 'quantity' ? ['1', '2', '3'] : ['l', 'm', 'h']
+  const ticketSizeOptions = () => tradeTicket?.orderType !== 'TARGET_PERCENT' && tradeTicket?.settings?.desktop_order_size_mode === 'quantity' ? ticketQuantityTiers(tradeTicket.settings).map(String) : ['l', 'm', 'h']
   const ticketSizeLabel = (key: string) => tradeTicket?.settings ? tradeTicket.orderType === 'TARGET_PERCENT' ? ticketSizingLabel({...tradeTicket.settings,desktop_order_size_mode:'risk_ratio'},key).replace('Risk','Target') : ticketSizingLabel(tradeTicket.settings,key) : ''
   const orderTypeLabel = (orderType: ChartOrderType) => orderType === 'TARGET_PERCENT' ? 'Target %' : orderType === 'MARKET' ? 'M' : orderType === 'LIMIT' ? 'L' : orderType === 'TARGET' ? 'T' : orderType === 'AUTO_STOP_LIMIT' ? 'ASL' : 'AS'
   const submitTicketWhenReady = (ticket: TradeTicket) => {
@@ -2844,10 +2844,8 @@ function ScreenController(props: ScreenControllerProps) {
     {tradeTicket && <div className="trade-ticket trade-ticket-sizing" style={placeNearPoint(tradeTicket.anchor.x, tradeTicket.anchor.y, 280, 280)}>
       <header><strong>{tradeTicket.side} SL</strong><button onClick={() => { setTradeTicket(null); setPricePickAction(null) }}>x</button></header>
       <div className="ticket-row"><span>Stoploss</span><b>{tradeTicket.slPrice.toFixed(2)}</b></div>
-      {tradeTicket.orderType !== 'TARGET_PERCENT' && tradeTicket.settings.desktop_order_size_mode !== 'quantity' && <div className="ticket-sizing-toggle">
-        <span>Risk %</span>
-        <button type="button" role="switch" aria-label="Use Capital % instead of Risk % for this order" aria-checked={tradeTicket.settings.desktop_order_size_mode === 'funds_ratio'} onClick={() => setTradeTicket(switchTicketSizing(tradeTicket, tradeTicket.settings.desktop_order_size_mode === 'funds_ratio' ? 'risk_ratio' : 'funds_ratio'))}><span /></button>
-        <span>Capital %</span>
+      {tradeTicket.orderType !== 'TARGET_PERCENT' && <div className="ticket-sizing-modes" role="group" aria-label="Entry sizing mode">
+        {TICKET_SIZING_CHOICES.map(([choice, label, title]) => <button key={choice} type="button" title={title} aria-label={title} aria-pressed={tradeTicket.settings.desktop_order_size_mode === choice} onClick={() => setTradeTicket(switchTicketSizing(tradeTicket, choice))}>{label}</button>)}
       </div>}
       {tradeTicket.settings && <div className="ticket-picker">
         <div className="ticket-buttons">{(['MARKET', 'LIMIT', 'TARGET', 'TARGET_PERCENT', 'AUTO_STOP', 'AUTO_STOP_LIMIT'] as const).map(orderType => <button key={orderType} title={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : orderType === 'AUTO_STOP' ? 'Auto Stop Order' : orderType} aria-label={orderType === 'AUTO_STOP_LIMIT' ? 'Auto Stop Order Limit' : orderTypeLabel(orderType)} className={tradeTicket.orderType === orderType ? 'active' : ''} onClick={() => chooseTicketOrderType(orderType)}>{orderTypeLabel(orderType)}</button>)}</div>
