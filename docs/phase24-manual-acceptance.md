@@ -59,7 +59,9 @@ Volume (#801):
 
 ## H. Browse on the website and webapp (added 2026-11-12)
 1. Open the website (and the installed webapp) with no session running: it opens on **Browse**, two panes (NIFTY and SENSEX). With a paper or real session running it opens on Trading as before.
-2. In a pane's header, the button (symbol, day, contract) opens its panel: change the **symbol**, the **day** (‹ › step over weekends; the date box), **Spot | CE | PE**; for an option pick a **strike** or **Max price** with a premium cap. Two panes can show different symbols on different days side by side.
+1b. Change Settings → Trading Chart between Lightweight and KLine: Browse follows it (Lightweight charts with the Indicators / Draw toolbar, or KLine charts with the shared drawing rail at the left).
+1c. Every chart shows its time axis along the bottom (Lightweight and KLine, in every layout including 5 panes).
+2. In a pane's header, the button (symbol, day, contract) opens its panel: change the **symbol**, the **day** (‹ › step over weekends; or open the calendar: the month arrows only move between months, nothing reloads until you click a day), **Spot | CE | PE**; for an option pick a **strike** or **Max price** with a premium cap. Two panes can show different symbols on different days side by side.
 3. The header's layout box has the website's layouts (1, 2, 3, 4, 5 equal, 5 wide right, 4 as 1+3). **← Trading** goes to the session screen, **📈 Browse** returns.
 4. An index or share pane at 3 minutes: scroll the chart to the left edge repeatedly: older days load back to about a year (1-minute stops at 90 days; move the pane's day to look further back). Option panes keep their few days.
 5. Reload the page: the same panes, symbols, days, strikes and intervals are back.

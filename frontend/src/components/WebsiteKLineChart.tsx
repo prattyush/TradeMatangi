@@ -494,6 +494,7 @@ export default function WebsiteKLineChart(
           onDrawingError={reportError}
           hideInstrumentPicker
           hideMaximizeButton={!props.onMaximize}
+          headerStart={props.headerStart}
           onConfigure={() => {}}
           onMaximize={() => props.onMaximize?.()}
           maximized={props.isMaximized ?? false}

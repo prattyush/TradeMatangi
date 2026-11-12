@@ -13,7 +13,7 @@ import {
   announceDrawingChange as localAnnounce,
   watchDrawingChanges as localWatch,
 } from "./drawingEvents";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDismissMessage } from "./useDismissMessage";
 import {
   dispose,
@@ -318,6 +318,7 @@ export function KLineChart({
   candleAnchorSeconds = 0,
   hideInstrumentPicker = false,
   hideMaximizeButton = false,
+  headerStart,
   onTogglePanel,
   onToggleIndicator,
   onSelectDrawingTool,
@@ -402,6 +403,8 @@ export function KLineChart({
   candleAnchorSeconds?: number;
   hideInstrumentPicker?: boolean;
   hideMaximizeButton?: boolean;
+  /** Browse: a control placed first in the chart's own header row (no row of its own). */
+  headerStart?: ReactNode;
   onTogglePanel?: () => void;
   onToggleIndicator?: (name: string) => void;
   onSelectDrawingTool?: (tool: string) => void;
@@ -2472,6 +2475,7 @@ export function KLineChart({
     >
       <div className="chart-head">
         <span>
+          {headerStart}
           {tradingSettings?.desktop_hide_chart_labels
             ? ""
             : supportedIntervals.length

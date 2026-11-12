@@ -4,6 +4,7 @@ import { SymbolSearch, type SymbolChoice } from '../../../../shared/SymbolSearch
 import { formatBrowseDate, parseCap } from '../../../../shared/browse/browseModel.ts'
 import { premiumPresetsFor, withSavedPremium } from '../../../../shared/optionPremiumPresets'
 import { paneTitle, stepPaneDate, withDate, withSymbol, type BrowsePane } from '../../services/browseWorkspace'
+import { BrowseCalendar } from './BrowseCalendar'
 import type { PaneContract } from './usePaneContract'
 
 const button: React.CSSProperties = { background: '#21262d', border: '1px solid #30363d', color: '#e5e7eb', borderRadius: 5, padding: '3px 8px', fontSize: 12, cursor: 'pointer' }
@@ -22,6 +23,7 @@ export function BrowsePaneMenu({ pane, symbols, today, contract, onChange, open,
   const anchor = useRef<HTMLButtonElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const [place, setPlace] = useState<{ left: number; top: number }>({ left: 0, top: 0 })
+  const [calendarOpen, setCalendarOpen] = useState(false)
   const info = symbols.find(item => item.symbol === pane.symbol)
   const optionEligible = info?.option_eligible !== false
   const capText = useRef(pane.pick.cap != null ? String(pane.pick.cap) : '')
@@ -62,10 +64,10 @@ export function BrowsePaneMenu({ pane, symbols, today, contract, onChange, open,
             <span>Day</span>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <button type="button" style={button} aria-label="Previous day" onClick={() => onChange(stepPaneDate(pane, -1, today))}>‹</button>
-              <input type="date" aria-label="Day" max={today} value={pane.date} style={{ flex: 1, background: '#0d1117', color: 'inherit', border: '1px solid #30363d', borderRadius: 4, padding: '3px 6px' }}
-                onChange={event => { const value = event.target.value; if (/^\d{4}-\d{2}-\d{2}$/.test(value) && value <= today) onChange(withDate(pane, value)) }} />
+              <button type="button" aria-label="Choose a day" aria-expanded={calendarOpen} style={{ ...button, flex: 1 }} onClick={() => setCalendarOpen(value => !value)}>{formatBrowseDate(pane.date)} {pane.date.slice(0, 4)} ▾</button>
               <button type="button" style={button} aria-label="Next day" disabled={pane.date >= today} onClick={() => onChange(stepPaneDate(pane, 1, today))}>›</button>
             </div>
+            {calendarOpen && <BrowseCalendar selected={pane.date} latest={today} onPick={iso => { onChange(withDate(pane, iso)); setCalendarOpen(false) }} />}
           </div>
           <div role="group" aria-label="Contract" style={{ display: 'flex', gap: 6 }}>
             {(['spot', 'CE', 'PE'] as const).map(kind => (
