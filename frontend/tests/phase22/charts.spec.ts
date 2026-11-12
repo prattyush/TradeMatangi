@@ -520,6 +520,29 @@ test('KLine respects authoritative and unavailable website P&L', async ({page}) 
   await expect(page.locator('.position-pnl-label')).toHaveText('-5.00%');
 });
 
+test('KLine bar P&L shows the day milestone and can be hidden', async ({page}) => {
+  await page.goto('/tests/phase22/harness.html');
+  await page.waitForSelector('.website-kline canvas');
+  await page.waitForFunction(() => (window as any).chart().getDataList().length > 0);
+  const milestones = (aggregatePnl:number) => (window as any).setProps({pnl:999,pnlAvailable:true,sessionCapital:100000,aggregatePnl,pnlDisplay:{mode:'milestones',maxWinPct:9,maxLossPct:6,showBarLabel:true}});
+  await page.evaluate(milestones, 2000);
+  await expect(page.locator('.position-pnl-label')).toHaveText('—');
+  await page.evaluate(milestones, 3000);
+  await expect(page.locator('.position-pnl-label')).toHaveText('Win 1/3');
+  await page.evaluate(milestones, 6500);
+  await expect(page.locator('.position-pnl-label')).toHaveText('Win 2/3');
+  await page.evaluate(milestones, -4000);
+  await expect(page.locator('.position-pnl-label')).toHaveText('Loss 2/3');
+  await page.evaluate(milestones, -9000);
+  await expect(page.locator('.position-pnl-label')).toHaveText('Max loss');
+  await page.evaluate(() => (window as any).setProps({pnlDisplay:{mode:'milestones',maxWinPct:9,maxLossPct:6,showBarLabel:false}}));
+  await expect(page.locator('.position-pnl-label')).toHaveCount(0);
+  await page.evaluate(() => (window as any).setProps({pnlDisplay:{mode:'currency',maxWinPct:9,maxLossPct:6,showBarLabel:false}}));
+  await expect(page.locator('.position-pnl-label')).toHaveCount(0);
+  await page.evaluate(() => (window as any).setProps({pnl:123.45,pnlDisplay:{mode:'currency',maxWinPct:9,maxLossPct:6,showBarLabel:true}}));
+  await expect(page.locator('.position-pnl-label')).toHaveText('+123.45');
+});
+
 test('inactive-pane tools activate their own chart before drawing', async ({page}) => {
   await page.goto('/tests/phase22/harness.html');
   await page.waitForSelector('.website-kline canvas');

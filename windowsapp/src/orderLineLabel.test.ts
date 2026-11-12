@@ -20,6 +20,11 @@ describe('orderLineLabel', () => {
     const short = { ...position, side: 'SHORT', quantity: 50 } as DesktopPosition
     expect(orderLineLabel(order({ side: 'BUY', quantity: 25, trigger_price: 110 }), short, percent, 10000)).toBe('SL 25 -2.5% | -5.0%')
   })
+  it('shows no P&L at all in Milestones mode', () => {
+    const milestones = { desktop_pnl_display_mode: 'milestones' } as DesktopTradingSettings
+    expect(orderLineLabel(order(), position, milestones, 20000, 110, 1000, 0)).toBe('SL 40')
+    expect(orderLineLabel(order({ order_type: 'LIMIT', is_stoploss: false, limit_price: 110, quantity: 100 }), position, milestones, 20000)).toBe('L 100')
+  })
   it('keeps the plain label for non-exit orders', () => {
     expect(orderLineLabel(order({ side: 'BUY', order_type: 'LIMIT', quantity: 75 }), position, percent, 20000)).toBe('BL 75')
   })

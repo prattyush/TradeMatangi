@@ -27,7 +27,7 @@ import { contractPosition, unrealizedPnl } from './services/positionAccounting'
 import { applyRecoveryEvent, pruneRecoveryNotices, RecoveryNotices } from './services/protectionRecoveryState'
 import { IndicatorHistoryRequests } from './services/tradingChartState'
 import { startPerformanceDiagnostics, recordPerformance } from './services/performanceDiagnostics'
-import { formatPnl } from './pnlFormat'
+import { formatPnlDisplay, pnlDisplayColor } from './pnlFormat'
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
 import { BROWSE_HEADER_SLOT } from './components/browse/browseSlot'
@@ -44,7 +44,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import SessionSwitcher from './components/SessionSwitcher'
 import GuardRailPopup from './components/GuardRailPopup'
-import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, QuantityTiers, GuardRailSettingsLocal, loadSizingMode, loadRiskRatios, loadQuantityTiers, loadDefaultSlPct } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, QuantityTiers, GuardRailSettingsLocal, loadSizingMode, loadRiskRatios, loadQuantityTiers, loadDefaultSlPct } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, OpenOptionContract, BrokerOrder } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -281,7 +281,6 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
-  const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
   const strategySyncVersionRef = useRef(0)
@@ -546,6 +545,9 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
 
   // ── Per-user chart/alert preferences: target P&L lines, candle sound, MAX SIZE alert ──
   const tradingDisplay = useTradingDisplaySettings()
+  const pnlDisplay = tradingDisplay.pnl
+  const pnlPctMode = pnlDisplay.mode === 'percent'
+  const milestonesMode = pnlDisplay.mode === 'milestones'
   const candleAlertClock = useMemo<CandleAlertClock>(() => {
     if (!sim.sessionId || (sim.sessionState !== 'running' && sim.sessionState !== 'paused')) return { kind: 'off' }
     if (sim.sessionType === 'sim') return { kind: 'market', time: sim.latestEquityTick?.time }
@@ -2015,6 +2017,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           pnl={draft ? 0 : getPnlForPane(pane)}
           pnlAvailable={sim.sessionType !== 'real' || getPositionForPane(pane).side === 'FLAT' || getTickForPane(pane) !== null}
           pnlPctMode={pnlPctMode}
+          pnlDisplay={pnlDisplay}
           pnlTargetLevels={tradingDisplay.pnlTargetLevels}
           sessionCapital={draft ? 0 : sim.sessionCapital}
           brokeragePerOrder={sim.brokeragePerOrder}
@@ -2256,13 +2259,13 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             <span style={{ color: '#8b949e' }}>Day P&L</span>
             <span style={{
               fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-              color: totalDayPnl > 0 ? '#26a641' : totalDayPnl < 0 ? '#f85149' : '#8b949e',
+              color: pnlDisplayColor(totalDayPnl, pnlDisplay, sim.sessionCapital, totalDayPnl),
             }}>
-              {formatPnl(totalDayPnl, pnlPctMode, sim.sessionCapital)}
+              {formatPnlDisplay(totalDayPnl, pnlDisplay, sim.sessionCapital, totalDayPnl)}
             </span>
-            {sim.prevDayPnl !== 0 && (
+            {sim.prevDayPnl !== 0 && !milestonesMode && (
               <span style={{ color: '#484f58', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
-                (prev {formatPnl(sim.prevDayPnl, pnlPctMode, sim.sessionCapital)})
+                (prev {formatPnlDisplay(sim.prevDayPnl, pnlDisplay, sim.sessionCapital, totalDayPnl)})
               </span>
             )}
           </div>
@@ -2525,7 +2528,6 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             setAggrSlOnlyInProfit(onlyInProfit)
           }}
           onHistoricalDaysChange={setHistoricalDays}
-          onPnlPctModeChange={setPnlPctMode}
           onGuardRailSettingsChange={setGuardRailSettings}
           onAutoStartSnapshotsChange={setAutoStartSnapshots}
           onStepwiseLabelingPopupChange={setStepwiseLabelingPopup}
@@ -2751,6 +2753,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             activeRight={instrumentType === 'options' ? activeRight : undefined}
             activeLabel={activeLabel}
             pnlPctMode={pnlPctMode}
+            pnlDisplay={pnlDisplay}
+            dayPnl={totalDayPnl}
             sessionCapital={sim.sessionCapital}
             positionMarginRate={instrumentType === 'equity' ? 0.2 : 1}
             sizingMode={sizingMode}
@@ -2777,16 +2781,16 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
                 <span style={{ color: '#8b949e' }}>Combined P&L</span>
                 <span style={{
                   marginLeft: 'auto', fontWeight: 700, fontSize: 14,
-                  color: sim.pnl > 0 ? '#26a641' : sim.pnl < 0 ? '#f85149' : '#8b949e',
+                  color: pnlDisplayColor(sim.pnl, pnlDisplay, sim.sessionCapital, totalDayPnl),
                   fontVariantNumeric: 'tabular-nums',
                 }}>
-                  {pnlPctMode && sim.sessionCapital > 0
+                  {milestonesMode ? formatPnlDisplay(sim.pnl, pnlDisplay, sim.sessionCapital, totalDayPnl) : pnlPctMode && sim.sessionCapital > 0
                     ? `${sim.pnl >= 0 ? '+' : ''}${((sim.pnl / sim.sessionCapital) * 100).toFixed(2)}%`
                     : `${sim.pnl >= 0 ? '+' : ''}${sim.pnl.toFixed(2)}`
                   }
                 </span>
               </div>
-              {combinedPnlOpen && !idle && (
+              {combinedPnlOpen && !idle && !milestonesMode && (
                 <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options' ? (
                     openOptionContracts.length > 0
@@ -2929,6 +2933,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             roundTrips={roundTrips}
             labels={tradeLabels}
             pnlPctMode={pnlPctMode}
+            hidePnl={milestonesMode}
             sessionCapital={sim.sessionCapital}
           />
         </div>

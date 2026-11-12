@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { formatPnlDisplay, pnlDisplayColor, type PnlDisplayConfig } from '../pnlFormat'
 import { Position } from '../services/api'
 import { SessionState, PendingExitRt, ActiveEntryStrategy } from '../hooks/useSimulation'
 import PendingLabelPanel from './PendingLabelPanel'
@@ -15,6 +16,9 @@ interface Props {
   activeLabel?: string               // e.g. "NIFTY CE 24000"
   // P&L display mode
   pnlPctMode?: boolean
+  /** Milestones mode shows the DAY level (from dayPnl) in place of every number here. */
+  pnlDisplay?: PnlDisplayConfig
+  dayPnl?: number
   positionMarginRate?: number
   sessionCapital?: number
   sizingMode?: 'quantity' | 'fundsRatio' | 'riskRatio'
@@ -40,7 +44,7 @@ function fmt(n: number) { return n.toFixed(2) }
 
 export default function TradePanel({
   sessionState, currentPrice, position, pnl, sessionPnl,
-  pnlAvailable = true, activeRight = null, activeLabel, pnlPctMode, sessionCapital, sizingMode, positionMarginRate = 1,
+  pnlAvailable = true, activeRight = null, activeLabel, pnlPctMode, pnlDisplay, dayPnl, sessionCapital, sizingMode, positionMarginRate = 1,
   sessionId,
   pendingExitLabels = [],
   openLegs = [],
@@ -49,10 +53,14 @@ export default function TradePanel({
   onSaveEntry,
   onSaveExit,
 }: Props) {
-  const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
-  const sessionPnlColor = (sessionPnl ?? 0) > 0 ? '#26a641' : (sessionPnl ?? 0) < 0 ? '#f85149' : '#8b949e'
+  const milestones = pnlDisplay?.mode === 'milestones'
+  const capital = sessionCapital ?? 0
+  const levelColor = milestones ? pnlDisplayColor(0, pnlDisplay!, capital, dayPnl ?? sessionPnl ?? 0) : null
+  const pnlColor = levelColor ?? (pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e')
+  const sessionPnlColor = levelColor ?? ((sessionPnl ?? 0) > 0 ? '#26a641' : (sessionPnl ?? 0) < 0 ? '#f85149' : '#8b949e')
 
   const fmtPnl = (val: number) => {
+    if (milestones) return formatPnlDisplay(val, pnlDisplay!, capital, dayPnl ?? sessionPnl ?? 0)
     if (pnlPctMode && sessionCapital && sessionCapital > 0) {
       const pct = (val / sessionCapital) * 100
       return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`

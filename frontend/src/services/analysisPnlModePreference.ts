@@ -9,7 +9,9 @@ export function cachedAnalysisPnlMode(): AnalysisPnlMode {
   try { return localStorage.getItem(BROWSER_KEY) === 'true' ? 'percent' : 'currency' } catch { return 'currency' }
 }
 /** Remembers the server value (`desktop_pnl_display_mode`) and tells every mounted Label Trades view. */
-export function publishAnalysisPnlMode(value: unknown) {
+export function publishAnalysisPnlMode(raw: unknown) {
+  // Milestones is a trading-screen mode only; Label Trades and the other Analysis views stay in rupees.
+  const value = raw === 'milestones' ? 'currency' : raw
   if (!isAnalysisPnlMode(value)) return
   cached = value
   window.dispatchEvent(new CustomEvent(analysisPnlModeEvent, { detail: value }))

@@ -1,4 +1,6 @@
 import { bindChartMenu, ChartMenuButton, useChartMenuGesture, type MenuPoint } from '../../../shared/charts/ChartMenuGesture'
+import { pnlMilestone } from '../../../shared/pnlMilestone'
+import type { PnlDisplaySettings } from '../hooks/useTradingDisplaySettings'
 import { snapSwingPrice, swingOrderTick } from '../../../shared/swingOrderPrice'
 import { flashError } from '../services/notifications'
 import { recordPerformance } from '../services/performanceDiagnostics'
@@ -122,6 +124,8 @@ export interface Props {
   // Position for this pane — used to annotate stoploss label with projected P&L
   position?: Position
   pnlPctMode?: boolean
+  /** P&L display settings: Milestones mode shows the DAY level, and the bar label can be switched off. */
+  pnlDisplay?: PnlDisplaySettings
   /** Comma-separated target day-P&L values from Settings → Display. */
   pnlTargetLevels?: string
   sessionCapital?: number
@@ -485,6 +489,7 @@ export default function Chart({
   currentSimTime,
   position,
   pnlPctMode,
+  pnlDisplay,
   pnlTargetLevels: pnlTargetLevelsSetting,
   sessionCapital,
   brokeragePerOrder = 0,
@@ -1412,7 +1417,9 @@ export default function Chart({
       const price = orderDisplayPrice(order)
       let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
 
-      if (isExitOrderForPosition(order, position)) {
+      if (isExitOrderForPosition(order, position) && pnlDisplay?.mode === 'milestones') {
+        label = `${orderLineTypeLabel(order)} ${order.quantity}`
+      } else if (isExitOrderForPosition(order, position)) {
         label = exitOrderLineLabel(orderLineTypeLabel(order), price, order.quantity, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder)
       }
 
@@ -1430,7 +1437,7 @@ export default function Chart({
         }
       } catch { /* disposed */ }
     }
-  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close, brokeragePerOrder])
+  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, pnlDisplay?.mode, sessionCapital, aggregatePnl, latestTick?.close, brokeragePerOrder])
 
   // Running profit strategies use their own lines, separate from pending orders.
   useEffect(() => {
@@ -1563,8 +1570,14 @@ export default function Chart({
   const [pnlCoord, setPnlCoord] = useState<{ x: number; y: number } | null>(null)
 
   const hasPosition = position && position.side !== 'FLAT'
-  const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
+  const milestoneMode = pnlDisplay?.mode === 'milestones'
+  const dayMilestone = milestoneMode ? pnlMilestone(aggregatePnl ?? 0, sessionCapital ?? 0, pnlDisplay.maxLossPct, pnlDisplay.maxWinPct) : null
+  const pnlColor = dayMilestone
+    ? (dayMilestone.tone === 'win' ? '#26a641' : dayMilestone.tone === 'loss' ? '#f85149' : '#8b949e')
+    : pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
+  const showBarPnl = pnlDisplay?.showBarLabel !== false
   const fmtPnlValue = () => {
+    if (dayMilestone) return pnlAvailable && aggregatePnl !== undefined ? dayMilestone.text : '—'
     if (!pnlAvailable) return '—'
     if (pnlPctMode && sessionCapital && sessionCapital > 0) {
       const pct = (pnl / sessionCapital) * 100
@@ -1670,7 +1683,7 @@ export default function Chart({
   }, [positionLevels, positionAnchorTime, latestTick?.time, currentSimTime, intervalSecs])
   // Day-total target lines: drawn by a second primitive, which (like the position levels) never feeds autoscale.
   const targetMarkPrice = latestTick?.close ?? liveWindowRef.current?.close
-  const pnlTargetValues = useMemo(() => showPnlTargets ? parsePnlTargets(pnlTargetLevelsSetting) : [], [showPnlTargets, pnlTargetLevelsSetting])
+  const pnlTargetValues = useMemo(() => showPnlTargets && pnlDisplay?.mode !== 'milestones' ? parsePnlTargets(pnlTargetLevelsSetting) : [], [showPnlTargets, pnlTargetLevelsSetting, pnlDisplay?.mode])
   const targetPnlLevels = useMemo(() => pnlTargetValues.length && positionLevelsMatch && aggregatePnl !== undefined && targetMarkPrice !== undefined && pnlAvailable !== false
     ? pnlTargetLevels(position, targetMarkPrice, aggregatePnl, sessionCapital ?? 0, brokeragePerOrder, pnlTargetValues, pnlPctMode ? 'percent' : 'currency')
     : [], [pnlTargetValues, positionLevelsMatch, aggregatePnl, targetMarkPrice, pnlAvailable, position?.side, position?.quantity, position?.avg_entry_price, position?.entry_commission, sessionCapital, brokeragePerOrder, pnlPctMode])
@@ -1980,7 +1993,7 @@ export default function Chart({
         </div>
       )}
 
-      {hasPosition && pnlCoord && (
+      {hasPosition && pnlCoord && showBarPnl && (
         <div style={{
           position: 'absolute',
           left: pnlCoord.x,

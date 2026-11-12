@@ -72,6 +72,10 @@ DEFAULT_SETTINGS: dict = {
     "desktop_hide_chart_labels": False,
     "desktop_order_size_mode": "quantity",
     "desktop_pnl_display_mode": "currency",
+    # Milestones P&L display: the day P&L is shown as thirds of this win target (% of capital).
+    "pnl_max_win_pct": 10.0,
+    # Show the live position's P&L above the current bar on the chart.
+    "show_bar_pnl_label": True,
     # Comma-separated target day P&L values (% of capital or rupees, per display mode).
     "pnl_target_levels": "",
     "candle_alert_enabled": False,

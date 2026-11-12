@@ -867,6 +867,10 @@ def _snapshot(session, user_id: str) -> DesktopTradingSnapshot:
             "desktop_hide_chart_labels": settings.get("desktop_hide_chart_labels", False),
             "desktop_order_size_mode": settings.get("desktop_order_size_mode", "quantity"),
             "desktop_pnl_display_mode": settings.get("desktop_pnl_display_mode", "currency"),
+            "pnl_max_win_pct": settings.get("pnl_max_win_pct", 10.0),
+            "show_bar_pnl_label": settings.get("show_bar_pnl_label", True),
+            # Max loss for the Milestones P&L display is the GuardRails capital loss limit.
+            "guardrail_ban_capital_pct": settings.get("guardrail_ban_capital_pct", 10.0),
             "pnl_target_levels": settings.get("pnl_target_levels", ""),
             "desktop_confirm_flatten": settings.get("desktop_confirm_flatten", True),
             "context_menu_sl_mode": settings.get("context_menu_sl_mode", "longOnly"),
