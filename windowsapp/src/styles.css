@@ -242,6 +242,9 @@ input { width: 160px; }
 .ticket-sizing-toggle button span { display: block; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
 .ticket-sizing-toggle button[aria-checked="true"] { background: #1d4ed8; }
 .ticket-sizing-toggle button[aria-checked="true"] span { transform: translateX(14px); }
+.ticket-sizing-modes { display: flex; gap: 4px; }
+.ticket-sizing-modes button { flex: 1; padding: 3px 4px; font-size: .72rem; white-space: nowrap; }
+.ticket-sizing-modes button[aria-pressed="true"] { background: #1f3a5f; color: #79c0ff; border-color: #388bfd; }
 .ticket-size-label { display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .trade-ticket-sizing { box-sizing: border-box; width: 280px; max-width: calc(100vw - 16px); max-height: calc(100vh - 64px); overflow-y: auto; }
 
