@@ -1761,6 +1761,9 @@ def test_session_sizing_is_captured_once_and_display_settings_stay_live(mode):
         assert first.settings["desktop_order_size_mode"] == later.settings["desktop_order_size_mode"] == "funds_ratio"
         assert later.settings["funds_ratio_h_pct"] == .12
         assert later.settings["desktop_pnl_display_mode"] == "percent"
+        with patch.object(desktop_trading, "get_settings", return_value={**changed, "desktop_pnl_display_mode": "milestones", "pnl_max_win_pct": 7.5, "show_bar_pnl_label": False, "guardrail_ban_capital_pct": 6.0}):
+            live = desktop_trading._snapshot(session, session.user_id).settings
+        assert (live["desktop_pnl_display_mode"], live["pnl_max_win_pct"], live["show_bar_pnl_label"], live["guardrail_ban_capital_pct"]) == ("milestones", 7.5, False, 6.0)
         other = _equity_session(session_id=f"new-sizing-{mode}", mode=mode)
         with patch.object(desktop_trading, "get_settings", return_value=changed):
             assert desktop_trading._snapshot(other, other.user_id).settings["desktop_order_size_mode"] == "risk_ratio"

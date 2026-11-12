@@ -270,7 +270,9 @@ export interface UserSettingsResponse {
   target_deviation_configured?: boolean
   stoploss_limit_gap_pct?: number
   desktop_order_size_mode?: 'quantity' | 'funds_ratio' | 'risk_ratio'
-  desktop_pnl_display_mode?: 'currency' | 'percent'
+  desktop_pnl_display_mode?: 'currency' | 'percent' | 'milestones'
+  pnl_max_win_pct?: number
+  show_bar_pnl_label?: boolean
   pnl_target_levels?: string
   candle_alert_enabled?: boolean
   candle_alert_interval_min?: number

@@ -292,3 +292,12 @@ it('uses the current-day Paper ledger in Browse and the selected ledger in tradi
     '2026-10-04'
   )
 })
+
+describe('P&L display settings', () => {
+  it('offers Milestones with its max win and the bar-label switch in General', () => {
+    const general = sharedSettingsSections.General
+    expect(general.find((field) => field.key === 'desktop_pnl_display_mode')?.options).toEqual(['currency', 'percent', 'milestones'])
+    expect(general.find((field) => field.key === 'pnl_max_win_pct')).toMatchObject({ type: 'number', min: 1, max: 100 })
+    expect(general.find((field) => field.key === 'show_bar_pnl_label')?.type).toBe('boolean')
+  })
+})
