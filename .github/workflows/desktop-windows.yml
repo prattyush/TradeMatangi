@@ -55,11 +55,20 @@ jobs:
             if ($attempt -lt $max) { Start-Sleep -Seconds (30 * $attempt) }
           }
           exit 1
+      # The installed app finds ffmpeg.exe next to its own exe, put there by the installer, so the
+      # installer is what is checked. tauri-build also copies ffmpeg.exe into target/release; that copy
+      # went missing when the runner's Rust moved from 1.99 to 1.100 (the build still succeeded), so
+      # it only warns.
       - name: Check ffmpeg is bundled
         shell: bash
         run: |
-          test -f src-tauri/target/release/ffmpeg.exe
-          ls -l src-tauri/target/release/bundle/nsis/*.exe
+          installer=$(ls src-tauri/target/release/bundle/nsis/*.exe | head -n 1)
+          ls -l "$installer"
+          if [ ! -f src-tauri/target/release/ffmpeg.exe ]; then
+            echo "::warning::src-tauri/target/release/ffmpeg.exe was not copied by tauri-build; checking the installer itself"
+            find src-tauri/target -name 'ffmpeg*.exe' -not -path '*/bundle/*' | head -n 5
+          fi
+          "/c/Program Files/7-Zip/7z.exe" l "$installer" | tee installer-files.txt | grep -i 'ffmpeg\.exe'
       - uses: actions/upload-artifact@v4
         with:
           name: TradeMatangi-Charts-Windows-installer
