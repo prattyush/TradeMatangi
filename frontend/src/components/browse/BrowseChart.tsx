@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import TradingChartHost from '../TradingChartHost'
+import { useWebsiteChartRenderer } from '../../hooks/useWebsiteChartRenderer'
 import type { BrowsePane } from '../../services/browseWorkspace'
 import { useBrowseCandles } from './useBrowseCandles'
 
@@ -13,19 +14,31 @@ export function BrowseChart({ pane, ready, active, onActivate, onInterval, onMax
   onMaximize: () => void; isMaximized: boolean; header: ReactNode
 }) {
   const element = useRef<HTMLDivElement>(null)
+  const renderer = useWebsiteChartRenderer()
   const [height, setHeight] = useState(360)
+  // The chart gets the pane's height. The Lightweight chart draws its toolbar above the height it is given, so that toolbar
+  // (which can wrap on a narrow pane) is taken off, or the time axis at the bottom would be cut off. KLine's height is the whole chart.
   useEffect(() => {
-    if (!element.current) return
+    const box = element.current
+    if (!box) return
     let frame: number | undefined
-    const observer = new ResizeObserver(entries => {
-      const available = entries[0]?.contentRect.height
-      if (!available || available <= 0) return
-      if (frame !== undefined) cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(() => { frame = undefined; setHeight(previous => (previous === Math.floor(available) ? previous : Math.floor(available))) })
-    })
-    observer.observe(element.current)
-    return () => { observer.disconnect(); if (frame !== undefined) cancelAnimationFrame(frame) }
-  }, [])
+    let watched: Element | null = null
+    const measure = () => {
+      frame = undefined
+      const bar = box.querySelector<HTMLElement>('[data-chart-toolbar]')
+      if (bar && bar !== watched) { watched = bar; observer.observe(bar) }
+      const used = renderer === 'lightweight' ? (bar?.offsetHeight ?? 34) + 2 : 0
+      const next = Math.max(120, Math.floor(box.clientHeight - used))
+      setHeight(previous => (previous === next ? previous : next))
+    }
+    const schedule = () => { if (frame === undefined) frame = requestAnimationFrame(measure) }
+    const observer = new ResizeObserver(schedule)
+    observer.observe(box)
+    // The toolbar appears after the first render of the chart: measure again once it has.
+    const timers = [60, 300, 1000].map(delay => setTimeout(schedule, delay))
+    schedule()
+    return () => { observer.disconnect(); timers.forEach(clearTimeout); if (frame !== undefined) cancelAnimationFrame(frame) }
+  }, [renderer, pane.symbol, pane.kind, pane.interval])
   const data = useBrowseCandles(pane, pane.interval, ready)
   const spot = pane.kind === 'spot'
   return (

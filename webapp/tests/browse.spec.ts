@@ -30,6 +30,21 @@ async function mockBrowse(page: Page, renderer: 'lightweight' | 'kline' = 'light
   return seen
 }
 const pane = (page: Page, index: number) => page.locator('[data-pane]').nth(index)
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+/** Choose a day in the pane menu's calendar: open it, move month by month to the right month, click the day. */
+async function pickDay(page: Page, iso: string) {
+  const menu = page.getByRole('dialog', { name: 'Pane settings' })
+  await menu.getByRole('button', { name: 'Choose a day' }).click()
+  const calendar = menu.getByRole('group', { name: 'Choose a day' })
+  const [year, month, day] = iso.split('-').map(Number)
+  const wanted = `${MONTHS[month - 1]} ${year}`
+  for (let step = 0; step < 36 && (await calendar.locator('strong').innerText()) !== wanted; step++) {
+    const shown = (await calendar.locator('strong').innerText()).split(' ')
+    const behind = Number(shown[1]) * 12 + MONTHS.indexOf(shown[0]) > year * 12 + month - 1
+    await calendar.getByRole('button', { name: behind ? 'Previous month' : 'Next month' }).click()
+  }
+  await calendar.getByRole('button', { name: new RegExp(`\\b${day} ${MONTHS[month - 1]} ${year}$`) }).click()
+}
 const history = (seen: Seen[]) => seen.filter(item => item.path.endsWith('/data/historical'))
 
 test('the header Browse button goes to Trading and back, and the layout choice lives in that same header row', async ({ page }) => {
@@ -108,7 +123,7 @@ for (const renderer of ['lightweight', 'kline'] as const) {
     await menu.getByRole('combobox', { name: 'Symbol' }).click()
     await menu.getByRole('combobox', { name: 'Symbol' }).fill('reliance')
     await page.getByRole('option', { name: 'Reliance Industries' }).click()
-    await menu.getByLabel('Day', { exact: true }).fill('2026-10-01')
+    await pickDay(page, '2026-10-01')
     await expect(page.getByRole('button', { name: /^Pane: RELIND · / })).toBeVisible()
     await expect.poll(() => history(seen).some(item => item.query.get('symbol') === 'RELIND' && item.query.get('trading_date') === '2026-10-01')).toBe(true)
     // The first pane is untouched: same symbol, its own day.
@@ -164,7 +179,7 @@ for (const renderer of ['lightweight', 'kline'] as const) {
     await menu.getByRole('combobox', { name: 'Symbol' }).click()
     await menu.getByRole('combobox', { name: 'Symbol' }).fill('tata power')
     await page.getByRole('option', { name: 'Tata Power' }).click()
-    await menu.getByLabel('Day', { exact: true }).fill('2026-10-02')
+    await pickDay(page, '2026-10-02')
     await page.keyboard.press('Escape')
     const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('tradematangi_browse_alice')!))
     expect(saved.layout).toBe(3)
@@ -235,3 +250,52 @@ test('KLine in Browse draws the saved support/resistance lines of its instrument
   await page.keyboard.press('Delete')
   await expect.poll(() => calls.some(call => call === 'DELETE /api/desktop/v1/drawings/d1')).toBe(true)
 })
+
+
+test('the calendar waits: month arrows move between months and nothing loads until a day is clicked', async ({ page }) => {
+  const seen = await mockBrowse(page)
+  await page.addInitScript(() => localStorage.setItem('tradematangi_browse_alice', JSON.stringify({
+    layout: 1, maximized: null,
+    panes: [{ id: 1, symbol: 'NIFTY', kind: 'spot', date: '2026-11-11', expiry: null, strike: null, pick: { mode: 'manual', cap: null }, interval: 3 }],
+  })))
+  await page.goto(app)
+  await expect(page.getByRole('button', { name: /^Pane: NIFTY/ })).toBeVisible()
+  await expect.poll(() => history(seen).length).toBeGreaterThan(0)
+  const before = history(seen).length
+  await page.getByRole('button', { name: /^Pane: NIFTY/ }).click()
+  const menu = page.getByRole('dialog', { name: 'Pane settings' })
+  await menu.getByRole('button', { name: 'Choose a day' }).click()
+  const calendar = menu.getByRole('group', { name: 'Choose a day' })
+  await expect(calendar.locator('strong')).toHaveText('November 2026')
+  await calendar.getByRole('button', { name: 'Previous month' }).click()
+  await expect(calendar.locator('strong')).toHaveText('October 2026')
+  await calendar.getByRole('button', { name: 'Previous month' }).click()
+  await expect(calendar.locator('strong')).toHaveText('September 2026')
+  await page.waitForTimeout(600)
+  // Still the same day, the same chart, and no request was made for another day.
+  await expect(page.getByRole('button', { name: /^Pane: NIFTY · .*11 Nov/ })).toBeVisible()
+  expect(history(seen).length).toBe(before)
+  // Weekends and days after today cannot be chosen.
+  await expect(calendar.getByRole('button', { name: /\b5 September 2026/ })).toBeDisabled()
+  await calendar.getByRole('button', { name: /\b2 September 2026/ }).click()
+  await expect(page.getByRole('button', { name: /^Pane: NIFTY · Wed 2 Sep/ })).toBeVisible()
+  await expect.poll(() => history(seen).some(item => item.query.get('trading_date') === '2026-09-02')).toBe(true)
+})
+
+for (const renderer of ['lightweight', 'kline'] as const) {
+  test(`the ${renderer} chart keeps its time axis inside the pane`, async ({ page }) => {
+    await mockBrowse(page, renderer)
+    await page.goto(app)
+    await expect(page.locator('[data-pane] canvas').first()).toBeVisible()
+    await page.waitForTimeout(1500)
+    for (const index of [0, 1]) {
+      const box = (await pane(page, index).boundingBox())!
+      const chart = renderer === 'kline' ? pane(page, index).locator('.website-kline') : pane(page, index).locator('.tv-lightweight-charts')
+      const chartBox = (await chart.first().boundingBox())!
+      expect(chartBox.y + chartBox.height).toBeLessThanOrEqual(box.y + box.height + 1)
+      // The time axis is the last strip of the chart: its canvas is inside the pane too.
+      const canvases = await pane(page, index).locator('canvas').evaluateAll(list => list.map(item => { const r = item.getBoundingClientRect(); return r.bottom }))
+      expect(Math.max(...canvases)).toBeLessThanOrEqual(box.y + box.height + 1)
+    }
+  })
+}
