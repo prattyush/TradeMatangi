@@ -56,6 +56,11 @@ Volume (#801):
 6. Same replay on the desktop (Indicators > Volume); also check a Swing chart on a stock (Volume appears with the daily candles).
 7. Live and real sessions show history volume only; the forming candle has no volume yet (B2, not built). If a live candle shows a huge or zero-only volume, report it.
 
+VWAP and Lightweight volume (added 2026-11-14, `feat/vwap-volume-charts`):
+8. KLine, stock or option: Indicators > VWAP draws a line **over the candles** (not in a pane of its own); Volume still has its own pane. On a daily (1D) Swing chart VWAP draws nothing. `NIFTY` offers neither. Do this on the website, the desktop (trading and Swing) and the phone Browse.
+9. Website Settings > Trading Chart = Lightweight: on a stock or option chart, Indicators lists **VWAP** and **Volume** (off by default; `NIFTY` lists neither). Turn both on: a purple VWAP line and volume bars in the bottom fifth of the pane. VWAP restarts at each day's 09:15 (look at a chart that shows two days). Switch to KLine and back: the choice is kept. In a replay or stepwise session the forming bar's volume bar grows and the VWAP point moves with it; pause, resume and interval change must not double a bar.
+10. Analysis (Lightweight): Trade Analysis, Walkthrough, What If and Label Trades charts have the same two items in Indicators; the choice is shared across them and kept after a reload. The Snapshot viewer has no indicator menu.
+
 
 ## H. Browse on the website and webapp (added 2026-11-12)
 1. Open the website (and the installed webapp) with no session running: it opens on **Browse**, two panes (NIFTY and SENSEX). With a paper or real session running it opens on Trading as before.

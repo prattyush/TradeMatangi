@@ -14,6 +14,7 @@ import type { AnalysisTrade, OHLCCandle } from '../../../../shared/analysis/api'
 import { rendererAccountKey } from '../../services/websiteChartPreferences'
 import { LightweightChartTools, useLightweightTools, type LightweightTools } from './LightweightChartTools'
 import { lightweightDrawingKey } from './lightweightDrawings'
+import { toVolumeCandles } from '../../indicators/volumeStudies'
 function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
   if (!trade.right) return trade.side
   if (trade.right === 'CE') return trade.side === 'BUY' ? 'BUY' : 'SELL'
@@ -185,13 +186,14 @@ export function WebsiteAnalysisChart({
     if (!seriesRef.current || !symbol || !date) return
     let cancelled = false
     setHistoryState('loading');setLoadedInterval(null)
-    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([])
+    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([]);tools.setVolumeData([])
     tradeMarkerPoolRef.current.forEach(marker=>{try{chartRef.current?.removeSeries(marker)}catch{}});tradeMarkerPoolRef.current=[]
     ;(async () => {
       try {
-        const toCandle = (c: OHLCCandle): CandlestickData => ({
+        const toCandle = (c: OHLCCandle): CandlestickData & { volume?: number | null } => ({
           time: c.time as Time,
           open: c.open, high: c.high, low: c.low, close: c.close,
+          volume: c.volume,
         })
         const [histResp, tradingDayCandles] = await Promise.all([
           api.getHistorical(symbol, date, intervalMinutes, historicalDays),
@@ -203,7 +205,7 @@ export function WebsiteAnalysisChart({
           ...histResp.candles.map(toCandle),
           ...tradingDayCandles.map(toCandle),
         ]
-        const byTime = new Map<number, CandlestickData>()
+        const byTime = new Map<number, CandlestickData & { volume?: number | null }>()
         all.forEach(c => byTime.set(c.time as number, c))
         const sorted = Array.from(byTime.values()).sort(
           (a, b) => (a.time as number) - (b.time as number)
@@ -211,6 +213,7 @@ export function WebsiteAnalysisChart({
         setLoadedInterval(intervalMinutes);setHistoryState(sorted.length?'ready':'empty')
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
+          tools.setVolumeData(toVolumeCandles(sorted))
 
           const closes = sorted.map(c => c.close)
           const ema9Vals = computeEMA(closes, 9)
@@ -444,18 +447,19 @@ export function WebsiteOptionsChart({
     if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
     let cancelled = false
     setHistoryState('loading');setLoadedInterval(null)
-    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([])
+    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([]);tools.setVolumeData([])
     tradeMarkerPoolRef.current.forEach(marker=>{try{chartRef.current?.removeSeries(marker)}catch{}});tradeMarkerPoolRef.current=[]
     ;(async () => {
       try {
-        const toCandle = (c: OHLCCandle): CandlestickData => ({
+        const toCandle = (c: OHLCCandle): CandlestickData & { volume?: number | null } => ({
           time: c.time as Time,
           open: c.open, high: c.high, low: c.low, close: c.close,
+          volume: c.volume,
         })
         const histResp = await api.getOptionsHistorical(symbol, date, strike, expiry, right, intervalMinutes, historicalDays)
         if (cancelled || !seriesRef.current) return
 
-        const byTime = new Map<number, CandlestickData>()
+        const byTime = new Map<number, CandlestickData & { volume?: number | null }>()
         histResp.candles.map(toCandle).forEach(c => byTime.set(c.time as number, c))
         const sorted = Array.from(byTime.values()).sort(
           (a, b) => (a.time as number) - (b.time as number)
@@ -463,6 +467,7 @@ export function WebsiteOptionsChart({
         setLoadedInterval(intervalMinutes);setHistoryState(sorted.length?'ready':'empty')
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
+          tools.setVolumeData(toVolumeCandles(sorted))
 
           const closes = sorted.map(c => c.close)
           const ema9Vals = computeEMA(closes, 9)

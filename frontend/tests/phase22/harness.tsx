@@ -19,12 +19,15 @@ import { init } from "klinecharts";
 const w = window as any;
 const base = Date.parse("2026-10-16T09:15:00Z") / 1000;
 const prior = base - 86400;
+// An index has no volume; `?volume=1` gives the candles volume, like a stock or an option.
+const withVolume = new URLSearchParams(location.search).get("volume") === "1";
 const history = Array.from({ length: 70 }, (_, i) => ({
   time: prior + i * 180,
   open: 100 + Math.sin(i),
   high: 104 + Math.sin(i),
   low: 97 + Math.sin(i),
   close: 101 + Math.sin(i),
+  ...(withVolume ? { volume: 1000 + (i % 5) * 300 } : {}),
 }));
 const today = Array.from({ length: 12 }, (_, i) => ({
   time: base + i * 180,
@@ -32,6 +35,7 @@ const today = Array.from({ length: 12 }, (_, i) => ({
   high: 104 + i,
   low: 97 + i,
   close: 101 + i,
+  ...(withVolume ? { volume: 1500 + (i % 4) * 200 } : {}),
 }));
 const order = {
   order_id: "o1",

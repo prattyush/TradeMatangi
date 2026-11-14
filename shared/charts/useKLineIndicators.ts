@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type MutableRefObject } from "react";
 import { registerExtensions } from "react-klinecharts-ui/extensions";
 import type { Chart } from "klinecharts";
-import { allIndicators, volumeIndicators } from "./catalogue";
+import { allIndicators, indicatorUnavailable, overlayIndicators } from "./catalogue";
 
 /** `PositionPnL` only makes sense on a live trading chart. */
 export const analysisIndicators = allIndicators.filter(
@@ -33,16 +33,17 @@ const write = (key: string, names: string[]) => {
   }
 };
 
-export function applyAnalysisIndicators(chart: Chart, names: string[], options: { hasVolume?: boolean } = {}) {
+export function applyAnalysisIndicators(chart: Chart, names: string[], options: { hasVolume?: boolean; interval?: string } = {}) {
   ensureKLineExtensions();
   chart.removeIndicator();
   names.forEach((name) => {
     // An index has no traded volume: an empty VOL pane or a VWAP of zeros would mislead. Unspecified keeps every indicator.
-    if (options.hasVolume === false && volumeIndicators.includes(name)) return;
+    if (indicatorUnavailable(name, options)) return;
     if (name === "MA")
       chart.createIndicator({ name: "MA", calcParams: [5, 10, 20], paneId: "candle_pane" }, true);
     else if (name === "EMA")
       chart.createIndicator({ name: "EMA", calcParams: [9, 21], paneId: "candle_pane" }, true);
+    else if (overlayIndicators.includes(name)) chart.createIndicator({ name, paneId: "candle_pane" }, true);
     else chart.createIndicator(name);
   });
 }
@@ -51,17 +52,18 @@ export function applyAnalysisIndicators(chart: Chart, names: string[], options: 
  * Indicator selection for an Analysis KLine chart, persisted in localStorage
  * under `storageKey`. Call after the chart has been created.
  */
-export function useKLineIndicators(chartRef: MutableRefObject<Chart | null>, storageKey: string, options: { hasVolume?: boolean } = {}) {
+export function useKLineIndicators(chartRef: MutableRefObject<Chart | null>, storageKey: string, options: { hasVolume?: boolean; interval?: string } = {}) {
   const [state, setState] = useState(() => ({ key: storageKey, names: read(storageKey) }));
   // The key changes when one chart instance switches between underlying and option contracts.
   const names = state.key === storageKey ? state.names : read(storageKey);
   if (state.key !== storageKey) setState({ key: storageKey, names });
   const signature = names.join("|");
   const hasVolume = options.hasVolume;
+  const interval = options.interval;
   useEffect(() => {
     const chart = chartRef.current;
-    if (chart) applyAnalysisIndicators(chart, names, { hasVolume });
-  }, [signature, hasVolume]);
+    if (chart) applyAnalysisIndicators(chart, names, { hasVolume, interval });
+  }, [signature, hasVolume, interval]);
   const update = useCallback(
     (next: (current: string[]) => string[]) =>
       setState((current) => {

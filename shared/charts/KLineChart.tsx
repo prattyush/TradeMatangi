@@ -43,7 +43,7 @@ import {
 } from "./positionPnlLevels";
 import { orderLineLabel, orderPrice } from "./orderLineLabel";
 import { TradingOverlayRegistry } from "./tradingOverlays";
-import { drawingTools, indicatorLabel, volumeIndicators } from "./catalogue";
+import { drawingTools, indicatorLabel, indicatorUnavailable, overlayIndicators } from "./catalogue";
 
 interface ChartSettings {
   background: string;
@@ -1083,8 +1083,10 @@ export function KLineChart({
           },
           true,
         );
-      } else if (volumeIndicators.includes(indicator) && !hasVolume) {
-        // Indices report no traded volume; an empty VOL pane or a VWAP of zeros would mislead.
+      } else if (indicatorUnavailable(indicator, { hasVolume, interval })) {
+        // Indices report no traded volume; an empty VOL pane or a VWAP of zeros would mislead. VWAP on daily bars is just the typical price.
+      } else if (overlayIndicators.includes(indicator)) {
+        chart.createIndicator({ name: indicator, paneId: "candle_pane" }, true);
       } else if (indicator !== "PositionPnL" && indicator !== "PnLTargets")
         chart.createIndicator(indicator);
     });
