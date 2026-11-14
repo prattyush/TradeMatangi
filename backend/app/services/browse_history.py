@@ -159,9 +159,16 @@ def _fetch_span(provider: str, item: dict, days: list[Date], span: int) -> pd.Da
         return pd.concat(parts).sort_index() if parts else pd.DataFrame()
 
 
-def _fill_days(item: dict, wanted: list[Date]) -> dict[Date, pd.DataFrame]:
-    """The 1-minute frame of every wanted day that any source can give, fetching missing days in windows."""
+def _fill_days(item: dict, wanted: list[Date]) -> tuple[dict[Date, pd.DataFrame], set[Date], str | None]:
+    """The 1-minute frame of every wanted day that any source can give, fetching missing days in windows.
+
+    Returns ``(have, failed, failure)``. ``failed`` holds the days that are missing because a source **failed or was
+    resting** (an expired token, a timeout) and that no other source supplied, as opposed to days every source answered
+    for without rows (a real gap such as an unscheduled closure). The caller must not treat a failed day as absent:
+    skipping it makes the chart jump from one day to months earlier. ``failure`` is the first reason, in words.
+    """
     have: dict[Date, pd.DataFrame] = {}
+    errored: set[Date] = set()
     missing: list[Date] = []
     for day in wanted:
         frame = _cached_day(item, day)
@@ -176,6 +183,7 @@ def _fill_days(item: dict, wanted: list[Date]) -> dict[Date, pd.DataFrame]:
         cooling = _cooling(provider)
         if cooling:
             failure = failure or cooling
+            errored.update(missing)
             continue
         for first, last in _windows(missing, WINDOW_DAYS[provider]):
             key = f"{provider}:{_identity(item)}:{first}:{last}"
@@ -196,10 +204,16 @@ def _fill_days(item: dict, wanted: list[Date]) -> dict[Date, pd.DataFrame]:
                     if reason:
                         _cooldown[provider] = (time.monotonic() + _COOLDOWN_SECONDS, reason)
                         failure = failure or reason
+                        errored.update(missing)  # the windows after this one are not asked either
                         break
                     logger.warning("browse_history provider=%s %s..%s failed: %s", provider, first, last, exc)
                     failure = failure or "Historical provider failed. Try again."
+                    errored.update(todo)
                     continue
+                # The provider answered for these days: a day it has no rows for is a gap, not a failure.
+                errored.difference_update(todo)
+                if rows.empty:
+                    continue  # nothing for any of these days (an empty frame has no date index to compare)
                 for day in todo:
                     day_rows = rows[rows.index.date == day]
                     if day_rows.empty:
@@ -208,9 +222,7 @@ def _fill_days(item: dict, wanted: list[Date]) -> dict[Date, pd.DataFrame]:
                     if not frame.empty:
                         have[day] = frame
         missing = [day for day in missing if day not in have]
-    if not have and failure:
-        raise BrowseUnavailable(failure)
-    return have
+    return have, {day for day in wanted if day not in have and day in errored}, failure
 
 
 def _daily_paths(provider: str, item: dict) -> tuple[Path, Path]:
@@ -331,10 +343,25 @@ def page(symbol: str, interval: int, anchor: Date, before: int | None = None, da
         frame.index = [int(stamp.tz_localize("UTC").timestamp()) for stamp in frame.index]
         result["candles"] = _records(frame)
     else:
-        have = _fill_days(item, wanted)
-        frames = [have[day] for day in sorted(have)]
-        if not frames:
+        have, failed, failure = _fill_days(item, wanted)
+        # A page is the run of days next to the seam, newest first, up to the first day that could not be loaded. Days
+        # beyond a failed one are not returned: the client asks again from the oldest candle it holds, so skipping the
+        # failed day would hide it for good (the chart jumped from one day to months earlier). A day no source has data
+        # for (nothing failed) is a real gap and is passed over.
+        run: list[Date] = []
+        for day in wanted:
+            if day in have:
+                run.append(day)
+            elif day in failed:
+                break
+        if not run:
+            if failed:
+                raise BrowseUnavailable(failure or "Historical provider failed. Try again.")
             return result
+        if len(run) < len([day for day in wanted if day in have]) or (failed and wanted[-1] != run[-1]):
+            result["more"] = True  # the failed day is older than this page and still has to be loaded
+        result["oldest_date"] = run[-1].isoformat()
+        frames = [have[day] for day in sorted(run)]
         merged = _bucketed(frames, interval)
         if cutoff is not None:
             merged = merged[merged.index < int(cutoff.timestamp())]
