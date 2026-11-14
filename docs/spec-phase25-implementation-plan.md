@@ -123,7 +123,7 @@ I will **not** add a global `GZipMiddleware` (it would change every route, inclu
 |---|---|---|
 | P0 | Discovery (this section) | Done, awaiting owner review |
 | P1 | Backend desktop mounts, helper routes, Rust `desktop_patterns_request`, `patternsApi.ts`, parity tests | In PR into `dev` (branch `feat/desktop-patterns-transport`) |
-| P2 | `shared/patterns` environment; Pattern Library on KLine | Planned |
+| P2 | Pattern Library on KLine (desktop-only, core) | In PR into `dev` (branch `feat/desktop-pattern-library`); P2b (drawing tools, R:R, Top Patterns, extra panes, bulk delete) planned |
 | P3 | Chart Structures (Broad) | Planned |
 | P4 | Fine Structures | Planned |
 | P5 | Docs, Windows acceptance | Planned |
@@ -134,3 +134,11 @@ I will **not** add a global `GZipMiddleware` (it would change every route, inclu
 - Tests: `backend/tests/test_desktop_patterns.py` (bearer required, every website route mirrored, only the four data helpers exposed, no order/session/trade/wallet/broker/stream path exposed, identity is the bearer user).
 - Needs a desktop rebuild (Rust change). No trading logic touched; shared files changed: `backend/app/main.py` (one import and one `include_router`) and `windowsapp/src-tauri/src/lib.rs` (new command, its tests, one handler-list line).
 - Sharing (pattern/fine/structure share-by-email) routes are not in the website routers' route list, so they are not exposed; revisit in P2 if the pages need them.
+
+### P2 as built (owner chose "desktop-only, reuse the Analysis chart", 2026-11-14)
+Deviation from the plan above: **no `shared/patterns` refactor and no change to the website page.** The desktop Pattern Library is a new tool, `windowsapp/src/tools/PatternLibrary.tsx` (Tools > Pattern Library), built on the desktop Analysis KLine chart, which already draws saved pattern markers (`analysisAnnotation` overlays) and has a click-to-pick mode (What If). The website page stays on lightweight-charts untouched, so there is no regression risk to the website (which is also the live-trading screen). Unifying the two is optional and can be revisited in P5.
+- Pieces: `patternsClient.ts` (typed calls over `patternsRequest`), `tools/patternLibraryModel.ts` (pure: mark toggling, strike resolution OTM / Max Price using the website's `patternStrikes.ts`, save body), `PatternLibrary.tsx`, `patternTools.css`, one `TOOLS` entry in `ToolsView.tsx`. Max Price mode and caps, and historical days, come from the account settings (`trading/settings/current`), not localStorage.
+- Features: load a day (underlying only, or underlying + CE + PE with OTM offset or Max Price strikes), mark entry/exit per instrument with category and strategy (a second click on the same candle removes the mark), notes, save and update (one chart per symbol, day and type), restore an existing chart for that day, Saved charts table with strategy, category and top-pattern filters, open and delete.
+- Not in P2 (planned as P2b): drawing tools (hline, trend, fib, rectangle), R:R indicator, Top Patterns editing, adding or removing extra strike panes, bulk delete, pattern sharing. The candle interval is the Analysis chart's own selector and is saved with the chart.
+- Tests: `patternLibraryModel.test.ts` (7), `PatternLibrary.test.tsx` (initial render). Needs manual acceptance on the Windows build (P1's Rust command must be rebuilt): marks land on the clicked candle at every interval, saved charts reload with their marks and interval, Max Price strikes follow Settings.
+- No trading logic touched: only `windowsapp/src/tools/ToolsView.tsx` (one list entry) among existing files.
