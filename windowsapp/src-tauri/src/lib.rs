@@ -1156,6 +1156,68 @@ async fn desktop_analysis_request(
     response.json().await.map_err(|e| e.to_string())
 }
 
+/// Allowlist for the Patterns, Chart Structures and Fine Structures routes (`/api/desktop/v1/patterns/...`).
+/// Mirrored by `validPatternsPath` in `src/patternsApi.ts`; keep the two in step.
+fn valid_patterns_path(path: &str, method: &str) -> bool {
+    let route = path.split('?').next().unwrap_or("");
+    if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
+    let id = |v: &str| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let symbol = |v: &str| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '&');
+    let date = |v: &str| v.len() == 10 && v.chars().all(|c| c.is_ascii_digit() || c == '-');
+    let seg: Vec<&str> = route.split('/').collect();
+    match (method, seg.as_slice()) {
+        ("GET", ["pattern", "strategies" | "categories" | "charts"]) => true,
+        ("GET", ["pattern", "chart", "by-date"]) => true,
+        ("GET", ["pattern", "chart", v]) => id(v),
+        ("GET", ["pattern", "ohlc", "equity" | "options"]) => true,
+        ("POST", ["pattern", "strategies" | "categories" | "chart" | "charts"]) => true,
+        ("POST", ["pattern", "charts", "bulk-delete"]) => true,
+        ("PUT" | "DELETE", ["pattern", "chart", v]) => id(v),
+        ("GET", ["chart-structures", "types" | "structures"]) => true,
+        ("GET", ["chart-structures", "structure", v]) => id(v),
+        ("GET", ["chart-structures", "ohlc", s, d]) => symbol(s) && date(d),
+        ("POST", ["chart-structures", "structure"]) => true,
+        ("PUT" | "DELETE", ["chart-structures", "structure", v]) => id(v),
+        ("GET", ["fine-structures", "definitions" | "flows"]) => true,
+        ("GET", ["fine-structures", "flow", v]) => id(v),
+        ("GET", ["fine-structures", "ohlc" | "ohlc-options", s, d]) => symbol(s) && date(d),
+        ("POST", ["fine-structures", "definition" | "flow" | "search"]) => true,
+        ("PUT" | "DELETE", ["fine-structures", "definition" | "flow", v]) => id(v),
+        ("GET", ["data", "symbols" | "price-at" | "expiry"]) => true,
+        ("GET", ["data", "options", "find-strike-by-price"]) => true,
+        _ => false,
+    }
+}
+
+#[tauri::command]
+async fn desktop_patterns_request(
+    base_url: String,
+    path: String,
+    method: String,
+    body: serde_json::Value,
+    host: tauri::State<'_, HostState>,
+) -> Result<serde_json::Value, String> {
+    if !valid_patterns_path(&path, &method) { return Err("Invalid patterns request".into()); }
+    let token = host.access_token(&base_url).await?;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/desktop/v1/patterns/{}", base_url.trim_end_matches('/'), path);
+    let request = match method.as_str() {
+        "GET" => client.get(url),
+        "POST" => client.post(url).json(&body),
+        "PUT" => client.put(url).json(&body),
+        "DELETE" => client.delete(url),
+        _ => return Err("Unsupported patterns request".into()),
+    };
+    let response = request.bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Patterns request failed ({status}): {detail}"));
+    }
+    if status == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
+    response.json().await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn desktop_drawing_request(
     window: tauri::WebviewWindow,
@@ -2440,6 +2502,7 @@ pub fn run() {
             desktop_drawing_request,
             desktop_settings_request,
             desktop_analysis_request,
+            desktop_patterns_request,
             desktop_logout,
             queue_offline_mutation,
             pending_offline_mutations,
@@ -2484,6 +2547,28 @@ mod tests {
             assert!(!super::valid_analysis_path("performance/swing", method));
         }
         assert!(!super::valid_analysis_path("performance/swing/extra", "GET"));
+    }
+
+    #[test]
+    fn patterns_allowlist_is_exact_and_method_scoped() {
+        let ok = [
+            ("GET", "pattern/strategies"), ("GET", "pattern/charts?symbol=NIFTY"), ("GET", "pattern/chart/by-date?date=2026-10-01"),
+            ("GET", "pattern/chart/abc-123"), ("POST", "pattern/chart"), ("PUT", "pattern/chart/abc_1"), ("DELETE", "pattern/chart/abc"),
+            ("POST", "pattern/charts/bulk-delete"), ("GET", "pattern/ohlc/options?symbol=NIFTY"),
+            ("GET", "chart-structures/types"), ("GET", "chart-structures/ohlc/NIFTY/2026-10-01"), ("PUT", "chart-structures/structure/s1"),
+            ("GET", "fine-structures/flows"), ("POST", "fine-structures/search"), ("DELETE", "fine-structures/definition/d1"),
+            ("GET", "fine-structures/ohlc-options/NIFTY/2026-10-01?right=CE"),
+            ("GET", "data/symbols"), ("GET", "data/price-at?symbol=NIFTY"), ("GET", "data/options/find-strike-by-price?symbol=NIFTY"),
+        ];
+        for (method, path) in ok { assert!(super::valid_patterns_path(path, method), "{method} {path}"); }
+        let bad = [
+            ("DELETE", "pattern/strategies"), ("PUT", "pattern/chart"), ("POST", "pattern/chart/abc"), ("GET", "pattern/chart/"),
+            ("GET", "pattern/chart/a/b"), ("GET", "pattern/chart/a%2Fb"), ("GET", "../analysis/sessions"), ("GET", "/pattern/strategies"),
+            ("GET", "chart-structures/ohlc/NIFTY/2026-10-01/x"), ("GET", "chart-structures/ohlc/NIFTY/not-a-date"),
+            ("GET", "data/historical"), ("POST", "data/symbols"), ("GET", "orders"), ("GET", "trading/orders"),
+            ("GET", "pattern/chart/a\\b"), ("PATCH", "pattern/chart/abc"), ("GET", ""),
+        ];
+        for (method, path) in bad { assert!(!super::valid_patterns_path(path, method), "{method} {path}"); }
     }
 
     use super::*;

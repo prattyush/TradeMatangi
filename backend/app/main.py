@@ -11,7 +11,7 @@ from app.request_logging import RequestLoggingMiddleware
 
 from app.routers import browse, swing
 from app.config import LOG_DIR
-from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings, performance, desktop_analysis, behavior, video_links, whatif
+from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings, performance, desktop_analysis, desktop_patterns, behavior, video_links, whatif
 
 
 def _configure_logging() -> None:
@@ -162,6 +162,7 @@ app.include_router(orders.router)
 app.include_router(wallet.router)
 app.include_router(analysis.router)
 app.include_router(desktop_analysis.router)
+app.include_router(desktop_patterns.router)
 app.include_router(strategies.router)
 app.include_router(users.router)
 app.include_router(admin.router)
