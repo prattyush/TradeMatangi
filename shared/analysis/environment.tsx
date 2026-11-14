@@ -4,6 +4,7 @@ import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
 import type { HabitLedger } from './habits/types'
 import type { VideoLinksSource } from './videoLinks'
+import type { WhatIfSource } from './whatif/scenarios'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -24,6 +25,10 @@ export interface AnalysisEnvironment {
   api: AnalysisApi
   /** YouTube videos uploaded for a session (owner only). Absent => Analysis shows no videos. */
   videoLinks?: VideoLinksSource
+  /** True when this host's Analysis charts can take a price by clicking them (KLine): What If then offers "pick on chart". */
+  chartPicking?: boolean
+  /** Saved What If scenarios (owner only). Absent => What If is a playground that is lost on refresh. */
+  whatIf?: WhatIfSource
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
     getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>
@@ -43,6 +48,11 @@ export interface AnalysisEnvironment {
   desktop?: boolean
   intervalMinutes?: number
   setIntervalMinutes?: (minutes: number) => void
+  /**
+   * Candle and indicator details drawn over the chart (time, open/high/low/close, indicator values):
+   * `always` (default, as before), `follow_cross` (only while the crosshair is active, i.e. while touching) or `none`.
+   */
+  chartInfo?: 'always' | 'follow_cross' | 'none'
   historicalDays?: number
   /** Label Trades layout (user setting `analysis_label_view`); absent => one trade at a time. */
   labelView?: 'one_by_one' | 'all'

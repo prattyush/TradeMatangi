@@ -37,6 +37,13 @@ describe('round trip model', () => {
     expect(roundTripMarkerText([first, second], trade('a', '2', { side: 'SELL' }))).toBe('#1/#2 SELL')
     expect(roundTripMarkerText([first, second], trade('a', '99'))).toBe('BUY')
   })
+  it('on an option chart keeps only the round-trip numbers: the marker colour already says buy or sell', () => {
+    const first = trip('a', 1, ['1'], ['2'])
+    const second = trip('a', 2, ['2'], ['3'])
+    expect(roundTripMarkerText([first, second], trade('a', '1'), false)).toBe('#1')
+    expect(roundTripMarkerText([first, second], trade('a', '2', { side: 'SELL' }), false)).toBe('#1/#2')
+    expect(roundTripMarkerText([first, second], trade('a', '99'), false)).toBe('') // not in any round trip: no text at all
+  })
   it('names the contract from the legs', () => {
     expect(contractName(trip('a', 0, ['1'], ['2']))).toBe('EQ')
     expect(contractName(trip('a', 0, ['1'], ['2'], 'CE', 24500))).toBe('CE 24500')

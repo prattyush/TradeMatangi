@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.request_logging import RequestLoggingMiddleware
 
-from app.routers import swing
+from app.routers import browse, swing
 from app.config import LOG_DIR
-from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings, performance, desktop_analysis, behavior, video_links
+from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings, performance, desktop_analysis, behavior, video_links, whatif
 
 
 def _configure_logging() -> None:
@@ -145,6 +145,8 @@ app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(swing.router,prefix="/api")
 app.include_router(swing.router,prefix="/api/desktop/v1",include_in_schema=False)
+app.include_router(browse.router, prefix="/api")
+app.include_router(browse.router, prefix="/api/desktop/v1", include_in_schema=False)
 app.include_router(auth.router)
 app.include_router(desktop.router)
 app.include_router(desktop_persistence.router)
@@ -175,6 +177,7 @@ app.include_router(chart_structures.router)
 app.include_router(labels.router)
 app.include_router(behavior.router)
 app.include_router(video_links.router)
+app.include_router(whatif.router)
 app.include_router(fine_structures.router)
 
 

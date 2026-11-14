@@ -88,3 +88,13 @@ describe('saveVideoUnderSessions', () => {
     expect(saveOutcomeText({ saved: 1, failed: [] }, 1)).toBe('Link saved with the session.')
   })
 })
+
+describe('loadSavedVideos with an unexpected answer', () => {
+  it('treats a missing or non-list answer as no links instead of failing', async () => {
+    const { loadSavedVideos } = await import('../../../shared/analysis/videoLinks')
+    const source = { list: async (id: string) => (id === 'a' ? (undefined as never) : id === 'b' ? ({} as never) : [{ session_id: 'c', video_id: 'abcdefghijk', url: 'u', title: 't', privacy: 'unlisted', chapters: '', uploaded_at: '2026-11-09T00:00:00Z' }]) }
+    const result = await loadSavedVideos(source, ['a', 'b', 'c'])
+    expect(result.error).toBe('')
+    expect(result.videos.map(video => video.videoId)).toEqual(['abcdefghijk'])
+  })
+})

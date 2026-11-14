@@ -1,4 +1,5 @@
 import { bindChartMenu, ChartMenuButton, useChartMenuGesture, type MenuPoint } from "./ChartMenuGesture";
+import { DEFAULT_MAX_LOSS_PCT, DEFAULT_MAX_WIN_PCT, pnlMilestone } from "../pnlMilestone";
 import { beginChartActivity } from "./chartActivity";
 import { snapSwingPrice, swingOrderTick } from "../swingOrderPrice";
 import {
@@ -13,7 +14,7 @@ import {
   announceDrawingChange as localAnnounce,
   watchDrawingChanges as localWatch,
 } from "./drawingEvents";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useDismissMessage } from "./useDismissMessage";
 import {
   dispose,
@@ -318,6 +319,7 @@ export function KLineChart({
   candleAnchorSeconds = 0,
   hideInstrumentPicker = false,
   hideMaximizeButton = false,
+  headerStart,
   onTogglePanel,
   onToggleIndicator,
   onSelectDrawingTool,
@@ -402,6 +404,8 @@ export function KLineChart({
   candleAnchorSeconds?: number;
   hideInstrumentPicker?: boolean;
   hideMaximizeButton?: boolean;
+  /** Browse: a control placed first in the chart's own header row (no row of its own). */
+  headerStart?: ReactNode;
   onTogglePanel?: () => void;
   onToggleIndicator?: (name: string) => void;
   onSelectDrawingTool?: (tool: string) => void;
@@ -1099,7 +1103,7 @@ export function KLineChart({
       ? parsePnlTargets(tradingSettings?.pnl_target_levels)
       : [];
     const targetMark = positionMarkPrice ?? candles[candles.length - 1]?.close;
-    const levels = [
+    const levels = tradingSettings?.desktop_pnl_display_mode === "milestones" ? [] : [
       ...(indicators.includes("PositionPnL")
         ? positionPnlLevels(levelsPosition, sessionCapital, brokeragePerOrder)
         : []),
@@ -2229,7 +2233,8 @@ export function KLineChart({
       !latest ||
       !position ||
       position.side === "FLAT" ||
-      position.quantity <= 0
+      position.quantity <= 0 ||
+      tradingSettings?.show_bar_pnl_label === false
     ) {
       pnlLabelSourceRef.current = null;
       positionPnlLabel();
@@ -2239,7 +2244,15 @@ export function KLineChart({
     const pnl = authoritativePnl ?? (
       dir * (latest.close - position.avg_entry_price) * position.quantity -
       (position.entry_commission ?? 0));
-    const text = !pnlAvailable || !Number.isFinite(pnl) ? "—" :
+    const milestone = tradingSettings?.desktop_pnl_display_mode === "milestones"
+      ? pnlMilestone(
+          aggregatePnl ?? Number.NaN,
+          sessionCapital,
+          tradingSettings.guardrail_ban_capital_pct ?? DEFAULT_MAX_LOSS_PCT,
+          tradingSettings.pnl_max_win_pct ?? DEFAULT_MAX_WIN_PCT,
+        )
+      : null;
+    const text = milestone ? milestone.text : !pnlAvailable || !Number.isFinite(pnl) ? "—" :
       tradingSettings?.desktop_pnl_display_mode === "percent" &&
       sessionCapital > 0
         ? `${pnl >= 0 ? "+" : ""}${((pnl / sessionCapital) * 100).toFixed(2)}%`
@@ -2248,13 +2261,16 @@ export function KLineChart({
       timestamp: latest.timestamp * 1000,
       value: latest.high,
       text,
-      color: !pnlAvailable || !Number.isFinite(pnl) ? "#94a3b8" : pnl >= 0 ? "#22c55e" : "#ef4444",
+      color: milestone
+        ? milestone.tone === "win" ? "#22c55e" : milestone.tone === "loss" ? "#ef4444" : "#94a3b8"
+        : !pnlAvailable || !Number.isFinite(pnl) ? "#94a3b8" : pnl >= 0 ? "#22c55e" : "#ef4444",
     };
     positionPnlLabel();
   }, [
     candles,
     position,
     authoritativePnl,
+    aggregatePnl,
     pnlAvailable,
     tradingSettings,
     sessionCapital,
@@ -2472,6 +2488,7 @@ export function KLineChart({
     >
       <div className="chart-head">
         <span>
+          {headerStart}
           {tradingSettings?.desktop_hide_chart_labels
             ? ""
             : supportedIntervals.length

@@ -663,21 +663,26 @@ async fn desktop_historical_page(
     trading_date: String,
     interval_minutes: u32,
     context_days: Option<u32>,
+    granularity: Option<String>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
     let token = host.access_token(&base_url).await?;
+    let mut query = vec![
+        ("symbol", symbol),
+        ("trading_date", trading_date),
+        ("interval_minutes", interval_minutes.to_string()),
+        ("context_days", context_days.unwrap_or(5).min(5).to_string()),
+    ];
+    if let Some(granularity) = minute_granularity(granularity) {
+        query.push(("granularity", granularity));
+    }
     let response = reqwest::Client::new()
         .get(format!(
             "{}/api/desktop/v1/historical/pages",
             base_url.trim_end_matches('/')
         ))
         .bearer_auth(token)
-        .query(&[
-            ("symbol", symbol),
-            ("trading_date", trading_date),
-            ("interval_minutes", interval_minutes.to_string()),
-            ("context_days", context_days.unwrap_or(5).min(5).to_string()),
-        ])
+        .query(&query)
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -750,23 +755,27 @@ async fn desktop_option_historical_page(
     strike: f64,
     right: String,
     interval_minutes: u32,
+    granularity: Option<String>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    desktop_get(
-        base_url,
-        "options/historical/pages",
-        vec![
-            ("symbol", symbol),
-            ("trading_date", trading_date),
-            ("expiry", expiry),
-            ("strike", strike.to_string()),
-            ("right", right),
-            ("interval_minutes", interval_minutes.to_string()),
-            ("context_days", "5".into()),
-        ],
-        host,
-    )
-    .await
+    let mut query = vec![
+        ("symbol", symbol),
+        ("trading_date", trading_date),
+        ("expiry", expiry),
+        ("strike", strike.to_string()),
+        ("right", right),
+        ("interval_minutes", interval_minutes.to_string()),
+        ("context_days", "5".into()),
+    ];
+    if let Some(granularity) = minute_granularity(granularity) {
+        query.push(("granularity", granularity));
+    }
+    desktop_get(base_url, "options/historical/pages", query, host).await
+}
+
+/// Browse asks for minute-level candles (`granularity=minute`); nothing else is ever forwarded to the server.
+fn minute_granularity(value: Option<String>) -> Option<String> {
+    value.filter(|value| value == "minute")
 }
 
 #[tauri::command]
@@ -1104,16 +1113,16 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
     if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if method == "POST" {
-        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks" | "video-links")
+        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks" | "video-links" | "whatif")
             || route.strip_prefix("behavior/questions/").and_then(|rest| rest.split_once('/')).map(|(id, action)| valid_id(id) && matches!(action, "update" | "archive" | "restore")).unwrap_or(false);
     }
-    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees" || route == "video-links"; }
+    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees" || route == "video-links" || route == "whatif"; }
     if method != "GET" { return false; }
     match route {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
-        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" => true,
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -2480,6 +2489,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_minute_granularity_is_forwarded_to_the_history_routes() {
+        assert_eq!(minute_granularity(Some("minute".into())), Some("minute".into()));
+        assert_eq!(minute_granularity(Some("second".into())), None);
+        assert_eq!(minute_granularity(Some(String::new())), None);
+        assert_eq!(minute_granularity(None), None);
+    }
+
+    #[test]
     fn snapshot_candle_route_is_read_only_and_exact() {
         assert!(valid_analysis_path("snapshots/event-id/candle?session_id=s&instrument=CE", "GET"));
         for method in ["POST", "DELETE", "PUT"] {
@@ -2499,6 +2516,25 @@ mod tests {
         }
         for path in ["pattern/chart", "pattern/chart/by-date", "pattern/ohlc/equity", "pattern/strategies/extra"] {
             assert!(!valid_analysis_path(path, "POST"));
+        }
+    }
+
+    #[test]
+    fn whatif_allows_get_post_and_delete_on_the_exact_path_and_a_read_only_range() {
+        for method in ["GET", "POST", "DELETE"] {
+            assert!(valid_analysis_path("whatif", method), "{method}");
+        }
+        assert!(valid_analysis_path("whatif?session_id=s1", "GET"));
+        assert!(valid_analysis_path("whatif?session_id=s1&scenario_id=exit-at-close", "DELETE"));
+        assert!(!valid_analysis_path("whatif", "PUT"));
+        assert!(valid_analysis_path("whatif/range?start=2026-11-01&end=2026-11-30", "GET"));
+        for method in ["POST", "DELETE", "PUT"] {
+            assert!(!valid_analysis_path("whatif/range", method), "{method}");
+        }
+        for path in ["whatif/extra", "whatif/", "/whatif", "whatif/../labels", "what-if", "whatif%2Frange", "whatif/range/x"] {
+            for method in ["GET", "POST", "DELETE"] {
+                assert!(!valid_analysis_path(path, method), "{method} {path}");
+            }
         }
     }
 

@@ -312,10 +312,13 @@ export default function WebsiteKLineChart(
     () =>
       ({
         desktop_hide_chart_labels: !settings.showChartInfo,
-        desktop_pnl_display_mode: props.pnlPctMode ? "percent" : "currency",
+        desktop_pnl_display_mode: props.pnlDisplay?.mode ?? (props.pnlPctMode ? "percent" : "currency"),
+        pnl_max_win_pct: props.pnlDisplay?.maxWinPct,
+        guardrail_ban_capital_pct: props.pnlDisplay?.maxLossPct,
+        show_bar_pnl_label: props.pnlDisplay?.showBarLabel ?? true,
         pnl_target_levels: props.pnlTargetLevels ?? "",
       }) as DesktopTradingSettings,
-    [settings.showChartInfo, props.pnlPctMode, props.pnlTargetLevels],
+    [settings.showChartInfo, props.pnlPctMode, props.pnlDisplay, props.pnlTargetLevels],
   );
   const pricePickAction = useMemo(
     () => (props.onPriceSelect ? { label: props.pricePickLabel } : null),
@@ -494,6 +497,7 @@ export default function WebsiteKLineChart(
           onDrawingError={reportError}
           hideInstrumentPicker
           hideMaximizeButton={!props.onMaximize}
+          headerStart={props.headerStart}
           onConfigure={() => {}}
           onMaximize={() => props.onMaximize?.()}
           maximized={props.isMaximized ?? false}

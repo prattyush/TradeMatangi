@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import datetime as _dt
+import json as _json
+import os as _os
+import threading as _threading
+from pathlib import Path as _Path
 
 
 # NSE/BSE market holidays (2023–2026). Source: official NSE/BSE holiday calendar.
@@ -68,8 +72,74 @@ NSE_HOLIDAYS: frozenset[_dt.date] = frozenset({
 })
 
 
+# ── Operator-added holidays ──────────────────────────────────────────────────
+# NSE sometimes announces a closure after the list above was written (or the list
+# is simply wrong for a day). Those dates live in DATA_DIR/holidays.json so they can
+# be added at run time (PUT/POST /api/admin/holidays) without a deploy or restart.
+# The file is re-read when its modification time changes, so a hand edit also works.
+
+_extra_lock = _threading.Lock()
+_extra_cache: tuple[tuple[int, int] | None, dict[_dt.date, str]] = (None, {})
+
+
+def _holidays_file() -> _Path:
+    from app.config import DATA_DIR
+    return _Path(DATA_DIR) / "holidays.json"
+
+
+def extra_holidays() -> dict[_dt.date, str]:
+    """Holidays added by the operator, as {date: note}. Missing or unreadable file means none."""
+    global _extra_cache
+    path = _holidays_file()
+    try:
+        stat = path.stat()
+        stamp: tuple[int, int] | None = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        stamp = None
+    with _extra_lock:
+        if _extra_cache[0] == stamp:
+            return dict(_extra_cache[1])
+        found: dict[_dt.date, str] = {}
+        if stamp is not None:
+            try:
+                data = _json.loads(path.read_text(encoding="utf-8"))
+                for key, note in (data.get("holidays") or {}).items():
+                    try:
+                        found[_dt.date.fromisoformat(key)] = str(note or "")
+                    except ValueError:
+                        continue
+            except (OSError, ValueError, AttributeError):
+                found = {}
+        _extra_cache = (stamp, found)
+        return dict(found)
+
+
+def _write_extra_holidays(holidays: dict[_dt.date, str]) -> None:
+    path = _holidays_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {"holidays": {d.isoformat(): note for d, note in sorted(holidays.items())}}
+    tmp = path.with_name(path.name + f".{_os.getpid()}.tmp")
+    tmp.write_text(_json.dumps(body, indent=2), encoding="utf-8")
+    _os.replace(tmp, path)
+
+
+def add_extra_holiday(day: _dt.date, note: str = "") -> dict[_dt.date, str]:
+    current = extra_holidays()
+    current[day] = note.strip()[:100]
+    _write_extra_holidays(current)
+    return extra_holidays()
+
+
+def remove_extra_holiday(day: _dt.date) -> dict[_dt.date, str]:
+    current = extra_holidays()
+    if day in current:
+        del current[day]
+        _write_extra_holidays(current)
+    return extra_holidays()
+
+
 def is_trading_day(d: _dt.date) -> bool:
-    return d.weekday() < 5 and d not in NSE_HOLIDAYS
+    return d.weekday() < 5 and d not in NSE_HOLIDAYS and d not in extra_holidays()
 
 
 def prior_trading_days(date_str: str, n: int = 2) -> list[str]:

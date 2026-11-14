@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 
 import { EventSnapshot, SessionSummary } from './api'
 import { useAnalysisEnvironment } from './environment'
+import { eventIcon, filterSnapshots, sortSnapshots } from './snapshotModel'
 
 interface Props {
   readOnly?: boolean
@@ -13,30 +14,15 @@ interface Props {
 }
 
 export default function EventSnapshotViewer({ readOnly=false, session, snapshots, onClose, onDeleteAll }: Props) {
-  // Sort by timestamp ascending for chronological event list
-  // Same tick -> wall-clock capture time -> capture sequence (matches the backend order).
-  const sorted = snapshots.length > 0 ? [...snapshots].sort((a, b) =>
-    a.timestamp - b.timestamp
-    || (a.snapshot.event_timestamp ?? 0) - (b.snapshot.event_timestamp ?? 0)
-    || (a.snapshot.seq ?? 0) - (b.snapshot.seq ?? 0)) : snapshots
+  // Chronological event list (shared with the phone's viewer).
+  const sorted = sortSnapshots(snapshots)
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [deleting, setDeleting] = useState(false)
   const [deleteError,setDeleteError] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
 
-  // Filter sorted snapshots by search query (case-insensitive, * = wildcard)
-  const filtered = !searchQuery.trim()
-    ? sorted
-    : sorted.filter(s => {
-        const target = `${s.event.description} ${s.event.type}`.toLowerCase()
-        const q = searchQuery.trim().toLowerCase()
-        const regexStr = q
-          .split('*')
-          .map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-          .join('.*')
-        try { return new RegExp(regexStr).test(target) }
-        catch { return target.includes(q) }
-      })
+  // Filter by search query (case-insensitive, * = wildcard)
+  const filtered = filterSnapshots(sorted, searchQuery)
 
   // Reset selection when filter changes
   useEffect(() => { setSelectedIdx(0) }, [searchQuery])
@@ -69,14 +55,6 @@ export default function EventSnapshotViewer({ readOnly=false, session, snapshots
   const formatTime = (ts: number) => {
     const d = new Date(ts * 1000)
     return d.toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC' })
-  }
-
-  const eventIcon = (type: string) => {
-    if (type === 'order_placed') return '🆕'
-    if (type === 'order_edited') return '✏️'
-    if (type === 'order_converted') return '🔄'
-    if (type === 'order_filled') return '✅'
-    return '📌'
   }
 
   return (

@@ -115,6 +115,11 @@ export interface PerformanceCycle {
   execution_broker?: string | null;
   broker_account_id?: string | null;
   fee_source?: string;
+  /** Most capital in use at once during the cycle (open lots at cost, % of session capital). */
+  peak_capital_pct?: number | null;
+  /** The round-trip number Label Trades shows (the label index). */
+  label_index?: number;
+  holding_seconds?: number | null;
 
   shared?: boolean;
   owner_email?: string | null;

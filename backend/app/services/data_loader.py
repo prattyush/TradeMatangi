@@ -242,12 +242,14 @@ def pre_session_candles(
     date: str,
     start_time: str,
     interval_minutes: int = CANDLE_INTERVAL_MINUTES,
+    frame: pd.DataFrame | None = None,
 ) -> list[dict]:
     """
     Return candles for `date` from market open (09:15) up to but not
     including the candle window that contains start_time.
+    `frame` (IST-as-UTC index) replaces the second-level file, for minute-level callers.
     """
-    df = load_dataframe(symbol, date)
+    df = load_dataframe(symbol, date) if frame is None else frame
 
     market_open_ts = pd.Timestamp(f"{date} {MARKET_OPEN}", tz="UTC")
     start_ts = pd.Timestamp(f"{date} {start_time}", tz="UTC")

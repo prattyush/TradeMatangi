@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { GroupCard, groupSessions } from '../../shared/analysis/TradeAnalysis'
 import type { SessionSummary } from '../../shared/analysis/api'
 import { useAnalysisEnvironment } from '../../shared/analysis/environment'
+import { dayTone, SessionDayButton, signedMoney } from './SessionDayButton'
 
-const money=(n:number)=>`₹${n.toLocaleString('en-IN',{maximumFractionDigits:2})}`
 export default function DesktopAnalysisSessions({initialPortfolioId}:{initialPortfolioId?:string}) {
   const environment=useAnalysisEnvironment(); const api=environment.api
   const today = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata'}).format(new Date())
@@ -32,7 +32,7 @@ export default function DesktopAnalysisSessions({initialPortfolioId}:{initialPor
       <label>From<input aria-label="Analysis from date" type="date" value={filters.startDate} onChange={e=>field('startDate',e.target.value)}/></label><label>Through<input aria-label="Analysis through date" type="date" value={filters.endDate} onChange={e=>field('endDate',e.target.value)}/></label>
       <button disabled={loading} onClick={()=>navigate(()=>setRefresh(n=>n+1))}>Refresh</button>
     </header>
-    <aside className="analysis-session-navigator" aria-label="Session navigator"><p>{groups.length} groups · {money(groups.reduce((sum,g)=>sum+g.totalPnl,0))}</p>{groups.map(group=><button key={group.key} aria-pressed={current?.key===group.key} onClick={()=>navigate(()=>{setSelected(group.key);if(window.innerWidth<1100)setCollapsed(true)})}><strong>{group.date} · {group.symbol}</strong><span>{group.sessions[0]?.shared ? `Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id} · ` : ''}{group.instrument_type} · {group.session_type==='sim'?'Replay':group.session_type} · {group.sessions.length} session(s)</span><span>{money(group.totalPnl)} · {group.totalTrades} closed trades</span></button>)}</aside>
+    <aside className="analysis-session-navigator" aria-label="Session navigator"><p>{groups.length} groups · <b className={`day-pnl ${dayTone(groups.reduce((sum,g)=>sum+g.totalPnl,0))}`}>{signedMoney(groups.reduce((sum,g)=>sum+g.totalPnl,0))}</b></p>{groups.map(group=><SessionDayButton key={group.key} group={group} pressed={current?.key===group.key} onSelect={()=>navigate(()=>{setSelected(group.key);if(window.innerWidth<1100)setCollapsed(true)})}/>)}</aside>
     <div className="analysis-navigator-separator" role="separator" aria-label="Resize session navigator" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={480} aria-valuenow={width} tabIndex={0} onKeyDown={e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();setWidth(n=>Math.max(240,Math.min(480,n+(e.key==='ArrowLeft'?-20:20))))}}} onPointerDown={e=>e.currentTarget.setPointerCapture(e.pointerId)} onPointerMove={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId)){const box=root.current?.getBoundingClientRect();if(box)setWidth(Math.max(240,Math.min(480,e.clientX-box.left)))}}}/>
     <div className="analysis-selected-session" aria-label="Selected session">
       {loading&&<p role="status">Reading sessions…</p>}{error&&<p role="alert">{error}<button onClick={()=>setRefresh(n=>n+1)}>Retry</button></p>}

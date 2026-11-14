@@ -1,0 +1,131 @@
+name: Android phone app
+
+# Builds the landscape phone app (mobile/): type-check, unit tests, landscape UI tests, then a debug APK for every run.
+# A signed release APK is built only when the signing secrets exist and the run is started by hand with "release".
+on:
+  push:
+    paths:
+      - 'mobile/**'
+      - 'shared/**'
+      - 'frontend/src/services/**'
+      - 'windowsapp/src/analysisApi.ts'
+      - 'windowsapp/src/historyPaging.ts'
+      - 'windowsapp/src/tools/videoLinks.ts'
+      - '.github/workflows/android-phone.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - 'shared/**'
+      - 'frontend/src/services/**'
+      - 'windowsapp/src/analysisApi.ts'
+      - 'windowsapp/src/historyPaging.ts'
+      - 'windowsapp/src/tools/videoLinks.ts'
+      - '.github/workflows/android-phone.yml'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Also build the signed release APK (needs the ANDROID_KEYSTORE_* secrets)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # Capacitor 8 builds with Java 21 and compile/target SDK 36.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Landscape UI tests
+        env:
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
+        run: npm run test:ui
+
+      - name: Build the web bundle and sync it into the Android project
+        run: |
+          npm run build
+          node node_modules/@capacitor/cli/bin/capacitor sync android
+
+      # A fixed debug key (secrets) makes every CI debug APK, and the local ones, install over each other.
+      # Without the secrets (a fork, or before they are set) the runner's throwaway debug key is used and the APK needs an uninstall first.
+      - name: Debug APK
+        working-directory: mobile/android
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_B64 }}
+          ANDROID_DEBUG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEYSTORE_PASSWORD }}
+          ANDROID_DEBUG_KEY_ALIAS: ${{ secrets.ANDROID_DEBUG_KEY_ALIAS }}
+          ANDROID_DEBUG_KEY_PASSWORD: ${{ secrets.ANDROID_DEBUG_KEY_PASSWORD }}
+        run: |
+          if [ -n "$DEBUG_KEYSTORE_B64" ]; then
+            echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/debug.keystore"
+            export ANDROID_DEBUG_KEYSTORE_PATH="$RUNNER_TEMP/debug.keystore"
+          else
+            echo "::warning::ANDROID_DEBUG_KEYSTORE_B64 is not set: this debug APK uses a throwaway key and will not install over another build."
+          fi
+          # Minutes since 1970: the same scheme as scripts/build-android-phone.sh, so a later build (CI or local) always has the higher version code.
+          ./gradlew --no-daemon assembleDebug -PversionCode=$(( $(date +%s) / 60 ))
+          rm -f "$RUNNER_TEMP/debug.keystore"
+
+      - name: Signed release APK
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+        working-directory: mobile/android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "ANDROID_KEYSTORE_B64 secret is not set"; exit 1; fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
+          ./gradlew --no-daemon assembleRelease -PversionCode=$(( $(date +%s) / 60 ))
+          rm -f "$RUNNER_TEMP/release.keystore"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tradematangi-phone-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+        with:
+          name: tradematangi-phone-release-apk
+          path: mobile/android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ui-test-results
+          path: mobile/test-results
+          if-no-files-found: ignore

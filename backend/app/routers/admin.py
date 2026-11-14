@@ -91,6 +91,58 @@ async def set_tokens(req: SetTokensRequest, user_id: str = Depends(_require_admi
     )
 
 
+# ── Holidays added by the operator ────────────────────────────────────────────
+
+class HolidayRequest(BaseModel):
+    date: str
+    note: str = ""
+
+
+def _holiday_list() -> dict:
+    from app.utils import NSE_HOLIDAYS, extra_holidays
+    extra = extra_holidays()
+    return {
+        "added": [{"date": d.isoformat(), "note": note} for d, note in sorted(extra.items())],
+        "built_in": sorted(d.isoformat() for d in NSE_HOLIDAYS),
+    }
+
+
+def _parse_holiday(value: str):
+    import datetime
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD") from exc
+
+
+@router.get("/holidays")
+async def get_holidays(user_id: str = Depends(_require_admin)):
+    """Operator-added market holidays plus the built-in NSE list."""
+    return _holiday_list()
+
+
+@router.post("/holidays")
+async def add_holiday(req: HolidayRequest, user_id: str = Depends(_require_admin)):
+    """Mark a date as a market holiday (effective immediately, no restart)."""
+    import asyncio
+    from app.utils import add_extra_holiday
+    day = _parse_holiday(req.date)
+    await asyncio.to_thread(add_extra_holiday, day, req.note)
+    logger.info("Admin %s marked %s as a market holiday", user_id, day)
+    return _holiday_list()
+
+
+@router.delete("/holidays/{date}")
+async def remove_holiday(date: str, user_id: str = Depends(_require_admin)):
+    """Remove a date that was added with POST. Built-in holidays are not affected."""
+    import asyncio
+    from app.utils import remove_extra_holiday
+    day = _parse_holiday(date)
+    await asyncio.to_thread(remove_extra_holiday, day)
+    logger.info("Admin %s removed the added holiday %s", user_id, day)
+    return _holiday_list()
+
+
 # ── Real Trading Whitelist ─────────────────────────────────────────────────────
 
 @router.get("/real-trading/whitelist", response_model=list[WhitelistEntry])

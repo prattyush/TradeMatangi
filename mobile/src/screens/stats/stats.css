@@ -1,0 +1,65 @@
+/* Stats on a landscape phone: the shared dashboard (shared/analysis/performance.css) re-laid out.
+   Left: the section tabs and a Filters button. Right: one scrolling pane. Filters open as a panel over the pane. */
+.phone-stats { position: relative; overflow: hidden; }
+.phone-stats .pa-overlay {
+  position: absolute; inset: 0; z-index: 1;
+  flex-direction: row; background: var(--bg);
+}
+.phone-stats .pa-header { display: none; }
+
+/* Section tabs: a vertical strip. */
+.phone-stats .pa-tabs {
+  flex: 0 0 var(--stats-tabs-w, 104px); flex-direction: column; gap: 2px;
+  padding: 6px 6px 56px; border-bottom: 0; border-right: 1px solid var(--border); overflow-y: auto;
+}
+.phone-stats .pa-tabs button { min-height: 42px; padding: 0 10px; border-radius: 8px; border: 0; text-align: left; font-size: 13px; }
+.phone-stats .pa-tabs button.active { border-bottom: 0; box-shadow: inset 3px 0 0 #a5b4fc; }
+
+/* The pane. */
+.phone-stats .pa-main { flex: 1 1 0; min-width: 0; padding: 10px 12px 28px; -webkit-overflow-scrolling: touch; }
+.phone-stats .pa-kpis { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.phone-stats .pa-kpi { flex: 0 0 132px; padding: 9px 11px; gap: 3px; border-radius: 10px; }
+.phone-stats .pa-kpi strong { font-size: 18px; letter-spacing: -0.4px; }
+.phone-stats .pa-kpi small { display: none; }
+.phone-stats .pa-coverage { padding: 8px 0; }
+.phone-stats .pa-card { padding: 12px; margin-bottom: 12px; border-radius: 10px; }
+.phone-stats .pa-columns { grid-template-columns: 1fr; gap: 0; }
+.phone-stats .pa-curve { max-height: 190px; }
+.phone-stats .pa-overlay th { padding: 8px 8px; }
+.phone-stats .pa-overlay td { padding: 9px 8px; }
+.phone-stats .pa-overlay button { min-height: 36px; }
+.phone-stats .pa-overlay .pa-tabs button { min-height: 42px; }
+.phone-stats .pa-overlay select, .phone-stats .pa-overlay input { min-height: 40px; font-size: 14px; }
+.phone-stats .pa-calendar, .phone-stats .pa-heatmap { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); margin-top: 10px; }
+.phone-stats .pa-calendar button, .phone-stats .pa-heatmap button { padding: 10px; }
+
+/* Filters: hidden until the Filters button is pressed, then a panel over the pane. Writing and exporting are not offered. */
+.phone-stats .pa-overlay > .pa-filters {
+  display: none;
+  position: absolute; z-index: 6; left: var(--stats-tabs-w, 104px); right: 0; top: 0; max-height: 100%; overflow-y: auto;
+  padding: 10px 12px 14px; background: var(--panel); border-bottom: 1px solid var(--border); box-shadow: 0 8px 24px #0009;
+  display: none; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 12px; align-items: end;
+}
+.phone-stats[data-filters='open'] .pa-overlay > .pa-filters { display: grid; }
+.phone-stats .pa-filters label { font-size: 11px; }
+.phone-stats .pa-more-filters { grid-column: 1 / -1; padding: 0; }
+.phone-stats .pa-more-filters > .pa-filters { position: static; width: auto; box-shadow: none; border: 0; padding: 8px 0 0; background: transparent; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 12px; }
+.phone-stats .pa-export { display: none; }
+
+.stats-filters-button {
+  position: absolute; z-index: 7; left: 6px; bottom: 6px; width: calc(var(--stats-tabs-w, 104px) - 12px); min-height: var(--tap);
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); color: var(--text); font: inherit; font-size: 13px;
+}
+.stats-filters-button[aria-expanded='true'] { border-color: var(--accent); }
+
+/* A trade's details open over the pane, full width. */
+.phone-stats .pa-drawer { position: absolute; z-index: 5; left: var(--stats-tabs-w, 104px); right: 0; width: auto; padding: 12px; box-shadow: none; border-left: 1px solid var(--border); }
+.phone-stats .pa-drawer h2 { font-size: 17px; margin: 4px 0; }
+.phone-stats .pa-detail-pnl { font-size: 22px; padding: 6px 0; }
+
+/* Swing statistics have no tab strip: the pane fills the overlay. */
+.phone-stats .pa-overlay > .swing-statistics, .phone-stats .pa-overlay > .swing-stat-card { flex: 1 1 0; min-width: 0; overflow: auto; padding: 10px 12px 28px; }
+
+/* Habit questions are managed on the website or desktop; the phone only reads (labels and marks are its only writes). */
+.phone-stats .hb-manage { display: none; }
+.phone-stats .hb-check input { min-height: 0; width: 20px; height: 20px; padding: 0; }

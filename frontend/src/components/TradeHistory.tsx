@@ -26,6 +26,8 @@ interface Props {
   roundTrips?: RoundTrip[]
   labels?: TradeLabel[]
   pnlPctMode?: boolean
+  /** Milestones mode hides per-trade P&L (it is not a day level). */
+  hidePnl?: boolean
   sessionCapital?: number
 }
 
@@ -64,7 +66,7 @@ const SEPARATOR_STYLE_EXPANDED: React.CSSProperties = {
   letterSpacing: '0.05em',
 }
 
-export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh, brokerOrders, roundTrips = [], labels = [], pnlPctMode = false, sessionCapital = 0 }: Props) {
+export default function TradeHistory({ trades, historicalTrades = [], sessionType, onRefresh, brokerOrders, roundTrips = [], labels = [], pnlPctMode = false, hidePnl = false, sessionCapital = 0 }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -253,9 +255,9 @@ export default function TradeHistory({ trades, historicalTrades = [], sessionTyp
                         </td>
                         <td style={{
                           padding: '7px 14px', fontVariantNumeric: 'tabular-nums', fontWeight: pnl != null ? 600 : 400,
-                          color: pnl != null ? (pnl >= 0 ? '#3fb950' : '#f85149') : '#484f58',
+                          color: pnl != null && !hidePnl ? (pnl >= 0 ? '#3fb950' : '#f85149') : '#484f58',
                         }}>
-                          {pnl != null ? fmtPnl(pnl, pnlPctMode, sessionCapital) : '—'}
+                          {pnl != null && !hidePnl ? fmtPnl(pnl, pnlPctMode, sessionCapital) : '—'}
                         </td>
                         <td style={{ padding: '7px 14px', color: '#484f58', fontSize: 10 }}>
                           {t.trade_id.slice(0, 8)}…

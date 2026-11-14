@@ -2,7 +2,7 @@ import { ToolbarIcon } from './ToolbarIcon'
 import { CandleInterval } from '../CandleInterval'
 import { contractTabs } from './analysisContracts'
 import { snapshotCandles, snapshotBarTime, resolveSnapshotExecutions } from './analysisSnapshot'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { init, dispose, registerOverlay, type Chart, type KLineData } from 'klinecharts'
 import type { AnalysisTrade, OHLCCandle, PatternAnnotation, TopPatterns } from '../api'
 import { useAnalysisApi, useAnalysisEnvironment } from '../environment'
@@ -14,10 +14,29 @@ import { ensureKLineExtensions, useKLineIndicators } from '../../charts/useKLine
 import { KLineIndicatorMenu, KLineToolsRail, useToolsRailVisible } from '../../charts/KLineToolsPanel'
 
 interface Props {
+  /** Hosts with little vertical room (the phone) put their own controls at the start of the chart's header row. */
+  toolbarStart?: ReactNode
+  /**
+   * Live: the host supplies the whole candle series (history plus ticks) and updates it as ticks arrive; the chart then
+   * fetches nothing itself. Candles that only change in the last bar are pushed incrementally.
+   */
+  liveCandles?: OHLCCandle[]
+  /**
+   * Browse: scroll-back. Asked for the candles older than `before` (epoch seconds of the oldest candle held) when the user
+   * pans to the left edge; `more` false stops asking. Absent = the chart shows what it fetched, as before.
+   */
+  loadOlder?: (before: number) => Promise<{ candles: OHLCCandle[]; more: boolean }>
+  /** What If: while true a click or tap on the chart reports the time and price under it (and is not passed on to the chart). Escape cancels. */
+  pickMode?: boolean
+  onPick?: (point: { time: number; price: number }) => void
+  onPickCancel?: () => void
+  pickHint?: string
+  /** What If: edited legs drawn as hollow rings; those whose option side and strike match this chart (or equity on the underlying) show. */
+  whatIfMarkers?: Array<{ key: string; time: number; price: number; side: 'BUY' | 'SELL'; text: string; removed: boolean; right: string | null; strike: number | null }>
   symbol: string; date: string; trades?: AnalysisTrade[]; historicalDays?: number
   exchange?: string; product?: string;
   strike?: number; expiry?: string; right?: string; title?: string; isMaximized?: boolean
-  onMaximize?: () => void; onMax?: () => void; getMarkerText?: (trade: AnalysisTrade) => string
+  onMaximize?: () => void; onMax?: () => void; getMarkerText?: (trade: AnalysisTrade, forOption?: boolean) => string
   /** Epoch seconds to centre the chart on (e.g. the round trip being labeled). Zoom is kept. */
   focusTime?: number
   /** Show `getMarkerText` on option-contract markers (they are unlabeled by default). */
@@ -38,6 +57,12 @@ function registerAnalysisOverlays() {
       ...(marker.text ? [{type:'text',attrs:{x:point.x,y:point.y-9,text:marker.text,align:'center',baseline:'bottom'},styles:{color:marker.color,size:11,weight:'bold'},ignoreEvent:false}] : []),
     ] },
   })
+  registerOverlay({ name: 'analysisWhatIf', totalStep: 1, needDefaultPointFigure: false, needDefaultXAxisFigure: false, needDefaultYAxisFigure: false,
+    createPointFigures: ({coordinates,overlay}) => { const point=coordinates[0]; if(!point) return []; const marker=overlay.extendData as {color:string;text:string;removed:boolean}; return [
+      {type:'circle',attrs:{x:point.x,y:point.y,r:marker.removed?5:8},styles:{color:'transparent',borderColor:marker.color,borderSize:2,style:marker.removed?'stroke_fill':'stroke',borderStyle:marker.removed?'dashed':'solid'},ignoreEvent:true},
+      {type:'text',attrs:{x:point.x,y:point.y+11,text:marker.text,align:'center',baseline:'top'},styles:{color:marker.color,size:11,weight:'bold'},ignoreEvent:true},
+    ] },
+  })
   registerOverlay({ name:'analysisAnnotation', totalStep:1, needDefaultPointFigure:false, needDefaultXAxisFigure:false, needDefaultYAxisFigure:false,
     createPointFigures:({coordinates,overlay})=>{ const p=coordinates[0]; if(!p) return []; const data=overlay.extendData as {color:string;text:string}; return [{type:'text',attrs:{x:p.x,y:p.y,text:data.text,align:'center',baseline:'bottom'},styles:{color:data.color,size:11},ignoreEvent:true}] },
   })
@@ -56,6 +81,10 @@ export default function DesktopAnalysisChart(props: Props) {
   const intervalMinutes=environment.intervalMinutes??3
   const historicalDays=props.historicalDays??environment.historicalDays??2
   const container=useRef<HTMLDivElement>(null); const chartRef=useRef<Chart|null>(null)
+  const pickRef=useRef({active:false,onPick:props.onPick,onCancel:props.onPickCancel}); pickRef.current={active:!!props.pickMode,onPick:props.onPick,onCancel:props.onPickCancel}
+  const loadOlderRef=useRef(props.loadOlder); loadOlderRef.current=props.loadOlder
+  const olderMore=useRef(true)
+  const whatIfOverlays=useRef<string[]>([])
   const candlesRef=useRef<OHLCCandle[]>([]); const overlays=useRef<string[]>([])
   const [candles,setCandles]=useState<OHLCCandle[]>([]); const [error,setError]=useState(''); const [loading,setLoading]=useState(true); const [refresh,setRefresh]=useState(0)
   const [filter,setFilter]=useState('all'); const [chooser,setChooser]=useState<ExecutionMarker|null>(null)
@@ -92,7 +121,7 @@ export default function DesktopAnalysisChart(props: Props) {
   useEffect(()=>{
     if(!container.current)return
     ensureKLineExtensions(); registerAnalysisOverlays(); const chart=init(container.current); if(!chart)return
-    chartRef.current=chart; chart.setTimezone('Etc/UTC'); chart.setStyles('dark'); chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0}); chart.setPeriod({span:intervalMinutes,type:'minute'})
+    chartRef.current=chart; chart.setTimezone('Etc/UTC'); chart.setStyles('dark'); chart.setStyles({candle:{tooltip:{showRule:chartInfoRef.current}},indicator:{tooltip:{showRule:chartInfoRef.current}}}); chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0}); chart.setPeriod({span:intervalMinutes,type:'minute'})
     let lastWidth=container.current.clientWidth
     let resizeRevision=0
     const observer=new ResizeObserver(()=>{
@@ -110,7 +139,18 @@ export default function DesktopAnalysisChart(props: Props) {
     }); observer.observe(container.current)
     chart.subscribeAction('onScroll',saveViewport); chart.subscribeAction('onZoom',saveViewport)
     const owner=container.current
-    return ()=>{ generation.current++; saveViewport(); observer.disconnect(); chart.unsubscribeAction('onScroll',saveViewport); chart.unsubscribeAction('onZoom',saveViewport); dispose(owner); chartRef.current=null }
+    // What If: while picking, a click reports the time and price under it, before the chart's own handlers (marker chooser) see it.
+    const onPickClick=(event:MouseEvent)=>{
+      const pick=pickRef.current; if(!pick.active||!pick.onPick)return
+      const box=owner.getBoundingClientRect()
+      const converted=chart.convertFromPixel([{x:event.clientX-box.left,y:event.clientY-box.top}],{paneId:'candle_pane'})
+      const point=Array.isArray(converted)?converted[0]:converted
+      if(!point||typeof point.value!=='number'||!Number.isFinite(point.value)||point.value<=0)return
+      event.stopPropagation();event.preventDefault()
+      pick.onPick({time:Math.round((point.timestamp??0)/1000),price:Math.round(point.value*100)/100})
+    }
+    owner.addEventListener('click',onPickClick,true)
+    return ()=>{ owner.removeEventListener('click',onPickClick,true); generation.current++; saveViewport(); observer.disconnect(); chart.unsubscribeAction('onScroll',saveViewport); chart.unsubscribeAction('onZoom',saveViewport); dispose(owner); chartRef.current=null }
   },[])
   // Drawing tools + indicators. Declared after the chart-creation effect so chartRef is set when they first run.
   // undefined = resolving, null = no resolver (use defaults), false = lookup failed (tools disabled rather than saved under a guessed key)
@@ -125,10 +165,33 @@ export default function DesktopAnalysisChart(props: Props) {
   const drawingInstrument=useMemo(()=>environment.drawingRequest&&symbolInfo!==undefined&&symbolInfo!==false?analysisDrawingInstrument({symbol:props.symbol,right:props.right,strike:props.strike,expiry:props.expiry,kind:symbolInfo?.kind,exchange:symbolInfo?.exchange}):null,[environment.drawingRequest,symbolInfo,props.symbol,props.right,props.strike,props.expiry])
   const [hovered,setHovered]=useState(false)
   const drawings=useKLineDrawings({chartRef,instrument:drawingInstrument,request:environment.drawingRequest,active:hovered&&environment.active!==false,onError:error=>environment.reportError?.(String(error),'Drawings')})
-  const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`)
+  // Details over the chart follow the environment setting (default: always, as before).
+  const chartInfo=environment.chartInfo??'always'; const chartInfoRef=useRef(chartInfo); chartInfoRef.current=chartInfo
+  useEffect(()=>{chartRef.current?.setStyles({candle:{tooltip:{showRule:chartInfo}},indicator:{tooltip:{showRule:chartInfo}}})},[chartInfo])
+  const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`,{hasVolume:candles.some(c=>c.volume!=null)})
   const [toolsVisible,toggleTools]=useToolsRailVisible()
   const toolsAvailable=Boolean(environment.drawingRequest)
+  // The bars the chart asks for: everything fetched on init, and (Browse) older pages on the left edge via `loadOlder`.
+  const analysisLoader=()=>({getBars:async({type,timestamp,callback}:{type:string;timestamp:number|null;callback:(rows:KLineData[],more?:{forward:boolean;backward:boolean})=>void})=>{
+    const toBar=(c:OHLCCandle):KLineData=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})})
+    const older=loadOlderRef.current
+    if(type==='init'){callback(candlesRef.current.map(toBar),{forward:Boolean(older)&&olderMore.current,backward:false});return}
+    if(type!=='forward'||!older||timestamp==null||!olderMore.current){callback([],{forward:false,backward:false});return}
+    const owner=chartRef.current
+    try{
+      const page=await older(timestamp/1000)
+      if(chartRef.current!==owner)return
+      const rows=page.candles.filter(c=>c.time*1000<timestamp)
+      candlesRef.current=[...rows,...candlesRef.current];setCandles(candlesRef.current);setError('')
+      olderMore.current=page.more
+      callback(rows.map(toBar),{forward:page.more,backward:false})
+    }catch(cause){
+      if(chartRef.current!==owner)return
+      setError(String(cause)); callback([],{forward:true,backward:false})
+    }
+  }})
   useEffect(()=>{
+    if(props.liveCandles)return
     const controller=new AbortController()
     const request=++generation.current; setLoading(true);setError('');setChooser(null)
     const clearCandles=()=>{
@@ -170,7 +233,7 @@ export default function DesktopAnalysisChart(props: Props) {
       if(!continuing){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:intervalMinutes,type:'minute'})}
       // Reuse the loader on event changes so KLine also retains a manual price scale.
       if(continuing)chart.resetData()
-      else chart.setDataLoader({getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(c=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close} satisfies KLineData)):[],{forward:false,backward:false})})
+      else { olderMore.current=true; chart.setDataLoader(analysisLoader()) }
       const restoreViewport=()=>{
         if(request!==generation.current||chartRef.current!==chart)return
         chart.setBarSpace(saved?.barSpace??Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,sorted.length))))
@@ -194,6 +257,46 @@ export default function DesktopAnalysisChart(props: Props) {
     }})
     return () => { controller.abort(); generation.current++ }
   },[api,key,historicalDays,refresh])
+  const subscribeBar=useRef<((bar:KLineData)=>void)|null>(null)
+  useEffect(()=>{
+    const live=props.liveCandles; const chart=chartRef.current
+    if(!live||!chart)return
+    const toBar=(c:OHLCCandle):KLineData=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})})
+    const previous=candlesRef.current
+    const sameBar=(a:OHLCCandle|undefined,b:OHLCCandle|undefined)=>!!a&&!!b&&a.time===b.time&&a.open===b.open&&a.high===b.high&&a.low===b.low&&a.close===b.close
+    const incremental=loadedKey.current===chartKey&&previous.length>0&&live.length>0&&subscribeBar.current!==null&&live[0].time===previous[0].time
+      &&(live.length===previous.length||live.length===previous.length+1)&&(live.length<2||sameBar(live[live.length-2],previous[live.length-2]))
+    candlesRef.current=live;setCandles(live);setError('');setLoading(live.length===0)
+    if(!live.length){loadedKey.current=null;chart.setDataLoader({getBars:({callback})=>callback([],{forward:false,backward:false})});return}
+    if(incremental){subscribeBar.current!(toBar(live[live.length-1]));return}
+    const first=loadedKey.current!==chartKey
+    loadedKey.current=chartKey
+    if(first){chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0});chart.setPeriod({span:intervalMinutes,type:'minute'})}
+    chart.setDataLoader({
+      getBars:({type,callback})=>callback(type==='init'?candlesRef.current.map(toBar):[],{forward:false,backward:false}),
+      subscribeBar:({callback})=>{subscribeBar.current=callback},
+      unsubscribeBar:()=>{subscribeBar.current=null},
+    })
+    if(first)requestAnimationFrame(()=>{if(chartRef.current!==chart)return;chart.setBarSpace(Math.max(2,(container.current?.clientWidth??800)/Math.min(150,Math.max(1,live.length))));chart.scrollToRealTime(0)})
+    else chart.resetData()
+  },[props.liveCandles,chartKey])
+  useEffect(()=>{
+    if(!props.pickMode)return
+    const escape=(event:KeyboardEvent)=>{ if(event.key==='Escape'){ event.stopPropagation(); pickRef.current.onCancel?.() } }
+    window.addEventListener('keydown',escape,true); return()=>window.removeEventListener('keydown',escape,true)
+  },[props.pickMode])
+  useEffect(()=>{
+    const chart=chartRef.current;if(!chart)return
+    whatIfOverlays.current.forEach(id=>chart.removeOverlay({id}));whatIfOverlays.current=[]
+    if(!candles.length)return
+    const slot=intervalMinutes*60
+    for(const marker of props.whatIfMarkers??[]){
+      const here=props.right?marker.right===props.right&&marker.strike===(props.strike??null):marker.right==null
+      if(!here)continue
+      const id=chart.createOverlay({name:'analysisWhatIf',lock:true,points:[{timestamp:Math.floor(marker.time/slot)*slot*1000,value:marker.price}],extendData:{color:marker.side==='BUY'?'#f0b429':'#d36bff',text:marker.text,removed:marker.removed}})
+      if(typeof id==='string')whatIfOverlays.current.push(id)
+    }
+  },[candles,props.whatIfMarkers,props.right,props.strike,intervalMinutes])
   // Re-centre when the requested time changes on an already loaded chart (Prev/Next in Label Trades).
   useEffect(()=>{
     const chart=chartRef.current
@@ -229,8 +332,8 @@ export default function DesktopAnalysisChart(props: Props) {
     const levels=[...(props.openOrders??[]).map(order=>({price:order.trigger_price||order.limit_price,text:`${order.side} ${order.order_type} ${order.quantity}`})), ...(props.position?[{price:props.position.avg_entry_price,text:`Captured ${props.position.side} ${props.position.quantity}`}]:[]), ...(props.barTime!=null&&props.currentPrice!=null?[{price:props.currentPrice,text:'Captured current price'}]:[])]
     for(const order of levels){const price=order.price;if(!price||!candles.length)continue;const id=chart.createOverlay({name:'analysisLevel',lock:true,points:[{timestamp:candles[candles.length-1].time*1000,value:price}],extendData:{text:order.text}});if(typeof id==='string')overlays.current.push(id)}
   },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.openOrders,props.position,props.currentPrice,intervalMinutes])
-  return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''} ${toolsAvailable&&toolsVisible?'has-tools-rail':''}`} onPointerEnter={()=>setHovered(true)} onPointerLeave={()=>setHovered(false)}>
-    <header><strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · {intervalMinutes}m · IST</strong>
+  return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''} ${props.pickMode?'picking':''} ${toolsAvailable&&toolsVisible?'has-tools-rail':''}`} data-contract-labels={props.right?(props.labelContractMarkers?'on':'off'):undefined} onPointerEnter={()=>setHovered(true)} onPointerLeave={()=>setHovered(false)}>
+    <header>{props.toolbarStart}<strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · {intervalMinutes}m · IST</strong>
       {!props.right&&trades.some(t=>t.right)&&<select aria-label="Underlying markers" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option>CE</option><option>PE</option></select>}
       <CandleInterval />
       {toolsAvailable&&<button className="kline-tools-toggle" type="button" aria-pressed={toolsVisible} aria-label={toolsVisible?'Hide drawing tools':'Show drawing tools'} title={toolsVisible?'Hide drawing tools':'Show drawing tools'} onClick={toggleTools}>✎</button>}
@@ -239,6 +342,7 @@ export default function DesktopAnalysisChart(props: Props) {
       {(props.onMaximize||props.onMax)&&<button title={props.isMaximized?'Restore chart':'Maximize chart'} aria-label={props.isMaximized?'Restore chart':'Maximize chart'} onClick={props.onMaximize??props.onMax}><ToolbarIcon name={props.isMaximized?'Restore':'Maximize'} /></button>}
     </header>
     {toolsAvailable&&toolsVisible&&<KLineToolsRail drawings={drawings} />}
+    {props.pickMode&&<div className="analysis-pick-hint" role="status">{props.pickHint??'Click the chart to set the price'} · Esc cancels</div>}
     <div ref={container} className="analysis-kline" />
     {barTime!=null&&intervalMinutes!==3&&<small>Full historical event candle</small>}
     {loading&&<div role="status">Loading candles…</div>}{error&&<div role="alert">{error}<button onClick={()=>setRefresh(n=>n+1)}>Retry</button></div>}

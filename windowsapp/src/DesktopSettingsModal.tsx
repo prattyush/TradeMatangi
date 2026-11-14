@@ -721,7 +721,9 @@ export function DesktopSettingsModal({
                   {tab === 'General' && (
                     <p>
                       Indicator ratio and automatic option-selection preferences
-                      currently apply to the website.
+                      currently apply to the website. Milestones P&L display
+                      shows the day as thirds of Max win (set here) and Max loss
+                      (the GuardRails capital loss limit) instead of numbers.
                     </p>
                   )}
                   {tab === 'Analytics' && (

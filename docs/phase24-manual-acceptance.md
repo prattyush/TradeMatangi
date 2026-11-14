@@ -56,3 +56,19 @@ Volume (#801):
 6. Same replay on the desktop (Indicators > Volume); also check a Swing chart on a stock (Volume appears with the daily candles).
 7. Live and real sessions show history volume only; the forming candle has no volume yet (B2, not built). If a live candle shows a huge or zero-only volume, report it.
 
+
+## H. Browse on the website and webapp (added 2026-11-12)
+1. Open the website (and the installed webapp) with no session running: it opens on **Browse**, two panes (NIFTY and SENSEX). With a paper or real session running it opens on Trading as before.
+1b. Change Settings → Trading Chart between Lightweight and KLine: Browse follows it (Lightweight charts with the Indicators / Draw toolbar, or KLine charts with the shared drawing rail at the left).
+1c. Every chart shows its time axis along the bottom (Lightweight and KLine, in every layout including 5 panes).
+2. In a pane's header, the button (symbol, day, contract) opens its panel: change the **symbol**, the **day** (‹ › step over weekends; or open the calendar: the month arrows only move between months, nothing reloads until you click a day), **Spot | CE | PE**; for an option pick a **strike** or **Max price** with a premium cap. Two panes can show different symbols on different days side by side.
+3. The header's layout box has the website's layouts (1, 2, 3, 4, 5 equal, 5 wide right, 4 as 1+3). **← Trading** goes to the session screen, **📈 Browse** returns.
+4. An index or share pane at 3 minutes: scroll the chart to the left edge repeatedly: older days load back to about a year (1-minute stops at 90 days; move the pane's day to look further back). Option panes keep their few days.
+5. Reload the page: the same panes, symbols, days, strikes and intervals are back.
+6. Start a session from Trading: Browse is left; nothing in Browse starts or changes a session.
+
+## G. Browse on minute-level data (added 2026-11-11; Windows app)
+1. Mode **Browse**, a past day, NIFTY spot and an option of an expired expiry: the charts appear in seconds, with no long wait. Scroll left for older days: they load too.
+2. In Browse, **Max price** for a strike: the search answers without a long wait.
+2b. **A year back:** in a Browse spot tile at 3 minutes, scroll the chart to the left edge repeatedly: older pages load back to about a year (1-minute stops at 90 days; move the tile's date to look further back). Options tiles keep their few days.
+3. Switch to **Replay** (or Stepwise) on the same day and start it: it replays normally (replay still uses second-level data; nothing from Browse changes it).

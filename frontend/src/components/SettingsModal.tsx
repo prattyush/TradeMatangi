@@ -1,4 +1,6 @@
 import WebsiteChartAppearanceSettings from './WebsiteChartAppearanceSettings'
+import type { PnlDisplayMode } from '../../../shared/pnlMilestone'
+import { publishAnalysisPnlMode } from '../services/analysisPnlModePreference'
 import SettingHelp from './SettingHelp'
 import { cachedTradingDisplaySettings, publishTradingDisplaySettings } from '../hooks/useTradingDisplaySettings'
 import { parsePnlTargets } from '../indicators/positionPnlLevels'
@@ -438,7 +440,10 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [status, setStatus] = useState<string | null>(null)
   useFlashError(status && !/saved|success|connected|added|updated|deleted|^Streaming source set to:|^Reset to /i.test(status) ? status : null, 'Settings')
 
-  const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
+  const [pnlMode, setPnlMode] = useState<PnlDisplayMode>(() => cachedTradingDisplaySettings().pnl.mode)
+  const [pnlMaxWinInput, setPnlMaxWinInput] = useState(() => String(cachedTradingDisplaySettings().pnl.maxWinPct))
+  const [showBarPnl, setShowBarPnl] = useState(() => cachedTradingDisplaySettings().pnl.showBarLabel)
+  const [pnlMaxLoss, setPnlMaxLoss] = useState(() => cachedTradingDisplaySettings().pnl.maxLossPct)
   const [pnlTargetsInput, setPnlTargetsInput] = useState(() => cachedTradingDisplaySettings().pnlTargetLevels)
   const [candleAlertEnabled, setCandleAlertEnabled] = useState(() => cachedTradingDisplaySettings().candleAlert.enabled)
   const [candleAlertInterval, setCandleAlertInterval] = useState(() => cachedTradingDisplaySettings().candleAlert.intervalMin)
@@ -604,12 +609,14 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     onTargetDeviationChange(targetGap)
     setHistoricalDays(s.historical_days)
     localStorage.setItem(HISTORICAL_DAYS_KEY, String(s.historical_days))
-    if (s.desktop_pnl_display_mode === 'currency' || s.desktop_pnl_display_mode === 'percent') {
-      const percentMode = s.desktop_pnl_display_mode === 'percent'
-      setPnlPctMode(percentMode)
-      localStorage.setItem(PNL_PCT_MODE_KEY, String(percentMode))
-      onPnlPctModeChange?.(percentMode)
+    if (s.desktop_pnl_display_mode === 'currency' || s.desktop_pnl_display_mode === 'percent' || s.desktop_pnl_display_mode === 'milestones') {
+      setPnlMode(s.desktop_pnl_display_mode)
+      // Older browser key: true only for % of capital; Analysis reads it for its first paint.
+      localStorage.setItem(PNL_PCT_MODE_KEY, String(s.desktop_pnl_display_mode === 'percent'))
+      onPnlPctModeChange?.(s.desktop_pnl_display_mode === 'percent')
     }
+    if (typeof s.pnl_max_win_pct === 'number') setPnlMaxWinInput(String(s.pnl_max_win_pct))
+    if (typeof s.show_bar_pnl_label === 'boolean') setShowBarPnl(s.show_bar_pnl_label)
     if (s.desktop_order_size_mode === 'quantity' || s.desktop_order_size_mode === 'funds_ratio' || s.desktop_order_size_mode === 'risk_ratio') {
       const mode = s.desktop_order_size_mode === 'funds_ratio' ? 'fundsRatio' : s.desktop_order_size_mode === 'risk_ratio' ? 'riskRatio' : 'quantity'
       setSizingMode(mode)
@@ -739,6 +746,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_MINGAP_ENABLED_KEY, String(s.guardrail_mingap_enabled ?? ''))
       localStorage.setItem(GUARDRAIL_MINGAP_MINUTES_KEY, String(s.guardrail_mingap_minutes ?? ''))
     }
+    if (typeof guardrails.guardrail_ban_capital_pct === 'number') setPnlMaxLoss(guardrails.guardrail_ban_capital_pct)
     onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0, maxSizeAlertEnabled: guardrails.guardrail_maxsize_alert_enabled ?? false })
   }
 
@@ -814,11 +822,22 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     finally { setPreferenceSaving(false) }
   }
 
-  const togglePnlPctMode = () => {
-    const next = !pnlPctMode
-    void savePreference({ desktop_pnl_display_mode: next ? 'percent' : 'currency' }, () => {
-      setPnlPctMode(next); localStorage.setItem(PNL_PCT_MODE_KEY, String(next)); onPnlPctModeChange?.(next)
+  const choosePnlMode = (next: PnlDisplayMode) => {
+    void savePreference({ desktop_pnl_display_mode: next }, () => {
+      setPnlMode(next); localStorage.setItem(PNL_PCT_MODE_KEY, String(next === 'percent')); onPnlPctModeChange?.(next === 'percent')
+      publishTradingDisplaySettings({ desktop_pnl_display_mode: next })
+      publishAnalysisPnlMode(next)
     })
+  }
+  const saveMaxWin = () => {
+    const value = parseFloat(pnlMaxWinInput)
+    if (!Number.isFinite(value) || value < 1 || value > 100) { setStatus('Max win must be 1–100 % of capital'); return }
+    if (value === cachedTradingDisplaySettings().pnl.maxWinPct) { setPnlMaxWinInput(String(value)); return }
+    void savePreference({ pnl_max_win_pct: value }, () => { setPnlMaxWinInput(String(value)); publishTradingDisplaySettings({ pnl_max_win_pct: value }); setStatus('Max win saved'); setTimeout(() => setStatus(null), 2000) })
+  }
+  const toggleBarPnl = () => {
+    const next = !showBarPnl
+    void savePreference({ show_bar_pnl_label: next }, () => { setShowBarPnl(next); publishTradingDisplaySettings({ show_bar_pnl_label: next }) })
   }
 
   const saveRatios = async () => {
@@ -1041,7 +1060,8 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_MINGAP_ENABLED_KEY, String(grMinGapEnabled))
       localStorage.setItem(GUARDRAIL_MINGAP_MINUTES_KEY, String(minGapMinutes))
       onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, highTierPnlThresholdPct, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue, maxSizeAlertEnabled: grMaxSizeAlertEnabled })
-      publishTradingDisplaySettings({ guardrail_maxsize_enabled: grMaxSizeEnabled, guardrail_maxsize_alert_enabled: grMaxSizeAlertEnabled, guardrail_maxsize_mode: grMaxSizeMode, guardrail_maxsize_pct: maxSizePct, guardrail_maxsize_value: maxSizeValue })
+      setPnlMaxLoss(banCapitalPct)
+      publishTradingDisplaySettings({ guardrail_ban_capital_pct: banCapitalPct, guardrail_maxsize_enabled: grMaxSizeEnabled, guardrail_maxsize_alert_enabled: grMaxSizeAlertEnabled, guardrail_maxsize_mode: grMaxSizeMode, guardrail_maxsize_pct: maxSizePct, guardrail_maxsize_value: maxSizeValue })
       setStatus('GuardRail settings saved')
       setTimeout(() => setStatus(null), 2000)
     } catch {
@@ -1366,23 +1386,39 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
             {/* P&L Display Mode */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, fontWeight: 600 }}>P&L DISPLAY MODE</div>
-              <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
-                {([{ label: '₹ Monetary', value: false }, { label: '% of Capital', value: true }] as const).map(opt => (
+              <div role="group" aria-label="P&L display mode" style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid #30363d', width: 'fit-content' }}>
+                {([{ label: '₹ Monetary', value: 'currency' }, { label: '% of Capital', value: 'percent' }, { label: 'Milestones', value: 'milestones' }] as const).map(opt => (
                   <button
-                    key={String(opt.value)}
-                    onClick={() => { if (pnlPctMode !== opt.value) togglePnlPctMode() }}
+                    key={opt.value}
+                    aria-pressed={pnlMode === opt.value}
+                    disabled={preferenceSaving}
+                    onClick={() => { if (pnlMode !== opt.value) choosePnlMode(opt.value) }}
                     style={{
                       padding: '5px 16px', fontSize: 12, fontWeight: 600,
                       border: 'none', cursor: 'pointer',
-                      background: pnlPctMode === opt.value ? '#1f3a5f' : '#161b22',
-                      color: pnlPctMode === opt.value ? '#79c0ff' : '#484f58',
+                      background: pnlMode === opt.value ? '#1f3a5f' : '#161b22',
+                      color: pnlMode === opt.value ? '#79c0ff' : '#484f58',
                     }}
                   >
                     {opt.label}
                   </button>
                 ))}
               </div>
-              <SettingHelp text={"Pos P&L and Session P&L show % of session capital when enabled"} />
+              <SettingHelp text={"Pos P&L and Session P&L show % of session capital in % of Capital. Milestones shows no numbers: every P&L display shows only how far the day is towards Max win or Max loss, in thirds (Win 1/3, Win 2/3, Max win, Loss 1/3, Loss 2/3, Max loss), so size and P&L % do not pull your attention. Order-line and trade-history P&L are hidden in Milestones."} />
+              <label className="settings-field-row" style={{ marginTop: 10 }}>
+                <span>Milestones: max win (% of capital)</span>
+                <input className="settings-control" type="number" min={1} max={100} step={0.5} aria-label="Milestones max win percent" value={pnlMaxWinInput} disabled={preferenceSaving}
+                  onChange={event => setPnlMaxWinInput(event.target.value)} onBlur={saveMaxWin} />
+              </label>
+              <div className="settings-field-row" style={{ color: '#8b949e' }}>
+                <span>Milestones: max loss (% of capital)</span>
+                <span aria-label="Milestones max loss percent">{pnlMaxLoss}% — the GuardRails capital loss limit</span>
+              </div>
+              <label className="settings-field-row" style={{ marginTop: 10 }}>
+                <span>Show position P&L above the bar</span>
+                <input type="checkbox" aria-label="Show position P&L above the bar" checked={showBarPnl} disabled={preferenceSaving} onChange={toggleBarPnl} />
+                <SettingHelp text={"Draws the live position's P&L above the current bar on the chart. Turn off to hide it in every P&L display mode, for every kind of session."} />
+              </label>
             </div>
 
             {/* Historical Days */}

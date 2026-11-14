@@ -1,0 +1,26 @@
+/* Trade Walkthrough panel (right side of the split layout; the navigation header is Label Trades' own). */
+.wt-panel { display: flex; flex-direction: column; gap: 10px; color: var(--tl-text, #e6edf3); font-size: 12px; container-type: inline-size; }
+.wt-story { display: flex; align-items: stretch; gap: 6px; }
+.wt-step { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; border: 1px solid #21262d; border-radius: 8px; background: #0d1117; }
+.wt-step.wt-this { border-color: #30363d; background: #161b22; }
+.wt-step strong { font-size: clamp(12px, 4.6cqw, 17px); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wt-step small { color: #8b949e; font-size: 11px; }
+.wt-step strong.up { color: #3fb950; }
+.wt-step strong.down { color: #f85149; }
+.wt-arrow { align-self: center; color: #6e7681; }
+.wt-facts { display: flex; flex-wrap: wrap; gap: 4px 14px; color: #8b949e; }
+.wt-facts b { color: #c9d1d9; font-weight: 600; margin-right: 3px; }
+.wt-block h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: #8b949e; }
+.wt-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.wt-table th { text-align: left; font-weight: 500; font-size: 11px; color: #6e7681; padding: 2px 4px; border-bottom: 1px solid #21262d; }
+.wt-table td { padding: 5px 4px; border-bottom: 1px solid #161b22; white-space: nowrap; }
+.wt-table .num { text-align: right; }
+.wt-leg.buy td:nth-child(2) { color: #e6edf3; }
+.wt-leg.sell td:nth-child(2) { color: #58a6ff; }
+.wt-chip { display: inline-block; min-width: 30px; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 700; text-align: center; letter-spacing: 0.02em; }
+.wt-more { background: none; border: 0; color: #c9d1d9; cursor: pointer; padding: 0; font: inherit; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wt-more:hover { color: #58a6ff; }
+.wt-extra td { white-space: normal; color: #8b949e; padding-top: 0; }
+.wt-extra strong { color: #c9d1d9; }
+.wt-notes p { margin: 3px 0; color: #d29922; }
+.wt-notes .wt-muted, .wt-muted { color: #6e7681; }

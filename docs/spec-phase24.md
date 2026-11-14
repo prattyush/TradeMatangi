@@ -111,3 +111,136 @@ Status: B1 merged to `dev` (#801). Still to do by hand: the `VOL` pane and a rep
 
 ##### Test housekeeping (2026-11-10)
 Three Swing tests (`test_swing_api::test_exact_contract_lot_validation...`, `test_swing_paper_runtime::test_expiry_quote_closes...`, `test_swing_stream_valuation::...[True]`) had started failing on every branch once the real date passed their hardcoded option expiry (2026-11-03): the Swing portfolio date came from the wall clock and Swing correctly refused the entry. They now pin `swing_market.today` as `test_swing_futures.py` does (#802, tests only). Rule for new Swing tests: pin `swing_market.today`; never rely on the real date next to a hardcoded expiry.
+
+
+#### Android phone app
+
+##### Requirement (2026-11-10)
+An Android phone app for leisure-time analysis. Day trading stays on the desktop, website or a tablet; the phone is for reviewing and learning.
+
+1. **Platform.** Android phones, landscape only. Built with Capacitor around a new phone-first React entry (`mobile/`) that reuses `shared/` and the Tauri-free desktop modules, so changes to shared code reach the phone, the website, the webapp and the desktop. Installed as an APK (sideload first; Play Store later). Why Capacitor and not a Tauri Android build of the desktop app: `docs/architecture-phone.md`.
+2. **First version (read and review).**
+   - Sessions and the **whole Analysis section** (as on the website and desktop): session list with filters; session chart with trade markers, Underlying and option contracts (strikes); trades and stored orders; **event snapshots** (the captured chart at each order event, with a searchable event list); **Compare** (trades against saved pattern annotations); the day journey chart; and execution details.
+   - One-at-a-time trade labeling, including behavior questions and tags.
+   - Stats and Habits.
+   - Session videos with an embedded player, chapters, and Open in YouTube.
+   - Browse: search a symbol, pick a day, interval, spot or CE/PE, and read the chart (read-only).
+   - *Phase 2 (later PR):* read-only open positions for swing and day trading, and Google sign-in with optional app lock.
+3. **Later.** Alerts (push), swing trading actions, exit scenarios, deeper setup review. The navigation and API layer leave room for them.
+4. **Sign-in.** Email and password, and Google (native Android sign-in using the existing Web client ID). The same Bearer token flow as the desktop (`/api/auth/desktop/*`), never the website's `X-User-Id`. Optional app lock (fingerprint or PIN), off by default.
+5. **Server.** All data comes from the server over HTTPS (default `https://tradematangi.co.in`). The server URL can be changed in the app. The app must work against `dev`, `preprod` and the phone branch: a feature the server does not have shows a clear "not available on this server" message, never a crash.
+6. **UI.** Designed for a landscape phone (about 740 to 960 by 340 to 440 px): a left navigation rail, list-and-detail panes instead of modals, filters in sheets, one chart per screen page, 44 px touch targets, and the Android back button steps back one level. It is not the website layout shrunk down. Sessions, trade labeling, Stats, Videos and Browse each have their own phone layout (see `docs/architecture-phone.md`).
+7. **Safety.** Read-only for trading in the first version: labels and behavior marks are the only writes. No order could be placed from the phone. *Phase 2 exception (user decision 2026-11-11): the phone trades the **Swing portfolio** (see below); Day trading stays off the phone.* Real swing appears only for users with real-trading access.
+8. **Production quality.** Signed release builds, tokens in the Android Keystore, no cleartext traffic, no tokens in logs, request timeouts and offline handling, date-bounded queries, tests for the token flow and each screen, and a manual acceptance list on a real phone (`docs/phone-manual-acceptance.md`).
+9. **Delivery.** One feature branch (`feat/android-phone-app`) and one pull request into `dev`; the server URL decides which backend is tested.
+
+Status: phase 1 in progress (Sessions, Snapshots, Day journey, Label trades accepted on a phone; Compare, Stats and Habits, Videos, Browse and hardening remain). Google sign-in and Positions are phase 2. Sprints, decisions and risks: `docs/spec-phase24-android-plan.md`.
+
+
+### TRADE WALKTHROUGH
+This will be another tab in the analysis section, very similar to label trades in UI, but just read only.
+
+It will on left panel the charts similar to label trades but on the right side it will show the entries and exits and before and after P&L for that roundtrip trade. Basically, it will going through each trade entries and exits if possible there details like risk% entry or capital % entry and exits are stoploss or stop limit or take profit strategy exits or likewise. And also what effect that trade had on the P&L Story before and after.
+
+For UI, you can create efficient way to show entry and exit order details, the right panel space if it is becoming a concern.
+
+When adding this same feature in phone app, again you can creative in UI. Major important points to be necessary displayed at front.
+1. Before and After P&L Story
+2. Capital % and size entry and time.
+3. Capital % and size exit and time.
+4. Total Peak Capital of the trade.
+
+For phone you can show the exact entry details or exit details as a color or short cut or More Info button. Coloring like Stoploss exit, and SELL LImit or (Sell Target exit) or Take Profit Strategy Exit. You can use accronyms as well like , BL (Buy limit), BUy Target, SELL LIMIT (SL) or SELL stoploss (SS) or Take Profit Strategy (TP). Your wish, UI is not my forte these all are just suggestions.
+
+
+##### Decisions (2026-11-10, planning)
+1. **Where.** A new **Walkthrough** tab in the Analysis section next to Label Trades, in the website (Lightweight and KLine), the desktop app, the webapp and the phone app (a **Walkthrough** entry in the day's view menu, full screen like Label trades). Intraday sessions, like Label Trades.
+2. **All session types.** Real, paper, replay (sim) and stepwise. Real sessions also show how the charges were counted (estimated or allocated actual).
+3. **Contents (per round trip).** Entries (time, size, price, capital %, risk %, sizing method), exits (time, size, price, capital %, how it happened), the trade's peak capital %, and the **P&L story before and after**: the day's realised P&L (money and % of capital) before this trade and after it, with the trade's own P&L between. Realised only; trades that overlap in time are noted.
+4. **How an exit happened** is shown with a colour and a short code (details in `docs/spec-phase24-walkthrough-whatif-plan.md`): stoploss, limit, target, take-profit strategy, other strategy exits, market, session close.
+5. **Order.** Trades are walked in time order by their **first entry**: with overlapping trades, the one opened first comes first, then the next one opened, and so on (not by exit time or label number).
+6. **Read-only.** Nothing is saved or sent. It reuses the Label Trades layout (charts left, one round trip right, Prev / Next).
+
+Status: merged to `dev` (#808; website, desktop, webapp, phone). Seen on the phone and the website; the Windows app is still to be checked. Sprints W0 to W4 in `docs/spec-phase24-walkthrough-whatif-plan.md`. Since the first try-out, the option-chart markers carry no text in Walkthrough (KLine charts, every host; the Lightweight renderer is unchanged), see What If below.
+
+### WHAT IF
+
+This is a interesting requirement. This requirement is another tab in analysis section, it also shows left panel and right panel, left panel are the charts and the right panel is the rountrip trade entry and exits and P&L before and after. Trick is here we can calculate WHAT IF.
+
+What if the exit was at this price, What if quantity waas less. What if only one entry.
+
+So, this section will allow for each entry, changes in price, changes in quantity.
+And for exit changes in price and changes in quantity. Now, the system should showthing to notify the user, if the entries and exits don't match.
+
+
+The restrictions are:-
+1. Entry and exit quantities should match in What-If at the end of the day. I mean it cannot happen that user adds a buy and doesn't give a sell. If the does, the net P&L would be negative. So, maybe this can just a notification, as it will show as net P&L would be uneven. 
+
+Another restriction what if the user, extends the price till next 2 bars and we already had trades there. I would suggest leave it, they are only for evaluation, open playground for user to evaluate all possibilities, It can or can not be stored, so suggestions. If stored I think it would be better to have separate table. 
+
+Some  of the ways What If can used:-
+1. The user has a habit of exiting trades in between a bar before its closed. What if they started taking exits at close of each bar, the same bar they exited. User just changes the exit prices, what happens at days P&L. 
+2. The user always averages their entries when in loss, what if the user stops doing it, what happens to end of day P&L.
+3. What if the user exited at end of the move, instead of taking 3 trades in teh same move. Swing instead of scalp.
+
+Allow the user to choose the price from chart by clicking or enter directly. Quantity when changed should show the %capital change.
+
+For UI in phone app, feel free to innovate. I am not good in UI.
+
+##### Decisions (2026-11-10, planning)
+1. **Where.** A new **What If** tab beside Walkthrough, in the website, desktop, webapp and phone app, for real, paper, replay (sim) and stepwise sessions. Intraday sessions only.
+2. **What can be changed.** The price and quantity of each **existing** entry and exit (not new legs). Quantity 0 removes a leg ("what if only one entry", "what if I stopped averaging"). The price is typed or **clicked on the chart** (KLine charts: desktop, webapp, phone, website with the KLine renderer; the website's Lightweight renderer can type values only). A quantity change shows the change in % of capital.
+3. **Result.** The trade's and the **day's** P&L, actual against what-if, recalculated for every trade with an edit. P&L is cash flow (sells minus buys minus charges, by direction). When the entry and exit quantities of a trade do not match, a notice says the P&L is uneven; it is not blocked. Edits that reach into the next bars or overlap other trades are allowed: it is an open playground for evaluation. Charges are recalculated with the platform's fee formula; for real sessions they are an estimate (actual broker charges cannot be reproduced).
+4. **Saved per day.** A what-if is saved (so a refresh does not erase it, the day can be revisited or undone, and days can be compared): named scenarios, several per day (for example "exit at bar close", "no averaging"), each holding the edits of every trade of that day, in a separate table (`WhatIfScenarios`, owner only). **Revert day** clears all edits; a scenario can be deleted. A **Compare days** view lists saved scenarios over a date range with actual against what-if per day and the total, grouped by scenario name.
+5. **Never trades.** What If sends no order and changes no trade, label or session; it only reads the day and writes its own scenarios.
+
+Status: merged to `dev` (#809; website, desktop, webapp, phone). Tried by the user on the website and the phone; the Windows app is still to be checked. The server needs the `WhatIfScenarios` table (`scripts/setup-dynamodb-tables.py`). Sprints F0 to F5 in `docs/spec-phase24-walkthrough-whatif-plan.md`.
+Decisions taken after the first try-out: the option (CE/PE) chart's markers carry **no text** in Walkthrough and What If (one trade is shown and the colour says buy or sell), on every host with KLine charts; on the **phone** that holds for Label trades too. Label Trades on the website, desktop and webapp keeps its round-trip numbers there. On the phone, What If sets **Entries** and **Exits** apart with a coloured title band, a thick bar on each fill row and a thick line between the blocks.
+
+### PHONE BROWSE: SEPARATE CE / PE STRIKES AND MAX PRICE
+Status: merged to `dev` (#811). In the phone's Browse, CE and PE each keep their own strike (switching side no longer moves the other one). The strike menu's pinned first command **Max price…** opens a sheet (the symbol's premium presets or a typed cap); the server picks, for that side and day, the strike closest to the money whose premium at 9:30 is at or below the cap (the desktop picker's `prepare-session` search, mode `browse`), asked again for each day. A failed search offers Try again or Manual strike; an older server says it is not available. Checks in `docs/phone-manual-acceptance.md` section F.
+
+### PHONE SWING TRADING (PHASE 2)
+User decision 2026-11-11: the phone trades the **Swing portfolio**, full-fledged: see positions and pending orders, **enter and exit** (equity, options **and futures**; futures are required because in India a stock can only be shorted over several days through futures), edit and cancel orders, start a portfolio, pause entries, close the portfolio. Paper and real; real is shown only to users with real-trading access. Day-trading positions are out of scope.
+- **Decisions.** The phone uses the existing Bearer swing API (`/api/desktop/v1/swing/portfolios/*`, same handlers as the website): no new trading endpoints; the only server change is the order tag `client: "phone"`. Orders are confirmed in a **summary sheet** (what will be sent, PAPER or REAL in large type). **Real** needs the phone **App lock turned on**, and the phone's own lock (fingerprint / screen lock) is asked when a real portfolio is started or attached and when it is closed; there is no custom PIN. An email OTP as a second factor is a later server-side step. Real funding, import, allocation and reconcile controls stay on the website and desktop.
+- **Data.** Position charts use minute candles (`swing/portfolios/{id}/charts/history`, the same minute data as Browse).
+- **Not in this version.** Day positions, alerts, email OTP.
+- Plan, sprints and safety rules: `docs/spec-phase24-phone-swing-plan.md`.
+
+### BROWSE ON MINUTE-LEVEL DATA (PHONE AND WINDOWS APP)
+Browse only draws candles of one minute or more, so it no longer waits for Breeze second-level downloads (slow, sometimes timing out on the phone). With `granularity=minute` the server answers from a complete second-level cache if one exists, else Kite minute candles, else Breeze `1minute` (the only source for expired options: Kite has none), cached in a separate `minute/` folder that replay and stepwise never read. The phone sends it on its three history routes; the Windows app sends it for tiles in **Browse** mode (history pages, scroll-back and the Browse date check); Max price in Browse scans minute candles. Replay, stepwise, paper and real are unchanged. Details: `docs/live-history-providers.md`, `docs/backend-technical-constraints.md`.
+
+### BROWSE ON THE WEBSITE, AND ONE YEAR OF HISTORY IN BROWSE (requirement 2026-11-12)
+User requirement. **Status:** PR 1 built (paged history route `browse/history`, `prepare-session` header for Browse, desktop and phone scroll-back to a year); Both merged to `dev` (#819 paged route + desktop and phone scroll-back, #820 website and webapp Browse); acceptance checks pending: `docs/phase24-manual-acceptance.md` §H (website), §G (desktop), `docs/phone-manual-acceptance.md` §F (phone).
+- **Website Browse, the default mode.** The website gets the Browse the Windows app and the phone have: read-only charts, **each pane with its own symbol and its own date**, spot or option (CE/PE) with the strike chosen by hand or by **max price** at that date, as on the desktop. It is for exploration, so a user compares symbols and days side by side. The website's **existing pane layouts are kept unchanged** (1, 2, 3, 4, 5 equal, 5 wide-right, 4 as 1+3). Browse is the landing mode; **if a paper or real session is already running the website still opens on Trading** (a live session is never hidden). The pane set (symbols, dates, strikes, intervals, layout) is **saved per user and restored** on the next visit. The webapp is the same code and gets it too. **Browse uses the website's Trading Chart setting**: Lightweight charts when it is Lightweight, KLine when it is KLine.
+- **History.** Equity and index panes open as today (3-minute candles, the last few days) and **page back to about one year** as the user scrolls; **option panes keep about 3 days**. The same one-year scroll-back applies to Browse on the **desktop** and the **phone**. Data is fetched efficiently (1-minute data in large windows from Kite, Breeze as fallback, cached per day; coarser intervals derived from it; daily candles for the far past) and the user can still dig into minutes: switch the interval, or move the pane's date to any day. Horizon back from the pane's date: 1-minute 90 days, 3 and 5 minutes 365 days, 15 minutes and up 550 days (bounds memory and indicator cost).
+- **UI rule.** No new rows that take chart space. Each chart gets one compact button in its existing header (symbol, date, Spot | CE | PE, strike or max price in one popover); interval, indicators and drawings stay the chart's own controls; the Browse/Trading switch is a button in the existing website header.
+- **Server.** One portfolio-free paged route `GET /api/browse/history` (website) and `GET /api/desktop/v1/browse/history` (desktop and phone); `prepare-session` accepts the website's `X-User-Id` for `mode=browse` only (max price on the website). Replay, stepwise, paper and real are untouched.
+- **Not in scope.** Option history beyond about 3 days, Live ticks on year views, saving the website's Browse panes on the server (browser storage per user for now).
+
+### MARKET HOLIDAYS ADDED AT RUN TIME
+Status: merged to `dev` (#810). The built-in `NSE_HOLIDAYS` list is still edited by hand each year; an admin can also add a closure without a deploy: `POST /api/admin/holidays {date, note}` (`DELETE /api/admin/holidays/{date}`, `GET` lists both), stored in `DATA_DIR/holidays.json` and re-read when the file changes. Nothing fetches the NSE calendar automatically. See `docs/architecture-backend.md`.
+
+### ANDROID PHONE APP: PHASE 2 (TODO, next after Walkthrough and What If)
+Google sign-in with optional app lock (needs an Android OAuth client in Google Cloud for package `in.co.tradematangi.phone` and the debug key's SHA-1), then read-only Positions for swing and day. Not started; see `docs/spec-phase24-android-plan.md`.
+
+### ORDER TICKET: QUANTITY AS A THIRD SIZING CHOICE (requirement 2026-11-12)
+**Status:** merged to `dev` (#824); waiting for the user's try on the website and Windows app. Website, webapp and Windows app. The Windows ticket's quantity buttons now use the saved Low/Medium/High quantities (they were fixed 1, 2, 3); the typed quantity box stays.
+- **Today (before this change).** Settings already holds all three modes (Quantity | Capital % | Risk %, each with Low/Medium/High tiers; `desktop_order_size_mode`, `quantity_{l,m,h}`, `funds_ratio_*_pct`, `risk_ratio_*_pct`). The chart right-click ticket (`ChartEntryTicket.tsx` on the website and webapp; the inline ticket plus `ticketSizing.ts` on the Windows app) only has a one-order **Risk / Capital %** switch, hidden when Settings is in Quantity mode. So Quantity cannot be chosen per order, and in Quantity mode there is no switch at all.
+- **Requirement.** The ticket gets a **3-way segmented control `Qty | Capital % | Risk %`**, always shown, defaulting to the Settings mode and changing the mode **for that one order only** (Settings is not changed).
+- **Values shown.** The Low/Medium/High buttons show their values for the chosen mode, e.g. `L 1 · M 2 · H 5` (quantity: units, lots for options), `L 3% · M 6% · H 12%` (capital), `L 1% · M 2% · H 4%` (risk), so the user sees what each button will do.
+- **Rules kept.** Target % orders still force Risk (the control shows Risk selected and disabled). Strictly increasing L < M < H is already enforced by Settings. Quantity goes through the existing `quantity` field (website `POST /api/orders`; desktop `chart-orders`; `entryQuantity` multiplies units by lot size), so **no backend change**; Max-size / Max-per-entry GuardRails caps still apply.
+- **Files (when built).** Website/webapp: `frontend/src/components/ChartEntryTicket.tsx` (mode state, `submit` mapping), `services/dayChartContextMenu.ts` (ticket carries `sizingMode`), `App.tsx` `submitContextMenuEntry`. Desktop: `windowsapp/src/ticketSizing.ts` (`switchTicketSizing`, `ticketSizingPayload`, `ticketSizingLabel`) and the ticket UI in `windowsapp/src/App.tsx`. Reuse the existing mode-name conversions (website `fundsRatio`/`riskRatio` vs desktop `funds_ratio`/`risk_ratio`).
+- **Tests (when built).** Extend `windowsapp/src/ticketSizing.test.ts` (quantity payload, switch from each mode, Target % forced Risk); add a unit test for the website ticket's L/M/H to payload mapping (none exists); extend the Playwright ticket checks in `frontend/tests/phase22/charts.spec.ts` and `webapp/tests/gestures.spec.ts`.
+
+### P&L DISPLAY MODE "MILESTONES", AND HIDING THE POSITION P&L ABOVE THE BAR (requirement 2026-11-12)
+**Status:** merged to `dev` (#825); waiting for the user's try in replay/paper on the website and Windows app. Website, webapp and Windows app (trading only; the phone app is review-only and unaffected). Settings: `desktop_pnl_display_mode` = `milestones`, `pnl_max_win_pct` (default 10, range 1-100), `show_bar_pnl_label` (default on); the desktop snapshot also carries `guardrail_ban_capital_pct` as the max loss. On the website all of it lives in `useTradingDisplaySettings` (`pnl`), and the shared helper is `shared/pnlMilestone.ts`. Analysis keeps Monetary / % (a Milestones user sees Monetary there). On the Windows app the numbers hidden or replaced are the header pill, the chart labels and the Trade History P&L % column; its tool panel has no P&L. Checked by tests only so far, not yet by hand in the browser or the Windows build.
+- **Purpose.** Stops the trader reacting to position size and the P&L %. Instead of a number, every live P&L shows only **how far the day is towards a Max Win or Max Loss**, in three steps.
+- **Setting.** The existing General setting **P&L Display Mode** (today `currency` | `percent`, field `desktop_pnl_display_mode`) gets a third value, **Milestones** (`milestones`). Options: Monetary / % of Capital / Milestones.
+- **Inputs.** **Max Loss %** reuses the GuardRails **Capital loss limit (%)** (`guardrail_ban_capital_pct`, default 10; the value is always present even when the Ban toggle is off). **Max Win %** is a **new** setting (new `UserSettings` field, default fixed at build, range 1-100), edited **under the P&L Display Mode setting in General**, shown beside a read-only copy of the loss limit so the mode is self-contained. Max Win is display-only and enforces nothing. Both are % of session capital, the same basis as today's % view.
+- **Steps (of the day P&L, realized + unrealized, net of fees, against session capital).** Neutral `—` while |P&L| is under 33% of the max. Profit side: `Win 1/3` at 33% of Max Win or more, `Win 2/3` at 66%, `Max win` at 100%. Loss side: `Loss 1/3`, `Loss 2/3`, `Max loss` at the same fractions of Max Loss. Green for wins, red for losses; no numbers are shown. Thresholds are inclusive. If capital is 0 or missing, show `—`.
+- **Day P&L everywhere.** Every live P&L display shows the **day** level, including the per-position ones, so position size never leaks through: website header Day P&L pill (and its "prev" part), right pane `TradePanel` (Pos P&L, Session P&L), the "Combined P&L" box, the label above the bar on both renderers (Lightweight `Chart.tsx`, KLine `shared/charts/KLineChart.tsx`), and the Windows header pill and chart tiles. One shared pure helper `pnlMilestone(dayPnl, capital, maxLossPct, maxWinPct)` in `shared/` serves the website and the desktop.
+- **Hidden in this mode (everything in trading).** Order and target line labels (`orderLineLabel.ts` in `frontend/src` and `shared/charts`, `targetProfitLabel.ts`) show only price and quantity, with no P&L text; trade-history P&L columns (`TradeHistory.tsx`, the desktop Trade History modal "P&L %" and close rows) show `—`; the P&L target lines (`pnl_target_levels`) are not drawn. **Unchanged:** post-session Analysis (Label Trades, Walkthrough, What If) keeps its Monetary / % view and treats an unknown mode as Monetary.
+- **Hide the position P&L above the bar.** A separate on/off setting in General next to P&L Display Mode: **Show position P&L above the bar** (default on; new `UserSettings` boolean, name fixed at build, e.g. `show_bar_pnl_label`). When off, the floating label showing the **live position's** P&L above the current bar is not drawn. It is independent of the P&L Display Mode (Monetary, % of Capital or Milestones), applies on every host and both chart renderers (Lightweight `Chart.tsx`, KLine `shared/charts/KLineChart.tsx`; the website wrapper `WebsiteKLineChart.tsx` passes it down), and to **all trading types** (replay, stepwise, paper, real). The header Day P&L, right-pane P&L, Combined P&L box and trade history are not affected by it.
+- **Plumbing (when built).** Backend: widen the `Literal` for `desktop_pnl_display_mode` in `schemas.py` (response and update), add the Max Win and bar-label fields to `DEFAULT_SETTINGS`, both schemas and the explicit snapshot dict in `desktop_trading.py`. Frontend/desktop types: `api.ts`, `windowsapp/src/contracts.ts`, `windowsapp/src/settingsFields.ts`. Website: the boolean `pnlPctMode` (`App.tsx`, localStorage key `pnlPctMode`, read by `analysisPnlModePreference.ts`) cannot hold three values, so replace it with a string mode while keeping the legacy key readable, and thread it through `Chart.tsx`, `TradePanel.tsx`, `TradeHistory.tsx` and `WebsiteKLineChart.tsx`. Desktop: the header pill in `windowsapp/src/App.tsx` and the `=== 'percent'` checks in `KLineChart.tsx`. Follow `website_chart_renderer` as the pattern for a server-backed setting.
+- **Tests (when built).** Unit tests for `pnlMilestone` (33/66/100 boundaries, both sides, zero capital); extend `frontend/src/pnlFormat.test.mjs` and the windowsapp vitest label helpers; backend `test_user_settings.py`, `test_shared_desktop_settings.py`, `test_desktop_trading.py` (new fields and mode in the snapshot); Playwright bar-label check in `frontend/tests/phase22/charts.spec.ts` (label absent when the toggle is off, in each renderer).

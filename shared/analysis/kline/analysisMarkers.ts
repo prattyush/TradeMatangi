@@ -1,7 +1,7 @@
 import type { AnalysisTrade } from '../api'
 import type { PerformanceCycle } from '../performance'
 export interface ExecutionMarker { key: string; timestamp: number; price: number; color: string; text: string; approximate: boolean; trades: AnalysisTrade[] }
-export function analysisMarkers(trades: AnalysisTrade[], candles: { time: number; close: number }[], contract?: { right: string; strike: number; expiry: string;exchange?:string;product?:string }, filter = 'all', getText?: (trade: AnalysisTrade) => string, intervalMinutes=3, labelContract=false): ExecutionMarker[] {
+export function analysisMarkers(trades: AnalysisTrade[], candles: { time: number; close: number }[], contract?: { right: string; strike: number; expiry: string;exchange?:string;product?:string }, filter = 'all', getText?: (trade: AnalysisTrade, forOption?: boolean) => string, intervalMinutes=3, labelContract=false): ExecutionMarker[] {
   const closes = new Map(candles.map(c => [c.time, c.close]))
   const groups = new Map<string, ExecutionMarker>()
   for (const trade of trades) {
@@ -15,7 +15,7 @@ export function analysisMarkers(trades: AnalysisTrade[], candles: { time: number
     const key = `${timestamp}:${price}`
     const buyDirection = !contract && trade.right === 'PE' ? trade.side === 'SELL' : trade.side === 'BUY'
     // Option-contract charts stay unlabeled, even with a label function, unless the host opts in (`labelContract`: Label Trades numbers them `#idx B/S`).
-    const text = contract ? (labelContract ? getText?.(trade) ?? '' : '') : getText?.(trade) ?? `${trade.right ? `${trade.right} ` : ''}${trade.side === 'BUY' ? 'B' : 'S'}`
+    const text = contract ? (labelContract ? getText?.(trade, true) ?? '' : '') : getText?.(trade) ?? `${trade.right ? `${trade.right} ` : ''}${trade.side === 'BUY' ? 'B' : 'S'}`
     const current = groups.get(key)
     if (current) { current.trades.push(trade); current.text = contract ? (labelContract ? [...new Set([current.text, text].filter(Boolean))].join(' ') : '') : String(current.trades.length); current.approximate ||= approximate }
     else groups.set(key, {key, timestamp, price, color: buyDirection ? '#FFFFFF' : '#00AAFF', text, approximate, trades: [trade]})

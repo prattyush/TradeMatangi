@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnalysisChart, OptionsChart } from '../TradeAnalysis'
 import type { AnalysisTrade } from '../api'
+import type { WhatIfChartExtras } from '../whatif/chartExtras'
 
 interface Props {
   symbol: string
@@ -8,11 +9,15 @@ interface Props {
   /** Executions to mark; the strike pane follows the option contracts found in them. */
   trades: AnalysisTrade[]
   historicalDays: number
-  getMarkerText: (trade: AnalysisTrade) => string
+  getMarkerText: (trade: AnalysisTrade, forOption?: boolean) => string
   /** Candle-clock epoch seconds to centre both charts on. */
   focusTime?: number
   /** Label Trades is maximized: show the Underlying and strike charts stacked. Otherwise one chart with a switcher. */
   maximized?: boolean
+  /** What If: price picking and the edited legs (KLine charts use them; Lightweight ignores them). */
+  extras?: WhatIfChartExtras
+  /** Text on the option-contract chart's markers (the round-trip numbers). Off for views that show one trade at a time. */
+  labelContractMarkers?: boolean
 }
 
 interface Contract { key: string; label: string; right: string; strike: number; expiry: string; trades: AnalysisTrade[] }
@@ -47,7 +52,7 @@ function usePhone() {
  * strike of the viewed trade) so the chart gets the full height; when Label Trades is maximized the Underlying and the
  * strike chart are stacked so every marker of the round trip is visible at once. Phones always use the switcher.
  */
-export default function LabelChartPanes({ symbol, date, trades, historicalDays, getMarkerText, focusTime, maximized = false }: Props) {
+export default function LabelChartPanes({ symbol, date, trades, historicalDays, getMarkerText, focusTime, maximized = false, extras, labelContractMarkers = true }: Props) {
   const contracts = useMemo(() => contractsOf(trades), [trades])
   const [selected, setSelected] = useState('')
   const contract = contracts.find(item => item.key === selected) ?? contracts[0]
@@ -58,13 +63,17 @@ export default function LabelChartPanes({ symbol, date, trades, historicalDays, 
   const showUnderlying = stacked || pane === 'underlying' || !contract
   const showStrike = Boolean(contract) && (stacked || pane === 'strike')
   const pickContract = (key: string) => { setSelected(key); setPane('strike') }
+  // Picking a price: show the chart it is for.
+  const pickTarget = extras?.pickTarget
+  useEffect(() => { if (pickTarget === 'underlying') setPane('underlying'); else if (pickTarget === 'option' && contracts.length) setPane('strike') }, [pickTarget, contracts.length])
   return (
     <div className="tl-panes" data-pane={pane} data-layout={stacked ? 'stacked' : 'single'}>
       {showUnderlying && (
         <div className="tl-pane tl-pane-underlying" aria-label="Underlying chart pane">
           <div className="tl-pane-chart">
             <AnalysisChart symbol={symbol} date={date} trades={trades} historicalDays={historicalDays} title={symbol}
-              getMarkerText={getMarkerText} focusTime={focusTime} fill />
+              getMarkerText={getMarkerText} focusTime={focusTime} fill
+              pickMode={pickTarget === 'underlying'} onPick={extras?.onPick} onPickCancel={extras?.onPickCancel} pickHint={extras?.pickHint} whatIfMarkers={extras?.whatIfMarkers} />
           </div>
         </div>
       )}
@@ -79,7 +88,8 @@ export default function LabelChartPanes({ symbol, date, trades, historicalDays, 
           )}
           <div className="tl-pane-chart">
             <OptionsChart symbol={symbol} date={date} strike={contract.strike} expiry={contract.expiry} right={contract.right}
-              trades={contract.trades} historicalDays={historicalDays} getMarkerText={getMarkerText} labelContractMarkers focusTime={focusTime} fill />
+              trades={contract.trades} historicalDays={historicalDays} getMarkerText={getMarkerText} labelContractMarkers={labelContractMarkers} focusTime={focusTime} fill
+              pickMode={pickTarget === 'option'} onPick={extras?.onPick} onPickCancel={extras?.onPickCancel} pickHint={extras?.pickHint} whatIfMarkers={extras?.whatIfMarkers} />
           </div>
         </div>
       )}
