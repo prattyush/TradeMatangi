@@ -246,7 +246,7 @@ Google sign-in with optional app lock (needs an Android OAuth client in Google C
 - **Tests (when built).** Unit tests for `pnlMilestone` (33/66/100 boundaries, both sides, zero capital); extend `frontend/src/pnlFormat.test.mjs` and the windowsapp vitest label helpers; backend `test_user_settings.py`, `test_shared_desktop_settings.py`, `test_desktop_trading.py` (new fields and mode in the snapshot); Playwright bar-label check in `frontend/tests/phase22/charts.spec.ts` (label absent when the toggle is off, in each renderer).
 
 ### LIVE VOLUME ON TICKS AND A VWAP INDICATOR IN BOTH CHARTS (requirement 2026-11-14)
-**Status:** Track B (charts) built on `feat/vwap-volume-charts`; Track A (probe script) next; Track C (live volume) waits for the probe. Updated at every step below ("As built" notes).
+**Status:** Track B (charts, #828) and Track A (probe script, #829) merged to `dev`; Track C (live volume) waits for the user to run the probe. Updated at every step below ("As built" notes).
 
 #### Requirement
 - **Live volume on ticks** in every session type (replay, stepwise, paper, real, and the Swing live bar) and from every live broker feed (Kite, Fyers, Breeze, Kotak).
@@ -281,4 +281,49 @@ Google sign-in with optional app lock (needs an Android OAuth client in Google C
 - Tests: `frontend/src/indicators/vwap.test.mjs` (7, node), `windowsapp/src/analysisVolumeIndicators.test.ts` (5: overlay pane, daily skip), Playwright `analysis-tools.spec.ts` and `charts.spec.ts` (VWAP/Volume offered only with volume, persistence, renderer switch, maximize); full frontend Playwright 48 passed, windowsapp, mobile and webapp typechecks clean. Manual steps: `docs/phase24-manual-acceptance.md` section F, steps 8-10.
 - Other KLine indicators that draw over price (BOLL, SuperTrend, Ichimoku, MA Ribbon, HMA, Pivot Points) are still created without a `paneId`, so they too get a sub-pane. Left as is (not asked for); check whether that is intended.
 
-**Track A and C.** Nothing yet. Add a dated note and the test counts here after each PR, and record the probe findings under Track A when the user has run it. Also refresh the Phase 24 row in `CLAUDE.md`, `docs/frontend-technical-constraints.md` (Volume), `docs/backend-technical-constraints.md` and `docs/phase24-manual-acceptance.md` section F as each track lands.
+**Track A, probe (2026-11-14, #829).** `scripts/probe-live-volume.py` is built and merged: it subscribes to the Kite, Fyers, Breeze and Kotak market-data websockets, keeps the raw payloads and prints which fields carry volume and whether each is a cumulative day total. It places no orders. It has **not been run** (no broker SDKs or market hours where it was built; only its recorder logic is tested, `backend/tests/test_live_volume_probe.py`). To run it: market hours, backend stopped, usage in the script header; the Kotak probe needs `--kotak-totp` and ends the app's Kotak session. Findings go here when known.
+
+**Track C.** Nothing yet; waits for the probe findings. Add a dated note and the test counts here after each PR, and record the probe findings under Track A when the user has run it. Also refresh the Phase 24 row in `CLAUDE.md`, `docs/frontend-technical-constraints.md` (Volume), `docs/backend-technical-constraints.md` and `docs/phase24-manual-acceptance.md` section F as each track lands.
+
+### PATTERNS AND STRUCTURES ON MINUTE DATA, AND MAX PRICE IN PATTERNS (requirement 2026-11-14)
+**Status:** requirement and approach written; nothing built. Branch `feat/patterns-minute-maxprice`, PR into `dev`. "As built" below is updated at every step.
+
+#### Requirement
+1. Patterns, Structures (Chart Structures and Fine Structures) draw candles of 1m to 60m, so fetch **minute-level** data like Browse does (#814) instead of Breeze second-level data, so they load fast. Cross-check every flow that downloads OHLC data and switch every one that is not replay, stepwise or an Analysis section.
+2. Patterns picks its strikes with an OTM offset only. When Settings has **Max Price** selected (`max_price_mode = threshold`, caps `max_price_threshold_ce` / `_pe`), Patterns uses it too.
+
+#### Evaluation (2026-11-14, from the code)
+- **Today.** `pattern_logger.py` `ohlc_equity` / `ohlc_options`, `chart_structures.py` `get_ohlc`, `fine_structures.py` `get_ohlc` / `get_ohlc_options` call `fetch_historical` / `fetch_options_historical` (Breeze 1-second candles, about 25 paced requests per option day) then `load_*`, `resample_to_candles`, `candles_to_records`. They run their blocking I/O on the event loop and are always in `replay` history mode. `GET /api/data/price-at` (Patterns' 09:15 ATM) and `GET /api/data/options/find-strike-by-price` (Fine Structures' Max Price, a full second-level option day per scanned strike, up to 30) are second-level too, which would defeat a faster chart route.
+- **Minute path to reuse.** `minute_history.load` (frame `open/high/low/close/volume/observed`, UTC-labelled IST, no gap fill; sources: complete Breeze second-level cache read-only, minute cache, Kite minute, Breeze `1minute`; cache `OHLCDATA_DIR/minute/<provider>/<id>/<date>.parquet`, never a replay file name). `routers/data.py::_load_minute` has the error contract (503 token, 404 other, `FileNotFoundError` passes). `resample_to_candles` and `candles_to_records` work on a minute frame with the same timestamps.
+- **Max Price today.** Patterns ignores `max_price_mode`: one OTM pair from the 09:15 price (`PatternLibrary.tsx` `handleLoadChart`), only the CE strike is stored (`PatternAnnotations.strike`), and on reload (`handleGalleryLoad`) and in the pattern-vs-trade comparison (`shared/analysis/PatternVsTradeComparison.tsx`) that CE strike is used for the PE side too. The Max Price resolvers: the legacy `options_service.find_strike_by_max_price` (second-level, ATM fallback) and `desktop_preparation.prepare()` (strict, no look-ahead, minute data in Browse mode).
+
+#### Flow classification
+| Flow | Entry | Second-level needed? | Decision |
+|---|---|---|---|
+| Pattern Library equity and options OHLC | `pattern_logger.py` | No | **Minute** |
+| Chart Structures OHLC and sparkline | `chart_structures.py` | No | **Minute** |
+| Fine Structures equity and options OHLC | `fine_structures.py` | No | **Minute** |
+| ATM price for Patterns (09:15) | `data.py` `price-at` | No for Patterns | **Minute**, new optional `granularity=minute` |
+| Max Price strike for Patterns and Fine Structures | `data.py` `find-strike-by-price` | No for them | **Minute**, new optional `granularity=minute` |
+| Pattern side of the comparison charts | pattern routes | No | follows the pattern routes |
+| Trade side of the comparison; Trade Analysis, Walkthrough, What If, Label trades, Snapshot charts | `data/*` | Yes (exact marker and as-of candles) | unchanged |
+| AI helper `ohlc-context`, snapshot candle, excursion | `analysis.py`, services | Yes (exact entry/exit bars, `observed` seconds) | unchanged |
+| Replay, stepwise, paper and real history and gap fill, paper EOD quote, session-start strike pick | simulation, desktop services | Yes | unchanged |
+| Offline scripts | `scripts/` | n/a | unchanged |
+
+#### Decisions (2026-11-14)
+1. The Max Price cap is checked at **09:30** (like Browse and Fine Structures). The ATM price for OTM stays at 09:15.
+2. Max Price applies to **indices only** (NIFTY, BSESEN), as everywhere else; stocks stay OTM.
+3. A Max Price miss is an error message, never a silent ATM fallback (the strict resolver of `prepare()`).
+4. `price-at` and `find-strike-by-price` keep their current second-level behaviour unless `granularity=minute` is sent, so session start, replay and paper are unaffected.
+
+#### Proposed approach
+- **Backend.** The five OHLC routes read `minute_history.load` (through `_load_minute`), keep the `days_back` prior-day loop (a day with no data is skipped), the concat, `resample_to_candles` and `candles_to_records`; blocking I/O moves off the event loop; index responses omit volume as before; an unsupported symbol is a 422, not a 500. `price-at?granularity=minute` returns the open of the minute bar starting at `HH:MM:00` (the exact price at that instant, no look-ahead), else the last close of a finished bar. The strike scan in `desktop_preparation.prepare()` is extracted into `find_max_price_strike(...)` and also serves `find-strike-by-price?granularity=minute`.
+- **Two strikes saved.** `strike_pe` is added to a pattern chart (create, update, meta); `strike` stays the CE strike; every reader falls back to `strike` for older charts.
+- **Frontend.** `patternStrikes.ts` (pure) decides OTM or Max Price from the Settings values. `PatternLibrary.tsx` gets the ATM through `getPriceAt(..., minute)` and, for Max Price, both strikes through `findStrikeByPrice(..., '09:30:00', minute)`; the OTM input is replaced by a read-only "Max price CE / PE" line in that mode; save sends both strikes; the gallery and `PatternVsTradeComparison` use `strike_pe ?? strike` for PE.
+- **Known differences from second-level data.** Illiquid option days lose the back-filled flat early candles (no gap fill); provider minute OHLC can differ slightly from Breeze seconds aggregated; today's minute cache lives 60 s; a past day already cached at second level is reused read-only.
+- **Tests.** Backend: pattern, chart-structures and fine-structures `ohlc` routes with `minute_history.load` patched and `fetch_*` asserted not called; index volume; 503 and 404; skipped prior day; `price-at` and `find-strike-by-price` minute; the extracted scan agrees with `prepare()`; `strike_pe` round trip and fallback. Frontend: `patternStrikes.test.mjs`.
+
+#### As built
+Nothing yet. Add a dated note and test counts after each step. At the end also refresh `docs/live-history-providers.md` (which routes read minute data), the Phase 24 row in `CLAUDE.md` and `docs/phase24-manual-acceptance.md`.
+
