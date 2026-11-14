@@ -15,7 +15,10 @@ import {
 } from 'lightweight-charts'
 import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, TopPatterns } from '../services/api'
 import { buildMarkers, patternIdentity, cleanTopPatterns, MARKER_COLORS } from '../services/patternMarkers'
-import { loadHistoricalDays } from '../components/SettingsModal'
+import { loadHistoricalDays, loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../components/SettingsModal'
+import {
+  PATTERN_ATM_TIME, PATTERN_MAX_PRICE_TIME, maxPriceLabel, otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
+} from '../patternStrikes'
 
 // ── EMA helpers ───────────────────────────────────────────────────────────────
 
@@ -648,6 +651,10 @@ function GalleryCard({ chart, activeStrategy: _activeStrategy, onLoad, onDelete,
 const SUPPORTED_SYMBOLS = ['NIFTY', 'BSESEN', 'RELIND', 'TATMOT', 'TATPOW']
 const STRIKE_INTERVALS: Record<string, number> = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }
 const GALLERY_MAX_COLUMNS = 6
+
+/** The Settings "Option strike mode" for this symbol, read when it is needed (Settings may change between loads). */
+const readStrikeRule = (symbol: string) =>
+  patternStrikeRule(symbol, { mode: loadMaxPriceMode(), ceCap: loadMaxPriceThresholdCE(), peCap: loadMaxPriceThresholdPE() })
 const GALLERY_CARD_MIN_WIDTH = 220
 
 function galleryGridStyle(columns: number): CSSProperties {
@@ -674,6 +681,8 @@ export default function PatternLibrary() {
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
   const [otmOffset, setOtmOffset] = useState(0)
   const [intervalMinutes, setIntervalMinutes] = useState(3)
+  // Read on every render: it is a cheap localStorage read and Settings can change while this page is open.
+  const strikeRule = readStrikeRule(symbol)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -798,15 +807,28 @@ export default function PatternLibrary() {
       let atm: number | null = null
 
       if (instrumentType === 'options') {
-        const [priceRes, expiryRes] = await Promise.all([
-          api.getPriceAt(symbol, date, '09:15'),
-          api.getExpiry(symbol, date),
-        ])
-        expiry = expiryRes.expiry
+        // Minute data (no second-level download): the ATM price is the open of the 09:15 bar, the Max Price pick is
+        // the same resolver Browse uses.
+        const rule = readStrikeRule(symbol)
         const interval = STRIKE_INTERVALS[symbol] ?? 50
-        atm = Math.round(priceRes.price / interval) * interval
-        const ceStrike = atm + otmOffset * interval
-        const peStrike = atm - otmOffset * interval
+        const expiryRes = await api.getExpiry(symbol, date)
+        expiry = expiryRes.expiry
+        let ceStrike: number
+        let peStrike: number
+        if (rule.mode === 'max_price') {
+          const [ceRes, peRes, priceRes] = await Promise.all([
+            api.findStrikeByPrice(symbol, date, expiry, 'CE', rule.ceCap, PATTERN_MAX_PRICE_TIME, 'replay', 'minute'),
+            api.findStrikeByPrice(symbol, date, expiry, 'PE', rule.peCap, PATTERN_MAX_PRICE_TIME, 'replay', 'minute'),
+            api.getPriceAt(symbol, date, PATTERN_ATM_TIME, 'replay', 'minute').catch(() => null),
+          ])
+          ceStrike = ceRes.strike
+          peStrike = peRes.strike
+          atm = priceRes ? roundToStrike(priceRes.price, interval) : null
+        } else {
+          const priceRes = await api.getPriceAt(symbol, date, PATTERN_ATM_TIME, 'replay', 'minute')
+          atm = roundToStrike(priceRes.price, interval)
+          ;({ ce: ceStrike, pe: peStrike } = otmStrikes(atm, otmOffset, interval))
+        }
 
         const [ceRes, peRes] = await Promise.all([
           api.patternOhlcOptions(symbol, date, ceStrike, expiry, 'CE', intervalMinutes, loadHistoricalDays()),
@@ -816,7 +838,7 @@ export default function PatternLibrary() {
           { id: paneIdRef.current++, right: 'CE', strike: ceStrike, expiry, candles: ceRes.candles },
           { id: paneIdRef.current++, right: 'PE', strike: peStrike, expiry, candles: peRes.candles },
         ]
-        setAddPaneStrike(String(atm))
+        setAddPaneStrike(String(atm ?? ceStrike))
       }
 
       const eqRes = await eqPromise
@@ -943,6 +965,7 @@ export default function PatternLibrary() {
     if (!strategy) { flashError('Please specify a strategy name before saving.'); return }
     setSaveMsg(null)
     const firstCe = optionPanes.find(p => p.right === 'CE')
+    const firstPe = optionPanes.find(p => p.right === 'PE')
     try {
       let saved: PatternChart
       const cleanTopPatterns: TopPatterns = {}
@@ -951,12 +974,14 @@ export default function PatternLibrary() {
       if (topPatterns.bottom_1) cleanTopPatterns.bottom_1 = topPatterns.bottom_1
       const rr = Object.keys(riskRewardRatios).length > 0 ? riskRewardRatios : undefined
       if (currentChartId) {
-        saved = await api.patternUpdateChart(currentChartId, annotations, notes, Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined, rr, intervalMinutes)
+        saved = await api.patternUpdateChart(currentChartId, annotations, notes, Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined, rr, intervalMinutes,
+          { strike: firstCe?.strike, strike_pe: firstPe?.strike })
       } else {
         saved = await api.patternCreateChart({
           symbol, date, instrument_type: instrumentType, annotations, notes,
           right: firstCe ? 'CE' : undefined,
           strike: firstCe?.strike,
+          strike_pe: firstPe?.strike,
           top_patterns: Object.keys(cleanTopPatterns).length ? cleanTopPatterns : undefined,
           risk_reward_ratios: rr,
           interval_minutes: intervalMinutes,
@@ -1027,14 +1052,16 @@ export default function PatternLibrary() {
         try {
           const expiryRes = await api.getExpiry(chart.symbol, chart.date)
           const expiry = expiryRes.expiry
+          // CE and PE can differ (Max Price); a chart saved before that has one strike for both.
+          const { ce: ceStrike, pe: peStrike } = savedStrikes(chart) as { ce: number; pe: number }
           const [ceRes, peRes] = await Promise.all([
-            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'CE', savedInterval, loadHistoricalDays()).catch(() => null),
-            api.patternOhlcOptions(chart.symbol, chart.date, chart.strike, expiry, 'PE', savedInterval, loadHistoricalDays()).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, ceStrike, expiry, 'CE', savedInterval, loadHistoricalDays()).catch(() => null),
+            api.patternOhlcOptions(chart.symbol, chart.date, peStrike, expiry, 'PE', savedInterval, loadHistoricalDays()).catch(() => null),
           ])
           const annotatedRights = new Set(chart.annotations.map(a => a.instrument))
           const newPanes: OptionPane[] = []
-          if (ceRes && annotatedRights.has('CE')) newPanes.push({ id: paneIdRef.current++, right: 'CE', strike: chart.strike, expiry, candles: ceRes.candles })
-          if (peRes && annotatedRights.has('PE')) newPanes.push({ id: paneIdRef.current++, right: 'PE', strike: chart.strike, expiry, candles: peRes.candles })
+          if (ceRes && annotatedRights.has('CE')) newPanes.push({ id: paneIdRef.current++, right: 'CE', strike: ceStrike, expiry, candles: ceRes.candles })
+          if (peRes && annotatedRights.has('PE')) newPanes.push({ id: paneIdRef.current++, right: 'PE', strike: peStrike, expiry, candles: peRes.candles })
           setOptionPanes(newPanes)
           setResolvedExpiry(expiry)
           setAddPaneStrike(String(chart.strike))
@@ -1312,14 +1339,18 @@ export default function PatternLibrary() {
                 </button>
               ))}
             </div>
-            {instrumentType === 'options' && (
+            {instrumentType === 'options' && (strikeRule.mode === 'max_price' ? (
+              <span style={{ fontSize: 12, color: '#8b949e' }} title="Option strike mode is set in Settings">
+                {maxPriceLabel(strikeRule)}
+              </span>
+            ) : (
               <label style={{ fontSize: 12, color: '#8b949e' }}>
                 OTM&nbsp;
                 <input type="number" value={otmOffset} min={-10} max={10}
                   onChange={e => setOtmOffset(parseInt(e.target.value) || 0)}
                   style={{ ...inputStyle, width: 55 }} disabled={loading} />
               </label>
-            )}
+            ))}
             <label style={{ fontSize: 12, color: '#8b949e' }}>
               Interval&nbsp;
               <select value={intervalMinutes} onChange={e => handleChangeInterval(parseInt(e.target.value))}

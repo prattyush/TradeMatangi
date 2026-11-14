@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.dependencies import get_request_user_id
+from app.services.minute_ohlc import load_candle_records
 from app.services import pattern_logger_service as svc
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,8 @@ class CreateChartRequest(BaseModel):
     annotations: list[AnnotationItem] = []
     notes: str = ""
     right: Optional[str] = None    # "CE" | "PE" (options only)
-    strike: Optional[int] = None   # options reference strike
+    strike: Optional[int] = None   # options reference strike (the CE strike)
+    strike_pe: Optional[int] = None  # options: the PE strike when it differs (Max Price); absent = same as strike
     top_patterns: Optional[TopPatternsPayload] = None
     risk_reward_ratios: Optional[dict] = None  # {"category::strategy": "1.5", ...}
     interval_minutes: int = 3      # candle interval used when creating this chart
@@ -61,6 +63,8 @@ class UpdateChartRequest(BaseModel):
     top_patterns: Optional[TopPatternsPayload] = None
     risk_reward_ratios: Optional[dict] = None  # {"category::strategy": "1.5", ...}
     interval_minutes: Optional[int] = None     # update candle interval if provided
+    strike: Optional[int] = None               # options: the CE strike shown when saving, if provided
+    strike_pe: Optional[int] = None            # options: the PE strike shown when saving, if provided
 
 
 class BulkDeleteRequest(BaseModel):
@@ -189,6 +193,7 @@ async def create_chart(req: CreateChartRequest, user_id: str = Depends(get_reque
             notes=req.notes,
             right=req.right,
             strike=req.strike,
+            strike_pe=req.strike_pe,
             top_patterns=top_patterns,
             risk_reward_ratios=req.risk_reward_ratios,
             interval_minutes=req.interval_minutes,
@@ -218,6 +223,8 @@ async def update_chart(chart_id: str, req: UpdateChartRequest, user_id: str = De
             top_patterns=top_patterns,
             risk_reward_ratios=req.risk_reward_ratios,
             interval_minutes=req.interval_minutes,
+            strike=req.strike,
+            strike_pe=req.strike_pe,
         )
         if not updated:
             raise HTTPException(status_code=500, detail="Update failed")
@@ -277,33 +284,15 @@ async def ohlc_equity(
     days_back: int = Query(default=2, ge=1, le=5),
     _user_id: str = Depends(get_request_user_id),
 ):
-    """Return OHLC candles for an equity symbol including up to days_back prior trading days."""
-    try:
-        import pandas as pd
-        from app.utils import prior_trading_days
-        from app.services.broker_service import fetch_historical
-        from app.services.data_loader import load_dataframe, resample_to_candles, candles_to_records
+    """Return OHLC candles for an equity symbol including up to days_back prior trading days.
 
-        prior_dates = prior_trading_days(date, n=days_back)
-        all_dfs = []
-        for d in prior_dates:
-            try:
-                fetch_historical(symbol, d)
-                all_dfs.append(load_dataframe(symbol, d))
-            except (FileNotFoundError, RuntimeError):
-                pass
-        fetch_historical(symbol, date)
-        all_dfs.append(load_dataframe(symbol, date))
-        if not all_dfs:
-            raise FileNotFoundError
-        combined = pd.concat(all_dfs).sort_index()
-        candles = resample_to_candles(combined, interval_minutes)
-        records = candles_to_records(candles)
+    Candles of one minute or more are drawn from minute data (``minute_ohlc``), not Breeze second-level downloads.
+    """
+    try:
+        records = await load_candle_records(symbol, date, interval_minutes, days_back)
         return {"symbol": symbol, "date": date, "interval_minutes": interval_minutes, "candles": records}
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No data for {symbol} on {date}")
-    except RuntimeError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("ohlc_equity error %s %s: %s", symbol, date, exc)
         raise HTTPException(status_code=500, detail="Failed to load equity OHLC")
@@ -320,42 +309,21 @@ async def ohlc_options(
     days_back: int = Query(default=2, ge=1, le=5),
     _user_id: str = Depends(get_request_user_id),
 ):
-    """Return OHLC candles for an options contract including up to days_back prior trading days."""
+    """Return OHLC candles for an options contract including up to days_back prior trading days (minute data)."""
     if right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=400, detail="right must be CE or PE")
     try:
-        import pandas as pd
-        from app.utils import prior_trading_days
-        from app.services.options_service import fetch_options_historical, load_options_dataframe
-        from app.services.data_loader import resample_to_candles, candles_to_records
-
-        prior_dates = prior_trading_days(date, n=days_back)
-        all_dfs = []
-        for d in prior_dates:
-            try:
-                fetch_options_historical(symbol, d, strike, expiry, right.upper())
-                all_dfs.append(load_options_dataframe(symbol, d, strike, expiry, right.upper()))
-            except (FileNotFoundError, RuntimeError):
-                pass
-        fetch_options_historical(symbol, date, strike, expiry, right.upper())
-        all_dfs.append(load_options_dataframe(symbol, date, strike, expiry, right.upper()))
-        if not all_dfs:
-            raise FileNotFoundError
-        combined = pd.concat(all_dfs).sort_index()
-        candles = resample_to_candles(combined, interval_minutes)
-        records = candles_to_records(candles)
+        records = await load_candle_records(
+            symbol, date, interval_minutes, days_back, strike=strike, expiry=expiry, right=right.upper(),
+            not_found=f"No options data for {symbol} {right} {strike} on {date}",
+        )
         return {
             "symbol": symbol, "date": date, "strike": strike,
             "expiry": expiry, "right": right.upper(),
             "interval_minutes": interval_minutes, "candles": records,
         }
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No options data for {symbol} {right} {strike} on {date}",
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("ohlc_options error %s %s %s %s: %s", symbol, date, strike, right, exc)
         raise HTTPException(status_code=500, detail="Failed to load options OHLC")

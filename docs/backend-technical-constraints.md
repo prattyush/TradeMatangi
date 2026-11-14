@@ -265,3 +265,10 @@ separate from portfolio-scoped Swing amendments.
 - **Indices have no volume.** `load_dataframe` drops the column for `options_only` symbols (NIFTY, BSESEN), so their candles and ticks have no volume (`null` in the response models). Contracts, including index options, keep it.
 - Files saved without a `volume` column still load (OHLC only); loaders must never assume the column.
 - Replay and stepwise ticks (`iter_ticks`, `options_iter_ticks`) carry the second's `volume` when present. **Live** ticks (Kite, Kotak, Breeze, Fyers) do not yet: that is Phase 24 B2 (cumulative-to-delta per token, reconnect and failover guards).
+
+## Minute data for read-only screens (Phase 24)
+
+- Pattern Library, Chart Structures and Fine Structures OHLC routes read minute data through `app/services/minute_ohlc.py` (`minute_history.load`), never `fetch_historical` / `fetch_options_historical` (Breeze second-level downloads, about 25 paced requests per option day). Do not add second-level calls to them: a screen that only draws candles of one minute or more does not need seconds. Replay, stepwise, paper/real history and the Analysis sections (trade charts, snapshots, `ohlc-context`, excursions) need seconds and stay as they are.
+- `GET /api/data/price-at` and `GET /api/data/options/find-strike-by-price` take an optional `granularity=minute` for read-only screens. The minute `price-at` is the open of the bar that starts at the time (the price at that instant); the minute strike pick is `desktop_preparation.find_max_price_strike`, the single resolver shared with `prepare()` (last observed prices before the reference time, no ATM fallback). A minute bar is only known once it has finished, so never read a minute bar's close for a time inside it.
+- A pattern chart stores the CE strike in `strike` and the PE strike in `strike_pe` (absent on charts saved before Max Price in Patterns: readers use `strike`).
+
