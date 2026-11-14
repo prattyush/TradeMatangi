@@ -86,6 +86,10 @@ Max Price in Patterns:
 8. Trade Analysis, pattern-vs-trade comparison of that day (website, Windows app, phone): the CE and PE pattern tabs show their own strikes.
 9. A stock symbol (Reliance, Tata Motors, Tata Power) stays on the OTM box whatever the setting says.
 
+## J. Browse scroll-back never jumps (added 2026-11-14)
+1. Website Browse, a stock or index, any interval: scroll left past the first three days. The next day shown is the previous trading day (weekends and market holidays are the only gaps); keep scrolling a few pages and check the same at each seam.
+2. With the Kite and Breeze sessions expired (or the backend offline for one provider), scroll left on a day range you have not browsed: you get the error banner ("The Kite session has expired. Sign in to Kite again." or "Historical provider failed. Try again.") and the chart does **not** jump to older cached days. Sign in again, scroll once more: the chart continues from where it stopped.
+
 ## G. Browse on minute-level data (added 2026-11-11; Windows app)
 1. Mode **Browse**, a past day, NIFTY spot and an option of an expired expiry: the charts appear in seconds, with no long wait. Scroll left for older days: they load too.
 2. In Browse, **Max price** for a strike: the search answers without a long wait.

@@ -273,3 +273,48 @@ def test_a_window_the_provider_refuses_is_halved_until_it_is_accepted(monkeypatc
     assert len({c["time"] // 86400 for c in page["candles"]}) == 40
     assert {provider for provider, _ in calls} == {"kite"}          # never fell through to a slower source
     assert calls[0][1] > 20 and all(span <= 31 for _, span in calls[1:])
+
+
+# ── A page never skips days it could not load ─────────────────────────────────────────────────────────────────────
+# Scrolling back used to return only the days that happened to be cached when the providers failed (an expired token),
+# so the chart jumped from one day to months earlier without a word.
+
+def _days_in(page):
+    return sorted({pd.Timestamp(candle["time"], unit="s").date() for candle in page["candles"]})
+
+
+def test_older_cached_days_are_not_returned_across_a_hole_when_the_recent_days_failed(monkeypatch):
+    monkeypatch.setattr(swing_charts, "_fetch", Fetcher())
+    bh.page("NIFTY", 5, date(2026, 10, 1), days=3)                       # earlier browsing cached 29 Sep, 30 Sep, 1 Oct
+    expired = Fetcher(failures={"kite": KiteTokenError("expired"), "breeze": KiteTokenError("expired")})
+    monkeypatch.setattr(swing_charts, "_fetch", expired)
+    bh._locks.clear()
+    bh._cooldown.clear()
+    with pytest.raises(bh.BrowseUnavailable, match="session has expired"):
+        bh.page("NIFTY", 5, ANCHOR, days=8)                              # 9 Oct back to 29 Sep: only the oldest three are cached
+
+
+def test_a_failure_in_the_middle_ends_the_page_at_the_hole_and_the_next_page_reports_it(monkeypatch):
+    monkeypatch.setattr(swing_charts, "_fetch", Fetcher())
+    bh.page("NIFTY", 5, ANCHOR, days=3)                                  # cached: 7, 8, 9 Oct
+    monkeypatch.setattr(swing_charts, "_fetch", Fetcher(failures={"kite": ValueError("down"), "breeze": ValueError("down")}))
+    bh._locks.clear()
+    bh._cooldown.clear()
+    page = bh.page("NIFTY", 5, ANCHOR, days=8)
+    assert _days_in(page) == [date(2026, 10, 7), date(2026, 10, 8), date(2026, 10, 9)]    # up to the hole, nothing beyond it
+    assert page["more"] is True and page["oldest_date"] == "2026-10-07"
+    with pytest.raises(bh.BrowseUnavailable):                            # the next page starts on the missing day: say so
+        bh.page("NIFTY", 5, ANCHOR, before=page["candles"][0]["time"], days=8)
+
+
+def test_a_day_no_provider_has_data_for_is_a_real_gap_and_is_skipped(monkeypatch):
+    # 6 Oct has no rows at any source and nothing failed: that is the market's gap, not an error.
+    class NoSixth(Fetcher):
+        def __call__(self, provider, item, start, end, daily):
+            frame = super().__call__(provider, item, start, end, daily)
+            return frame[frame.datetime.dt.date != date(2026, 10, 6)]
+
+    monkeypatch.setattr(swing_charts, "_fetch", NoSixth())
+    page = bh.page("NIFTY", 5, ANCHOR, days=5)
+    assert date(2026, 10, 6) not in _days_in(page)
+    assert _days_in(page)[-1] == date(2026, 10, 9) and len(_days_in(page)) == 4 and page["more"] is True
