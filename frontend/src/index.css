@@ -9,3 +9,25 @@ button:active {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
+
+/* Header navigation icon buttons (Browse, Swing, Analysis, Patterns, Structures) */
+.nav-icon-btn {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0; flex: none;
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+  color: #8b949e; cursor: pointer;
+  transition: transform 0.1s ease, filter 0.1s ease, color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.nav-icon-btn:hover { color: #e6edf3; border-color: #58a6ff; background: #1c2330; }
+.nav-icon-btn:focus-visible { outline: 2px solid #58a6ff; outline-offset: 1px; }
+.nav-icon-btn--active, .nav-icon-btn--active:hover { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.nav-icon-btn::after {
+  content: attr(data-tooltip);
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 5px;
+  padding: 3px 8px; font-size: 11px; line-height: 1.4; white-space: nowrap; pointer-events: none;
+  opacity: 0; visibility: hidden; transition: opacity 0.12s ease; z-index: 1000;
+}
+.nav-icon-btn:hover::after, .nav-icon-btn:focus-visible::after { opacity: 1; visibility: visible; transition-delay: 0.25s; }
+.nav-icon-btn:active::after { opacity: 0; }

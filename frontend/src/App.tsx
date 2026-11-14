@@ -61,6 +61,7 @@ import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/op
 import { selectPaperResumePanes } from './paperResume'
 import { buildReselectBody, paneStrikeErrorMessage, reselectOutcome, type StrikeRule } from './strikeRule'
 import ConfirmModal from './components/ConfirmModal'
+import NavIconButton from './components/NavIconButton'
 import { isBrokerSnapshot, brokerSnapshotSessionId } from './brokerSnapshot'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
@@ -2270,30 +2271,10 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             )}
           </div>
         )}
-        <button
-          onClick={() => setShowBrowse(value => !value)}
-          title="Browse — read-only charts: any symbol, any day, side by side"
-          aria-pressed={showBrowse}
-          style={{
-            background: showBrowse ? '#1f6feb' : '#161b22', border: `1px solid ${showBrowse ? '#1f6feb' : '#30363d'}`,
-            color: showBrowse ? '#fff' : '#8b949e', borderRadius: 6, padding: '4px 10px',
-            fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          {showBrowse ? '← Trading' : <><span aria-hidden="true">📈</span> Browse</>}
-        </button>
+        <NavIconButton icon={showBrowse ? 'trading' : 'browse'} active={showBrowse} onClick={() => setShowBrowse(value => !value)}
+          label={showBrowse ? 'Back to Trading' : 'Browse — read-only charts: any symbol, any day, side by side'} />
         <span id={BROWSE_HEADER_SLOT} style={{ display: 'inline-flex' }} />
-        <button
-          onClick={() => setShowSwing(true)}
-          title="Swing portfolio — hold positions across days"
-          style={{
-            background: '#161b22', border: '1px solid #30363d',
-            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
-            fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          <span aria-hidden="true">🗂</span> Swing
-        </button>
+        <NavIconButton icon="swing" onClick={() => setShowSwing(true)} label="Swing portfolio — hold positions across days" />
         {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
           <button
@@ -2318,41 +2299,11 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           </button>
         )}
         <WalletWidget date={sim.date} sessionId={sim.sessionState === 'running' || sim.sessionState === 'paused' ? sim.sessionId : null} refreshKey={sim.walletRefreshKey} onWalletSnapshot={sim.applyWalletSnapshot} />
-        <button
-          onClick={() => setShowAnalysis(true)}
-          title="Trade Analysis"
-          style={{
-            background: '#161b22', border: '1px solid #30363d',
-            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
-            fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          📊 Analysis
-        </button>
-        <button
-          onClick={() => setShowPatternLibrary(p => !p)}
-          title="Pattern Library — annotate and study trade setups"
-          style={{
-            background: showPatternLibrary ? '#1f6feb' : '#161b22',
-            border: `1px solid ${showPatternLibrary ? '#1f6feb' : '#30363d'}`,
-            color: showPatternLibrary ? '#fff' : '#8b949e',
-            borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          📚 Patterns
-        </button>
-        <button
-          onClick={() => setShowChartStructures(p => !p)}
-          title="Chart Structures — browse daily market structure classifications"
-          style={{
-            background: showChartStructures ? '#1f6feb' : '#161b22',
-            border: `1px solid ${showChartStructures ? '#1f6feb' : '#30363d'}`,
-            color: showChartStructures ? '#fff' : '#8b949e',
-            borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          📊 Structures
-        </button>
+        <NavIconButton icon="analysis" onClick={() => setShowAnalysis(true)} label="Trade Analysis" />
+        <NavIconButton icon="patterns" active={showPatternLibrary} onClick={() => setShowPatternLibrary(p => !p)}
+          label="Pattern Library — annotate and study trade setups" />
+        <NavIconButton icon="structures" active={showChartStructures} onClick={() => setShowChartStructures(p => !p)}
+          label="Chart Structures — browse daily market structure classifications" />
         {/* Show/hide session controls — only when session is active */}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && (
           <>
