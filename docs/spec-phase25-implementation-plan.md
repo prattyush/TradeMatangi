@@ -92,3 +92,38 @@ I will **not** add a global `GZipMiddleware` (it would change every route, inclu
 - Track P manual checks on the Windows build and the website: create, save, reload and delete a pattern chart, a chart structure and a fine flow; Max Price strikes honour desktop settings; website pages unchanged after refactor.
 - Track G manual: play each game at levels 1, 10 and 20 on desktop and in Chrome; Task Manager memory at level 20; network trace shows only `/api/desktop/v1/games/*`; offline outbox flush; trading window and live session unaffected while Games runs; a cache miss returns 404 and logs no broker call.
 - Each PR description lists shared files touched and confirms no trading logic changed.
+
+---
+
+## Track P, Sprint P0 findings (2026-11-14, discovery only, no code changed)
+
+**KLine can draw everything the three pages need.** Reuse, do not add a library:
+- Custom overlays: `registerOverlay` / `createOverlay` with `points` and `extendData` (see `analysisAnnotation`, `analysisExecution`, `analysisLevel` in `shared/analysis/kline/AnalysisChart.tsx:54-69`). The desktop already renders saved pattern annotations this way, so **Pattern marker display is already done**; Pattern Library only adds placement and saving.
+- Click to place: `chart.convertFromPixel` on a capture-phase container click (`AnalysisChart.tsx:~141-152`, the What If picker) gives time and price. This replaces `subscribeClick` plus `coordinateToPrice`.
+- Drawings: KLine built-ins `rect`, `segment`, `horizontalStraightLine`, `fibonacciLine` (`shared/charts/catalogue.ts`, `klineDrawingModel.ts overlayName`). The pages' drawings are throwaway (not persisted), so create the overlays directly instead of going through `useKLineDrawings`, which saves to the user's drawing store and must not be touched.
+- Only custom work: the **risk/reward indicator** (`rrindicator`, three coloured line segments) and Fine Structures **transition bar** markers. Both are small `registerOverlay` figures (a rect pair plus text).
+- EMA 9/21: `shared/charts/useKLineIndicators.ts` exists; Chart Structures also draws a sparkline on a plain 2D canvas, which needs no chart library.
+
+**Routes the three pages call** (website `services/api.ts` method -> needs a desktop route):
+- Pattern: strategies (list), categories (list), charts (list, get, get-by-date, create, update, delete, bulk-delete), `ohlc/equity`, `ohlc/options`.
+- Chart Structures: types, list, create, update, `ohlc/{symbol}/{date}`.
+- Fine Structures: definitions (list, create, update, delete), flows (create, update, list, get, delete), `search`, `ohlc/{symbol}/{date}`, `ohlc-options/...`.
+- Helpers used by two or more pages and absent from the desktop allowlist: `getExpiry`, `getPriceAt`, `findStrikeByPrice`, `getSymbols`.
+- `updateUserSettings` (Max Price caps): on the desktop use the existing `desktop_settings_request` route, not a new one.
+
+**Decisions for P1.**
+1. One new Rust command `desktop_patterns_request(path, method, body)` for `pattern/`, `chart-structures/` and `fine-structures/`; methods GET/POST/PUT/DELETE; segment checks as `valid_analysis_path`, plus a path-shape allowlist per family and a `?query` allowance. Do not extend the Analysis command.
+2. Backend: second `include_router` for each of the three routers under `/api/desktop/v1/...`, with `get_desktop_user_id` in place of `get_request_user_id` (it accepts `X-User-Id` too, so the website behaviour is unchanged). The helper routes get a small `desktop_patterns_helpers` router (expiry, price-at, strike-by-price, symbols), all minute-data only.
+3. TS: `windowsapp/src/patternsApi.ts` with `validPatternsPath`, mirroring the Rust allowlist, and parity tests (vitest and cargo).
+4. Shared UI environment: `shared/patterns/environment.tsx`.
+
+**Real-trading path check:** nothing in P0 or P1 touches order, session, broker or stream code. P1 touches `backend/app/main.py` (router mounts), `windowsapp/src-tauri/src/lib.rs` (new command and its tests) and the Rust handler list.
+
+| Sprint | Scope | Status |
+|---|---|---|
+| P0 | Discovery (this section) | Done, awaiting owner review |
+| P1 | Backend desktop mounts, helper routes, Rust `desktop_patterns_request`, `patternsApi.ts`, parity tests | Planned |
+| P2 | `shared/patterns` environment; Pattern Library on KLine | Planned |
+| P3 | Chart Structures (Broad) | Planned |
+| P4 | Fine Structures | Planned |
+| P5 | Docs, Windows acceptance | Planned |
