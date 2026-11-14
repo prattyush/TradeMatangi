@@ -124,6 +124,55 @@ def _load_minute(symbol, date, strike=None, expiry=None, right=None):
         raise RuntimeError("Historical provider failed") from exc
 
 
+def price_at(result, date, reference):
+    """Price at an instant, without look-ahead, for minute rows.
+
+    A minute bar labelled 09:15:00 opens at 09:15:00, so the open of the bar that starts exactly at ``reference`` is the
+    price at that instant. Otherwise the last finished bar's close, as ``price_before``.
+    """
+    if result.interval_seconds > 1:
+        frame = observed_frame(result, date)
+        exact = frame[frame.index == reference]
+        if not exact.empty:
+            value = float(exact.iloc[0]["open"])
+            if isfinite(value) and value > 0:
+                return value
+    return price_before(result, date, reference)
+
+
+def find_max_price_strike(symbol, date, expiry, right, cap, reference, load):
+    """The first strike from ATM outwards (CE up, PE down, 30 steps) whose observed premium is at or below ``cap``.
+
+    ``load(symbol, date[, strike, expiry, right])`` supplies the candles (minute for Browse and the read-only screens,
+    seconds for replay), and the prices are the last observed ones before ``reference`` (no look-ahead). There is no ATM
+    fallback: ``ValueError`` says what was missing. Returns ``(strike, premium, history)``.
+    """
+    underlying = load(symbol, date)
+    price = price_before(underlying, date, reference, require_observed=True)
+    if price is None:
+        raise ValueError("No underlying price is available at this reference time")
+    atm = get_atm_strike(symbol, price)
+    for step in range(30):
+        strike = atm + step * STRIKE_INTERVALS[symbol] * (1 if right == "CE" else -1)
+        if strike <= 0:
+            break
+        try:
+            candidate = load(symbol, date, strike, expiry, right)
+        except FileNotFoundError:
+            continue
+        premium = price_before(candidate, date, reference, require_observed=True)
+        if premium is not None and premium <= cap:
+            return strike, premium, candidate
+    raise ValueError("No observed premium at or below the cap within 30 strikes")
+
+
+def find_max_price_strike_minute(symbol, date, expiry, right, cap, reference_time):
+    """``find_max_price_strike`` on minute data, for the read-only Patterns and Structures screens."""
+    reference = pd.Timestamp(f"{date} {reference_time}", tz="UTC")
+    strike, premium, _ = find_max_price_strike(symbol, date, expiry, right, cap, reference, _load_minute)
+    return {"strike": strike, "price": premium}
+
+
 def prepare(mode, date, reference_time, panes):
     requested = calendar_date.fromisoformat(date)
     if not is_trading_day(requested):
@@ -147,28 +196,8 @@ def prepare(mode, date, reference_time, panes):
                     if item["expiry"] != get_expiry_date(symbol, date):
                         raise ValueError("Expiry is outside the supported date-aware option range")
                     if item.get("selection_mode") == "max_price":
-                        underlying = load(symbol, date)
-                        price = price_before(underlying, date, reference, require_observed=True)
-                        if price is None:
-                            raise ValueError("No underlying price is available at this reference time")
-                        atm = get_atm_strike(symbol, price)
-                        cap = item["max_price"]
-                        found = None
-                        for step in range(30):
-                            strike = atm + step * STRIKE_INTERVALS[symbol] * (1 if item["right"] == "CE" else -1)
-                            if strike <= 0:
-                                break
-                            try:
-                                candidate = load(symbol, date, strike, item["expiry"], item["right"])
-                            except FileNotFoundError:
-                                continue
-                            premium = price_before(candidate, date, reference, require_observed=True)
-                            if premium is not None and premium <= cap:
-                                found = strike
-                                history = candidate
-                                break
-                        if found is None:
-                            raise ValueError("No observed premium at or below the cap within 30 strikes")
+                        found, premium, history = find_max_price_strike(
+                            symbol, date, item["expiry"], item["right"], item["max_price"], reference, load)
                         item["strike"] = str(found)
                     strike = strike_number(item["strike"])
                     if strike <= 0 or strike % STRIKE_INTERVALS[symbol]:

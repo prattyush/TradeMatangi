@@ -332,11 +332,16 @@ async def get_price_at(
     symbol: str = Query(...),
     date: str = Query(...),
     time: str = Query(...),
+    granularity: str | None = Query(default=None, pattern="^minute$"),
 ):
     """
-    Return the first available close price at or after the given time on the given date.
+    Return the last close price at or before the given time on the given date.
     Used to resolve ATM strike before an options session is configured.
     time format: HH:MM or HH:MM:SS
+
+    granularity=minute answers from minute data (read-only screens such as Patterns): the open of the minute bar that
+    starts at ``time`` (the price at that instant, no look-ahead), else the last finished bar's close. Without it the
+    second-level data is downloaded and used, as before.
     """
     if symbol not in SUPPORTED_SYMBOLS:
         raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
@@ -345,6 +350,21 @@ async def get_price_at(
         raise HTTPException(status_code=422, detail="time must be HH:MM or HH:MM:SS")
     if len(time) == 5:
         time = time + ":00"
+
+    if granularity == "minute":
+        from app.services.desktop_preparation import price_at
+
+        try:
+            result = await run_data_history(_load_minute, symbol, date)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Data not found for {symbol} on {date}")
+        minute_price = price_at(result, date, pd.Timestamp(f"{date} {time}", tz="UTC"))
+        if minute_price is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No data at or before {time} for {symbol} on {date}",
+            )
+        return PriceAtResponse(symbol=symbol, date=date, time=time, price=round(minute_price, 2))
 
     await run_data_history(_ensure_data, symbol, date)
 
@@ -390,12 +410,17 @@ async def find_strike_by_max_price(
     right: str = Query(...),
     max_price: float = Query(...),
     reference_time: str = Query("09:15:00"),
+    granularity: str | None = Query(default=None, pattern="^minute$"),
 ):
     """
     Return the strike whose option price at reference_time ≤ max_price,
     scanning outward from ATM. Used for Max Price Threshold strike selection mode.
     right: "CE" or "PE"
     reference_time: "HH:MM:SS" in IST
+
+    granularity=minute (read-only screens: Patterns, Fine Structures) uses the same minute-data resolver as Browse:
+    prices are the last observed ones before reference_time, and there is no ATM fallback (404 says what was missing).
+    Without it the second-level scan below runs, as for a session start.
     """
     if symbol not in SUPPORTED_SYMBOLS:
         raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
@@ -405,6 +430,25 @@ async def find_strike_by_max_price(
         raise HTTPException(status_code=422, detail="reference_time must be HH:MM or HH:MM:SS")
     if len(reference_time) == 5:
         reference_time = reference_time + ":00"
+
+    if granularity == "minute":
+        from app.services.desktop_preparation import find_max_price_strike_minute
+        from app.services.options_service import STRIKE_INTERVALS
+
+        if symbol not in STRIKE_INTERVALS:
+            raise HTTPException(status_code=400, detail=f"Max price is not available for {symbol}")
+        if not (max_price > 0 and max_price < float("inf")):
+            raise HTTPException(status_code=422, detail="max_price must be a positive number")
+        try:
+            result = await run_data_history(
+                find_max_price_strike_minute, symbol, date, expiry, right.upper(), max_price, reference_time)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"No data for {symbol} on {date}")
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=f"{exc}; retry")
+        return {**result, "symbol": symbol, "date": date, "right": right.upper()}
 
     from app.services.options_service import find_strike_by_max_price, get_expiry_date
     result = await run_data_history(find_strike_by_max_price, symbol, date, expiry, right.upper(), max_price, reference_time)

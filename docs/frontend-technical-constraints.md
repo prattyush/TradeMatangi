@@ -163,3 +163,8 @@
 - **Date-bounded requests.** `GET /api/analysis/sessions` has no pagination; the phone always sends `start_date` and `end_date`.
 - **Secrets.** The refresh token lives in secure storage (Android Keystore); the access token only in memory; neither is ever logged (`diagnostics.redact`). In a plain browser nothing secret is persisted.
 - **Shared code.** Phone layout components compose shared logic; edits to shared UI components must be additive props whose default is the current behavior (the website, webapp and desktop all use them).
+
+## Patterns strike selection (Phase 24)
+
+- `frontend/src/patternStrikes.ts` is the one place that decides OTM or Max Price for the Pattern Library: Max Price only for NIFTY and BSESEN when Settings has the Max Price option strike mode with a positive cap on both sides (stocks and every other case stay OTM). The ATM price comes from `getPriceAt(..., '09:15', 'replay', 'minute')` and the cap is checked at 09:30 through `findStrikeByPrice(..., 'replay', 'minute')`; a failed pick is shown, never replaced by ATM. A saved chart keeps CE in `strike` and PE in `strike_pe`; every reader (gallery reload, `shared/analysis/PatternVsTradeComparison.tsx`) uses `strike_pe ?? strike`.
+

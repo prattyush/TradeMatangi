@@ -482,6 +482,8 @@ export interface PatternChartMeta {
   instrument_type: string
   right?: string
   strike?: number
+  /** The PE strike when it differs from `strike` (Max Price). Absent on older charts: use `strike`. */
+  strike_pe?: number | null
   notes: string
   created_at: string
   updated_at: string
@@ -1107,8 +1109,9 @@ const api = {
     return data.candles ?? []
   },
 
-  async getPriceAt(symbol: string, date: string, time: string, historyMode: 'live' | 'replay' = 'replay'): Promise<PriceAtResponse> {
-    const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}&history_mode=${historyMode}`
+  /** `granularity: 'minute'` answers from minute data (read-only screens such as Patterns): no second-level download. */
+  async getPriceAt(symbol: string, date: string, time: string, historyMode: 'live' | 'replay' = 'replay', granularity?: 'minute'): Promise<PriceAtResponse> {
+    const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}&history_mode=${historyMode}${granularity ? `&granularity=${granularity}` : ''}`
     const res = await fetch(url)
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
@@ -1126,9 +1129,10 @@ const api = {
 
   async findStrikeByPrice(
     symbol: string, date: string, expiry: string, right: 'CE' | 'PE',
-    maxPrice: number, referenceTime: string, historyMode: 'live' | 'replay' = 'replay',
+    maxPrice: number, referenceTime: string, historyMode: 'live' | 'replay' = 'replay', granularity?: 'minute',
   ): Promise<{ strike: number; price: number; symbol: string; date: string; right: string }> {
     const params = new URLSearchParams({ symbol, date, expiry, right, max_price: String(maxPrice), reference_time: referenceTime, history_mode: historyMode })
+    if (granularity) params.set('granularity', granularity)
     const url = `${BACKEND_URL}/api/data/options/find-strike-by-price?${params}`
     const res = await fetch(url)
     if (!res.ok) {
@@ -2235,7 +2239,7 @@ const api = {
   async patternCreateChart(body: {
     symbol: string; date: string; instrument_type: string;
     annotations: PatternAnnotation[]; notes: string;
-    right?: string; strike?: number;
+    right?: string; strike?: number; strike_pe?: number;
     top_patterns?: TopPatterns;
     risk_reward_ratios?: Record<string, string>;
     interval_minutes?: number;
@@ -2249,11 +2253,11 @@ const api = {
     return res.json()
   },
 
-  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns, riskRewardRatios?: Record<string, string>, intervalMinutes?: number): Promise<PatternChart> {
+  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns, riskRewardRatios?: Record<string, string>, intervalMinutes?: number, strikes?: { strike?: number; strike_pe?: number }): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns, risk_reward_ratios: riskRewardRatios, interval_minutes: intervalMinutes }),
+      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns, risk_reward_ratios: riskRewardRatios, interval_minutes: intervalMinutes, ...strikes }),
     })
     if (!res.ok) throw new Error(`Update chart failed: ${res.status}`)
     return res.json()

@@ -260,3 +260,57 @@ def test_option_history_page_does_not_display_leading_future_backfill(tmp_path):
         page = asyncio.run(option_historical_page("BSESEN", DATE, DATE, 71700, "CE", 3, 0, "owner"))
     assert len(page.candles) == 1
     assert page.candles[0].timestamp == int(raw.index[1].timestamp())
+
+
+# ── Minute-data helpers for the read-only Patterns and Structures screens ────────────────────────────────────────
+
+def test_price_at_is_the_open_of_the_minute_bar_that_starts_at_the_time():
+    result = history((100, 110, 120), ("09:15:00", "09:16:00", "09:17:00"), interval=60)
+    result.frame["open"] = [99, 109, 119]
+    at = lambda clock: prep.price_at(result, DATE, pd.Timestamp(f"{DATE} {clock}", tz="UTC"))
+    assert at("09:15:00") == 99      # the price at the instant, not the close of 09:15:59 (no look-ahead)
+    assert at("09:16:00") == 109
+    assert at("09:16:30") == 100     # mid-bar: the last finished bar's close
+    assert at("09:14:00") is None    # before the first bar
+
+
+def test_price_at_for_second_data_is_the_last_close_at_or_before_the_time():
+    result = history((300, 310), ("09:15:00", "09:15:01"), interval=1)
+    assert prep.price_at(result, DATE, pd.Timestamp(f"{DATE} 09:15:00", tz="UTC")) == 300
+    assert prep.price_at(result, DATE, pd.Timestamp(f"{DATE} 09:15:05", tz="UTC")) == 310
+
+
+def test_extracted_scan_finds_the_same_strike_as_prepare():
+    seen = []
+    def load(symbol, date, strike=None, *args):
+        if strike is None:
+            return history((71700,), ("09:15:00",))
+        seen.append(strike)
+        return history((101 if len(seen) == 1 else 100,), ("09:15:00",))
+    reference = pd.Timestamp(f"{DATE} 09:15:00", tz="UTC")
+    strike, premium, found = prep.find_max_price_strike("BSESEN", DATE, DATE, "CE", 100, reference, load)
+    assert (strike, premium) == (71800, 100) and found.frame is not None
+    seen.clear()
+    with patch.object(prep, "load_history", side_effect=load):
+        via_prepare = prep.prepare("replay", DATE, "09:15:00", [{**PANE, "selection_mode": "max_price", "max_price": 100}])
+    assert via_prepare["panes"][0]["pane"]["strike"] == str(strike)
+
+
+def test_extracted_scan_has_no_atm_fallback():
+    reference = pd.Timestamp(f"{DATE} 09:15:00", tz="UTC")
+    load = lambda symbol, date, *args: history((71700,), ("09:15:00",))
+    with pytest.raises(ValueError, match="No observed premium at or below the cap within 30 strikes"):
+        prep.find_max_price_strike("BSESEN", DATE, DATE, "PE", 1, reference, load)
+
+
+def test_minute_scan_reads_minute_candles_and_never_second_level():
+    calls = []
+    def minute(symbol, date, strike=None, *args):
+        calls.append(strike)
+        # A minute bar is only known once it has finished: 09:29 finishes at 09:30:00.
+        return history((71700,) if strike is None else (50,), ("09:29:00",), interval=60)
+    with patch.object(prep, "_load_minute", side_effect=minute), \
+         patch.object(prep, "load_history", side_effect=AssertionError("second-level data was requested")):
+        result = prep.find_max_price_strike_minute("BSESEN", DATE, DATE, "CE", 60, "09:30:00")
+    assert result == {"strike": 71700, "price": 50}
+    assert calls[0] is None

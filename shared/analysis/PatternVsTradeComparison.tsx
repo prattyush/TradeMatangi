@@ -55,7 +55,7 @@ export default function PatternVsTradeComparison({symbol,date,instrumentType,ses
       const map=new Map<string,TradeLabel[]>()
       sessionIds.forEach((id,i)=>{ const trips=new Map(rtRes[i].map(trip=>[trip.index,trip])); lblRes[i].forEach(label=>{const trip=trips.get(label.round_trip_index);if(trip)[...trip.entry_trades,...trip.exit_trades].forEach(trade=>[trade.trade_id,trade.execution_id].filter(Boolean).forEach(identity=>{const key=`${id}:${identity}`;const existing=map.get(key)??[];if(!existing.some(item=>item.round_trip_index===label.round_trip_index))map.set(key,[...existing,label])}))}) })
       slm(map);spa(pChart?.annotations??[]);stp(pChart?.top_patterns??{});ss(strats.strategies);scat(cats.categories)
-      spStrike({ce:pChart?.strike??null,pe:pChart?.strike??null,exp:expiry?.expiry??null})
+      spStrike({ce:pChart?.strike??null,pe:pChart?.strike_pe??pChart?.strike??null,exp:expiry?.expiry??null}) // CE and PE differ under Max Price; older charts have one strike for both
     })().catch(reason=>{if(!cancelled)setError(String(reason))}).finally(()=>{if(!cancelled)setLoading(false)})
     return()=>{cancelled=true}
   },[api,symbol,date,isOpt,sessionKey,retry])

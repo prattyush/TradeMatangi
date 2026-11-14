@@ -72,6 +72,20 @@ VWAP and Lightweight volume (added 2026-11-14, `feat/vwap-volume-charts`):
 5. Reload the page: the same panes, symbols, days, strikes and intervals are back.
 6. Start a session from Trading: Browse is left; nothing in Browse starts or changes a session.
 
+## I. Patterns and Structures on minute data, and Max Price in Patterns (added 2026-11-14)
+Speed (website, webapp):
+1. Pick a trading day whose option contracts you have **not** opened before (no cached files). In Patterns, Options, NIFTY, Load Chart: the underlying and the CE and PE panes appear within a few seconds, not after the minutes second-level downloads took. In the backend cache folder only `minute/<provider>/…` files appear for that day and contracts, no new `…-DD-MM-YYYY.parquet` second-level files.
+2. Chart Structures (Underlying chart of a day) and Fine Structures (equity and an option contract) load the same way.
+3. Replay or stepwise a session on that day afterwards: it still downloads and uses second-level data as before. Trade Analysis charts and Snapshots are unchanged.
+4. Illiquid option days can show fewer early candles than before (no back-fill). Report a chart that looks wrong, not merely different.
+
+Max Price in Patterns:
+5. Settings, Option strike mode = OTM Offset: Patterns, Options shows the OTM box; Load Chart takes ATM from the 09:15 price (the open of the first minute) plus and minus the offset, as before.
+6. Settings, Option strike mode = Max Price with CE and PE caps (for example 60 and 45): the OTM box is replaced by "Max price: CE up to ₹60, PE up to ₹45 (Settings)". Load Chart picks a CE and a PE strike that are usually different; check each strike's premium at 09:30 on the chart is at or below its cap and the next strike toward ATM is above it. A day where nothing within 30 strikes qualifies shows the server's message and loads no chart.
+7. Save annotations, open the chart again from the gallery (Load): the CE pane and the PE pane use their own strikes. A chart saved before this change still opens, with its one strike on both sides.
+8. Trade Analysis, pattern-vs-trade comparison of that day (website, Windows app, phone): the CE and PE pattern tabs show their own strikes.
+9. A stock symbol (Reliance, Tata Motors, Tata Power) stays on the OTM box whatever the setting says.
+
 ## G. Browse on minute-level data (added 2026-11-11; Windows app)
 1. Mode **Browse**, a past day, NIFTY spot and an option of an expired expiry: the charts appear in seconds, with no long wait. Scroll left for older days: they load too.
 2. In Browse, **Max price** for a strike: the search answers without a long wait.
