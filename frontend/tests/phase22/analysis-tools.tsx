@@ -10,12 +10,15 @@ const w = window as any;
 const mode = new URLSearchParams(location.search).get("mode");
 localStorage.setItem("auth_user", JSON.stringify({ userId: "owner" }));
 const base = Date.parse("2026-10-16T09:15:00Z") / 1000;
+// An index has no volume; `?volume=1` gives the candles volume, like a stock or an option.
+const withVolume = new URLSearchParams(location.search).get("volume") === "1";
 const candles = Array.from({ length: 90 }, (_, i) => ({
   time: base + i * 180,
   open: 100 + Math.sin(i / 4) * 3,
   high: 105 + Math.sin(i / 4) * 3,
   low: 96 + Math.sin(i / 4) * 3,
   close: 101 + Math.sin(i / 4) * 3,
+  ...(withVolume ? { volume: 1000 + (i % 7) * 250 } : {}),
 }));
 w.drawingLog = [];
 w.errors = [];

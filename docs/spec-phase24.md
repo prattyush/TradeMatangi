@@ -246,7 +246,7 @@ Google sign-in with optional app lock (needs an Android OAuth client in Google C
 - **Tests (when built).** Unit tests for `pnlMilestone` (33/66/100 boundaries, both sides, zero capital); extend `frontend/src/pnlFormat.test.mjs` and the windowsapp vitest label helpers; backend `test_user_settings.py`, `test_shared_desktop_settings.py`, `test_desktop_trading.py` (new fields and mode in the snapshot); Playwright bar-label check in `frontend/tests/phase22/charts.spec.ts` (label absent when the toggle is off, in each renderer).
 
 ### LIVE VOLUME ON TICKS AND A VWAP INDICATOR IN BOTH CHARTS (requirement 2026-11-14)
-**Status:** requirement and approach written; nothing built. Track A (probe script) and Track B (charts) can start now; Track C (live volume) waits for the probe. Updated at every step below ("As built" notes).
+**Status:** Track B (charts) built on `feat/vwap-volume-charts`; Track A (probe script) next; Track C (live volume) waits for the probe. Updated at every step below ("As built" notes).
 
 #### Requirement
 - **Live volume on ticks** in every session type (replay, stepwise, paper, real, and the Swing live bar) and from every live broker feed (Kite, Fyers, Breeze, Kotak).
@@ -273,4 +273,12 @@ Google sign-in with optional app lock (needs an Android OAuth client in Google C
 - **Order of work.** Track B (one or two PRs) alongside Track A (probe script PR); Track C after the user runs the probe, one broker per PR, starting with the broker used most in live sessions.
 
 #### As built
-Nothing yet. Add a dated note and the test counts here after each PR, and record the probe findings under Track A when the user has run it. Also refresh the Phase 24 row in `CLAUDE.md`, `docs/frontend-technical-constraints.md` (Volume), `docs/backend-technical-constraints.md` and `docs/phase24-manual-acceptance.md` section F as each track lands.
+**Track B, charts (2026-11-14, branch `feat/vwap-volume-charts`, PR into `dev`).**
+- KLine: VWAP is created on the candle pane, stacked like MA/EMA (the library gave it a sub-pane of its own; confirmed in the library source and in the running chart). `overlayIndicators` and `indicatorUnavailable()` live in `shared/charts/catalogue.ts` and both creation sites use them (`KLineChart.tsx`, `useKLineIndicators.ts`); VWAP is hidden on `1D` and, with VOL, on instruments with no volume.
+- Lightweight: `frontend/src/indicators/vwap.ts` (pure maths, daily reset on the IST date) and `volumeStudies.ts` (histogram + VWAP line, `setData` / `update`). Wired into `Chart.tsx` (equity, options and external/Swing/Browse history, the forming bar with the KLine volume rule, the stepwise correction, a menu with VWAP and Volume that appears only when the data has volume) and into the Analysis charts through `useLightweightTools` (`AnalysisCharts.tsx` underlying and option charts, `ComparisonCharts.tsx` trades and pattern charts; menu in `LightweightChartTools.tsx`). Preferences: VWAP and Volume default to off; `analysis-lw-vwap` / `analysis-lw-volume`, and `showVwap` / `showVolume` in `LightweightChartState`.
+- Not changed: the Snapshot viewer's Lightweight charts (`SnapshotCharts.tsx`) have no indicator menu at all (EMA is always on), so they get no VWAP. The desktop and phone have no Lightweight chart.
+- Not done here (Track C): live ticks still carry no volume, so on a live session the forming bar keeps its history volume and VWAP is flat inside it.
+- Tests: `frontend/src/indicators/vwap.test.mjs` (7, node), `windowsapp/src/analysisVolumeIndicators.test.ts` (5: overlay pane, daily skip), Playwright `analysis-tools.spec.ts` and `charts.spec.ts` (VWAP/Volume offered only with volume, persistence, renderer switch, maximize); full frontend Playwright 48 passed, windowsapp, mobile and webapp typechecks clean. Manual steps: `docs/phase24-manual-acceptance.md` section F, steps 8-10.
+- Other KLine indicators that draw over price (BOLL, SuperTrend, Ichimoku, MA Ribbon, HMA, Pivot Points) are still created without a `paneId`, so they too get a sub-pane. Left as is (not asked for); check whether that is intended.
+
+**Track A and C.** Nothing yet. Add a dated note and the test counts here after each PR, and record the probe findings under Track A when the user has run it. Also refresh the Phase 24 row in `CLAUDE.md`, `docs/frontend-technical-constraints.md` (Volume), `docs/backend-technical-constraints.md` and `docs/phase24-manual-acceptance.md` section F as each track lands.

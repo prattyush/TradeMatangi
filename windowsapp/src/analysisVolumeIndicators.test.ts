@@ -7,7 +7,14 @@ import { applyAnalysisIndicators } from '../../shared/charts/useKLineIndicators'
 
 const fakeChart = () => {
   const created: string[] = []
-  return { created, chart: { removeIndicator: vi.fn(), createIndicator: (value: string | { name: string }) => { created.push(typeof value === 'string' ? value : value.name) } } }
+  const calls: Array<{ value: string | { name: string; paneId?: string }; stack?: boolean }> = []
+  return {
+    created, calls,
+    chart: {
+      removeIndicator: vi.fn(),
+      createIndicator: (value: string | { name: string; paneId?: string }, stack?: boolean) => { created.push(typeof value === 'string' ? value : value.name); calls.push({ value, stack }) },
+    },
+  }
 }
 
 describe('Analysis chart volume indicators', () => {
@@ -25,5 +32,15 @@ describe('Analysis chart volume indicators', () => {
     const { chart, created } = fakeChart()
     applyAnalysisIndicators(chart as never, ['VOL', 'MA'])
     expect(created).toEqual(['VOL', 'MA'])
+  })
+  it('draws VWAP over the candles (candle pane, stacked) while VOL keeps its own pane', () => {
+    const { chart, calls } = fakeChart()
+    applyAnalysisIndicators(chart as never, ['VOL', 'VWAP'], { hasVolume: true })
+    expect(calls).toEqual([{ value: 'VOL', stack: undefined }, { value: { name: 'VWAP', paneId: 'candle_pane' }, stack: true }])
+  })
+  it('skips VWAP on daily bars, where it is only the typical price', () => {
+    const { chart, created } = fakeChart()
+    applyAnalysisIndicators(chart as never, ['VOL', 'VWAP'], { hasVolume: true, interval: '1D' })
+    expect(created).toEqual(['VOL'])
   })
 })

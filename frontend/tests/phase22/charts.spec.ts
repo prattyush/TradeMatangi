@@ -807,3 +807,39 @@ test('website replay countdown follows market time and live countdown ticks', as
   await page.evaluate(() => (window as any).setProps({intervalMinutes:1440}));
   await expect(timer).toHaveCount(0);
 });
+
+test("Lightweight trading chart: VWAP and Volume are offered only with volume, and survive a renderer switch", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  // An index has no volume: the menu has no VWAP or Volume.
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await expect(page.getByLabel("EMA 9/21", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("VWAP", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Volume", { exact: true })).toHaveCount(0);
+
+  // With volume both are offered, off by default; the choice returns after switching renderers.
+  await page.goto("/tests/phase22/harness.html?volume=1");
+  await page.waitForSelector(".website-kline canvas");
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await expect(page.getByLabel("VWAP", { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel("Volume", { exact: true })).not.toBeChecked();
+  await page.getByLabel("VWAP", { exact: true }).check();
+  await page.getByLabel("Volume", { exact: true }).check();
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await page.evaluate(() => (window as any).switchRenderer("kline"));
+  await page.waitForSelector(".website-kline canvas");
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await expect(page.getByLabel("VWAP", { exact: true })).toBeChecked();
+  await expect(page.getByLabel("Volume", { exact: true })).toBeChecked();
+  expect(errors).toEqual([]);
+});
+
