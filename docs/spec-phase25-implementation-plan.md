@@ -122,8 +122,15 @@ I will **not** add a global `GZipMiddleware` (it would change every route, inclu
 | Sprint | Scope | Status |
 |---|---|---|
 | P0 | Discovery (this section) | Done, awaiting owner review |
-| P1 | Backend desktop mounts, helper routes, Rust `desktop_patterns_request`, `patternsApi.ts`, parity tests | Planned |
+| P1 | Backend desktop mounts, helper routes, Rust `desktop_patterns_request`, `patternsApi.ts`, parity tests | In PR into `dev` (branch `feat/desktop-patterns-transport`) |
 | P2 | `shared/patterns` environment; Pattern Library on KLine | Planned |
 | P3 | Chart Structures (Broad) | Planned |
 | P4 | Fine Structures | Planned |
 | P5 | Docs, Windows acceptance | Planned |
+
+### P1 as built
+- Backend `routers/desktop_patterns.py`: re-registers every route of `pattern_logger`, `chart_structures` and `fine_structures` under `/api/desktop/v1/patterns/{pattern,chart-structures,fine-structures}/...`, plus four read-only `data` helpers (`symbols`, `price-at`, `expiry`, `options/find-strike-by-price`). It swaps the website identity for a **desktop bearer only** (`get_patterns_user_id`; `X-User-Id` gives 401), and runs the legacy sync handlers on the bounded history pool (`run_history`), as `desktop_analysis.adapt` does. The website routers are unchanged.
+- Rust `desktop_patterns_request` + `valid_patterns_path` (GET/POST/PUT/DELETE, exact path shapes, id/symbol/date segment checks) in `lib.rs`; TS mirror `windowsapp/src/patternsApi.ts` (`validPatternsPath`, `patternsRequest`). Both run the same 36 allow/deny cases (`patternsApi.test.ts`, cargo test `patterns_allowlist_is_exact_and_method_scoped`).
+- Tests: `backend/tests/test_desktop_patterns.py` (bearer required, every website route mirrored, only the four data helpers exposed, no order/session/trade/wallet/broker/stream path exposed, identity is the bearer user).
+- Needs a desktop rebuild (Rust change). No trading logic touched; shared files changed: `backend/app/main.py` (one import and one `include_router`) and `windowsapp/src-tauri/src/lib.rs` (new command, its tests, one handler-list line).
+- Sharing (pattern/fine/structure share-by-email) routes are not in the website routers' route list, so they are not exposed; revisit in P2 if the pages need them.
