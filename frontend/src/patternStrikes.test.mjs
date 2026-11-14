@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  maxPriceLabel, otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
+  otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
 } from './patternStrikes.ts'
 
 const threshold = { mode: 'threshold', ceCap: 60, peCap: 45 }
@@ -37,9 +37,4 @@ test('a saved chart gives its own PE strike, and older charts reuse the CE strik
   assert.deepEqual(savedStrikes({ strike: 24500 }), { ce: 24500, pe: 24500 })
   assert.deepEqual(savedStrikes({ strike: 24500, strike_pe: null }), { ce: 24500, pe: 24500 })
   assert.deepEqual(savedStrikes({}), { ce: undefined, pe: undefined })
-})
-
-test('the Settings line names both caps only in Max Price mode', () => {
-  assert.match(maxPriceLabel({ mode: 'max_price', ceCap: 60, peCap: 45 }), /CE up to ₹60, PE up to ₹45/)
-  assert.equal(maxPriceLabel({ mode: 'otm' }), '')
 })

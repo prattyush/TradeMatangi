@@ -17,8 +17,9 @@ import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, Top
 import { buildMarkers, patternIdentity, cleanTopPatterns, MARKER_COLORS } from '../services/patternMarkers'
 import { loadHistoricalDays, loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../components/SettingsModal'
 import {
-  PATTERN_ATM_TIME, PATTERN_MAX_PRICE_TIME, maxPriceLabel, otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
+  PATTERN_ATM_TIME, PATTERN_MAX_PRICE_TIME, otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
 } from '../patternStrikes'
+import { premiumPresetsFor, withSavedPremium } from '../../../shared/optionPremiumPresets'
 
 // ── EMA helpers ───────────────────────────────────────────────────────────────
 
@@ -652,9 +653,30 @@ const SUPPORTED_SYMBOLS = ['NIFTY', 'BSESEN', 'RELIND', 'TATMOT', 'TATPOW']
 const STRIKE_INTERVALS: Record<string, number> = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }
 const GALLERY_MAX_COLUMNS = 6
 
-/** The Settings "Option strike mode" for this symbol, read when it is needed (Settings may change between loads). */
-const readStrikeRule = (symbol: string) =>
-  patternStrikeRule(symbol, { mode: loadMaxPriceMode(), ceCap: loadMaxPriceThresholdCE(), peCap: loadMaxPriceThresholdPE() })
+/**
+ * OTM or Max Price: Settings' "Option strike mode" decides, read when it is needed (Settings may change between loads).
+ * The caps are the ones on screen (the Max Price dropdowns below), which start from Settings, as in trading.
+ */
+const strikeRuleFor = (symbol: string, ceCap: number, peCap: number) =>
+  patternStrikeRule(symbol, { mode: loadMaxPriceMode(), ceCap, peCap })
+
+/** Same dropdown as the trading screen: presets for the symbol, plus a saved value that is not one of them. */
+function MaxPriceSelect({ symbol, value, label, disabled, onChange }: {
+  symbol: string; value: number; label: string; disabled: boolean; onChange: (value: number) => void
+}) {
+  const presets = premiumPresetsFor(symbol)
+  return (
+    <label style={{ fontSize: 12, color: '#8b949e' }}>
+      {label}&nbsp;
+      <select value={value} disabled={disabled} aria-label={`${label} max price`}
+        style={{ ...selectStyle, width: 108 }} onChange={e => onChange(Number(e.target.value))}>
+        {withSavedPremium(presets, value).map(v => (
+          <option key={v} value={v}>₹{v}{!presets.includes(v) ? ' (saved)' : ''}</option>
+        ))}
+      </select>
+    </label>
+  )
+}
 const GALLERY_CARD_MIN_WIDTH = 220
 
 function galleryGridStyle(columns: number): CSSProperties {
@@ -681,8 +703,18 @@ export default function PatternLibrary() {
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
   const [otmOffset, setOtmOffset] = useState(0)
   const [intervalMinutes, setIntervalMinutes] = useState(3)
-  // Read on every render: it is a cheap localStorage read and Settings can change while this page is open.
-  const strikeRule = readStrikeRule(symbol)
+  // Max Price caps on screen: they start from Settings (and are read again when the symbol changes), and a change is saved
+  // to Settings like the trading screen's dropdown, so both screens always show the same value.
+  const [maxCe, setMaxCe] = useState(loadMaxPriceThresholdCE)
+  const [maxPe, setMaxPe] = useState(loadMaxPriceThresholdPE)
+  useEffect(() => { setMaxCe(loadMaxPriceThresholdCE()); setMaxPe(loadMaxPriceThresholdPE()) }, [symbol])
+  const saveCap = (side: 'ce' | 'pe', value: number) => {
+    if (side === 'ce') { setMaxCe(value); localStorage.setItem('maxPriceThresholdCE', String(value)) }
+    else { setMaxPe(value); localStorage.setItem('maxPriceThresholdPE', String(value)) }
+    api.updateUserSettings(side === 'ce' ? { max_price_threshold_ce: value } : { max_price_threshold_pe: value }).catch(() => {})
+  }
+  // The mode is read on every render: a cheap localStorage read, and Settings can change while this page is open.
+  const strikeRule = strikeRuleFor(symbol, maxCe, maxPe)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -809,7 +841,7 @@ export default function PatternLibrary() {
       if (instrumentType === 'options') {
         // Minute data (no second-level download): the ATM price is the open of the 09:15 bar, the Max Price pick is
         // the same resolver Browse uses.
-        const rule = readStrikeRule(symbol)
+        const rule = strikeRuleFor(symbol, maxCe, maxPe)
         const interval = STRIKE_INTERVALS[symbol] ?? 50
         const expiryRes = await api.getExpiry(symbol, date)
         expiry = expiryRes.expiry
@@ -867,7 +899,7 @@ export default function PatternLibrary() {
     } finally {
       setLoading(false)
     }
-  }, [symbol, date, instrumentType, otmOffset, intervalMinutes])
+  }, [symbol, date, instrumentType, otmOffset, intervalMinutes, maxCe, maxPe])
 
   // ── Add option pane ───────────────────────────────────────────────────────
 
@@ -1340,8 +1372,10 @@ export default function PatternLibrary() {
               ))}
             </div>
             {instrumentType === 'options' && (strikeRule.mode === 'max_price' ? (
-              <span style={{ fontSize: 12, color: '#8b949e' }} title="Option strike mode is set in Settings">
-                {maxPriceLabel(strikeRule)}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                title="Settings picks OTM or Max Price; the values here are saved to Settings, as on the trading screen">
+                <MaxPriceSelect symbol={symbol} value={maxCe} label="Max Price CE" disabled={loading} onChange={v => saveCap('ce', v)} />
+                <MaxPriceSelect symbol={symbol} value={maxPe} label="PE" disabled={loading} onChange={v => saveCap('pe', v)} />
               </span>
             ) : (
               <label style={{ fontSize: 12, color: '#8b949e' }}>

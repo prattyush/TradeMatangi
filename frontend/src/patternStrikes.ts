@@ -42,7 +42,3 @@ export function savedStrikes(chart: { strike?: number | null; strike_pe?: number
   const ce = chart.strike ?? undefined
   return { ce, pe: chart.strike_pe ?? ce }
 }
-
-export function maxPriceLabel(rule: PatternStrikeRule) {
-  return rule.mode === 'max_price' ? `Max price: CE up to ₹${rule.ceCap}, PE up to ₹${rule.peCap} (Settings)` : ''
-}
