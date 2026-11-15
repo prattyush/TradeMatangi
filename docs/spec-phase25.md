@@ -827,6 +827,7 @@ All brain games return `SessionScore` 0–100 and plug into the §6.2 level rule
 - **Accuracy-emphasis games** (memory, puzzles, word): the per-game formulas in §17.5.
 - **Volume check:** if the player completed fewer than `minTrialsFrac` (default 0.6) of the expected trials for a timed block, multiply the score by `completed / (minTrialsFrac × expected)`, capped at 1. This stops "answer two perfectly and idle" runs from scoring high.
 - **Required property (tested, §17.10):** a random responder scores ≤ 25 and a perfect responder ≥ 95 at every level of every game.
+  - **As built (B1):** a perfect responder scores 100 (tested at levels 1, 10, 20). "Random ≤ 25" cannot hold in every single run of a ~40-trial block (Green Light level 1 has only about 6 NO-GO trials, so luck can lift one run to 50-60), so it is tested **over 200 seeds**: mean ≤ 10, 90th percentile ≤ 30 and at most 15 % of runs above 25. Measured: mean 2 to 7, 90th percentile 7 to 25. Always pressing and never pressing score exactly 0. See the plan, "B1 as built".
 
 ### 17.5 The 21 games
 
@@ -1015,7 +1016,7 @@ shared/games/brain/
   games/<id>/    index.ts (TrialGameDefinition), engine.ts, View.tsx
   ui/            Stimulus, ResponsePad, TimeBar, LivesBar, ProgressDots, KeyHint, TrialReview
   assets/words/  common.txt, valid.txt  (+ NOTICE entry)
-  config/        difficulty.brain.json   (anchors for the 21 games)
+  config/        difficulty.brain.ts     (anchors for the 21 games; typed TypeScript instead of JSON, B1)
 ```
 
 - **Desktop:** the brain games appear in the existing Games window (same hub). No new Rust is needed beyond what G3 adds. Hub tabs: **Brain**, **Market**, **Dashboard**, **Warm-up**.
@@ -1066,7 +1067,7 @@ Track B starts when G2 (persistence, `/state`, `games` flag) and G3 (foundation:
 | Sprint | Scope | Exit criteria |
 |---|---|---|
 | B0 | Discovery and calibration: confirm the G2/G3 interfaces, verify website live-session behaviour (§17.7), choose and verify word-list licences, finalise the palette and symbol set, set the first parameter anchors, write `docs/spec-phase25-implementation-plan.md` Track B section | Owner approves; no code changed |
-| B1 | Framework: `TrialGameDefinition`, timed `GameShell`, `rt.ts`, simulated-player harness, UI primitives, import-boundary and key-handler tests. Games: **Quick Match, Colour Clash, Green Light** end to end on desktop and website | Three Speed games playable at all levels in both clients; simulated-player tests pass |
+| B1 | Framework: `TrialGameDefinition`, timed `GameShell`, `rt.ts`, simulated-player harness, UI primitives, import-boundary and key-handler tests. Games: **Quick Match, Colour Clash, Green Light** end to end on desktop and website | Three Speed games playable at all levels in both clients; simulated-player tests pass Done 2026-11-15 (B1) |
 | B2 | Memory: **Grid Recall, Sequence Echo, N-Back Stream**. Attention: **Flanker Flock, Needle Finder, Track the Dots** | Six games playable; Track the Dots deterministic replay works in Review |
 | B3 | Flexibility: **Rule Switch, Card Sorter, Flip Map**. Math: **Number Sprint, Equation Drop, Make Target** (with solver) | Six games playable; solver and generator tests pass |
 | B4 | Reasoning: **Pattern Matrix, Number Series, Code Breaker** (generators with uniqueness checks) | Three games playable; uniqueness tests pass at every level |

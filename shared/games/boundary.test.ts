@@ -74,6 +74,15 @@ describe('Games import boundary', () => {
     expect(bad).toEqual([])
   })
 
+  it('brain games never read the clock or schedule timers (RT comes from rAF and event timestamps, spec 17.3)', () => {
+    const bad: string[] = []
+    for (const file of files.filter(f => relative(gamesDir, f).split(sep)[0] === 'brain')) {
+      const text = readFileSync(file, 'utf8')
+      for (const banned of [/\bDate\.now\s*\(/, /\bsetTimeout\s*\(/, /\bsetInterval\s*\(/]) if (banned.test(text)) bad.push(`${relative(root, file)}: ${banned.source}`)
+    }
+    expect(bad).toEqual([])
+  })
+
   it('has no global key handlers and no direct network calls', () => {
     const bad: string[] = []
     for (const file of files) {

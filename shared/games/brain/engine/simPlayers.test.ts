@@ -1,0 +1,63 @@
+/**
+ * Spec 17.10 / correction C6: simulated players prove the scoring is chance-corrected.
+ *  - a perfect player (always right, at RT_fast) scores 95 or more at levels 1, 10 and 20;
+ *  - always pressing and never pressing score 5 or less in a go/no-go game (they score exactly 0);
+ *  - a random player ("random" and "fast but random") scores about nothing.
+ * "Random <= 25" cannot hold in every single run: a block has only about 40 trials (Green Light level 1 has about 6 NO-GO
+ * trials), so luck sometimes lifts one run well above chance. The property is therefore tested over 200 seeds: the mean is
+ * small, nine runs in ten stay at or below 30, and a lucky run above 25 is rare. Measured on 2026-11-15: mean 2 to 7,
+ * 90th percentile 7 to 25, worst single run 62 (Green Light level 1).
+ */
+import { describe, expect, it } from 'vitest'
+import quickMatch from '../games/quick_match'
+import colourClash from '../games/colour_clash'
+import greenLight from '../games/green_light'
+import { quickMatchSim } from '../games/quick_match/engine'
+import { colourClashSim } from '../games/colour_clash/engine'
+import { greenLightSim } from '../games/green_light/engine'
+import { simulateBlock, simulateMany, type PlayerProfile, type SimPlayer } from './simPlayers'
+import type { TrialGameDefinition } from '../../core/types'
+
+const SEEDS = 200
+const LEVELS = [1, 10, 20] as const
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const GAMES: Array<[string, TrialGameDefinition<any, any>, SimPlayer<any, any>, boolean]> = [
+  ['quick_match', quickMatch, quickMatchSim, false],
+  ['colour_clash', colourClash, colourClashSim, false],
+  ['green_light', greenLight, greenLightSim, true],
+]
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+const percentile = (xs: number[], p: number) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))]
+
+describe.each(GAMES)('%s simulated players', (name, definition, sim, detection) => {
+  describe.each(LEVELS)('level %i', level => {
+    it('a perfect player scores 95 or more', () => {
+      for (const seed of [1, 2, 3, 4, 5]) expect(simulateBlock(definition, sim, level, 'perfect', seed).score, `${name} seed ${seed}`).toBeGreaterThanOrEqual(95)
+    })
+    it.each<PlayerProfile>(['random', 'fastRandom'])('a %s player scores about nothing', profile => {
+      const scores = simulateMany(definition, sim, level, profile, SEEDS)
+      expect(mean(scores)).toBeLessThanOrEqual(10)
+      expect(percentile(scores, 0.9)).toBeLessThanOrEqual(30)
+      expect(scores.filter(score => score > 25).length / SEEDS).toBeLessThanOrEqual(0.15)
+    })
+    if (detection) {
+      it.each<PlayerProfile>(['alwaysPress', 'neverPress'])('%s scores 5 or less (it scores 0)', profile => {
+        for (const score of simulateMany(definition, sim, level, profile, 50)) expect(score).toBeLessThanOrEqual(5)
+      })
+    }
+  })
+})
+
+describe('the harness', () => {
+  it('is deterministic for a seed and produces a plausible number of trials', () => {
+    const a = simulateBlock(quickMatch, quickMatchSim, 10, 'perfect', 42)
+    expect(simulateBlock(quickMatch, quickMatchSim, 10, 'perfect', 42)).toEqual(a)
+    expect(a.review!.length).toBeGreaterThan(50) // 60 s at about 390 ms + 400 ms per trial
+    expect(a.review!.length).toBeLessThan(80)
+  })
+  it('a timed block stops when the clock runs out (no trial runs on)', () => {
+    const summary = simulateBlock(greenLight, greenLightSim, 1, 'perfect', 1)
+    const rows = summary.review!
+    expect(rows.length).toBeGreaterThan(25); expect(rows.length).toBeLessThan(60)
+  })
+})

@@ -3,6 +3,7 @@ import type { ComponentType } from 'react'
 import type { Category, GameId } from './ids'
 import type { ParamTable } from './difficulty'
 import type { Rng } from './rng'
+import type { ReviewRow, TrialEngine, TrialLogEntry } from './trial'
 
 export type SessionMode = 'progress' | 'practice'
 
@@ -14,6 +15,8 @@ export interface SessionSummary {
   /** Optional trading-style extras that the day record keeps. */
   expectancyR?: number
   discipline?: number
+  /** Per-trial review shown on the result screen (brain games). Kept on the device, never sent to the server. */
+  review?: ReviewRow[]
 }
 
 /** What the shell hands a game's View. Kept deliberately small; B1/G3b extend it per kind. */
@@ -21,7 +24,11 @@ export interface GameViewProps {
   level: number
   mode: SessionMode
   params: Record<string, number>
+  /** Seeded stream for this session. A View that must restart (React StrictMode) builds a fresh one from `seed`. */
   rng: Rng
+  seed: number
+  /** True while a dialog (quit?) is open over the game: a timed block treats it like losing focus. */
+  suspended: boolean
   /** The game calls this once with its result. */
   onFinish: (summary: SessionSummary) => void
   /** The shell owns Esc; a game that must stop (data failed to load) calls this instead. */
@@ -47,12 +54,15 @@ export interface GameDefinition extends DefinitionBase {
 }
 
 /** Brain games: trial-based, usually a timed block (Track B). */
-export interface TrialGameDefinition extends DefinitionBase {
+export interface TrialGameDefinition<Trial = unknown, R = unknown> extends DefinitionBase {
   kind: 'trial'
   session: { kind: 'timed'; seconds: number } | { kind: 'rounds'; count: (level: number) => number }
+  createEngine(params: Record<string, number>, rng: Rng): TrialEngine<Trial, R>
+  summarise(log: TrialLogEntry<Trial, R>[], level: number): SessionSummary
 }
 
-export type AnyGameDefinition = GameDefinition | TrialGameDefinition
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyGameDefinition = GameDefinition | TrialGameDefinition<any, any>
 
 /** A timed block cannot be paused and ends on focus loss (spec 17.3). */
 export const isTimedBlock = (definition: AnyGameDefinition): boolean => definition.kind === 'trial' && definition.session.kind === 'timed'
