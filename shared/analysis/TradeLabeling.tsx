@@ -5,6 +5,7 @@ import BehaviorManagerModal from './behavior/BehaviorManagerModal'
 import { questionIdsByTrip } from './behavior/model'
 import { readableError } from './behavior/types'
 import RoundTripSplitLayout from './labeling/RoundTripSplitLayout'
+import { invalidateLabelProgress } from './labeling/dayProgress'
 import { useMaximized, useRoundTripView } from './labeling/useRoundTripView'
 import OneByOneLabeling from './labeling/OneByOneLabeling'
 import RoundTripLabelForm from './labeling/RoundTripLabelForm'
@@ -84,6 +85,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
   }, [api])
   saveRef.current = async rows => {
     await api.saveLabels(rows)
+    invalidateLabelProgress([...new Set(rows.map(row => row.session_id))])
     // A tag typed for the first time joins the suggestion lists.
     if (rows.some(row => !entryTags.includes(row.entry_tag) || !exitTags.includes(row.exit_tag))) await refreshTags().catch(() => undefined)
   }
@@ -169,6 +171,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
         if (label) labelData.push(finalizeLabel(label))
       }
       await api.saveLabels(labelData)
+      invalidateLabelProgress([...new Set(labelData.map(row => row.session_id))])
       if (revision === edits.current) setDirtyAll(false)
       setSaveMsg('Saved!')
       environment.onDataChanged?.()
@@ -225,7 +228,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
     </div>
   )
   const maximizeButton = (
-    <button type="button" className="tl-ghost" onClick={() => setMaximized(!maximized)} aria-pressed={maximized}
+    <button type="button" className="tl-ghost tl-maximize" onClick={() => setMaximized(!maximized)} aria-pressed={maximized}
       aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): one chart with a switcher' : 'Maximize: larger view, Underlying and strike charts stacked'}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
   )
 
@@ -237,7 +240,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
         {behaviorError && <p role="note" className="tl-status">Behavior questions unavailable: {behaviorError}</p>}
         {view === 'one_by_one' ? (
           <OneByOneLabeling
-            trips={roundTrips} index={Math.min(index, Math.max(roundTrips.length - 1, 0))} sessionCount={sessionGroups.size} labels={labels}
+            trips={roundTrips} index={Math.min(index, Math.max(roundTrips.length - 1, 0))} sessionCount={sessionGroups.size} showLabelProgress labels={labels}
             busy={navBusy} readOnly={readOnly} pnlMode={environment.pnlDisplayMode} save={combinedState} active={environment.active !== false}
             onGo={to => void go(to)} onRetry={() => void flushAll()}
             controls={<>
