@@ -43,5 +43,12 @@ Unless a step says otherwise, use NIFTY and a recent trading day.
 2. With the network inspector or the backend log, every call from these tools is under `/api/desktop/v1/patterns/...`, `desktop_drawing_request` drawing calls, or the existing Settings read. No order, session, wallet, broker or stream call comes from them.
 3. A desktop token that has expired shows the sign-in prompt instead of an empty list.
 
+## F. Games backend (G2)
+1. Run `python scripts/setup-dynamodb-tables.py` (or just start the backend and call the route): `GameProfiles` is created (or skipped if it exists) and the script prints the TTL line.
+2. `curl -H "X-User-Id: <you>" http://localhost:8700/api/desktop/v1/games/state` returns `{"version":1,"profile":null,"games":{},"days":{},"months":{}}` for a new user.
+3. A `PUT` with a `game` (`revision` 0) returns 200 and `applied: true`; repeating the same body returns `applied: false`; a second `PUT` with the old `revision` returns 409 and the current record.
+4. `GET /api/desktop/v1/capabilities` (same header) lists `"games"` in `features`.
+5. Nothing in the trading screens changes; no trading route shows in the backend log for these calls.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.

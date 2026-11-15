@@ -257,7 +257,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 |---|---|
 | B0 | Done (2026-11-15), awaiting owner review |
 | G0-close | Done (2026-11-15), see the table at the end of this file |
-| G2, G3a, B1–B6, G1, G3b, G4–G7 | Planned, order above |
+| G2 | Done (2026-11-15), see "G2 as built" below |
+| G3a, B1–B6, G1, G3b, G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -581,3 +582,22 @@ Most answers were verified against the code during Track P discovery and are col
 | 12 | Per-user rate limiter | None exists (the broker history modules have their own provider limits, not per-user). G1 writes a small in-process token bucket in `games_data_service.py`; no global `GZipMiddleware` (it would change every route): compress in the games route only (plan #5) |
 
 **Resampling decision (recorded):** client-side for 5 s and 15 s. **Market anchors:** the §15 table stays as the first pass; G3b/G4–G6 tune it from the owner's play. Spec §13 now points here.
+
+## G2 as built (2026-11-15)
+
+Backend persistence for Games progress. Branch `feat/games-persistence`, PR into `dev`.
+
+- **Files:** `backend/app/services/games_persistence_service.py` (table, validation, `get_state`, `put_state`), `backend/app/services/games_rate_limit.py` (`TokenBucket`), `backend/app/routers/desktop_games.py` (`GET`/`PUT /api/desktop/v1/games/state`), `scripts/setup-dynamodb-tables.py` (table plus TTL), tests `backend/tests/test_games_persistence.py` (68 tests).
+- **Shared files touched:** `backend/app/main.py` (one import and one `include_router`) and `backend/app/routers/desktop.py` (`"games"` appended to `features`). No trading logic touched; a test scans the new modules' imports for order, session, broker, stream, guardrail and strategy code.
+- **Decisions:**
+  - One range query (`day#<today-30d>` to `profile`) returns recent days, all games, all months and the profile; the 30 days are calendar days.
+  - The PUT body also takes `month` (the client writes the rollup). `revision` 0 means a new record; mismatches return 409 with the current records and nothing is written.
+  - Idempotency is `last_mutation_id` on every written record (no dedupe table). A retry is a no-op only while the same mutation is the latest on all its records; otherwise the client re-reads, as for any conflict.
+  - Per-type size caps: profile 4 KB, game 3 KB, day 2.5 KB, month 3 KB, hard 8 KB. A test fills a day record with all 31 games and all categories and checks it stays under 2.5 KB.
+  - Only day records get `expires_at` (now + 200 days), and TTL is enabled at table creation. DynamoDB Local does not enforce it.
+  - Float to `Decimal` conversion and `TypeSerializer` for the low-level `transact_write_items`, as `analysis_sharing` does.
+  - The token bucket is per process (2 requests/s, burst 10); G1 reuses it.
+- **Tests:** moto (`mock_aws`) like the other DynamoDB tests, so DynamoDB Local is not needed for the suite (the earlier plan text said it was). One manual smoke against the real DynamoDB Local on `:8000` also passed (create, idempotent retry, stale 409, read, cleanup).
+- **Docs updated:** spec §8.4 and §14, `architecture-backend.md`, `backend-technical-constraints.md`, `phase25-manual-acceptance.md` (section F), `CLAUDE.md` row.
+- **Manual acceptance:** section F of `docs/phase25-manual-acceptance.md`.
+

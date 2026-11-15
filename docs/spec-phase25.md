@@ -554,6 +554,13 @@ A convenience `interval_seconds=60` call over a whole day is allowed for prior-d
 
 Behaviour: validates schema and size only; applies as one `TransactWriteItems`; idempotent per `mutation_id`; optimistic concurrency on `revision` (409 with the current item on conflict; client merges by re-reading and re-applying its session on top). Same revision/mutation-id pattern as `desktop_persistence_service` (verify and reuse its helpers).
 
+**As built (G2, 2026-11-15).** `routers/desktop_games.py` and `services/games_persistence_service.py`. Differences from the text above:
+- The body accepts an optional **`month`** entry (`{month: "YYYY-MM", revision, item}`) next to `game`, `day` and `profile`, because the client writes the monthly rollup; `day` is `{date, revision, item}`.
+- `revision` is the revision the client read; **0 means the record is new**. A mismatch cancels the whole transaction and returns **409** with `{"detail", "current": {record_id: record|null}}`.
+- Idempotency is per record: `last_mutation_id` is stored on every written record, and a retry whose records all carry that id returns `applied: false`. There is no separate dedupe table.
+- `GET /state` returns the **last 30 calendar days** of `day#` items (not "the last 30 items") with every `game#`, every `month#` and the `profile`, in one range query on the sort key.
+- A small in-process token bucket (2 requests/s, burst 10 per user) guards both routes; 429 with `Retry-After`.
+
 ### 8.5 DynamoDB table `GameProfiles` and size budget
 
 - Keys: partition `user_id` (S), sort `record_id` (S). `PAY_PER_REQUEST`. Created lazily like the other desktop tables.
@@ -649,7 +656,7 @@ Each sprint: one feature branch off `dev`, one PR into `dev`, tests green, this 
 |---|---|---|---|
 | 0 | Discovery: answer §13, write `docs/spec-phase25-implementation-plan.md`, finalise parameter anchor tables | Owner approves the plan; no code changed | Done 2026-11-15 (§13 answered in the implementation plan) |
 | 1 | Backend data: `build-games-index.py`, `/availability`, `/window`, cache-only guarantees, tests | Backend tests pass; manual check of payload sizes; proves no broker/download call on miss | Planned |
-| 2 | Backend persistence: `GameProfiles`, `/state` GET/PUT, schema/size/TTL rules, `games` capability flag, tests | Round trip, idempotency, conflict and per-user isolation tests pass | Planned |
+| 2 | Backend persistence: `GameProfiles`, `/state` GET/PUT, schema/size/TTL rules, `games` capability flag, tests | Round trip, idempotency, conflict and per-user isolation tests pass | Done 2026-11-15 (G2) |
 | 3 | Desktop foundation: Rust `desktop_games_request` + allowlist, Games window + toolbar button, hub shell, engine core (`rng`, `difficulty`, `scoring`, `costModel`, `volUnit`), `GameChart`, `windowCache`, `outbox`, import-boundary test, **Tick Reader end-to-end** | Tick Reader playable from the hub at all levels; progress saved and restored; Rust change rebuilt and tested | Planned |
 | 4 | Entry Sniper, Exit Discipline, Hotkey Drill, Risk Calculator | Each game playable, tested, tuned with owner feedback | Planned |
 | 5 | Level Recall (`levels.ts`), Strike Picker (`optionPricing.ts`), Regime Switch (`regime.ts`) | Same | Planned |
