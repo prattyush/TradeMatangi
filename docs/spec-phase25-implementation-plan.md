@@ -2,6 +2,8 @@
 
 Approved 2026-11-14. Source of truth for sprint order; update the status column as sprints merge.
 
+**Updated 2026-11-15 (Sprint B0):** the full remaining roadmap (Track G and Track B, one linear order with docs per sprint) and the Track B discovery are at the end of this file, under "Track B: Brain Games". Where that roadmap and the Track G sprint list below differ (G3 split into G3a and G3b), the roadmap wins.
+
 
 ## Context
 `docs/spec-phase25.md` (written in the Claude web UI; header says "Phase 24", which is already used) specifies ten scalping "brain games" for the desktop app only. The user asked for four things:
@@ -172,3 +174,386 @@ Inside Tools > Chart Structures, a **Broad | Fine** switch (as on the website). 
 - Not in P4: the website's old equity and options builders are merged into one Builder (same data); no flow delete (the website page has none either); no flow sharing.
 - Shared files touched: none. No trading logic touched.
 - Manual acceptance on the Windows build: build a 3-step flow with transitions on the underlying and on CE/PE, save, reload the day and see it restored; search for the sequence and for one with a wildcard; add, edit and delete a definition.
+
+
+---
+
+## Track B: Brain Games (21 cognitive games), and the remaining Phase 25 roadmap
+
+Sprint B0 (discovery and calibration, **doc only, 2026-11-15**). Covers spec §17. No feature code was written. Awaiting owner review.
+
+### B0 findings in brief
+1. **G2 and G3 are not built.** No `shared/games/`, no `desktop_games` router, no `GameProfiles` table, no `games` flag, no `gamesRequest`, no `GamesWorkspace`. §17.11 says Track B starts once G2 and G3 are merged, so G3 is split (decision D1) and G2 + G3a become the prerequisite.
+2. **Website live-session behaviour:** Games must copy **Browse** (a fixed overlay, trading layout stays mounted), not Pattern Library / Chart Structures / Swing (early `return`, trading layout unmounted). Details in B.2.
+3. **§17 has defects** that would make its own acceptance tests fail or its numbers unreachable (C1–C4), a missing framework feature (step parameters, C5), an under-specified test property (C6) and one omission, the main-thread budget on the website (C7). Corrections C1–C11 below; they are applied to the spec when the owning sprint starts (D3).
+4. **Word lists:** ENABLE (public domain) as the valid list and SCOWL 2020.12.07 levels ≤ 60 as the common list, both measured (B.3). The common list is **49,301–50,312 words** (not 20–30k) so only the first tier is the `common` list.
+5. **Games stay out of real trading**, apart from the hook points in "Existing files Phase 25 touches".
+
+### Master roadmap (remaining Phase 25 work)
+Recommended linear order (one branch and one PR into `dev` per sprint, merge commit). Brain games first because they need no market data (decision D6).
+
+| # | Sprint | Scope | Depends on | Exit criterion |
+|---|---|---|---|---|
+| — | P5 acceptance (owner) | Windows run of `docs/phase25-manual-acceptance.md` Track P rows | none | Owner signs off |
+| 1 | **B0** (doc only) | This section; spec §17 committed | none | Owner approves |
+| 2 | **G0-close** (doc only) | Answer spec §13 in a table (most already verified under "Spec corrections to apply" above); record the resampling decision (client-side recommended); confirm market anchors | B0 | Owner approves |
+| 3 | **G2** Backend persistence | `GameProfiles`, `GET/PUT /state` (transaction, `mutation_id`, revisions, 409), schema/size/TTL rules, 31-id whitelist, `games` flag, table setup script, token-bucket limiter helper | none | Round trip, idempotency, conflict, isolation, TTL tests pass |
+| 4 | **G3a** Foundation shell | Rust `desktop_games_request` + Games window + toolbar button; `shared/games/core` (`rng`, `difficulty` with step params, `scoring`, timed-capable `GameShell`, registry with `kind`); hub shell with tabs; `outbox` (+ `fake-indexeddb`); `gamesRequest` for desktop and website; website/webapp nav + lazy `GamesWorkspace`; import-boundary test; CI test steps | G2 | Empty hub opens on desktop and website; settings round-trip; Rust change rebuilt |
+| 5 | **B1** Framework + Speed | `TrialGameDefinition`, `rt.ts`, `scoringBrain.ts`, `generatorHost`, UI primitives, simulated-player harness; Quick Match, Colour Clash, Green Light | G3a | Three games playable at all levels in both clients; sim tests pass |
+| 6 | **B2** Memory + Attention | Grid Recall, Sequence Echo, N-Back Stream, Flanker Flock, Needle Finder, Track the Dots | B1 | Six games playable; dot replay deterministic |
+| 7 | **B3** Flexibility + Math | Rule Switch, Card Sorter, Flip Map, Number Sprint, Equation Drop, Make Target (+ solver in a Worker) | B1 | Six games playable; solver tests pass |
+| 8 | **B4** Reasoning | Pattern Matrix, Number Series, Code Breaker (generators with uniqueness checks) | B1 | Uniqueness holds at every level |
+| 9 | **B5** Word | Word assets + `NOTICE` + build script; Anagram Dash, Letter Grid, Word Ladder; lazy loading | B1 | Assets absent from the main bundle |
+| 10 | **B6** Brain integration | Brain tab; Dashboard (brain panels), Warm-up (`warmupPool=brain` works; `both`/`market` degrade to brain until G7), brain Review with trial logs, Settings (palette, reduce motion, zoom, sound, practice-tool note), accessibility and performance pass | B1–B5 | Brain-only acceptance passes on the Windows build and in Chrome |
+| 11 | **G1** Backend data | `scripts/build-games-index.py`, `GET /availability`, `GET /window` (cache-only, observed-only, integer paise, gzip in route, token bucket) | none (may move earlier) | Tests prove no broker/download call on a miss; payload sizes recorded |
+| 12 | **G3b** Market foundation | `GameChart` canvas, `windowCache` (IndexedDB LRU), `seenWindows`, `windows.ts`, `costModel`, `volUnit`; Tick Reader end to end | G1, G3a | Tick Reader playable at all levels, progress saved, memory within §3.5 |
+| 13 | **G4** | Entry Sniper, Exit Discipline, Hotkey Drill, Risk Calculator | G3b | Each playable, tested, tuned with owner feedback |
+| 14 | **G5** | Level Recall (`levels.ts`), Strike Picker (`optionPricing.ts`), Regime Switch (`regime.ts`) | G3b | Same |
+| 15 | **G6** | Spot the Trap (`patterns.ts`), No-Trade Day | G3b | Same |
+| 16 | **G7** Integration and close | Market panels on the Dashboard; Warm-up `both`/`market` pools; market Review; market settings (cost model placeholders, hotkeys, rebasing, cache cap, Low memory mode); §3.5 memory/perf pass; final docs; acceptance for both pools | all | Full acceptance on the Windows build and in Chrome; Phase 25 marked complete |
+
+The earlier Track G list (G0–G7) above is superseded in order by this table: G3 becomes G3a + G3b; G0 is closed by a doc-only step; everything else is unchanged.
+
+### Docs updated inside every sprint (not optional)
+1. `docs/spec-phase25.md`: sprint status in §14 / §17.11, "as built" notes, and any spec correction (C1–C11) applied to the affected section.
+2. This plan: a "`<sprint>` as built" subsection (decisions, deviations, tests, shared files touched), as Track P did.
+3. `CLAUDE.md`: the Phase 25 row (status, PR numbers, test counts), updated in the same PR.
+4. `docs/phase25-manual-acceptance.md`: that sprint's manual rows, added as the sprint lands.
+5. Architecture docs when structure is added: `docs/architecture-backend.md` (G1, G2), `docs/architecture-frontend.md` (G3a onward), and the technical-constraints docs for any new rule (key handlers, Worker budget, z-order, TTL not enforced on DynamoDB Local).
+6. Memory: `project_phase25_games.md` (status and how to resume) plus its `MEMORY.md` pointer.
+7. PR description: shared files touched (table below) and "no trading logic changed".
+
+| Sprint | Extra docs |
+|---|---|
+| B0 | This section (interfaces, website findings, word-list decision record and `NOTICE` text, palette, corrections, anchors, roadmap) |
+| G0-close | Spec §13 answers table, resampling decision |
+| G2 | `architecture-backend.md`: `GameProfiles` schema, size budget, TTL note, `/state` contract; table setup script usage |
+| G3a | `architecture-frontend.md`: Games module, window, transports, nav hook; `windowsapp/README.md`: Games window and rebuild note; `frontend-technical-constraints.md`: Games overlay rules; CI note |
+| B1 | Spec §17.3 timing rules as built; simulated-player contract |
+| B5 | Word-list `NOTICE`, build recipe, measured sizes |
+| B6 | Spec §12 "How to add a game" completed with a `TrialGameDefinition` example; Track B acceptance section |
+| G1 | `architecture-backend.md`: index file, `/availability`, `/window`; ops note for the index script; `docs/live-history-providers.md` cross-reference |
+| G3b | Spec §9 chart notes; memory budget measurements |
+| G7 | Spec §11/§16 acceptance results; Phase 25 row set to Complete; final pass on the architecture docs |
+
+### Existing files Phase 25 touches (the real-trading hook points)
+Games are new code in new folders (`shared/games/`, `backend/app/{routers,services}/*games*`). They call no order, session, broker, stream, guardrail, strategy or analysis code; an import-boundary test fails the build if they try. Everything lands on `dev`; nothing reaches `preprod` or `main` until promoted.
+
+| Existing file | Edit | Risk |
+|---|---|---|
+| `frontend/src/App.tsx` (website live-trading screen) | `showGames` flag, one `NavIconButton`, one lazy mount, one `sessionKind` prop (G3a) | Low, but the file to review closely |
+| `frontend/src/components/NavIconButton.tsx` | new `games` icon | None |
+| `windowsapp/src-tauri/src/lib.rs`, `tauri.conf.json` | `desktop_games_request`, `open_games_window`, handler list, window-event/close handling for label `games`, windows list. Needs a desktop rebuild | Low; the shared window-event handler is the one to review |
+| `windowsapp/src/main.tsx`, `windowsapp/src/App.tsx` | `?window=games` branch (none exists today); one toolbar button | Low |
+| `backend/app/main.py` | one `include_router` | Low |
+| `backend/app/routers/desktop.py` | append `"games"` to `DesktopCapabilities.features` (a plain string list, line 28) | None |
+| `scripts/setup-dynamodb-tables.py` | new table entry | None |
+| `.github/workflows/desktop-windows.yml` | add `npm test` and `cargo test` steps | None for runtime |
+
+One **runtime** interaction: on the website the Games overlay shares a browser renderer with the live trading screen, so a heavy generator could delay tick handling. Handled by the 8 ms main-thread budget, Worker generators and a lazy chunk (B.2, C7). The desktop Games window is a separate WebView.
+
+### Sprint status (Track B and roadmap)
+| Sprint | Status |
+|---|---|
+| B0 | Done (2026-11-15), awaiting owner review |
+| G0-close | Planned (doc only) |
+| G2, G3a, B1–B6, G1, G3b, G4–G7 | Planned, order above |
+
+### Decisions (defaults applied by B0; owner may overrule)
+- **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
+- **D2** Words in the exclusion list are not accepted from the player either (as §17.6 says).
+- **D3** Spec corrections C1–C4 are applied to the spec when the owning sprint starts, not in B0.
+- **D4** On the website, opening Analysis closes Games (a running Progress block asks to quit first).
+- **D5** B0 commits the §17 spec as its own commit; this section is the second commit.
+- **D6** Build order: brain games first (B1–B6), then market games (G1, G3b, G4–G6), then G7. If market first, B6's Warm-up and Dashboard wait for G7.
+
+### B.1 G2/G3 interfaces the brain games depend on
+
+Status: all specified in §3, §4, §6, §7, §8 and the plan; none implemented. This table is what B0 records and what G2/G3 must deliver before B1.
+
+| # | Interface | Specified in | Exists today | What Track B needs from it |
+|---|---|---|---|---|
+| 1 | `GameId` union and `registry.ts` | §4.1, §17.2 | no | 31 ids; registry holds both definition kinds. **Both `GameDefinition` and `TrialGameDefinition` need a discriminant `kind: 'market' \| 'trial'`** (neither has one) |
+| 2 | `GameShell` (instructions → Practice/Progress → countdown → play → result) | §4.2, §17.3 | no | A timed-block mode: time bar, no pause, Esc asks to quit, focus-loss voiding. Build it in G3 with that mode in mind, or B1 adds it |
+| 3 | `difficulty.ts` anchors at L1/5/10/15/20, linear interpolation, level up/down rule | §6.1–6.2 | no | **Must also support stepped and categorical parameters** (e.g. item kind changes at L6 and L13, rule banner mode, reverse recall from L12). Linear interpolation cannot express this. Proposed config shape: `{"steps":[{"from":1,"v":0},{"from":6,"v":1},{"from":13,"v":2}]}` next to `{"anchors":[a1,a5,a10,a15,a20]}` |
+| 4 | `scoring.ts` (SessionScore 0–100, category rating `0.7·prev + 0.3·score·levelFactor`) | §6.3 | no | Pure functions; brain `scoringBrain.ts` builds on them |
+| 5 | `rng.ts` (mulberry32) | §3.3 | no | Seed = hash of `userId + date + gameId + sessionNo`. Define the string hash now: xmur3 → mulberry32. `sessionNo` = local count of that game's sessions that day (two devices on one day may repeat a seed; accepted) |
+| 6 | `gamesRequest` transport | plan "Client structure" | no | Desktop: Rust `desktop_games_request` (allowlist, GET/PUT). Website: `fetch` with `X-User-Id`, modelled on `frontend/src/services/desktopDrawingRequest.ts`. Brain code calls only `/state` (§8.4) |
+| 7 | `GET/PUT /state` with `mutation_id`, per-record `revision`, 409 on conflict | §8.4 | no | One write per completed Progress session. Same pattern as `desktop_persistence_service.update_screen` (`revision` condition, `mutation_id`) |
+| 8 | `GameProfiles` table (`profile`, `game#<id>`, `day#…`, `month#…`) | §8.5, §17.9 | no | Validation accepts 31 ids; day items `expires_at` ≈ 200 days and ≤ 2.5 KB; ≤ 20 stats keys |
+| 9 | `games` flag in `DesktopCapabilities.features` | §3.2 | `features` is a plain string list (`routers/desktop.py:28`) | Append `"games"`. Hides the Games button against an older backend |
+| 10 | `outbox.ts` (IndexedDB) | §3.3 | no | Queue the one write; flush on reconnect. Desktop vitest runs in plain node, so `fake-indexeddb` is a **new dev dependency** (G3) |
+| 11 | Hub (tabs Brain / Market / Dashboard / Warm-up), ResultScreen, Dashboard, Warm-up, Review, Settings | §7, §17.8 | no | Brain adds tabs and panels; ResultScreen needs a per-trial review variant |
+| 12 | Desktop Games window (`?window=games`, label `games`, Tauri capability, close handling) | plan correction #11 | `windowsapp/src/main.tsx` has **no** window routing at all today; it renders `<App/>` | G3 adds the branch. Brain games need nothing more |
+| 13 | Website/webapp nav and lazy `GamesWorkspace` | plan "Client structure" | no | Detailed in B.2 below |
+| 14 | Import-boundary test | §3.4, §17.7 | no | Needs an allow-list (see correction C8) |
+| 15 | Package layout | §3.3 says `windowsapp/src/games/`; plan and §17.7 say `shared/games/` | n/a | `shared/games/` is canonical. Propose `shared/games/core/` (framework, imported by both pools), `shared/games/market/`, `shared/games/brain/` |
+
+Desktop test environment: vitest `2.1.9`, plain node, no jsdom. Components are tested through pure model functions. Existing desktop tests already import from `../../shared/...`, so engine tests for `shared/games/**` run in the desktop vitest. The website has no unit-test runner (only Playwright and a few `*.test.mjs`), so the Playwright smoke in §17.10 is the website test.
+
+**Decision D1 (needs the owner):** G3's first deliverable is "Tick Reader end to end", which needs G1 (market data). Track B must not wait for that. Recommended: **split G3 into G3a and G3b** and make G2 + G3a the prerequisite of B1.
+- G3a = Rust `desktop_games_request` + window, shared framework (`rng`, `difficulty` with steps, `scoring`, `GameShell` incl. timed mode), hub shell with tabs, outbox, `gamesRequest` for both clients, website/webapp nav, import-boundary test, `fake-indexeddb`.
+- G3b = `GameChart`, `windowCache`, market engine pieces, Tick Reader (needs G1).
+- G2 (backend persistence) is unchanged and needed first.
+Alternative: finish G1–G3 entirely before any brain game (slower, no benefit to Track B).
+
+### B.2 Website live-session behaviour (verified in `frontend/src/App.tsx`)
+
+How Browse behaves with a live session (all line numbers in `frontend/src/App.tsx` unless stated):
+- **Nav button is always shown** (`:2274`), also during a live session. It toggles `showBrowse`.
+- **Default view:** `showBrowse` starts true only if localStorage `tradematangi_workspace_<userId>` has no `sessionId` (`:324`). The restore effect sets it true when no session attaches (`:649`) and false when one does (`:654`, and on restore failure `:678`).
+- **Starting or attaching a session always leaves Browse** (`:328`, an effect on `sim.sessionState`). Toggling Browse manually during a live session is allowed and sticks.
+- **Overlay, not replacement:** `BrowseWorkspace` renders `position: fixed; z-index: 20` under the measured header (`components/browse/BrowseWorkspace.tsx:77`). The trading layout is **unmounted only when `showBrowse && idle`** (`:2663`). With a live session it stays mounted underneath, so streams, candle alerts, guardrail popups and notifications keep running. This matches §17.7's "mounted but hidden".
+- **Analysis closes Browse's mount:** `showBrowse && !showAnalysis` (`:2503`). One chart set on screen at a time.
+- **Counter-examples to avoid:** `showPatternLibrary` (`:2197`), `showChartStructures` (`:2046`), `showSwing` (`:2195`) early-`return` a different tree and unmount the trading panes.
+- **Global key handlers that exist:** only Escape handlers: `App.tsx:371` (`window`, cancels price-pick), `App.tsx:390` (`document`, only while an entry ticket is open), `components/Chart.tsx:658` (`window`). There are **no global trading hotkeys** on the website, so the keyboard hazard is small. A game's root-element handler that calls `stopPropagation` keeps Escape (and everything else) from reaching these.
+
+Design for Games on the website (one hook in `App.tsx`, nothing else existing):
+- `showGames` flag, one `NavIconButton icon="games"`, one lazy `GamesWorkspace` overlay using Browse's measured-offset pattern. Never `display: none` the trading screen and never unmount it while a session runs.
+- **Mutual exclusion:** opening Games closes Browse and vice versa. Opening Analysis closes Games (Games, like timed blocks, would void on blur anyway; if a Progress block is running show the standard "quit?" confirm first).
+- **Session banner (§3.4 #5):** `App.tsx` passes one prop, `sessionKind: 'none' | 'sim' | 'paper' | 'real'`, to `GamesWorkspace`. The workspace never imports session or sim modules. For `real`, show the non-blocking banner and keep sound off.
+- **z-order check in G3a:** overlay z-index 20 must sit below the guardrail popup, ConfirmModal, Kotak TOTP and notification toasts. Verify and write down the actual values.
+- **New requirement (omitted from §17), main-thread budget on the website.** Games share a renderer with live trading and the SSE streams. A long synchronous task (Boggle trie solve, Make Target exhaustive search, ladder graph build, matrix uniqueness check) delays tick handling and button clicks. Rule: no game task over **8 ms** on the main thread while a session is active. All heavy generators (`makeTarget`, `boggle`, `ladder`, `matrix`, `series`, `mastermind`) and word-list parsing run in a **module Web Worker** behind a `GeneratorHost` interface (desktop may run inline since the Games window is its own WebView). Generate the next puzzle while the current one is played. Canvas games pause rendering on `visibilitychange`. Test: a vitest benchmark records worst-case generator time per level and fails over a budget.
+- **Desktop:** nothing to verify beyond G3's own window work; the Games window is a separate WebView.
+
+
+#### B.2 addendum: values read at B0 time (2026-11-15)
+- Session state type: `'idle' | 'running' | 'paused' | 'ended'` (`frontend/src/hooks/useSimulation.ts:9`). `sessionKind` for `GamesWorkspace` is derived in `App.tsx` from `sim.sessionState` and `sim.sessionType` (`'real'`, `'paper'`, else simulated); the workspace itself never sees `sim`.
+- z-index values in use: Browse overlay 20; header dropdown 100; swing sidebar parts 5–40; AI chat and Settings modal 1000; swing order backdrop 1500; `ConfirmModal`, `KotakTOTPModal` and `GuardRailPopup` 2000; notification bar 20000 and history 20001. The Games overlay at **z-index 20 (same as Browse)** therefore stays below every modal, popup and notification. No change needed; G3a records this in `frontend-technical-constraints.md`.
+- Browse offsets itself with `.website-header` and `.website-chart-tools` measured by `ResizeObserver`/`MutationObserver` (`BrowseWorkspace.tsx:41-59`). Games reuses the same measuring (extract it as a small shared helper in G3a rather than copy it).
+- `windowsapp/src/main.tsx` renders `<App/>` only; there is no `?window=` routing today, so G3a adds the branch.
+
+### B.3 Word lists: decision record with measurements
+
+Downloaded into the scratchpad only (nothing committed in B0). Measured with a script run on 2026-11-15.
+
+**Sources**
+| Source | Version / location | SHA-256 | Licence (text verified) |
+|---|---|---|---|
+| ENABLE `enable1.txt` | GitHub mirror `dolph/dictionary` (`raw.githubusercontent.com/dolph/dictionary/master/enable1.txt`), 172,823 words, 1,743,363 bytes | `3f16130220645692ed49c7134e24a18504c2ca55b3c012f7290e3e77c63b1a89` | Public domain. ENABLE `readme.1st` (inside the SCOWL tarball, `r/enable/`): "The ENABLE list has been placed in the Public Domain… No fees, registrations, or contributions are required". SCOWL `Copyright` repeats the full release text, including "Please mention the source and credit us as originators of the list" and the note that the WORD.LST portion of a product may not be legally restricted from redistribution |
+| SCOWL | 2020.12.07 (`downloads.sourceforge.net/project/wordlist/SCOWL/2020.12.07/scowl-2020.12.07.tar.gz`, 2,569,810 bytes) | `5587667caa20c4891390c2d42dbb4d5c4c3f41bee77af1457ece3ba23fb859cc` | "Copyright 2000-2018 by Kevin Atkinson. Permission to use, copy, modify, distribute and sell these word lists, the associated scripts, the output created from the scripts, and its documentation for any purpose is hereby granted without fee, provided that the above copyright notice appears in all copies and that both that copyright notice and this permission notice appear in supporting documentation." (SCOWL `Copyright`) |
+
+**Verification notes**
+- The original ENABLE `WORD.LST` could not be fetched: the Debian `sources.debian.org` path returned 404 and the SCOWL tarball carries only the ENABLE documents, not the list. The mirror was therefore checked indirectly: **161,780 of its 172,823 words (93.6 %) appear in SCOWL's `english-words.*` lists**; the rest are US spellings that SCOWL keeps in its separate `american-words.*` files (for example `color`, `favorite`, `center`, `honor`, `theater`, `gray`, `defense`, `organize` are in the mirror and absent from `english-words`). That fits a genuine ENABLE copy. The licence rests on the ENABLE text above, not on the mirror's own (absent) licence file. To be re-verified in B5 against a second source if one can be found.
+- SCOWL levels used: `english-words.{10,20,35,40,50,55,60}` plus `american-words.{10…60}`. The `american-words` files are needed because ENABLE is American: leaving them out drops about 1,000 common words ("color", "favorite", "center"). They are generated with VarCon, which brings an Ispell-derived licence notice (below). Levels 70, 80 and 95 are **not** used (80 brings ENABLE-supplement and UKACD, with its verbatim-notice clause; 95 brings more).
+- Correction to the earlier plan text: levels ≤ 60 are **not** free of the WordNet notice. SCOWL's `Copyright` ties the WordNet licence to the inflection database used from level 35 up, so the WordNet notice goes in `NOTICE` too. All notices below are permissive (copyright and permission notices must travel with the files, no copyleft, no share-alike).
+- Rejected: `dolph/dictionary` `popular.txt` (built from Wiktionary frequency lists, CC BY-SA; no licence file), `first20hours/google-10000-english` (licence not stated on the page; derived from the Google n-gram corpus; swear filter from third-party lists), LDNOOBW and similar lists (CC BY-SA family), Wiktionary/wordfreq data (CC BY-SA mix), `/usr/share/dict/words` (mixed provenance, proper nouns; the local machine only has a README there).
+
+**Measured lists** (letters a–z only; offensive words removed; ENABLE as the whitelist for the common list)
+| List | Words | Raw | gzip -9 | Front-coded raw | Front-coded + gzip |
+|---|---|---|---|---|---|
+| Valid, all lengths (ENABLE minus SCOWL exclusions) | 172,758 | 1,742,850 B | 453,109 B | 733,314 B | **244,917 B** |
+| Valid, length ≤ 15 | 168,486 | 1,665,579 B | 439,536 B | 711,692 B | 237,087 B |
+| Valid, length ≤ 12 | 152,342 | 1,428,052 B | 390,814 B | 632,319 B | 210,837 B |
+| Common candidate (SCOWL ≤ 60 ∩ ENABLE, length 3–9, english + american) | 50,312 | 408,407 B | 129,438 B | 206,338 B | 68,535 B |
+
+- **Valid list decision:** ship **all lengths, front-coded** (sorted, one prefix-length character then the suffix; decoded on load). It meets both budgets (733 KB raw ≤ 1.5 MB; 245 KB gzipped ≤ 500 KB) with no loss of words. Plain text fails the raw budget (1.74 MB); the length cap is not needed.
+- **Trie memory:** the valid list has 387,889 trie nodes. A typed-array first-child/next-sibling trie is roughly 5 MB; an object-per-node trie would be 40 MB or more. **Rule: typed-array trie only**, which keeps the §17.6 limit (under 40 MB) with a wide margin.
+- **Common list decision:** SCOWL ≤ 60 gives 50,312 words (tier by SCOWL level: tier 1 = level ≤ 35, tier 2 = 40–50, tier 3 = 55–60):
+
+| Length | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|
+| Words (all tiers) | 634 | 2,511 | 4,947 | 8,024 | 11,189 | 12,116 | 10,891 |
+
+  Tier counts: tier 1 = **29,645**, tier 2 = 12,907, tier 3 = 7,760. The spec's 20–30k target is met by **tier 1 alone**. So: `common` = tier 1 (29,645 words; targets, Word Ladder graph and endpoints, Letter Grid denominator per C3/C4); tiers 2 and 3 form a `less common` extension used only for Anagram Dash targets from the tiers in the anchors table. One tiered file (word and tier digit) is shipped: about 69 KB front-coded and gzipped.
+- **Excluded words:** SCOWL's own `misc/offensive.1`, `offensive.2`, `profane.1`, `profane.3` give 81 distinct a–z words, of which 65 are in ENABLE (the lists hold many inflected forms already; the rest are not words in ENABLE). This is a small base: B5 writes an in-house `exclude.txt` (slurs, sexual and profane stems and common inflections) and the exclusion test checks both. It is **authored by us**, not copied from a share-alike list. The Games settings page says some words are excluded (D2).
+- Length distribution of ENABLE (for the Letter Grid and Anagram planning): 2 letters 96, 3: 972, 4: 3,903, 5: 8,636, 6: 15,232, 7: 23,109, 8: 28,420, 9: 24,873, 10: 20,302, 11: 15,504, 12: 11,358, then falling to 28 letters.
+
+**Draft `NOTICE`** (to be committed in B5 as `shared/games/brain/assets/words/NOTICE`, with the full texts copied from SCOWL's `Copyright`)
+1. ENABLE word list: public domain, released by M. Cooper ("thegrendel") with the efforts of Alan Beale; credit given as the originators of the list. The word files are not restricted from redistribution.
+2. SCOWL (Spell Checker Oriented Word Lists) 2020.12.07, Copyright 2000-2018 Kevin Atkinson: the permission notice quoted above, verbatim.
+3. Components of SCOWL levels ≤ 60 stated public domain by SCOWL: Moby Words II (Grady Ward), Brian Kelk's UK English wordlist with frequency classification, the 12Dicts package and its supplement (Alan Beale).
+4. WordNet 1.6 (Princeton University), used in SCOWL's inflection data: the Princeton copyright and disclaimer text, verbatim.
+5. VarCon and Ispell-derived word lists (American spellings): Copyright 2000-2016 Kevin Atkinson; Copyright 2016 Benjamin Titze; Copyright 1993 Geoff Kuenning (the Ispell licence text, verbatim). Note that our shipped lists are filtered and re-formatted derivatives of SCOWL output and say so.
+6. A statement of the filtering applied (a–z only, ENABLE whitelist, offensive terms removed, lengths), the build script name and the SHA-256 of each source and each shipped file.
+
+**Tests added in B5 beyond §17.10:** both lists sorted and unique, `[a-z]` only, length bounds, excluded words absent, common ⊂ valid, tier digits valid, decoded front-coded file equals the source list, shipped file hashes match `NOTICE`.
+
+### B.4 Palette, symbols (B0 sprint-row items, short)
+
+- **Palette:** Okabe–Ito: orange `#E69F00`, sky blue `#56B4E9`, bluish green `#009E73`, yellow `#F0E442`, blue `#0072B2`, vermilion `#D55E00`, reddish purple `#CC79A7`. The set's black is replaced by light grey `#D0D7DE` because the games sit on `#0d1117`. Colour Clash words: 4 colours = ORANGE, BLUE, GREEN, RED (vermilion); 6 adds YELLOW, PINK (reddish purple). Avoid sky blue vs blue in the same 4-set.
+- **Symbol set drawn in code:** circle, square, triangle, diamond, pentagon, hexagon, 5-point star, cross; 6 fills/patterns (solid, stripes, dots, cross-hatch, ring, half). Colour is never the only cue (shape or pattern or label always present).
+- No third-party icon packs or fonts.
+
+### B.5 Spec corrections found during B0 (apply when the owning sprint implements; the owner confirms)
+
+| # | Defect in §17 | Why it matters | Fix |
+|---|---|---|---|
+| C1 | **Grid Recall / Sequence Echo are unbounded for a perfect player** ("until 3 misses"), and `gainTarget 6` is unreachable at L1 (3×3 grid, start span 3 → max sensible span 7 → gain 5 → score 88, below the required ≥ 95) | Fails the "perfect ≥ 95" property; a perfect session never ends | Add `maxSpan = min(tiles − 2, 12)`, `maxTrials = gainTarget + 3`, and `gainTarget(level) = min(6, maxSpan − startSpan + 1)` per level in config. `TrialEngine.next()` already returns null for a cap |
+| C2 | **Card Sorter `categoryTarget` 6 is unreachable at `runLength` 10.** 64 cards ÷ (10 + ≈2 search) ≈ 5 categories max | Perfect scores ≈ 83 × perseveration factor | `categoryTarget` L1/5/10/15/20 = 4/5/5/6/6, each ≥ 1 below the perfect-player maximum (`⌊64 / (runLength + 2.5)⌋` = 5/6/6/7/7). Re-check with the simulated player |
+| C3 | **Letter Grid `maxPossibleValue` over the valid list** (173k words) includes many obscure words | A human cannot reach 25–55 % of an obscure-inclusive total | Denominator counts only words in the **common** list; any valid word still scores; share capped at 1 |
+| C4 | **Word Ladder par** ambiguous: BFS over which list? | Over the valid list par may use words nobody knows | `par` = BFS over the **common** graph. Accept valid-list intermediate words. Score `clamp(par / steps, 0, 1)` so a shorter obscure route cannot exceed 1 |
+| C5 | `difficulty.ts` only interpolates | Several levers are steps (item kind, banner mode, reverse recall, rule count, dual n-back) | Add step parameters (B.1 row 3) |
+| C6 | "Perfect ≥ 95, random ≤ 25" mixes two things | A perfect player at the RT floor tests scoring math, not human feasibility (e.g. Needle Finder absent trials at 60 items need a full scan) | Define each game's `simProfile`: perfect = always correct at `RT_fast`; random = uniform guess; fast-random = random at `RT_fast`; always/never press for detection games; "consistent solver" is the perfect player for Code Breaker. Human achievability is a **calibration** task per sprint, recorded in the owner's play notes |
+| C7 | Website runs games on the trading renderer | Main-thread blocking can delay live tick handling | B.2: 8 ms budget, Worker generators |
+| C8 | Import boundary forbids market imports but G3's framework lives in the same tree | The scan would flag legitimate framework imports | Boundary rule: `brain/**` may import `shared/games/core/**` and `shared/*` pure utilities only; it may not import `market/**`, `chart/**`, data or trading modules. Test lists the allow-list |
+| C9 | Two definition types with no discriminant | Hub/registry cannot narrow | `kind` discriminant (B.1 row 1) |
+| C10 | Seed hash and `sessionNo` unspecified | Review must regenerate a session | B.1 row 5 |
+| C11 | Brain trial-log storage unspecified | "≤ 250 trials × 20 sessions × 21 games" can reach several MB | IndexedDB store `brainLogs`, cap 20 sessions per game and a global 5 MB, oldest evicted; tuples of numbers only |
+
+### B.6 First parameter anchors (L1 / L5 / L10 / L15 / L20, provisional)
+
+Conventions: times in ms unless marked s. "step" = categorical (from-level → value). `RT_fast` / `RT_slow` are the speed-factor ends. **Expected trials** for volume check = block seconds ÷ (½(RT_fast+RT_slow) + inter-trial gap). All numbers are first-pass; each owning sprint tunes them from the owner's play with a calibration log. Where a value needs owner play to set, it is marked ◇.
+
+#### Speed
+| Game | Parameter | L1 | L5 | L10 | L15 | L20 |
+|---|---|---|---|---|---|---|
+| Quick Match (60 s, gap 400) | display time | 6000 (= until answered) | 3000 | 1500 | 900 | 600 |
+| | response window | 3000 | 2500 | 2000 | 1600 | 1200 |
+| | item kind (step) | circles | circles | polygons | mirrored | mirrored |
+| | "different" gap (1 = one feature) | 0.2 | 0.4 | 0.6 | 0.8 | 1.0 |
+| | RT_fast / RT_slow | 450/1800 | 420/1500 | 390/1300 | 370/1200 | 350/1100 |
+| Colour Clash (60 s) | colours k | 4 | 4 | 5 | 6 | 6 |
+| | incongruent % | 25 | 35 | 45 | 55 | 65 |
+| | neutral % (from L12) | 0 | 0 | 0 | 10 | 15 |
+| | response window | 3000 | 2500 | 1900 | 1400 | 1100 |
+| | shuffle swatches (step) | no | no | no | yes (L16+) | yes |
+| | RT_fast / RT_slow | 550/2200 | 520/1900 | 500/1700 | 480/1500 | 450/1400 |
+| Green Light (75 s) | symbol display | 1000 | 850 | 700 | 550 | 450 |
+| | interval mean ± jitter | 1000±200 | 1000±300 | 1000±400 | 1000±500 | 1000±600 |
+| | NO-GO % | 15 | 20 | 25 | 30 | 35 |
+| | rule stage (step) | colour+shape | colour+shape | any circle/any square | mid-block changes | mid-block changes |
+| | rule changes per block | 0 | 0 | 0 | 2 | 3 |
+| | RT_fast / RT_slow | 280/700 | 270/650 | 260/600 | 250/550 | 240/500 |
+
+#### Memory
+| Game | Parameter | L1 | L5 | L10 | L15 | L20 |
+|---|---|---|---|---|---|---|
+| Grid Recall | grid N×N | 3 | 4 | 5 | 5 | 6 |
+| | start span | 3 | 3 | 4 | 4 | 5 |
+| | span step (1, or 2 at L1–3) | 2 | 1 | 1 | 1 | 1 |
+| | max span | 7 | 12 | 12 | 12 | 12 |
+| | gainTarget (C1) | 5 | 6 | 6 | 6 | 6 |
+| | max trials | 8 | 9 | 9 | 9 | 9 |
+| | flash / gap | 700/200 | 600/200 | 500/200 | 400/200 | 300/200 |
+| | modes (step) | sequential | sequential | simultaneous (L8+), reverse (L12+) | reverse | reverse + rotate (L18+) |
+| Sequence Echo | item set | 4 pads | 5 pads | 6 digits | 8 digits | 9 digits/letters |
+| | start span | 3 | 3 | 4 | 5 | 6 |
+| | item time / gap | 800/250 | 650/250 | 500/250 | 400/250 | 300/250 |
+| | backward (step) | no | no | yes (L8+) | yes | yes |
+| | distractor flash (step) | no | no | no | yes (L15+) | yes |
+| | gainTarget fwd / bwd | 6/5 | 6/5 | 6/5 | 6/5 | 6/5 |
+| | max span | 12 | 12 | 12 | 12 | 12 |
+| N-Back Stream (≈ 90 s) | n (step) | 1 | 1 | 2 | 3 | 4 (L19+) |
+| | item time (incl. 500 gap) | 2000 | 1800 | 1500 | 1300 | 1200 |
+| | match % | 30 | 28 | 27 | 25 | 25 |
+| | lure % (L10+) | 0 | 0 | 10 | 12 | 15 |
+| | dual (step) | no | no | no | yes (L16+) | yes |
+
+#### Attention
+| Game | Parameter | L1 | L5 | L10 | L15 | L20 |
+|---|---|---|---|---|---|---|
+| Flanker Flock (60 s) | flankers per side | 2 | 3 | 4 | 5 | 6 |
+| | incongruent % | 33 | 40 | 50 | 58 | 66 |
+| | display | 1500 | 1200 | 900 | 700 | 500 |
+| | response window | 2000 | 1700 | 1400 | 1100 | 900 |
+| | position jitter / decoy row (steps) | off/off | off/off | on/off | on/on (L14+) | on/on |
+| | RT_fast / RT_slow | 330/1400 | 320/1250 | 310/1100 | 300/950 | 290/800 |
+| Needle Finder (20 trials) | set size | 8 | 14 | 24 | 40 | 60 |
+| | time per trial (s) | 15 | 12 | 10 | 7 | 5 |
+| | absent % | 20 | 22 | 25 | 28 | 30 |
+| | mode (step) | feature | feature | conjunction (L7+) | conjunction + 2nd feature (L15+) | same |
+| Track the Dots (8 trials) | dots N | 8 | 10 | 12 | 14 | 16 |
+| | targets t | 2 | 3 | 4 | 5 | 6 |
+| | speed px/s | 80 | 110 | 150 | 190 | 220 |
+| | motion time (s) | 5 | 6 | 7 | 9 | 10 |
+| | occluder (L12+) / flicker (L16+) | no | no | yes / no | yes / yes | yes / yes |
+
+#### Flexibility
+| Game | Parameter | L1 | L5 | L10 | L15 | L20 |
+|---|---|---|---|---|---|---|
+| Rule Switch (75 s) | rules | 2 | 2 | 2 | 2 | 3 (L16+) |
+| | switch pattern (step) | AABB | AABB | random ≈ 50 % | cue with card (L13+) | cue with card |
+| | cue lead | 1000 | 1000 | 500 | 0 | 0 |
+| | response window | 3500 | 3000 | 2500 | 2000 | 1700 |
+| | RT_fast / RT_slow | 600/2200 | 570/1900 | 540/1600 | 520/1400 | 500/1200 |
+| Card Sorter (64 cards) | rules in play (step) | 2 | 2 | 3 (L8+) | 3 | 3 |
+| | run length | 10 | 8 | 7 | 6 | 5 |
+| | ambiguous cards % | 0 | 5 | 12 | 20 | 25 |
+| | feedback delay (L15+) | 0 | 0 | 0 | 600 | 600 |
+| | categoryTarget (C2) | 4 | 5 | 5 | 6 | 6 |
+| Flip Map (75 s) | rules | 2 | 2 | 2 | 2 | 3 (L16+) |
+| | change every (trials, min–max) | 10–12 | 8–12 | 6–10 | 5–9 | 4–8 |
+| | banner (step) | persistent | persistent (to L6) | timed 1.5 s (L7–12) | none | none |
+| | display | 2000 | 1700 | 1400 | 1100 | 900 |
+| | RT_fast / RT_slow | 450/1800 | 430/1600 | 410/1400 | 390/1200 | 370/1000 |
+
+#### Math
+| Game | Parameter | L1 | L5 | L10 | L15 | L20 |
+|---|---|---|---|---|---|---|
+| Number Sprint (90 s) | operations (step) | + − | × ÷ added (L5+) | mixed two-step (L9+) | mixed | mixed |
+| | max operand | 9 | 20 | 99 | 200 | 999 |
+| | negatives (L12+) / decimals (L16+) | no | no | no | negatives | negatives + decimals |
+| | soft time T_q (s) | 12 | 9 | 7 | 5 | 4 |
+| | expert time per problem (s) ◇ | 2.2 | 3.0 | 4.0 | 5.5 | 7.0 |
+| | itemsTarget = round(0.81 × 90 / expert time) | 33 | 24 | 18 | 13 | 10 |
+| Equation Drop (90 s / 3 lives) | spawn interval (s) | 4.0 | 3.2 | 2.5 | 1.9 | 1.4 |
+| | fall time top→bottom (s) | 14 | 12 | 10 | 8 | 6 |
+| | simultaneous max | 2 | 3 | 4 | 5 | 6 |
+| | reverse drops (L12+) | no | no | no | yes | yes |
+| | target = round(0.85 × scheduled equations) | derived | derived | derived | derived | derived |
+| Make Target (8 puzzles) | numbers given | 4 | 4 | 5 | 5 | 6 |
+| | target digits | 2 | 2 | 2–3 | 3 | 3 |
+| | min solution depth (≤ numbers − 1) | 2 | 2 | 3 | 4 | 5 |
+| | time per puzzle (s) | 60 | 50 | 45 | 38 | 30 |
+| | tolerance ±2 (L1–6) | yes | yes | no | no | no |
+
+#### Reasoning (speed factor ends given as seconds: RT_fast ≈ 0.15 T, RT_slow ≈ 0.8 T)
+| Game | Parameter | L1 | L5 | L10 | L15 | L20 |
+|---|---|---|---|---|---|---|
+| Pattern Matrix (10) | simultaneous rules | 1 | 2 | 2 | 3 | 4 |
+| | options | 6 | 6 | 7 | 8 | 8 |
+| | time per puzzle (s) | 90 | 75 | 60 | 50 | 40 |
+| | distractor similarity | 0.3 | 0.5 | 0.7 | 0.9 | 1.0 |
+| | logical overlay (L14+) | no | no | no | yes | yes |
+| | RT_fast / RT_slow (s) | 13/72 | 11/60 | 9/48 | 8/40 | 6/32 |
+| Number Series (12) | rule tier | 1 | 2 | 3 | 4 | 5 |
+| | terms shown | 8 | 7 | 6 | 6 | 5 |
+| | time (s) | 60 | 50 | 40 | 30 | 25 |
+| | typed answer (L15+) | no | no | no | yes | yes |
+| | RT_fast / RT_slow (s) | 9/48 | 8/40 | 6/32 | 5/24 | 4/20 |
+| Code Breaker (6 codes) | code length | 3 | 3 | 4 | 4 | 5 |
+| | symbols | 4 | 5 | 6 | 7 | 8 |
+| | repeats (L10+) | no | no | yes | yes | yes |
+| | guess limit | 10 | 10 | 9 | 9 | 8 |
+| | hidden feedback cell (L16+) | no | no | no | no | yes |
+
+#### Word
+| Game | Parameter | L1 | L5 | L10 | L15 | L20 |
+|---|---|---|---|---|---|---|
+| Anagram Dash (90 s) | word length | 4 | 5 | 6 | 7 | 9 |
+| | frequency tier (SCOWL ≤ 35 / 50 / 60) | 1 | 1 | 2 | 2 | 3 |
+| | soft cap per word (s) | 30 | 25 | 20 | 17 | 15 |
+| | hints per block | 3 | 3 | 2 | 2 | 1 |
+| | expert time per word (s) ◇ | 8 | 10 | 12 | 14 | 16 |
+| | target value = round(0.8 × 90/expert time × (len − 2) × 0.85) | 15 | 16 | 18 | 18 | 27 (recompute from config) |
+| Letter Grid (120 s) | grid N×N | 4 | 4 | 4 | 5 | 5 |
+| | min word length | 3 | 3 | 3 | 4 | 4 |
+| | min solvable words (grid filter) | 25 | 30 | 35 | 45 | 55 |
+| | targetShare of common-list value (C3) | 0.25 | 0.30 | 0.38 | 0.46 | 0.55 |
+| Word Ladder (5) | word length | 3 | 3 | 4 | 4 | 5 |
+| | par (common graph, C4) | 3 | 4 | 5 | 6 | 8 |
+| | time per puzzle (s) | 120 | 105 | 90 | 75 | 60 |
+| | hints | 3 | 3 | 2 | 1 | 0 |
+
+The simulated-player harness, per game, uses these configs plus the `simProfile` of C6, and asserts: perfect ≥ 95, random ≤ 25, fast-random ≤ 25, always/never press ≤ 5, at L1, L10, L20.
+
+
+### B.7 Sprints and real-trading check
+
+#### Sprint detail
+| Sprint | Deliverables (files) | Tests | Exit |
+|---|---|---|---|
+| **Prereq** G2 + G3a | per plan; plus step params, timed `GameShell`, `kind` discriminant, `core/market/brain` layout, boundary test | per plan | Hub opens on desktop and website with an empty Brain tab |
+| **B1** Framework + 3 Speed games | `shared/games/brain/engine/{trialEngine,rt,scoringBrain,generatorHost}.ts`, `ui/*` primitives, simPlayers harness, `difficulty.brain.json` (Speed rows), games `quick_match`, `colour_clash`, `green_light`; worker scaffold | RT/timing (fake timers, mocked rAF), anticipation exclusion, discard-and-replace, focus-loss voiding, scoring bounds, sim players, boundary and key-handler scans, no-network assertion, Playwright smoke | Three games at all levels in both clients |
+| **B2** Memory + Attention | 6 games; deterministic dot trajectories (fixed timestep) for Review replay | span cap tests (C1), n-back lure logic, search-slope stats, replay equality | Six games playable |
+| **B3** Flexibility + Math | 6 games; Make Target solver (in Worker) | switch-cost stats, card-sort perseveration, C2 sim check, solver correctness vs brute force, equation schedule determinism | Six games playable |
+| **B4** Reasoning | matrix, series, mastermind generators with uniqueness verification | uniqueness at every level, par solver, ambiguity solver, worst-case generation time | Three games playable |
+| **B5** Word | word assets, loader, `NOTICE`, build script; three games | asset counts, charset, exclusion, common ⊂ valid, trie vs brute force, lazy chunk assertion (not in main or trading bundle), memory check | Assets absent from main bundle |
+| **B6** Hub, dashboard, Warm-up, Review, settings, a11y/perf, docs | Brain tab, filters, brain trend panels, `warmupPool`, trial-log Review, settings (palette, reduce motion, zoom, sound, note), `CLAUDE.md` row, architecture docs, spec §12 example, `docs/phase25-manual-acceptance.md` Track B section | dashboard model tests, warm-up determinism per pool | Acceptance on Windows build and Chrome |
+
+Per sprint (all): branch off `dev`, PR into `dev` (merge commit), docs updated, PR lists shared files touched (expected: the single `App.tsx` nav hook from G3a) and confirms no trading logic changed.
+
+#### Real-trading-path check
+Track B adds no backend route, no Rust beyond G3a, and no change to order, session, broker, stream, guardrail or strategy code. Shared file touched in B-work: only `frontend/src/App.tsx` via the G3a nav hook (already in the G3 plan). `App.tsx` is the live-trading screen, so that hook is the one place to review: it adds `showGames`, one `NavIconButton`, one lazy mount and one prop (`sessionKind`).
+
