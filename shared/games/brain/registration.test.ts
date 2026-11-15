@@ -4,10 +4,10 @@ import { getGame, isPlayable, registeredIds } from '../core/registry'
 import '../games'
 
 describe('registered brain games', () => {
-  const PLAYABLE = ['quick_match', 'colour_clash', 'green_light', 'grid_recall', 'sequence_echo', 'n_back_stream', 'flanker_flock', 'needle_finder', 'track_the_dots', 'rule_switch', 'card_sorter', 'flip_map', 'number_sprint', 'equation_drop', 'make_target'] as const
+  const PLAYABLE = ['quick_match', 'colour_clash', 'green_light', 'grid_recall', 'sequence_echo', 'n_back_stream', 'flanker_flock', 'needle_finder', 'track_the_dots', 'rule_switch', 'card_sorter', 'flip_map', 'number_sprint', 'equation_drop', 'make_target', 'pattern_matrix', 'number_series', 'code_breaker'] as const
   // Games scored on reaction time carry the RT_fast / RT_slow scale; recall and tracking games do not need one.
-  const REACTION_TIME = ['quick_match', 'colour_clash', 'green_light', 'n_back_stream', 'flanker_flock', 'needle_finder', 'rule_switch', 'flip_map', 'number_sprint', 'equation_drop', 'make_target'] as const
-  it('the Speed, Memory, Attention, Flexibility and Math games are registered and playable; the rest stay "Coming soon"', () => {
+  const REACTION_TIME = ['quick_match', 'colour_clash', 'green_light', 'n_back_stream', 'flanker_flock', 'needle_finder', 'rule_switch', 'flip_map', 'number_sprint', 'equation_drop', 'make_target', 'pattern_matrix', 'number_series', 'code_breaker'] as const
+  it('the Speed, Memory, Attention, Flexibility, Math and Reasoning games are registered and playable; the rest stay "Coming soon"', () => {
     expect(registeredIds().sort()).toEqual([...PLAYABLE].sort())
     for (const entry of gamesIn('brain')) expect(isPlayable(entry.id)).toBe((PLAYABLE as readonly string[]).includes(entry.id))
   })

@@ -23,6 +23,9 @@ import cardSorter from '../games/card_sorter'
 import flipMap from '../games/flip_map'
 import numberSprint from '../games/number_sprint'
 import makeTarget from '../games/make_target'
+import patternMatrix from '../games/pattern_matrix'
+import numberSeries from '../games/number_series'
+import codeBreaker from '../games/code_breaker'
 import { quickMatchSim } from '../games/quick_match/engine'
 import { colourClashSim } from '../games/colour_clash/engine'
 import { greenLightSim } from '../games/green_light/engine'
@@ -37,6 +40,9 @@ import { cardSorterSim } from '../games/card_sorter/engine'
 import { flipMapSim } from '../games/flip_map/engine'
 import { numberSprintSim } from '../games/number_sprint/engine'
 import { makeTargetSim } from '../games/make_target/engine'
+import { patternMatrixSim } from '../games/pattern_matrix/engine'
+import { numberSeriesSim } from '../games/number_series/engine'
+import { codeBreakerSim } from '../games/code_breaker/engine'
 import { simulateBlock, simulateMany, type PlayerProfile, type SimPlayer } from './simPlayers'
 import type { TrialGameDefinition } from '../../core/types'
 
@@ -59,6 +65,9 @@ const GAMES: Array<[string, TrialGameDefinition<any, any>, SimPlayer<any, any>, 
   ['flip_map', flipMap, flipMapSim, false, SEEDS],
   ['number_sprint', numberSprint, numberSprintSim, false, SEEDS],
   ['make_target', makeTarget, makeTargetSim, false, 40],
+  ['pattern_matrix', patternMatrix, patternMatrixSim, false, 100],
+  ['number_series', numberSeries, numberSeriesSim, false, 100],
+  ['code_breaker', codeBreaker, codeBreakerSim, false, 100],
 ]
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
 const percentile = (xs: number[], p: number) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))]

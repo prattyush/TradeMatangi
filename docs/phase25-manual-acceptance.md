@@ -104,5 +104,14 @@ Same setup as section H. Six more games are playable: **Rule Switch, Card Sorter
 8. Tell me which levels feel too easy or too hard: `itemsTarget` (Number Sprint), `target` (Equation Drop), `categoryTarget` (Card Sorter) and the RT anchors are provisional until you have played them.
 9. Windows only: the Games window loads Make Target's worker (if puzzles never appear, tell me; the game falls back to the calling thread and still starts).
 
+## K. Brain games, Reasoning (B4): Windows build and the website
+Same setup as section H. Three more games are playable: **Pattern Matrix, Number Series, Code Breaker**. The Brain tab now has eighteen Play buttons and three "Coming soon".
+1. A short "Preparing the puzzles" screen shows before each of these games. **On the website, with a paper or replay session running, check the trading chart keeps updating during it** (the puzzles are built in a Web Worker).
+2. **Pattern Matrix:** a 3 by 3 grid of figures with the last cell empty and 6 to 8 options (press 1 to 8 or click). Figures change in shape, number, size, colour, turn (a small white tick shows it) and shading. Check that every figure is clearly drawn, that colours also differ by pattern, and that the right option really is the only one that fits the rules (try to work out two puzzles by hand). From level 14 a small 2 by 2 dot pattern in the corner follows XOR or AND of the first two cells in a row.
+3. **Number Series:** a series with the next term missing; pick from 5 options (keys 1 to 5), or from level 15 type the answer and press Enter. Check that no puzzle seems to have two reasonable answers (tell me if one does: the solver should have rejected it).
+4. **Code Breaker:** place symbols with 1 to 8 (or click), Backspace undoes, Enter makes the guess; each guess shows "n exact, m misplaced". Level 1 is 3 positions from 5 symbols, no repeats; from level 10 symbols can repeat; from level 16 one number per code shows "?". The header shows par; after a code the result line says whether you solved it and gives the code if not.
+5. Each result screen shows its stats and a Trial review; Progress saves, Practice never changes your level; Esc asks to quit and records nothing; focus loss discards the code or puzzle in progress and away over 10 s cancels the session.
+6. Tell me which levels feel too easy or too hard (time limits, options, par); they are provisional until you have played them.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.
