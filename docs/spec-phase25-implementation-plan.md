@@ -124,8 +124,8 @@ I will **not** add a global `GZipMiddleware` (it would change every route, inclu
 | P0 | Discovery (this section) | Done, awaiting owner review |
 | P1 | Backend desktop mounts, helper routes, Rust `desktop_patterns_request`, `patternsApi.ts`, parity tests | In PR into `dev` (branch `feat/desktop-patterns-transport`) |
 | P2 | Pattern Library on KLine (desktop-only, core) | Core merged (#834); P2b (drawing tools, R:R, Top Patterns, extra panes, bulk delete) in PR (branch `feat/desktop-pattern-library-full`) |
-| P3 | Chart Structures (Broad) | In PR into `dev` (branch `feat/desktop-chart-structures`) |
-| P4 | Fine Structures | Planned |
+| P3 | Chart Structures (Broad) | Merged (#836) |
+| P4 | Fine Structures | In PR into `dev` (branch `feat/desktop-fine-structures`) |
 | P5 | Docs, Windows acceptance | Planned |
 
 ### P1 as built
@@ -161,3 +161,14 @@ Desktop Tools > **Chart Structures**, `windowsapp/src/tools/ChartStructures.tsx`
 - Tests: `chartStructuresModel.test.ts` (8: sparkline day filter and scaling, save rule, filter query, OHLC path, POST/PUT) and `ChartStructures.test.tsx` (initial render).
 - No new Rust or backend code (the P1 allowlist and routes already cover `chart-structures/*`). Shared files touched: none. One list entry in `ToolsView.tsx`. No trading logic touched.
 - Manual acceptance on the Windows build: filters narrow the gallery, a card opens its day on KLine, previous/next move through the filtered list, saving a system structure creates your own copy and saving your own updates it.
+
+### P4 as built (Fine Structures)
+Inside Tools > Chart Structures, a **Broad | Fine** switch (as on the website). Fine has three views, kept mounted so a half-built flow or a search survives a tab switch: **Builder**, **Search**, **Definitions**.
+- **Definitions** (`FineDefinitions.tsx`): add, edit and delete your structure definitions with comma-separated sub-types; system ones are read only.
+- **Builder** (`FineBuilder.tsx`): load a day as Underlying only or Underlying + CE/PE (OTM offset, or Max Price from Settings, via the same `resolveStrikes` as the Pattern Library). Add steps (structure, optional type, Bull/Bear), reorder and remove them, select a step and click a candle to set its transition bar; Bull draws an up arrow under the bar and Bear a down arrow over it, numbered by step. The drawing rail of the chart stays available (deselect the step to draw). Each pane (underlying, CE, PE) has its own flow, saved with the chart's candle interval. A saved flow is restored when the day is loaded, found by day, instrument type and right (one precise lookup, not the website's "first flow of the day").
+- **Search** (`FineSearch.tsx`): build a sequence of structures with `✱ Any` wildcards, filter equity or options, search, open a result on the chart with its transition bars and the matched steps highlighted. Options flows keep the right but not the strike, so the chart shows the **ATM contract of that day** (from the 09:15 price). The website uses the first candle of the loaded window, which can be an earlier day, so this is slightly more correct.
+- Model `fineStructuresModel.ts` is pure (step reducers, transition marks, flow lookup, query steps); the chart-interval bridge moved to `IntervalBridge.tsx`. No new Rust or backend code: the P1 allowlist and routes already cover `fine-structures/*`. Transition arrows use the chart's own annotation overlay, so their label is cut to the chart's marker length; the step list beside it has the full names.
+- Tests: `fineStructuresModel.test.ts` (12: step reducers, transition marks, flow lookup, search steps, client calls) and the Chart Structures render test now checks the Fine views. Desktop vitest 644, tsc clean.
+- Not in P4: the website's old equity and options builders are merged into one Builder (same data); no flow delete (the website page has none either); no flow sharing.
+- Shared files touched: none. No trading logic touched.
+- Manual acceptance on the Windows build: build a 3-step flow with transitions on the underlying and on CE/PE, save, reload the day and see it restored; search for the sequence and for one with a wildcard; add, edit and delete a definition.

@@ -17,6 +17,18 @@ export interface StructureFilters { opening_types?: string[]; midday_types?: str
 export interface StructureClassification { opening_type: string; midday_type: string; closing_type: string }
 export interface StructureCandle { time: number; open: number; high: number; low: number; close: number }
 
+export interface FineDefinition {
+  definition_id: string; name: string; sub_types: string[]; is_predefined: boolean; user_id: string; can_delete: boolean; created_at: string; updated_at: string
+}
+export interface FlowStep { definition_id: string; name: string; type?: string; direction?: string; transition_bar_time?: number }
+export interface FineFlow {
+  flow_id: string; symbol: string; date: string; steps: FlowStep[]; instrument_type: string; right?: string | null
+  interval_minutes: number; user_id: string; can_delete: boolean; created_at: string; updated_at: string
+}
+export interface FineQueryStep { name: string; type?: string; direction?: string }
+export interface FineSearchResult { flow: FineFlow; match_start_index: number }
+export interface FlowFilters { symbol?: string; start_date?: string; end_date?: string; instrument_type?: string; right?: string }
+
 export interface SaveChartBody {
   symbol: string; date: string; instrument_type: string
   annotations: PatternAnnotation[]; notes: string
@@ -51,6 +63,21 @@ export function createPatternsClient(request: PatternsRequest) {
       request<{ candles: StructureCandle[]; structure: ChartStructureItem | null }>(`chart-structures/ohlc/${encodeURIComponent(symbol)}/${date}${query({ interval_minutes: intervalMinutes, days_back: daysBack })}`, 'GET'),
     createStructure: (body: StructureClassification & { symbol: string; date: string }) => request<ChartStructureItem>('chart-structures/structure', 'POST', body),
     updateStructure: (id: string, body: StructureClassification) => request<ChartStructureItem>(`chart-structures/structure/${encodeURIComponent(id)}`, 'PUT', body),
+    listDefinitions: async () => (await request<{ definitions: FineDefinition[] }>('fine-structures/definitions', 'GET')).definitions,
+    createDefinition: (body: { name: string; sub_types: string[] }) => request<FineDefinition>('fine-structures/definition', 'POST', body),
+    updateDefinition: (id: string, body: { name: string; sub_types: string[] }) => request<FineDefinition>(`fine-structures/definition/${encodeURIComponent(id)}`, 'PUT', body),
+    deleteDefinition: (id: string) => request<void>(`fine-structures/definition/${encodeURIComponent(id)}`, 'DELETE'),
+    listFlows: async (filters: FlowFilters = {}) => (await request<{ flows: FineFlow[] }>(`fine-structures/flows${query({ ...filters })}`, 'GET')).flows,
+    createFlow: (body: { symbol: string; date: string; steps: FlowStep[]; instrument_type: string; right?: string | null; interval_minutes?: number }) =>
+      request<FineFlow>('fine-structures/flow', 'POST', body),
+    updateFlow: (id: string, steps: FlowStep[], intervalMinutes?: number) =>
+      request<FineFlow>(`fine-structures/flow/${encodeURIComponent(id)}`, 'PUT', { steps, interval_minutes: intervalMinutes }),
+    searchFlows: async (body: { query_steps: FineQueryStep[]; instrument_type?: string; symbol?: string; start_date?: string; end_date?: string }) =>
+      (await request<{ results: FineSearchResult[] }>('fine-structures/search', 'POST', body)).results,
+    fineOhlc: async (symbol: string, date: string, intervalMinutes: number, daysBack?: number) =>
+      (await request<{ candles: StructureCandle[] }>(`fine-structures/ohlc/${encodeURIComponent(symbol)}/${date}${query({ interval_minutes: intervalMinutes, days_back: daysBack })}`, 'GET')).candles,
+    fineOptionsOhlc: async (symbol: string, date: string, strike: number, right: 'CE' | 'PE', intervalMinutes: number, daysBack?: number) =>
+      (await request<{ candles: StructureCandle[] }>(`fine-structures/ohlc-options/${encodeURIComponent(symbol)}/${date}${query({ strike, right, interval_minutes: intervalMinutes, days_back: daysBack })}`, 'GET')).candles,
     getExpiry: (symbol: string, date: string) => request<{ expiry: string }>(`data/expiry${query({ symbol, date })}`, 'GET'),
     getPriceAt: (symbol: string, date: string, time: string) =>
       request<{ price: number }>(`data/price-at${query({ symbol, date, time, history_mode: 'replay', granularity: 'minute' })}`, 'GET'),
