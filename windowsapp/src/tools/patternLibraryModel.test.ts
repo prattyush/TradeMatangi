@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TOOL_OPTIONS, buildSaveBody, defaultPatternDate, resolveStrikes, strikesOf, toggleAnnotation } from './patternLibraryModel'
+import type { PatternAnnotation } from '../../../shared/analysis/api'
+import { TOOL_OPTIONS, buildSaveBody, defaultPatternDate, resolveStrikes, riskRewardKey, savedStrikePair, setRank, setRiskReward, strikesOf, toggleAnnotation, uniquePatterns } from './patternLibraryModel'
 import { createPatternsClient } from '../patternsClient'
 
 const tool = TOOL_OPTIONS.find(t => t.key === 'entry-CE')!
@@ -62,5 +63,32 @@ describe('buildSaveBody / defaultPatternDate', () => {
     expect(defaultPatternDate(new Date('2026-11-15T12:00:00Z'))).toBe('2026-11-13')
     expect(defaultPatternDate(new Date('2026-11-14T12:00:00Z'))).toBe('2026-11-13')
     expect(defaultPatternDate(new Date('2026-11-12T12:00:00Z'))).toBe('2026-11-12')
+  })
+})
+
+describe('P2b helpers', () => {
+  const marks = [
+    { id: '1', time: 1, price: 1, type: 'entry', instrument: 'underlying', strategy_name: 'ORB', category: 'Open', text: '' },
+    { id: '2', time: 2, price: 1, type: 'exit', instrument: 'underlying', strategy_name: 'ORB', category: 'Open', text: '' },
+    { id: '3', time: 3, price: 1, type: 'entry', instrument: 'CE', strategy_name: 'Fade', category: 'Mid', text: '' },
+  ] as PatternAnnotation[]
+
+  it('lists each strategy/category once', () => {
+    expect(uniquePatterns(marks).map(p => `${p.category}/${p.strategy_name}`)).toEqual(['Open/ORB', 'Mid/Fade'])
+  })
+  it('sets and clears a rank by identity', () => {
+    const top = setRank({}, 'top_1', uniquePatterns(marks)[1].identity)
+    expect(top).toEqual({ top_1: { strategy_name: 'Fade', category: 'Mid' } })
+    expect(setRank(top, 'top_1', '')).toEqual({})
+  })
+  it('keeps R:R per category::strategy and drops blanks', () => {
+    const key = riskRewardKey('Open', 'ORB')
+    expect(setRiskReward({}, key, '1.5')).toEqual({ 'Open::ORB': '1.5' })
+    expect(setRiskReward({ 'Open::ORB': '1.5' }, key, ' ')).toEqual({})
+  })
+  it('saves the first CE and PE strike, and one strike for both when only one right is shown', () => {
+    expect(savedStrikePair([{ id: 1, right: 'CE', strike: 24000 }, { id: 2, right: 'PE', strike: 24100 }, { id: 3, right: 'CE', strike: 23900 }])).toEqual({ ce: 24000, pe: 24100 })
+    expect(savedStrikePair([{ id: 1, right: 'PE', strike: 24100 }])).toEqual({ ce: 24100, pe: 24100 })
+    expect(savedStrikePair([])).toBeNull()
   })
 })

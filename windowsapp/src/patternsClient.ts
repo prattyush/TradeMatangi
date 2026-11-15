@@ -31,6 +31,7 @@ export function createPatternsClient(request: PatternsRequest) {
     updateChart: (chartId: string, body: Omit<SaveChartBody, 'symbol' | 'date' | 'instrument_type'>) =>
       request<PatternChart>(`pattern/chart/${encodeURIComponent(chartId)}`, 'PUT', body),
     deleteChart: (chartId: string) => request<void>(`pattern/chart/${encodeURIComponent(chartId)}`, 'DELETE'),
+    bulkDeleteCharts: (chartIds: string[]) => request<{ deleted: string[]; failed: Array<{ chart_id: string; reason: string }> }>('pattern/charts/bulk-delete', 'POST', { chart_ids: chartIds }),
     getExpiry: (symbol: string, date: string) => request<{ expiry: string }>(`data/expiry${query({ symbol, date })}`, 'GET'),
     getPriceAt: (symbol: string, date: string, time: string) =>
       request<{ price: number }>(`data/price-at${query({ symbol, date, time, history_mode: 'replay', granularity: 'minute' })}`, 'GET'),
