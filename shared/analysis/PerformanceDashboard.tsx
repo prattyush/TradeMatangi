@@ -1242,6 +1242,12 @@ export default function PerformanceDashboard(props: Props) {
                   ),
                 )}
                 <ComparisonTable
+                  rows={report.comparisons.expected_strategy}
+                  title="Your expected strategy labels"
+                  dimension="label:expected_strategy"
+                  onSelect={select}
+                />
+                <ComparisonTable
                   rows={report.comparisons.actual_strategy}
                   title="Your actual strategy labels"
                   dimension="label:actual_strategy"

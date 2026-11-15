@@ -549,6 +549,8 @@ export interface SessionSummary {
   total_commission: number
   trade_count: number
   round_trip_count: number
+  /** Closed round trips with a positive net P&L; absent from an older backend. */
+  winning_round_trip_count?: number
   buy_count: number
   sell_count: number
 }

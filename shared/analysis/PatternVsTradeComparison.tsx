@@ -26,7 +26,8 @@ function useStrikeTabs(allTrades: AnalysisTrade[], isOpt: boolean): StrikeTab[] 
   }, [allTrades, isOpt])
 }
 
-function Btn({s,onClick,active,children,title}:{s?:boolean;onClick?:()=>void;active?:boolean;children:React.ReactNode;title?:string}) {
+function Btn({s,onClick,active,children,title,strong}:{s?:boolean;onClick?:()=>void;active?:boolean;children:React.ReactNode;title?:string;strong?:boolean}) {
+  if(strong)return <button onClick={onClick} title={title} style={{padding:'4px 12px',fontSize:12,fontWeight:800,borderRadius:4,border:'1px solid #58a6ff',background:'#58a6ff',color:'#0d1117',cursor:'pointer'}}>{children}</button>
   return <button onClick={onClick} title={title} style={{padding:s?'3px 10px':'4px 12px',fontSize:11,fontWeight:600,borderRadius:4,border:`1px solid ${active?'#58a6ff':'#30363d'}`,background:active?'#1f3a5f':'#161b22',color:active?'#58a6ff':'#8b949e',cursor:'pointer'}}>{children}</button>
 }
 
@@ -66,7 +67,7 @@ export default function PatternVsTradeComparison({symbol,date,instrumentType,ses
     return names.length?[...new Set(names)].join(' / '):trade.side==='BUY'?'B':'S'
   },[labelMap])
 
-  if(max && !environment.desktop) return <div style={{position:'fixed',inset:0,zIndex:200,background:'#0d1117',display:'flex',flexDirection:'column'}}><div style={{display:'flex',alignItems:'center',padding:'8px 16px',background:'#161b22',borderBottom:'1px solid #30363d'}}><span style={{fontSize:14,fontWeight:700,color:'#e6edf3'}}>{symbol} · {date}</span><div style={{flex:1}}/><Btn onClick={()=>smax(null)}>⤡ Restore</Btn></div><div style={{flex:1,padding:8,overflow:'auto'}}>{max==='trades-underlying'&&<TradesChart symbol={symbol} date={date} trades={allTrades} getMarkerText={gmt} strikeTabs={strikeTabs} isOpt={isOpt}/>}{max==='patterns-underlying'&&<PatternChart symbol={symbol} date={date} annotations={pAnn} topPatterns={tp} activeStrategy={astr||null} activeCategory={acat||null} instFilter={instFilter} setInstFilter={sif} isOpt={isOpt} patternStrike={pStrike}/>}</div></div>
+  if(max && !environment.desktop) return <div style={{position:'fixed',inset:0,zIndex:200,background:'#0d1117',display:'flex',flexDirection:'column'}}><div style={{display:'flex',alignItems:'center',padding:'8px 16px',background:'#161b22',borderBottom:'1px solid #30363d'}}><span style={{fontSize:14,fontWeight:700,color:'#e6edf3'}}>{symbol} · {date}</span><div style={{flex:1}}/><Btn strong onClick={()=>smax(null)}>⤡ Restore</Btn></div><div style={{flex:1,padding:8,overflow:'auto'}}>{max==='trades-underlying'&&<TradesChart symbol={symbol} date={date} trades={allTrades} getMarkerText={gmt} strikeTabs={strikeTabs} isOpt={isOpt}/>}{max==='patterns-underlying'&&<PatternChart symbol={symbol} date={date} annotations={pAnn} topPatterns={tp} activeStrategy={astr||null} activeCategory={acat||null} instFilter={instFilter} setInstFilter={sif} isOpt={isOpt} patternStrike={pStrike}/>}</div></div>
 
   return <div className={`analysis-comparison-view ${max?'comparison-maximized':''}`} data-max={max??''} role="dialog" aria-label="Pattern comparison" style={{position:'fixed',inset:0,zIndex:99,background:'#0d1117',display:'flex',flexDirection:'column'}}>
     <div className="analysis-comparison-head" style={{display:'flex',alignItems:'center',gap:12,padding:'12px 20px',borderBottom:'1px solid #21262d',flexShrink:0}}>
@@ -79,7 +80,7 @@ export default function PatternVsTradeComparison({symbol,date,instrumentType,ses
     </div>
     {error&&<p role="alert">{error}<button onClick={()=>setRetry(n=>n+1)}>Retry comparison</button></p>}
     {loading&&<p role="status">Loading comparison…</p>}
-    {max&&environment.desktop&&<button onClick={()=>smax(null)}>Restore comparison</button>}
+    {max&&environment.desktop&&<button onClick={()=>smax(null)} style={{fontWeight:800}}>Restore comparison</button>}
     <div style={{flex:1,display:'flex',overflow:'hidden'}}>
       <div className="comparison-trades-pane" style={{flex:1,display:'flex',padding:'8px 4px',borderRight:'1px solid #21262d'}}>
         <TradesChart symbol={symbol} date={date} trades={allTrades} getMarkerText={gmt} strikeTabs={strikeTabs} isOpt={isOpt} onMax={()=>smax('trades-underlying')}/>

@@ -62,7 +62,7 @@ export default function TradeWalkthrough({ symbol, date, sessionIds, allTrades, 
   if (error) return <p role="alert">{error}<button onClick={() => setRetry(value => value + 1)}>Retry</button></p>
 
   const maximizeButton = (
-    <button type="button" className="tl-ghost" onClick={() => setMaximized(!maximized)} aria-pressed={maximized}
+    <button type="button" className="tl-ghost tl-maximize" onClick={() => setMaximized(!maximized)} aria-pressed={maximized}
       aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): one chart with a switcher' : 'Maximize: larger view, Underlying and strike charts stacked'}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
   )
   const info = current ? story.get(tripKey(current)) : undefined

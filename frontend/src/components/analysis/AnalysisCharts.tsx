@@ -70,12 +70,15 @@ function ChartToolbar({ title, isMaximized = false, onMaximize, tools }: {
         <button
           onClick={onMaximize}
           title={isMaximized ? 'Restore' : 'Maximize'}
-          style={{
-            background: 'none', border: 'none', color: '#484f58',
-            cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1,
+          style={isMaximized ? {
+            background: '#58a6ff', border: '1px solid #58a6ff', color: '#0d1117', borderRadius: 4,
+            cursor: 'pointer', fontSize: 12, fontWeight: 800, padding: '1px 8px', lineHeight: 1.4,
+          } : {
+            background: 'none', border: 'none', color: '#8b949e',
+            cursor: 'pointer', fontSize: 14, fontWeight: 700, padding: '0 2px', lineHeight: 1,
           }}
         >
-          {isMaximized ? '⤡' : '⤢'}
+          {isMaximized ? '⤡ Restore' : '⤢'}
         </button>
       )}
     </div>
@@ -631,8 +634,8 @@ export function WebsiteAnalysisChartPanel({
             onClick={() => setMaximizedChart(null)}
             title="Restore"
             style={{
-              background: 'none', border: '1px solid #30363d', color: '#8b949e',
-              borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
+              background: '#58a6ff', border: '1px solid #58a6ff', color: '#0d1117',
+              borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 800,
             }}
           >
             ⤡ Restore
