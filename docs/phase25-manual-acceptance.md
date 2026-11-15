@@ -62,5 +62,21 @@ Needs the backend from `dev` (G2) and a **rebuilt** desktop app.
 8. Network log: Games only calls `/api/desktop/v1/games/state` (website) or the Rust command (desktop). Nothing else, no order, session, wallet or broker route.
 9. Dashboard shows empty category bars and "Play a game in Progress mode..."; the footer says these are practice tools.
 
+## H. Brain games, Speed (B1): Windows build (Games window) and the website
+Needs the backend from `dev` and, on Windows, a desktop build that includes the Games window. Use a real keyboard and mouse, in Chrome and in the Windows app.
+1. Brain tab: **Quick Match, Colour Clash and Green Light** have a Play button; the other 18 say "Coming soon".
+2. Each game: Play shows the instructions (at most 6 lines), your level, **Progress** and a **Practice at level N** box. Practice never changes your level.
+3. Press Progress: a 3-2-1 countdown, then a time bar runs down over the block (60 s, Green Light 75 s). The block cannot be paused.
+4. **Quick Match:** press **S** for same and **D** for different (or click the buttons). Level 1 shows both items until you answer; at higher levels they vanish, and from level 13 they are rotated and a mirror image counts as different. A wrong answer scores nothing; answering at random scores about 0.
+5. **Colour Clash:** answer the colour the word is **printed in** (keys 1 to 4, or click). The buttons show a pattern and a number as well as the colour. From level 16 the buttons change places every trial.
+6. **Green Light:** a banner states the rule, then press **Space** (or GO) for a GO symbol and do nothing for the others. Level 1: green circle is GO, red square is NO-GO. From level 13 the rule changes during the block and a banner announces it.
+7. **Timing sanity:** at the fastest you can, your reported median reaction time is plausible (about 250 to 450 ms in Green Light, 400 to 700 ms in Quick Match). Compare Chrome and the Windows app; do not expect identical numbers.
+8. **Too early:** hold the key down or mash it before the symbol appears in Green Light: those presses are counted as errors ("anticipations" in the stats), not as fast reactions.
+9. **Focus loss:** during a block switch to another window for a few seconds and come back: the block resumes (the trial you missed is discarded). Stay away for over 10 seconds: "This session was cancelled" and nothing is saved.
+10. **Quit:** press Esc during a block: "Quit this session?". Keep playing resumes; Quit returns to the hub and records nothing.
+11. **Result screen:** score, a few stats (accuracy, median reaction time, and so on), and a collapsed "Trial review" with what was shown, your answer, the right answer and your time for every trial. After a Progress block "Saved to your progress" appears; on the Dashboard the Speed bar moves.
+12. **No trading interference:** with a paper or replay session running, open Games on the website and play a block: the trading screen keeps updating underneath and nothing in it is delayed or changed. Network log: only `GET`/`PUT .../games/state` (once at the start, once at the end).
+13. Keyboard safety: keys you press in a game (S, D, Space, digits, Esc) do nothing in the trading screen behind it.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useReducer, useRef } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { catalogueEntry } from '../core/ids'
 import { paramsAt } from '../core/difficulty'
-import { sessionRng } from '../core/rng'
+import { createRng, sessionSeed } from '../core/rng'
 import { FOCUS_LOSS_LIMIT_MS, initialShell, shellReducer, shouldRecord } from '../core/shell'
 import { isTimedBlock, type AnyGameDefinition, type SessionMode, type SessionSummary } from '../core/types'
 import { localDate } from '../core/uid'
+import { TrialReview } from './TrialReview'
 
 export interface ShellDone { mode: SessionMode; level: number; summary: SessionSummary; minutes: number }
 interface Props {
@@ -26,6 +27,7 @@ export function GameShell({ definition, level, userId, sessionNo, onDone, onExit
   const startedAt = useRef(0)
   const recorded = useRef(false)
   const entry = catalogueEntry(definition.id)
+  const [practiceLevel, setPracticeLevel] = useState(level)
 
   useEffect(() => { root.current?.focus() }, [state.phase])
 
@@ -50,6 +52,13 @@ export function GameShell({ definition, level, userId, sessionNo, onDone, onExit
     return () => { back(); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('blur', away); window.removeEventListener('focus', back) }
   }, [state.phase])
 
+  // A quit prompt left open over a timed block counts like losing focus: after the limit the block is voided.
+  useEffect(() => {
+    if (!state.quitFrom || !state.timed || state.phase !== 'playing') return
+    const timer = window.setTimeout(() => dispatch({ type: 'void', reason: 'The quit prompt was left open too long.' }), FOCUS_LOSS_LIMIT_MS)
+    return () => window.clearTimeout(timer)
+  }, [state.quitFrom, state.timed, state.phase])
+
   useEffect(() => {
     if (!shouldRecord(state) || recorded.current || !state.summary) return
     recorded.current = true
@@ -57,7 +66,8 @@ export function GameShell({ definition, level, userId, sessionNo, onDone, onExit
   }, [state, onDone])
 
   const params = useMemo(() => paramsAt(definition.paramTable, state.level), [definition, state.level])
-  const rng = useMemo(() => sessionRng(userId, localDate(), definition.id, sessionNo), [userId, definition.id, sessionNo])
+  const seed = useMemo(() => sessionSeed(userId, localDate(), definition.id, sessionNo), [userId, definition.id, sessionNo])
+  const rng = useMemo(() => createRng(seed), [seed])
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== 'Escape') return
@@ -75,23 +85,28 @@ export function GameShell({ definition, level, userId, sessionNo, onDone, onExit
         <section>
           <p>{definition.blurb}</p>
           <ul>{definition.instructions.map(line => <li key={line}>{line}</li>)}</ul>
-          <p>Level {level}</p>
+          <p>Your level: {level}</p>
           <div className="games-row">
             <button onClick={() => dispatch({ type: 'start', mode: 'progress', level })}>Progress (level {level})</button>
-            <button onClick={() => dispatch({ type: 'start', mode: 'practice', level })}>Practice</button>
             <button onClick={onExit}>Back</button>
+          </div>
+          <div className="games-row">
+            <label>Practice at level <input type="number" min={1} max={20} value={practiceLevel} onChange={event => setPracticeLevel(Math.min(20, Math.max(1, Math.round(Number(event.target.value)) || 1)))} style={{ width: 56 }} /></label>
+            <button onClick={() => dispatch({ type: 'start', mode: 'practice', level: practiceLevel })}>Practice</button>
           </div>
         </section>
       )}
       {state.phase === 'countdown' && <div className="games-countdown" role="status">{state.countdown}</div>}
       {(state.phase === 'playing' || state.phase === 'paused') && (
-        <View level={state.level} mode={state.mode} params={params} rng={rng}
+        <View level={state.level} mode={state.mode} params={params} rng={rng} seed={seed} suspended={state.quitFrom !== null}
           onFinish={summary => dispatch({ type: 'finish', summary })} onAbort={reason => dispatch({ type: 'void', reason })} />
       )}
       {state.phase === 'result' && state.summary && (
         <section role="status">
           <h3>Score {state.summary.score}</h3>
           <p>{state.mode === 'progress' ? 'Saved to your progress.' : 'Practice session: your level does not change.'}</p>
+          {state.summary.stats && <p className="games-meta">{Object.entries(state.summary.stats).slice(0, 8).map(([key, value]) => `${key.replace(/_/g, ' ')}: ${value}`).join(' · ')}</p>}
+          {state.summary.review && <TrialReview rows={state.summary.review} />}
           <div className="games-row"><button onClick={() => { recorded.current = false; startedAt.current = 0; dispatch({ type: 'again' }) }}>Play again</button><button onClick={onExit}>Back to games</button></div>
         </section>
       )}

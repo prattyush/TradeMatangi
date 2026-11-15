@@ -24,3 +24,7 @@
 .games-countdown { font-size: 5em; text-align: center; padding: 40px 0; }
 .games-confirm { position: fixed; inset: 0; background: #000a; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; }
 .games-root[data-reduce-motion] * { animation: none !important; transition: none !important; }
+.games-review { margin: 8px 0; } .games-review table { border-collapse: collapse; font-size: .85em; width: 100%; }
+.games-review th, .games-review td { border-bottom: 1px solid var(--g-line); padding: 2px 8px; text-align: left; }
+.games-review tr[data-correct="false"] td { color: #f85149; }
+.games-root input[type="number"], .games-root select { background: #0d1117; color: var(--g-text); border: 1px solid var(--g-line); border-radius: 6px; padding: 3px 6px; font: inherit; }
