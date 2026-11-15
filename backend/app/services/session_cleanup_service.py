@@ -1,7 +1,7 @@
 """
 Session cleanup service — cascade delete all data for a session.
 
-Deletes records from: Trades, Orders, Strategies, TradeLabels, BehaviorMarks, VideoLinks, EventSnapshots,
+Deletes records from: Trades, Orders, Strategies, TradeLabels, BehaviorMarks, VideoLinks, WhatIfScenarios, EventSnapshots,
 AICommands, AIDecisionLog, and the Sessions record itself.
 Also resets the wallet entry for the given user+date.
 """
@@ -98,6 +98,14 @@ def delete_session_cascade(session_id: str, user_id: str, date: str, reset_walle
     # saved links go; the videos on YouTube are not touched.
     try:
         _batch_delete_composite_key("VideoLinks", "session_id", "video_id", session_id)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "ResourceNotFoundException":
+            raise
+
+    # WhatIfScenarios (PK: session_id, SK: scenario_id), lazily created like VideoLinks. Only the saved
+    # what-ifs go; they never changed the session's trades.
+    try:
+        _batch_delete_composite_key("WhatIfScenarios", "session_id", "scenario_id", session_id)
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "ResourceNotFoundException":
             raise

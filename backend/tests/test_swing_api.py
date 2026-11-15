@@ -399,3 +399,15 @@ def test_futures_discovery_is_authenticated_read_only_and_execution_remains_gate
     path = start(client)
     body = {"symbol":"NIFTY", "instrument_type":"futures", "expiry":"2026-10-27", "side":"BUY", "quantity":65, "price":22000, "request_id":"gated"}
     assert client.post(path + "/orders", json=body, headers={"X-User-Id":"u"}).status_code == 403
+
+
+def test_phone_orders_are_the_same_order_as_a_website_retry(client):
+    """The phone app identifies itself as `phone`; it is an attribution tag only and never changes an order's identity."""
+    path = start(client)
+    headers = {"X-User-Id": "u"}
+    order = {"symbol": "HDFCBANK", "side": "BUY", "order_type": "LIMIT", "quantity": 10, "price": 100, "request_id": "phone-1"}
+    placed = client.post(path + "/orders", json={**order, "client": "phone"}, headers=headers)
+    assert placed.status_code == 200, placed.text
+    retry = client.post(path + "/orders", json={**order, "client": "website"}, headers=headers)
+    assert retry.status_code == 200 and retry.json()["order_id"] == placed.json()["order_id"]
+    assert client.post(path + "/orders", json={**order, "client": "tablet", "request_id": "phone-2"}, headers=headers).status_code == 422

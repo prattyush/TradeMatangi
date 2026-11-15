@@ -7,7 +7,7 @@ import { WebsiteSnapshotChart, WebsiteSnapshotOptionsChart } from '../components
 import { WebsiteTradesChart, WebsitePatternChart } from '../components/analysis/ComparisonCharts'
 import { useMemo, type ComponentType, type ComponentProps } from 'react'
 import { AnalysisProvider } from '../../../shared/analysis/environment'
-import api, { getVideoLinks, saveVideoLink, removeVideoLink } from './api'
+import api, { getVideoLinks, saveVideoLink, removeVideoLink, getWhatIfScenarios, getWhatIfRange, saveWhatIfScenario, removeWhatIfScenario } from './api'
 import { flashError } from './notifications'
 import * as performance from './performanceApi'
 import { useAnalysisChartRenderer } from '../hooks/useAnalysisChartRenderer'
@@ -23,7 +23,8 @@ const lightweightCharts = {
   TradesChart: WebsiteTradesChart, PatternChart: WebsitePatternChart,
 }
 const videoLinks = { list: getVideoLinks, save: saveVideoLink, remove: removeVideoLink, open: (video: { url: string }) => { window.open(video.url, '_blank', 'noopener,noreferrer') } }
-const base = { swingRequest, api, performance, videoLinks, reportError: flashError }
+const whatIf = { list: getWhatIfScenarios, range: getWhatIfRange, save: saveWhatIfScenario, remove: removeWhatIfScenario }
+const base = { swingRequest, api, performance, videoLinks, whatIf, reportError: flashError }
 const lightweightEnvironment = { ...base, charts: lightweightCharts }
 export function withWebsiteAnalysis<T extends ComponentType<any>>(Component: T) {
   return function WebsiteAnalysis(props: ComponentProps<T>) {
@@ -33,7 +34,7 @@ export function withWebsiteAnalysis<T extends ComponentType<any>>(Component: T) 
     const pnlDisplayMode = useAnalysisPnlMode()
     const kline = useMemo(() => ({
       ...base, charts: { SwingChart, ...klineAnalysisCharts },
-      drawingRequest: desktopDrawingRequest, resolveSymbolInstrument, accountKey: rendererAccountKey(),
+      drawingRequest: desktopDrawingRequest, resolveSymbolInstrument, accountKey: rendererAccountKey(), chartPicking: true,
     }), [])
     const labels = useMemo(() => ({ labelView, onLabelViewChange, pnlDisplayMode }), [labelView, onLabelViewChange, pnlDisplayMode])
     const klineValue = useMemo(() => ({ ...kline, ...labels }), [kline, labels])

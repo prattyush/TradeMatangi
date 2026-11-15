@@ -54,6 +54,41 @@ export async function removeVideoLink(sessionId: string, videoId: string): Promi
   if (!res.ok) throw new Error(`Removing the video link failed: ${res.status}`)
 }
 
+const whatIfFailure = async (res: Response, fallback: string): Promise<Error> => {
+  const detail = (await res.json().catch(() => null))?.detail
+  return new Error(typeof detail === 'string' ? detail : `${fallback}: ${res.status}`)
+}
+
+/** Saved what-ifs of one of the user's own days. */
+export async function getWhatIfScenarios(sessionId: string): Promise<import('../../../shared/analysis/whatif/scenarios').WhatIfScenario[]> {
+  const res = await fetch(`${BACKEND_URL}/api/whatif?session_id=${encodeURIComponent(sessionId)}`, { headers: _authHeaders() })
+  if (!res.ok) throw await whatIfFailure(res, 'Saved what-ifs request failed')
+  return (await res.json()).scenarios
+}
+
+/** The user's saved what-ifs over a date range (summaries only), for Compare days. */
+export async function getWhatIfRange(start?: string, end?: string): Promise<import('../../../shared/analysis/whatif/scenarios').WhatIfScenario[]> {
+  const query = [start ? `start=${encodeURIComponent(start)}` : '', end ? `end=${encodeURIComponent(end)}` : ''].filter(Boolean).join('&')
+  const res = await fetch(`${BACKEND_URL}/api/whatif/range${query ? `?${query}` : ''}`, { headers: _authHeaders() })
+  if (!res.ok) throw await whatIfFailure(res, 'Saved what-ifs request failed')
+  return (await res.json()).scenarios
+}
+
+/** Saves a what-if for a day (replacing the one with the same name). It changes nothing about the trades. */
+export async function saveWhatIfScenario(scenario: { sessionId: string; name: string; edits: import('../../../shared/analysis/whatif/scenarios').WhatIfEdit[]; summary: import('../../../shared/analysis/whatif/scenarios').WhatIfSummary }): Promise<import('../../../shared/analysis/whatif/scenarios').WhatIfScenario> {
+  const res = await fetch(`${BACKEND_URL}/api/whatif`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify({ session_id: scenario.sessionId, name: scenario.name, edits: scenario.edits, summary: scenario.summary }),
+  })
+  if (!res.ok) throw await whatIfFailure(res, 'Saving the what-if failed')
+  return res.json()
+}
+
+export async function removeWhatIfScenario(sessionId: string, scenarioId: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/whatif?session_id=${encodeURIComponent(sessionId)}&scenario_id=${encodeURIComponent(scenarioId)}`, { method: 'DELETE', headers: _authHeaders() })
+  if (!res.ok) throw await whatIfFailure(res, 'Removing the what-if failed')
+}
+
 export function _authHeaders(): Record<string, string> {
   try {
     const stored = localStorage.getItem('auth_user')
@@ -235,7 +270,9 @@ export interface UserSettingsResponse {
   target_deviation_configured?: boolean
   stoploss_limit_gap_pct?: number
   desktop_order_size_mode?: 'quantity' | 'funds_ratio' | 'risk_ratio'
-  desktop_pnl_display_mode?: 'currency' | 'percent'
+  desktop_pnl_display_mode?: 'currency' | 'percent' | 'milestones'
+  pnl_max_win_pct?: number
+  show_bar_pnl_label?: boolean
   pnl_target_levels?: string
   candle_alert_enabled?: boolean
   candle_alert_interval_min?: number
@@ -445,6 +482,8 @@ export interface PatternChartMeta {
   instrument_type: string
   right?: string
   strike?: number
+  /** The PE strike when it differs from `strike` (Max Price). Absent on older charts: use `strike`. */
+  strike_pe?: number | null
   notes: string
   created_at: string
   updated_at: string
@@ -565,6 +604,11 @@ export interface RoundTripTrade {
 
 export interface RoundTrip {
   index: number
+  /** The performance cycle this round trip is (join to SessionDetail.cycles); absent on older servers. */
+  cycle_id?: string | null
+  state?: string
+  strike?: number | null
+  expiry?: string | null
   right: string | null
   entry_trades: RoundTripTrade[]
   exit_trades: RoundTripTrade[]
@@ -1065,8 +1109,9 @@ const api = {
     return data.candles ?? []
   },
 
-  async getPriceAt(symbol: string, date: string, time: string, historyMode: 'live' | 'replay' = 'replay'): Promise<PriceAtResponse> {
-    const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}&history_mode=${historyMode}`
+  /** `granularity: 'minute'` answers from minute data (read-only screens such as Patterns): no second-level download. */
+  async getPriceAt(symbol: string, date: string, time: string, historyMode: 'live' | 'replay' = 'replay', granularity?: 'minute'): Promise<PriceAtResponse> {
+    const url = `${BACKEND_URL}/api/data/price-at?symbol=${encodeURIComponent(symbol)}&date=${date}&time=${encodeURIComponent(time)}&history_mode=${historyMode}${granularity ? `&granularity=${granularity}` : ''}`
     const res = await fetch(url)
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
@@ -1084,9 +1129,10 @@ const api = {
 
   async findStrikeByPrice(
     symbol: string, date: string, expiry: string, right: 'CE' | 'PE',
-    maxPrice: number, referenceTime: string, historyMode: 'live' | 'replay' = 'replay',
+    maxPrice: number, referenceTime: string, historyMode: 'live' | 'replay' = 'replay', granularity?: 'minute',
   ): Promise<{ strike: number; price: number; symbol: string; date: string; right: string }> {
     const params = new URLSearchParams({ symbol, date, expiry, right, max_price: String(maxPrice), reference_time: referenceTime, history_mode: historyMode })
+    if (granularity) params.set('granularity', granularity)
     const url = `${BACKEND_URL}/api/data/options/find-strike-by-price?${params}`
     const res = await fetch(url)
     if (!res.ok) {
@@ -2193,7 +2239,7 @@ const api = {
   async patternCreateChart(body: {
     symbol: string; date: string; instrument_type: string;
     annotations: PatternAnnotation[]; notes: string;
-    right?: string; strike?: number;
+    right?: string; strike?: number; strike_pe?: number;
     top_patterns?: TopPatterns;
     risk_reward_ratios?: Record<string, string>;
     interval_minutes?: number;
@@ -2207,11 +2253,11 @@ const api = {
     return res.json()
   },
 
-  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns, riskRewardRatios?: Record<string, string>, intervalMinutes?: number): Promise<PatternChart> {
+  async patternUpdateChart(chartId: string, annotations: PatternAnnotation[], notes: string, topPatterns?: TopPatterns, riskRewardRatios?: Record<string, string>, intervalMinutes?: number, strikes?: { strike?: number; strike_pe?: number }): Promise<PatternChart> {
     const res = await fetch(`${BACKEND_URL}/api/pattern/chart/${chartId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns, risk_reward_ratios: riskRewardRatios, interval_minutes: intervalMinutes }),
+      body: JSON.stringify({ annotations, notes, top_patterns: topPatterns, risk_reward_ratios: riskRewardRatios, interval_minutes: intervalMinutes, ...strikes }),
     })
     if (!res.ok) throw new Error(`Update chart failed: ${res.status}`)
     return res.json()

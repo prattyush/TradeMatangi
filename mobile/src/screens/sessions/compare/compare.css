@@ -1,0 +1,24 @@
+/* Compare on a landscape phone: the shared two-pane screen (inline-styled for the desktop) made to fit 740-960 x 340-440.
+   The !importants are needed because the shared component sets these values inline. */
+.phone-compare .analysis-comparison-view {
+  top: 0 !important; z-index: 60 !important;
+  padding: var(--sai-t) var(--sai-r) var(--sai-b) var(--sai-l);
+}
+.phone-compare .analysis-comparison-head { gap: 8px !important; padding: 4px 8px !important; min-height: 48px; }
+.phone-compare .analysis-comparison-title { font-size: 14px !important; white-space: nowrap; }
+.phone-compare .analysis-comparison-subtitle, .phone-compare .analysis-comparison-divider,
+.phone-compare .analysis-comparison-filter-label, .phone-compare .analysis-comparison-counts { display: none !important; }
+.phone-compare .analysis-comparison-head select { min-height: 40px; min-width: 0 !important; max-width: 150px; font-size: 13px !important; background: var(--panel-2); color: var(--text); }
+.phone-compare .analysis-comparison-close { min-height: 40px; padding: 0 12px !important; white-space: nowrap; }
+
+/* Two panes side by side, each with its own small button row and chart header. */
+.phone-compare .comparison-trades-pane, .phone-compare .comparison-pattern-pane { min-width: 0; min-height: 0; padding: 0 !important; }
+.phone-compare .analysis-comparison-chart { width: 100%; }
+.phone-compare .analysis-comparison-chart > nav { flex: 0 0 auto; display: flex; gap: 4px; overflow-x: auto; padding: 2px 4px; }
+.phone-compare .analysis-comparison-chart > nav button { min-height: 32px; padding: 0 10px; font-size: 12px; white-space: nowrap; }
+.phone-compare .analysis-comparison-chart.comparison-chart-maximized { inset: var(--sai-t) var(--sai-r) var(--sai-b) var(--sai-l); z-index: 70; }
+.phone-compare .desktop-analysis-chart header { min-height: 40px; padding: 0 4px; gap: 4px; flex-wrap: nowrap; overflow-x: auto; }
+.phone-compare .desktop-analysis-chart header strong { display: none; }
+.phone-compare .desktop-analysis-chart header button, .phone-compare .desktop-analysis-chart header select { min-height: 34px; }
+.phone-compare .desktop-analysis-chart > small { display: none; }
+.phone-compare [role='status'], .phone-compare [role='alert'] { margin: 0; padding: 4px 10px; font-size: 12px; }

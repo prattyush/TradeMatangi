@@ -1,0 +1,90 @@
+/* Sessions: list on the left, the chosen day on the right. */
+.screen.sessions { display: grid; grid-template-columns: clamp(230px, 32%, 310px) minmax(0, 1fr); }
+.session-pane { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+.pane-head { display: flex; align-items: center; gap: 8px; height: 48px; flex: 0 0 auto; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); }
+.pane-head h2 { font-size: 15px; font-weight: 600; }
+.pane-head .btn { min-height: 38px; padding: 0 12px; }
+.range-note { flex: 0 0 auto; padding: 4px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+.session-list { flex: 1 1 auto; overflow: auto; min-height: 0; }
+
+.session-row {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  width: 100%; min-height: 52px; padding: 6px 10px 6px 9px; text-align: left;
+  background: none; color: inherit; font: inherit; border: 0; border-bottom: 1px solid #21262d; border-left: 3px solid transparent;
+}
+.session-row[aria-current='true'] { background: var(--panel-2); border-left-color: var(--accent); }
+.session-date, .session-what, .session-result { display: flex; flex-direction: column; min-width: 0; }
+.session-date { align-items: center; line-height: 1.1; }
+.session-date strong { font-size: 16px; }
+.session-date small, .session-what small, .session-result small { font-size: 11px; color: var(--muted); }
+.session-what strong { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-what small { display: flex; align-items: center; flex-wrap: wrap; row-gap: 2px; }
+.session-what .badge { margin-left: 5px; }
+.session-result { align-items: flex-end; }
+.session-result strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+
+.detail-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.detail { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+.tabs-result { display: flex; align-items: center; gap: 8px; padding-right: 6px; font-size: 13px; white-space: nowrap; }
+.tabs-when { color: var(--muted); }
+.detail-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.detail-body .scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.detail-body > .state { margin: auto; }
+
+/* With a day chosen the list is hidden and the detail gets the whole width. */
+.screen.sessions.list-hidden { grid-template-columns: minmax(0, 1fr); }
+
+/* The one control row: Days, the view menu and, for the chart, the chart's own header (see PhoneChartPanel). */
+.detail-bar { display: flex; align-items: center; gap: 6px; height: 44px; flex: 0 0 auto; padding: 0 6px; border-bottom: 1px solid var(--border); background: var(--panel); }
+.tabs-result { display: flex; align-items: center; gap: 8px; padding-right: 6px; font-size: 13px; white-space: nowrap; }
+.tabs-when { color: var(--muted); }
+.days-button { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; min-width: 40px; justify-content: center; padding: 0 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font: inherit; font-size: 13px; }
+.days-button[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 800px) { .days-text { display: none; } }
+
+/* The shared chart (built for a 450 px desktop card) fills the pane; its header row carries everything. */
+.phone-chart { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.phone-chart .desktop-analysis-chart { min-height: 0; flex: 1 1 auto; }
+.phone-chart .desktop-analysis-chart > small { display: none; }
+.phone-chart .desktop-analysis-chart header { min-height: 44px; padding: 0 6px; gap: 6px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.phone-chart .desktop-analysis-chart header strong { display: none; }
+.phone-chart .desktop-analysis-chart header button, .phone-chart .desktop-analysis-chart header select { min-height: 36px; }
+.phone-toolbar-start { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }
+
+/* Maximized: the chart takes the whole screen (Underlying / Option and strike stay; Days and the view menu go). */
+.phone-chart.maximized { position: fixed; inset: 0; z-index: 50; background: #10131a; padding: var(--sai-t) var(--sai-r) var(--sai-b) var(--sai-l); }
+
+/* Snapshots: one 44 px strip steps through the events; the chart (with the usual control row) keeps the rest. */
+.snapshot-view { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.snapshot-strip { display: flex; align-items: center; gap: 6px; height: 44px; flex: 0 0 auto; padding: 0 6px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.step-button { min-width: 44px; min-height: 36px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font: inherit; font-size: 13px; }
+.step-button:disabled { opacity: 0.35; }
+.event-button { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font: inherit; font-size: 13px; text-align: left; }
+.event-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.event-desc { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-button .caret { color: var(--muted); font-size: 10px; }
+.event-list { display: flex; flex-direction: column; }
+.event-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 52px; padding: 6px 4px; text-align: left; background: none; border: 0; border-bottom: 1px solid #21262d; border-left: 3px solid transparent; color: inherit; font: inherit; }
+.event-row[aria-current='true'] { background: var(--panel-2); border-left-color: var(--accent); }
+.event-row-time { color: var(--muted); font-size: 12px; }
+.event-row-what { display: flex; flex-direction: column; min-width: 0; }
+.event-row-what strong { font-size: 13px; font-weight: 500; }
+.event-row-what small { color: var(--muted); font-size: 11px; }
+.event-row-pnl { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.detail-event { font-size: 14px; line-height: 1.4; }
+.detail-group { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--border); }
+.detail-group h4 { margin: 0 0 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.detail-line { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px; min-height: 28px; font-size: 13px; }
+.detail-line > span:first-child { color: var(--muted); }
+.detail-line small { flex-basis: 100%; text-align: right; font-size: 12px; }
+
+/* Execution details: the desktop inspector as a panel over the right edge of the pane. */
+.trades-table tr.tappable { cursor: pointer; }
+.trades-table tr.tappable:active { background: var(--panel-2); }
+.phone-inspector .analysis-execution-inspector { top: 0; width: min(440px, 90%); padding-bottom: var(--sai-b); }
+.phone-inspector .analysis-execution-inspector header button { min-height: 40px; min-width: 40px; }
+/* "Open cycle" opens the trade's details in Stats. */
+.phone-inspector .analysis-execution-inspector section > button { min-height: 40px; }
+.day-journey { background: transparent; border: 0; padding: 0; }
+.day-journey svg { max-height: none; }

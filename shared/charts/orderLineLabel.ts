@@ -12,6 +12,7 @@ export const orderLineLabel = (order: DesktopOrder, position?: DesktopPosition |
   const qty = compactQty(order.quantity)
   const isSl = order.order_type === 'STOPLOSS' || order.is_stoploss
   if (position && position.side !== 'FLAT' && ((position.side === 'LONG' && order.side === 'SELL') || (position.side === 'SHORT' && order.side === 'BUY'))) {
+    if (settings?.desktop_pnl_display_mode === 'milestones') return `${isSl ? 'SL' : order.order_type === 'LIMIT' ? 'L' : 'T'} ${qty}`
     const dir = position.side === 'LONG' ? 1 : -1
     const price = orderPrice(order)
     const percent = settings?.desktop_pnl_display_mode === 'percent'

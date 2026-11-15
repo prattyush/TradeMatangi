@@ -1,0 +1,42 @@
+/* Swing trading (phone). One control row, a summary strip and a list; actions live in sheets. */
+.swing-bar { gap: 10px; }
+.swing-bar .badge { margin-left: 0; }
+.swing-live { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.swing-live.on::before { content: '●'; color: var(--good); margin-right: 4px; }
+.swing-live:not(.on)::before { content: '●'; color: #d29922; margin-right: 4px; }
+.swing-body { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.swing-center { flex: 1 1 auto; overflow: auto; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px; gap: 8px; }
+.swing-strip { display: flex; align-items: center; gap: 18px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex: 0 0 auto; flex-wrap: wrap; }
+.swing-strip > div { display: flex; align-items: baseline; gap: 6px; }
+.swing-strip small { color: var(--muted); font-size: 11px; }
+.swing-strip strong { font-size: 15px; }
+.swing-flags { display: flex; gap: 6px; list-style: none; margin: 0 0 0 auto; padding: 0; flex-wrap: wrap; }
+.swing-flags li { background: #4d3b0b; color: #f2cc60; padding: 2px 8px; border-radius: 999px; font-size: 11px; }
+.swing-notice { padding: 4px 12px; font-size: 12px; background: #3d1f1f; color: #ffb3ad; flex: 0 0 auto; }
+.swing-tabs { display: flex; align-items: center; gap: 8px; padding: 6px 12px; flex: 0 0 auto; }
+.swing-list { flex: 1 1 0; min-height: 0; overflow: auto; padding: 0 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+.swing-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; padding: 6px 12px; text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font: inherit; }
+.swing-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.swing-main small { color: var(--muted); }
+.swing-num { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.swing-start { width: min(560px, 100%); }
+.swing-start-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; }
+.swing-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+.swing-facts dt { color: var(--muted); }
+.swing-facts dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.swing-banner { padding: 6px 10px; border-radius: var(--radius); font-weight: 700; letter-spacing: 0.04em; text-align: center; }
+.swing-banner-paper { background: #0f3a5f; color: #a5d6ff; }
+.swing-banner-real { background: #7a1f1f; color: #ffd7d3; }
+.btn-real { background: #da3633; border-color: #da3633; color: #fff; }
+.swing-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.swing-confirm { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+.swing-check { flex-direction: row; align-items: flex-start; gap: 8px; color: var(--text); font-size: 13px; }
+.swing-check input { width: 22px; height: 22px; flex: none; }
+.swing-stepper { display: grid; grid-template-columns: 48px 1fr 48px; gap: 6px; }
+.swing-symbol { justify-content: space-between; display: flex; align-items: center; }
+.swing-estimate { padding: 8px 10px; border: 1px dashed var(--border); border-radius: var(--radius); font-size: 13px; }
+.swing-problems { margin: 0; padding: 8px 10px 8px 26px; border-radius: var(--radius); background: #3d1f1f; color: #ffb3ad; font-size: 13px; }
+.swing-chart { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; flex-direction: column; padding: var(--sai-t) var(--sai-r) var(--sai-b) var(--sai-l); }
+.swing-chart-bar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 8px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.swing-chart-body { flex: 1 1 0; min-height: 0; }
+select { min-height: var(--tap); background: #2d333b; color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 8px; font: inherit; }

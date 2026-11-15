@@ -56,3 +56,42 @@ Volume (#801):
 6. Same replay on the desktop (Indicators > Volume); also check a Swing chart on a stock (Volume appears with the daily candles).
 7. Live and real sessions show history volume only; the forming candle has no volume yet (B2, not built). If a live candle shows a huge or zero-only volume, report it.
 
+VWAP and Lightweight volume (added 2026-11-14, `feat/vwap-volume-charts`):
+8. KLine, stock or option: Indicators > VWAP draws a line **over the candles** (not in a pane of its own); Volume still has its own pane. On a daily (1D) Swing chart VWAP draws nothing. `NIFTY` offers neither. Do this on the website, the desktop (trading and Swing) and the phone Browse.
+9. Website Settings > Trading Chart = Lightweight: on a stock or option chart, Indicators lists **VWAP** and **Volume** (off by default; `NIFTY` lists neither). Turn both on: a purple VWAP line and volume bars in the bottom fifth of the pane. VWAP restarts at each day's 09:15 (look at a chart that shows two days). Switch to KLine and back: the choice is kept. In a replay or stepwise session the forming bar's volume bar grows and the VWAP point moves with it; pause, resume and interval change must not double a bar.
+10. Analysis (Lightweight): Trade Analysis, Walkthrough, What If and Label Trades charts have the same two items in Indicators; the choice is shared across them and kept after a reload. The Snapshot viewer has no indicator menu.
+
+
+## H. Browse on the website and webapp (added 2026-11-12)
+1. Open the website (and the installed webapp) with no session running: it opens on **Browse**, two panes (NIFTY and SENSEX). With a paper or real session running it opens on Trading as before.
+1b. Change Settings → Trading Chart between Lightweight and KLine: Browse follows it (Lightweight charts with the Indicators / Draw toolbar, or KLine charts with the shared drawing rail at the left).
+1c. Every chart shows its time axis along the bottom (Lightweight and KLine, in every layout including 5 panes).
+2. In a pane's header, the button (symbol, day, contract) opens its panel: change the **symbol**, the **day** (‹ › step over weekends; or open the calendar: the month arrows only move between months, nothing reloads until you click a day), **Spot | CE | PE**; for an option pick a **strike** or **Max price** with a premium cap. Two panes can show different symbols on different days side by side.
+3. The header's layout box has the website's layouts (1, 2, 3, 4, 5 equal, 5 wide right, 4 as 1+3). **← Trading** goes to the session screen, **📈 Browse** returns.
+4. An index or share pane at 3 minutes: scroll the chart to the left edge repeatedly: older days load back to about a year (1-minute stops at 90 days; move the pane's day to look further back). Option panes keep their few days.
+5. Reload the page: the same panes, symbols, days, strikes and intervals are back.
+6. Start a session from Trading: Browse is left; nothing in Browse starts or changes a session.
+
+## I. Patterns and Structures on minute data, and Max Price in Patterns (added 2026-11-14)
+Speed (website, webapp):
+1. Pick a trading day whose option contracts you have **not** opened before (no cached files). In Patterns, Options, NIFTY, Load Chart: the underlying and the CE and PE panes appear within a few seconds, not after the minutes second-level downloads took. In the backend cache folder only `minute/<provider>/…` files appear for that day and contracts, no new `…-DD-MM-YYYY.parquet` second-level files.
+2. Chart Structures (Underlying chart of a day) and Fine Structures (equity and an option contract) load the same way.
+3. Replay or stepwise a session on that day afterwards: it still downloads and uses second-level data as before. Trade Analysis charts and Snapshots are unchanged.
+4. Illiquid option days can show fewer early candles than before (no back-fill). Report a chart that looks wrong, not merely different.
+
+Max Price in Patterns:
+5. Settings, Option strike mode = OTM Offset: Patterns, Options shows the OTM box; Load Chart takes ATM from the 09:15 price (the open of the first minute) plus and minus the offset, as before.
+6. Settings, Option strike mode = Max Price with CE and PE caps (for example 60 and 45): the OTM box is replaced by two dropdowns, "Max Price CE" and "PE", like the trading screen's (presets of the symbol, a Settings value that is not a preset shows as "₹60 (saved)"). Choose other values: Load Chart uses them, and Settings shows the new values afterwards (and the trading screen's Max Price dropdown too). Load Chart picks a CE and a PE strike that are usually different; check each strike's premium at 09:30 on the chart is at or below its cap and the next strike toward ATM is above it. A day where nothing within 30 strikes qualifies shows the server's message and loads no chart.
+7. Save annotations, open the chart again from the gallery (Load): the CE pane and the PE pane use their own strikes. A chart saved before this change still opens, with its one strike on both sides.
+8. Trade Analysis, pattern-vs-trade comparison of that day (website, Windows app, phone): the CE and PE pattern tabs show their own strikes.
+9. A stock symbol (Reliance, Tata Motors, Tata Power) stays on the OTM box whatever the setting says.
+
+## J. Browse scroll-back never jumps (added 2026-11-14)
+1. Website Browse, a stock or index, any interval: scroll left past the first three days. The next day shown is the previous trading day (weekends and market holidays are the only gaps); keep scrolling a few pages and check the same at each seam.
+2. With the Kite and Breeze sessions expired (or the backend offline for one provider), scroll left on a day range you have not browsed: you get the error banner ("The Kite session has expired. Sign in to Kite again." or "Historical provider failed. Try again.") and the chart does **not** jump to older cached days. Sign in again, scroll once more: the chart continues from where it stopped.
+
+## G. Browse on minute-level data (added 2026-11-11; Windows app)
+1. Mode **Browse**, a past day, NIFTY spot and an option of an expired expiry: the charts appear in seconds, with no long wait. Scroll left for older days: they load too.
+2. In Browse, **Max price** for a strike: the search answers without a long wait.
+2b. **A year back:** in a Browse spot tile at 3 minutes, scroll the chart to the left edge repeatedly: older pages load back to about a year (1-minute stops at 90 days; move the tile's date to look further back). Options tiles keep their few days.
+3. Switch to **Replay** (or Stepwise) on the same day and start it: it replays normally (replay still uses second-level data; nothing from Browse changes it).

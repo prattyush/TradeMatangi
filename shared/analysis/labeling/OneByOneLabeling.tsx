@@ -21,6 +21,8 @@ interface Props {
   active: boolean
   onGo: (to: number) => void
   onRetry: () => void
+  /** Replaces the save status line (Trade Walkthrough is read-only: no saving to talk about); null hides it. */
+  status?: ReactNode | null
 }
 
 const typing = (target: EventTarget | null) => {
@@ -29,7 +31,7 @@ const typing = (target: EventTarget | null) => {
 }
 
 /** Header, trade summary and save status of the one-round-trip-at-a-time view. The label fields are its children. */
-export default function OneByOneLabeling({ trips, index, sessionCount, labels, busy, readOnly, pnlMode, save, controls, children, active, onGo, onRetry }: Props) {
+export default function OneByOneLabeling({ trips, index, sessionCount, labels, busy, readOnly, pnlMode, save, controls, children, active, onGo, onRetry, status }: Props) {
   const total = trips.length
   const rt = trips[index]
 
@@ -81,13 +83,13 @@ export default function OneByOneLabeling({ trips, index, sessionCount, labels, b
         <strong>{legsText(rt.entry_trades, 'B')}</strong>{' → '}<strong>{legsText(rt.exit_trades, 'S') || 'open'}</strong>
       </div>
       <div className="tl-card">{children}</div>
-      <div className="tl-status" role="status">
-        {readOnly ? <span>Shared history · read only</span>
+      {status !== null && <div className="tl-status" role="status">
+        {status !== undefined ? status : readOnly ? <span>Shared history · read only</span>
           : save.error ? <><span className="bad" role="alert">{save.error}</span><button type="button" onClick={onRetry}>Retry save</button></>
           : save.saving ? <span>Saving…</span>
           : save.pending ? <span>Unsaved changes…</span>
           : save.savedCount ? <span className="ok">Saved ✓</span> : <span>Changes save automatically.</span>}
-      </div>
+      </div>}
       {/* Phones: Prev/Next live in a sticky bar at the bottom, within thumb reach. */}
       <div className="tl-bottom-nav">
         <button type="button" className="tl-nav-button" disabled={busy || index === 0} onClick={() => onGo(index - 1)} aria-label="Previous trade">◀ Prev</button>

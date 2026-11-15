@@ -1,4 +1,6 @@
 import { bindChartMenu, ChartMenuButton, useChartMenuGesture, type MenuPoint } from '../../../shared/charts/ChartMenuGesture'
+import { pnlMilestone } from '../../../shared/pnlMilestone'
+import type { PnlDisplaySettings } from '../hooks/useTradingDisplaySettings'
 import { snapSwingPrice, swingOrderTick } from '../../../shared/swingOrderPrice'
 import { flashError } from '../services/notifications'
 import { recordPerformance } from '../services/performanceDiagnostics'
@@ -22,6 +24,8 @@ import {
 } from 'lightweight-charts'
 import api, { OHLCCandle, TickEvent, BarCandle, Trade, Order, Position, StrategyResponse } from '../services/api'
 import { PositionPnlPrimitive } from '../indicators/positionPnlPrimitive'
+import { attachVolumeStudies, type VolumeStudies } from '../indicators/volumeStudies'
+import { VWAP_COLOR, type VolumeCandle } from '../indicators/vwap'
 import { positionPnlLevels, projectedTotalPnlPctAtTarget, pnlTargetLevels, parsePnlTargets } from '../indicators/positionPnlLevels'
 import { exitOrderLineLabel } from '../orderLineLabel'
 import { replayAsOfTime } from '../replayAsOf'
@@ -44,6 +48,8 @@ export interface ChartVisibleRange {
 export interface LightweightChartState {
   drawings?: SavedDrawing[]
   showEma?: boolean
+  showVwap?: boolean
+  showVolume?: boolean
   showPositionLevels?: boolean
   showPnlTargets?: boolean
   activeRatioIndicators?: RocComparisonKey[]
@@ -54,7 +60,9 @@ export interface Props {
   candleAnchorSeconds?:number
   defaultShowAllMarkers?:boolean
   externalTradeMarkers?: boolean
-  externalCandles?: { time: number; open: number; high: number; low: number; close: number }[]
+  externalCandles?: { time: number; open: number; high: number; low: number; close: number; volume?: number }[]
+  /** Browse: a control placed first in the pane toolbar (no row of its own). */
+  headerStart?: React.ReactNode
   externalLoading?: boolean
   externalMessage?: string
   externalLoadOlder?: (before: number) => Promise<unknown>
@@ -120,6 +128,8 @@ export interface Props {
   // Position for this pane — used to annotate stoploss label with projected P&L
   position?: Position
   pnlPctMode?: boolean
+  /** P&L display settings: Milestones mode shows the DAY level, and the bar label can be switched off. */
+  pnlDisplay?: PnlDisplaySettings
   /** Comma-separated target day-P&L values from Settings → Display. */
   pnlTargetLevels?: string
   sessionCapital?: number
@@ -197,6 +207,10 @@ function optionsCacheKey(symbol: string, tradingDate: string, strike: number, ex
 
 function toCandle(c: OHLCCandle): CandlestickData {
   return { time: c.time as Time, open: c.open, high: c.high, low: c.low, close: c.close }
+}
+
+function toVolumeCandle(c: OHLCCandle): VolumeCandle {
+  return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume }
 }
 
 function toIndicatorCandle(c: OHLCCandle | BarCandle): IndicatorCandle {
@@ -452,7 +466,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 
 export default function Chart({
   lightweightState,
-  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey,
+  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey, headerStart,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right, onReselectStrike,
@@ -483,6 +497,7 @@ export default function Chart({
   currentSimTime,
   position,
   pnlPctMode,
+  pnlDisplay,
   pnlTargetLevels: pnlTargetLevelsSetting,
   sessionCapital,
   brokeragePerOrder = 0,
@@ -503,7 +518,8 @@ export default function Chart({
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const liveWindowRef = useRef<{ start: number; open: number; high: number; low: number; close: number } | null>(null)
+  const liveWindowRef = useRef<{ start: number; open: number; high: number; low: number; close: number; volume?: number; tickedThrough?: number } | null>(null)
+  const volumeStudiesRef = useRef<VolumeStudies | null>(null)
   const recentLiveTicksRef = useRef(new RecentLiveTicks())
   const lastEma9Ref = useRef<number | null>(null)
   const lastEma21Ref = useRef<number | null>(null)
@@ -557,15 +573,19 @@ export default function Chart({
 
   const readSwingIndicators = () => {try{return drawingStorageKey?JSON.parse(localStorage.getItem(`${drawingStorageKey}:indicators`)??'{}'):{}}catch{return {}}}
   const [showEma, setShowEma] = useState<boolean>(()=>lightweightState?.current.showEma??readSwingIndicators().showEma??true)
+  const [showVwap, setShowVwap] = useState<boolean>(()=>lightweightState?.current.showVwap??readSwingIndicators().showVwap??false)
+  const [showVolume, setShowVolume] = useState<boolean>(()=>lightweightState?.current.showVolume??readSwingIndicators().showVolume??false)
+  // Volume and VWAP are offered only when the data has volume; indices report none.
+  const [volumeAvailable, setVolumeAvailable] = useState(false)
   const [activeRatioIndicators, setActiveRatioIndicators] = useState<RocComparisonKey[]>(()=>lightweightState?.current.activeRatioIndicators??[])
   const [expandedRatioIndicator, setExpandedRatioIndicator] = useState<RocComparisonKey | null>(()=>lightweightState?.current.expandedRatioIndicator??null)
   const [indicatorDropdownOpen, setIndicatorDropdownOpen] = useState(false)
   const [showPositionLevels, setShowPositionLevels] = useState<boolean>(()=>lightweightState?.current.showPositionLevels??readSwingIndicators().showPositionLevels??false)
   const [showPnlTargets, setShowPnlTargets] = useState<boolean>(()=>lightweightState?.current.showPnlTargets??readSwingIndicators().showPnlTargets??false)
-  useEffect(()=>{if(drawingStorageKey)try{localStorage.setItem(`${drawingStorageKey}:indicators`,JSON.stringify({showEma,showPositionLevels,showPnlTargets}))}catch{/* Storage can be disabled. */}},[drawingStorageKey,showEma,showPositionLevels,showPnlTargets])
+  useEffect(()=>{if(drawingStorageKey)try{localStorage.setItem(`${drawingStorageKey}:indicators`,JSON.stringify({showEma,showVwap,showVolume,showPositionLevels,showPnlTargets}))}catch{/* Storage can be disabled. */}},[drawingStorageKey,showEma,showVwap,showVolume,showPositionLevels,showPnlTargets])
   useEffect(()=>{
-    if(lightweightState)Object.assign(lightweightState.current,{showEma,showPositionLevels,showPnlTargets,activeRatioIndicators,expandedRatioIndicator})
-  },[lightweightState,showEma,showPositionLevels,showPnlTargets,activeRatioIndicators,expandedRatioIndicator])
+    if(lightweightState)Object.assign(lightweightState.current,{showEma,showVwap,showVolume,showPositionLevels,showPnlTargets,activeRatioIndicators,expandedRatioIndicator})
+  },[lightweightState,showEma,showVwap,showVolume,showPositionLevels,showPnlTargets,activeRatioIndicators,expandedRatioIndicator])
   const [chartVisibleRange, setChartVisibleRange] = useState<{ from: Time; to: Time } | null>(null)
   const [drawMode, setDrawMode] = useState<DrawMode>('none')
   const [drawStep, setDrawStep] = useState(0)
@@ -714,6 +734,7 @@ export default function Chart({
     pnlTargetPrimitiveRef.current = pnlTargetPrimitive
     ema9Ref.current = e9
     ema21Ref.current = e21
+    volumeStudiesRef.current = attachVolumeStudies(chart, { vwap: showVwap, volume: showVolume, onAvailableChange: setVolumeAvailable })
 
     chart.subscribeClick((param: MouseEventParams) => {
       if (!param.point || !seriesRef.current || Date.now() < swingClickUntil.current) return
@@ -994,6 +1015,10 @@ export default function Chart({
     ema21Ref.current?.applyOptions({ visible: showEma })
   }, [showEma])
 
+  useEffect(() => {
+    volumeStudiesRef.current?.setVisible({ vwap: showVwap, volume: showVolume })
+  }, [showVwap, showVolume])
+
   // ── Historical + pre-session — equity only ───────────────────────────────────
   useEffect(() => {
     if ((!drawingStorageKey && !lightweightState?.current.drawings) || !chartRef.current || !seriesRef.current) return
@@ -1072,6 +1097,7 @@ export default function Chart({
         if (allCandles.length === 0) return
 
         series.setData(allCandles.map(toCandle))
+        volumeStudiesRef.current?.setData(allCandles.map(toVolumeCandle))
         chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, allCandles.length - 150), to: allCandles.length - 1 })
         restoreInitialVisibleRange()
         candleTimesRef.current = allCandles.map(c => c.time)
@@ -1084,7 +1110,7 @@ export default function Chart({
           const iSecs = intervalMinutes * 60
           const last = allCandles[allCandles.length - 1]
           if (last.time === Math.floor(liveTs / iSecs) * iSecs) {
-            liveWindowRef.current = { start: last.time, open: last.open, high: last.high, low: last.low, close: last.close }
+            liveWindowRef.current = { start: last.time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume }
           }
         }
         const completedIntervalSecs = intervalMinutes * 60
@@ -1168,6 +1194,7 @@ export default function Chart({
         const priorCandles = patchedCandles.filter(c => c.time < cutoffTs)
 
         series.setData(priorCandles.map(toCandle))
+        volumeStudiesRef.current?.setData(priorCandles.map(toVolumeCandle))
         publishIndicatorCandles(priorCandles.map(toIndicatorCandle))
         candleTimesRef.current = priorCandles.map(c => c.time)
 
@@ -1181,7 +1208,7 @@ export default function Chart({
         if (liveTsForRestore != null) {
           const partialCandle = patchedCandles.find(c => c.time === cutoffTs)
           if (partialCandle) {
-            liveWindowRef.current = { start: partialCandle.time, open: partialCandle.open, high: partialCandle.high, low: partialCandle.low, close: partialCandle.close }
+            liveWindowRef.current = { start: partialCandle.time, open: partialCandle.open, high: partialCandle.high, low: partialCandle.low, close: partialCandle.close, volume: partialCandle.volume }
           }
         }
 
@@ -1223,6 +1250,7 @@ export default function Chart({
     externalFirstRef.current = externalCandles[0]?.time
     externalDatasetRef.current = key
     seriesRef.current.setData(externalCandles.map(row => ({...row,time:row.time as Time})))
+    volumeStudiesRef.current?.setData(externalCandles)
     candleTimesRef.current = externalCandles.map(row => row.time)
     const calculate = (period: number) => {let ema: number | null=null;const k=2/(period+1);return externalCandles.map(row=>{ema=ema===null?row.close:ema+(row.close-ema)*k;return{time:row.time as Time,value:ema}})}
     ema9Ref.current?.setData(calculate(9));ema21Ref.current?.setData(calculate(21))
@@ -1283,15 +1311,23 @@ export default function Chart({
         liveWindowRef.current = {
           start: windowStart,
           open: latestTick.open, high: latestTick.high, low: latestTick.low, close: latestTick.close,
+          volume: latestTick.volume,
+          tickedThrough: latestTick.volume !== undefined ? latestTick.time : undefined,
         }
       } else {
         live.high = Math.max(live.high, latestTick.high)
         live.low = Math.min(live.low, latestTick.low)
         live.close = latestTick.close
+        // Same rule as the KLine merge: tick volume is summed only into a bar the stream started, and a re-delivered tick adds nothing.
+        if (latestTick.volume !== undefined && live.tickedThrough !== undefined && latestTick.time > live.tickedThrough) {
+          live.volume = (live.volume ?? 0) + latestTick.volume
+          live.tickedThrough = latestTick.time
+        }
       }
 
       const current = liveWindowRef.current!
       series.update({ time: current.start as Time, open: current.open, high: current.high, low: current.low, close: current.close })
+      volumeStudiesRef.current?.update({ time: current.start, open: current.open, high: current.high, low: current.low, close: current.close, volume: current.volume })
     } catch (err) {
       // Chart may be disposed or have out-of-order timestamps; skip this tick
       console.warn('Chart update skipped:', err)
@@ -1325,13 +1361,18 @@ export default function Chart({
         low: completedBar.low,
         close: completedBar.close,
       })
+      // bar_paused carries no volume, so keep what the bar has gathered from its ticks.
+      const gathered = liveWindowRef.current?.start === completedBar.time ? liveWindowRef.current : null
       liveWindowRef.current = {
         start: completedBar.time,
         open: completedBar.open,
         high: completedBar.high,
         low: completedBar.low,
         close: completedBar.close,
+        volume: gathered?.volume,
+        tickedThrough: gathered?.tickedThrough,
       }
+      volumeStudiesRef.current?.update({ time: completedBar.time, open: completedBar.open, high: completedBar.high, low: completedBar.low, close: completedBar.close, volume: gathered?.volume })
       upsertCompletedIndicatorCandle(toIndicatorCandle(completedBar))
     } catch (err) {
       console.warn('Completed bar update skipped:', err)
@@ -1410,7 +1451,9 @@ export default function Chart({
       const price = orderDisplayPrice(order)
       let label = (order.side === 'BUY' ? 'B' : 'S') + (order.order_type === 'LIMIT' ? 'L' : 'T')
 
-      if (isExitOrderForPosition(order, position)) {
+      if (isExitOrderForPosition(order, position) && pnlDisplay?.mode === 'milestones') {
+        label = `${orderLineTypeLabel(order)} ${order.quantity}`
+      } else if (isExitOrderForPosition(order, position)) {
         label = exitOrderLineLabel(orderLineTypeLabel(order), price, order.quantity, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close ?? liveWindowRef.current?.close, brokeragePerOrder)
       }
 
@@ -1428,7 +1471,7 @@ export default function Chart({
         }
       } catch { /* disposed */ }
     }
-  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, sessionCapital, aggregatePnl, latestTick?.close, brokeragePerOrder])
+  }, [openOrders, paneType, right, strike, expiry, position, pnlPctMode, pnlDisplay?.mode, sessionCapital, aggregatePnl, latestTick?.close, brokeragePerOrder])
 
   // Running profit strategies use their own lines, separate from pending orders.
   useEffect(() => {
@@ -1561,8 +1604,14 @@ export default function Chart({
   const [pnlCoord, setPnlCoord] = useState<{ x: number; y: number } | null>(null)
 
   const hasPosition = position && position.side !== 'FLAT'
-  const pnlColor = pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
+  const milestoneMode = pnlDisplay?.mode === 'milestones'
+  const dayMilestone = milestoneMode ? pnlMilestone(aggregatePnl ?? 0, sessionCapital ?? 0, pnlDisplay.maxLossPct, pnlDisplay.maxWinPct) : null
+  const pnlColor = dayMilestone
+    ? (dayMilestone.tone === 'win' ? '#26a641' : dayMilestone.tone === 'loss' ? '#f85149' : '#8b949e')
+    : pnl > 0 ? '#26a641' : pnl < 0 ? '#f85149' : '#8b949e'
+  const showBarPnl = pnlDisplay?.showBarLabel !== false
   const fmtPnlValue = () => {
+    if (dayMilestone) return pnlAvailable && aggregatePnl !== undefined ? dayMilestone.text : '—'
     if (!pnlAvailable) return '—'
     if (pnlPctMode && sessionCapital && sessionCapital > 0) {
       const pct = (pnl / sessionCapital) * 100
@@ -1647,7 +1696,7 @@ export default function Chart({
     setActiveRatioIndicators(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key])
     if (expandedRatioIndicator === key) setExpandedRatioIndicator(null)
   }
-  const indicatorButtonActive = showEma || activeRatioIndicators.length > 0 || showPositionLevels || showPnlTargets
+  const indicatorButtonActive = showEma || activeRatioIndicators.length > 0 || showPositionLevels || showPnlTargets || (volumeAvailable && (showVwap || showVolume))
 
   const positionLevels = useMemo(() => showPositionLevels && positionLevelsMatch
     ? positionPnlLevels(position, sessionCapital ?? 0, brokeragePerOrder)
@@ -1668,7 +1717,7 @@ export default function Chart({
   }, [positionLevels, positionAnchorTime, latestTick?.time, currentSimTime, intervalSecs])
   // Day-total target lines: drawn by a second primitive, which (like the position levels) never feeds autoscale.
   const targetMarkPrice = latestTick?.close ?? liveWindowRef.current?.close
-  const pnlTargetValues = useMemo(() => showPnlTargets ? parsePnlTargets(pnlTargetLevelsSetting) : [], [showPnlTargets, pnlTargetLevelsSetting])
+  const pnlTargetValues = useMemo(() => showPnlTargets && pnlDisplay?.mode !== 'milestones' ? parsePnlTargets(pnlTargetLevelsSetting) : [], [showPnlTargets, pnlTargetLevelsSetting, pnlDisplay?.mode])
   const targetPnlLevels = useMemo(() => pnlTargetValues.length && positionLevelsMatch && aggregatePnl !== undefined && targetMarkPrice !== undefined && pnlAvailable !== false
     ? pnlTargetLevels(position, targetMarkPrice, aggregatePnl, sessionCapital ?? 0, brokeragePerOrder, pnlTargetValues, pnlPctMode ? 'percent' : 'currency')
     : [], [pnlTargetValues, positionLevelsMatch, aggregatePnl, targetMarkPrice, pnlAvailable, position?.side, position?.quantity, position?.avg_entry_price, position?.entry_commission, sessionCapital, brokeragePerOrder, pnlPctMode])
@@ -1691,12 +1740,13 @@ export default function Chart({
       }}
     >
       {/* Pane toolbar — paddingRight leaves room for the absolute-positioned ✕ remove button */}
-      <div style={{
+      <div data-chart-toolbar style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px',
         paddingRight: 36,
         background: '#161b22', borderBottom: '1px solid #21262d', flexWrap: 'wrap',
       }}>
         <ChartMenuButton chart={containerRef} visible={Boolean(onContextMenu)} />
+        {headerStart}
         <span style={{ fontSize: 11, color: isActive ? '#58a6ff' : '#79c0ff', marginRight: 4 }}>
           {paneLabel}
         </span>
@@ -1731,6 +1781,18 @@ export default function Chart({
                 />
                 <span>EMA 9/21</span>
               </label>
+              {volumeAvailable && (
+                <>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: showVwap ? VWAP_COLOR : '#e6edf3' }}>
+                    <input type="checkbox" checked={showVwap} onChange={() => setShowVwap(value => !value)} />
+                    <span>VWAP</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: showVolume ? '#26a69a' : '#e6edf3' }}>
+                    <input type="checkbox" checked={showVolume} onChange={() => setShowVolume(value => !value)} />
+                    <span>Volume</span>
+                  </label>
+                </>
+              )}
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: showPositionLevels ? '#f0883e' : '#e6edf3' }}>
                 <input type="checkbox" checked={showPositionLevels} onChange={() => setShowPositionLevels(value => !value)} />
                 <span>Position P&amp;L levels</span>
@@ -1977,7 +2039,7 @@ export default function Chart({
         </div>
       )}
 
-      {hasPosition && pnlCoord && (
+      {hasPosition && pnlCoord && showBarPnl && (
         <div style={{
           position: 'absolute',
           left: pnlCoord.x,

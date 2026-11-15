@@ -40,10 +40,15 @@ export function tradesForRoundTrip(rt: LabeledRoundTrip, trades: AnalysisTrade[]
   return trades.filter(trade => trade.session_id === rt.session_id && identities(trade).some(id => ids.has(id)))
 }
 
-/** Chart marker text: the round trips an execution belongs to, e.g. "#3 BUY" or "#2/#3 SELL" (a reversal). */
-export function roundTripMarkerText(roundTrips: LabeledRoundTrip[], trade: AnalysisTrade): string {
+/**
+ * Chart marker text: the round trips an execution belongs to, e.g. "#3 BUY" or "#2/#3 SELL" (a reversal). On an option
+ * chart (`withSide` false) the marker colour already says buy or sell, so only the numbers are kept: "#3", "#2/#3".
+ */
+export function roundTripMarkerText(roundTrips: LabeledRoundTrip[], trade: AnalysisTrade, withSide = true): string {
   const trips = roundTrips.filter(rt => rt.session_id === trade.session_id && tradesForRoundTrip(rt, [trade]).length > 0)
-  return trips.length ? `${trips.map(rt => `#${rt.index}`).join('/')} ${trade.side}` : trade.side
+  const numbers = trips.map(rt => `#${rt.index}`).join('/')
+  if (!withSide) return numbers
+  return trips.length ? `${numbers} ${trade.side}` : trade.side
 }
 
 /** "EQ", "CE 24500" … from the round trip's own legs. */
@@ -57,6 +62,22 @@ export function contractName(rt: Pick<RoundTrip, 'right' | 'entry_trades' | 'exi
 export function orderRoundTrips(trips: LabeledRoundTrip[], sessionOrder: string[]): LabeledRoundTrip[] {
   const rank = new Map(sessionOrder.map((id, position) => [id, position]))
   return [...trips].sort((a, b) => (rank.get(a.session_id) ?? 0) - (rank.get(b.session_id) ?? 0) || a.index - b.index)
+}
+
+/** When a round trip was first entered: its earliest entry fill (or, with none, its earliest exit). */
+export function firstEntryTime(trip: Pick<LabeledRoundTrip, 'entry_trades' | 'exit_trades'>): number {
+  const legs = trip.entry_trades.length ? trip.entry_trades : trip.exit_trades
+  const times = legs.map(leg => leg.timestamp).filter(Number.isFinite)
+  return times.length ? Math.min(...times) : Number.POSITIVE_INFINITY
+}
+
+/**
+ * Time order for walking through trades: by first entry, so overlapping trades come one after the other in the order they
+ * were opened (the round trip number only breaks a tie). Label Trades keeps `orderRoundTrips` (its numbering).
+ */
+export function orderRoundTripsByEntry(trips: LabeledRoundTrip[], sessionOrder: string[]): LabeledRoundTrip[] {
+  const rank = new Map(sessionOrder.map((id, position) => [id, position]))
+  return [...trips].sort((a, b) => firstEntryTime(a) - firstEntryTime(b) || (rank.get(a.session_id) ?? 0) - (rank.get(b.session_id) ?? 0) || a.index - b.index)
 }
 
 /** Candle clock time (the backend stores IST wall-clock values as UTC epoch seconds). */

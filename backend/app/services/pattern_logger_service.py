@@ -322,6 +322,7 @@ def _chart_to_meta_filtered(
         "instrument_type": item.get("instrument_type"),
         "right": item.get("right"),
         "strike": item.get("strike"),
+        "strike_pe": item.get("strike_pe"),
         "notes": item.get("notes", ""),
         "created_at": item.get("created_at"),
         "updated_at": item.get("updated_at"),
@@ -372,6 +373,7 @@ def create_chart(
     top_patterns: Optional[dict] = None,
     risk_reward_ratios: Optional[dict] = None,
     interval_minutes: int = 3,
+    strike_pe: Optional[int] = None,
 ) -> dict:
     chart_id = str(uuid.uuid4())
     now = _now_iso()
@@ -391,6 +393,9 @@ def create_chart(
         item["right"] = right
     if strike is not None:
         item["strike"] = strike
+    if strike_pe is not None:
+        # CE and PE strikes differ under Max Price. Older charts have none: readers fall back to ``strike``.
+        item["strike_pe"] = strike_pe
     if top_patterns:
         item["top_patterns"] = json.dumps(top_patterns)
     if risk_reward_ratios:
@@ -411,7 +416,7 @@ def _parse_top_patterns(item: dict) -> dict:
     return tp or {}
 
 
-def update_chart(chart_id: str, annotations: list[dict], notes: str, top_patterns: Optional[dict] = None, risk_reward_ratios: Optional[dict] = None, interval_minutes: Optional[int] = None) -> Optional[dict]:
+def update_chart(chart_id: str, annotations: list[dict], notes: str, top_patterns: Optional[dict] = None, risk_reward_ratios: Optional[dict] = None, interval_minutes: Optional[int] = None, strike: Optional[int] = None, strike_pe: Optional[int] = None) -> Optional[dict]:
     now = _now_iso()
     try:
         expr_parts = ["annotations = :a", "notes = :n", "updated_at = :u"]
@@ -429,6 +434,12 @@ def update_chart(chart_id: str, annotations: list[dict], notes: str, top_pattern
         if interval_minutes is not None:
             expr_parts.append("interval_minutes = :im")
             attr_values[":im"] = interval_minutes
+        if strike is not None:
+            expr_parts.append("strike = :st")
+            attr_values[":st"] = strike
+        if strike_pe is not None:
+            expr_parts.append("strike_pe = :stp")
+            attr_values[":stp"] = strike_pe
         resp = _table().update_item(
             Key={"chart_id": chart_id},
             UpdateExpression="SET " + ", ".join(expr_parts),

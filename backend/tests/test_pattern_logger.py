@@ -143,6 +143,10 @@ def _mock_table(items: list[dict] | None = None):
         })
         if ":tp" in ExpressionAttributeValues:
             item["top_patterns"] = ExpressionAttributeValues[":tp"]
+        if ":st" in ExpressionAttributeValues:
+            item["strike"] = ExpressionAttributeValues[":st"]
+        if ":stp" in ExpressionAttributeValues:
+            item["strike_pe"] = ExpressionAttributeValues[":stp"]
         _store[Key["chart_id"]] = item
         return {"Attributes": dict(item)}  # DynamoDB returns a copy; callers mutate it
 
@@ -207,6 +211,31 @@ class TestPatternLoggerService:
         assert updated is not None
         assert len(updated["annotations"]) == 1
         assert updated["annotations"][0]["strategy_name"] == "EMA Reversal"
+
+    def test_ce_and_pe_strikes_are_saved_and_read_back(self, mock_dynamo):
+        # Max Price gives CE and PE different strikes; `strike` stays the CE strike.
+        chart = svc.create_chart(USER, "NIFTY", "2026-05-06", "options", [], right="CE", strike=24600, strike_pe=24400)
+        assert chart["strike"] == 24600 and chart["strike_pe"] == 24400
+        fetched = svc.find_chart_by_date(USER, "NIFTY", "2026-05-06", "options")
+        assert fetched["strike"] == 24600 and fetched["strike_pe"] == 24400
+
+    def test_a_chart_saved_before_strike_pe_has_none(self, mock_dynamo):
+        chart = svc.create_chart(USER, "NIFTY", "2026-05-06", "options", [], right="CE", strike=24500)
+        assert "strike_pe" not in svc.get_chart(chart["chart_id"])
+
+    def test_the_chart_list_carries_both_strikes(self, mock_dynamo):
+        svc.create_chart(USER, "NIFTY", "2026-05-06", "options", [], right="CE", strike=24500)
+        svc.create_chart(USER, "NIFTY", "2026-05-07", "options", [], right="CE", strike=24600, strike_pe=24400)
+        listed = {row["date"]: row for row in svc.list_charts_for_user(USER)}
+        assert listed["2026-05-06"]["strike_pe"] is None and listed["2026-05-06"]["strike"] == 24500
+        assert listed["2026-05-07"]["strike_pe"] == 24400
+
+    def test_update_chart_can_change_the_strikes_and_leaves_them_alone_otherwise(self, mock_dynamo):
+        chart = svc.create_chart(USER, "NIFTY", "2026-05-06", "options", [], right="CE", strike=24500)
+        same = svc.update_chart(chart["chart_id"], [], "n")
+        assert same["strike"] == 24500 and "strike_pe" not in same
+        moved = svc.update_chart(chart["chart_id"], [], "n", strike=24600, strike_pe=24400)
+        assert moved["strike"] == 24600 and moved["strike_pe"] == 24400
 
     def test_delete_chart_removes_item(self, mock_dynamo):
         chart = svc.create_chart(USER, "NIFTY", "2026-05-06", "equity", [])
@@ -505,6 +534,22 @@ class TestPatternNameAPI:
             assert (await client.get("/api/pattern/strategies")).json() == {"strategies": ["Added Later"]}
             assert (await client.get("/api/pattern/categories")).json() == {"categories": ["Added Cat"]}
 
+    async def test_ce_and_pe_strikes_round_trip_through_the_routes(self, mock_dynamo):
+        body = {"symbol": "NIFTY", "date": "2026-05-06", "instrument_type": "options", "right": "CE",
+                "strike": 24600, "strike_pe": 24400, "annotations": [_sample_annotation()]}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post("/api/pattern/chart", json=body)
+            assert created.status_code == 200
+            assert (created.json()["strike"], created.json()["strike_pe"]) == (24600, 24400)
+            updated = await client.put(f"/api/pattern/chart/{created.json()['chart_id']}", json={
+                "annotations": [_sample_annotation()], "strike": 24700, "strike_pe": 24300})
+            assert updated.status_code == 200
+            assert (updated.json()["strike"], updated.json()["strike_pe"]) == (24700, 24300)
+            found = await client.get("/api/pattern/chart/by-date", params={
+                "symbol": "NIFTY", "date": "2026-05-06", "instrument_type": "options"})
+            assert found.status_code == 200
+            assert (found.json()["strike"], found.json()["strike_pe"]) == (24700, 24300)
+
     async def test_saving_chart_registers_names(self, mock_dynamo):
         body = {"symbol": "NIFTY", "date": "2026-05-06", "instrument_type": "equity",
                 "annotations": [_sample_annotation("Fresh Strat", category="Fresh Cat")]}
@@ -516,20 +561,20 @@ class TestPatternNameAPI:
 
 @pytest.mark.asyncio
 class TestPatternLoggerOHLC:
-    async def test_ohlc_equity_success(self, tmp_path):
+    async def test_ohlc_equity_success(self):
+        # Minute data (not Breeze seconds): see tests/test_minute_ohlc.py for the full route coverage.
+        from pathlib import Path
+        from app.services.historical_data_service import HistoricalResult
+
         n = 60
-        start = pd.Timestamp("2026-05-06 09:15:00")
-        idx = pd.date_range(start, periods=n, freq="s")
-        df = pd.DataFrame({
+        idx = pd.date_range(pd.Timestamp("2026-05-06 09:15:00", tz="UTC"), periods=n, freq="1min")
+        frame = pd.DataFrame({
             "open": [24200.0] * n, "high": [24210.0] * n,
             "low": [24190.0] * n, "close": [24205.0] * n,
         }, index=idx)
-        pkl = tmp_path / "NIFTY-06-05-2026.pickle"
-        df.to_pickle(pkl)
+        result = HistoricalResult(frame, Path("unused.parquet"), "minute", "kite", 60)
 
-        with patch("app.services.data_loader.DATA_DIR", tmp_path), \
-             patch("app.services.data_loader.OHLCDATA_DIR", tmp_path / "ohlcdata"), \
-             patch("app.services.broker_service.fetch_historical", return_value=None):
+        with patch("app.services.minute_history.load", return_value=result):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.get("/api/pattern/ohlc/equity", params={
                     "symbol": "NIFTY",
@@ -543,9 +588,7 @@ class TestPatternLoggerOHLC:
         assert "time" in data["candles"][0]
 
     async def test_ohlc_equity_missing_data(self):
-        # The route checks downloads before local reads; keep this test offline.
-        with patch("app.services.broker_service.fetch_historical", return_value=None), \
-             patch("app.services.data_loader.load_dataframe", side_effect=FileNotFoundError):
+        with patch("app.services.minute_history.load", side_effect=FileNotFoundError):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.get("/api/pattern/ohlc/equity", params={
                     "symbol": "NIFTY",

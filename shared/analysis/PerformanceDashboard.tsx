@@ -22,7 +22,8 @@ import "./performance.css";
 interface Props {
   defaultTradingStyle?: string;
   defaultPortfolioId?: string;
-  selectedCycle?: PerformanceCycle;
+  /** A cycle to open on mount; an identity alone is enough (its details are fetched). */
+  selectedCycle?: PerformanceCycle | CycleIdentity;
   onChargesChanged?: () => void;
   onClose: () => void;
   defaultSymbol: string;
@@ -842,6 +843,7 @@ export default function PerformanceDashboard(props: Props) {
           Refresh
         </button>
         <button
+          className="pa-export"
           disabled={!cycles.length || exporting}
           onClick={() => void exportCsv()}
         >

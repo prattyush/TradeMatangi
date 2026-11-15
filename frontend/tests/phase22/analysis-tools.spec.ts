@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
-const open = async (page: Page, mode: "kline" | "lightweight") => {
-  await page.goto(`/tests/phase22/analysis-tools.html?mode=${mode}`, { waitUntil: "domcontentloaded" });
+const open = async (page: Page, mode: "kline" | "lightweight", volume = false) => {
+  await page.goto(`/tests/phase22/analysis-tools.html?mode=${mode}${volume ? "&volume=1" : ""}`, { waitUntil: "domcontentloaded" });
 };
 const chartPoint = async (page: Page, selector: string, dx = 0, dy = 0) => {
   const box = (await page.locator(selector).first().boundingBox())!;
@@ -167,4 +167,38 @@ test("KLine Analysis panels: tools on both panes, per-contract drawings, maximiz
   await expect(page.locator(".kline-tools-rail:visible")).toHaveAttribute("data-drawing-count", "1");
   await page.keyboard.press("Escape");
   await expect(page.locator(".analysis-panels")).not.toHaveClass(/chart-maximized/);
+});
+
+test("Lightweight Analysis: VWAP and Volume are offered only when the candles have volume, and the choice persists", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  // An index (no volume): the menu has EMA only.
+  await open(page, "lightweight");
+  await page.waitForSelector("canvas");
+  await page.getByRole("button", { name: "Indicators ▾" }).click();
+  await expect(page.getByLabel("EMA 9/21")).toBeVisible();
+  await expect(page.getByLabel("VWAP", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Volume", { exact: true })).toHaveCount(0);
+
+  // A stock or option (volume): both are offered, off by default, and the choice is stored per account.
+  await open(page, "lightweight", true);
+  await page.waitForSelector("canvas");
+  await page.getByRole("button", { name: "Indicators ▾" }).click();
+  await expect(page.getByLabel("VWAP", { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel("Volume", { exact: true })).not.toBeChecked();
+  await page.getByLabel("VWAP", { exact: true }).check();
+  await page.getByLabel("Volume", { exact: true }).check();
+  expect(await page.evaluate(() => localStorage.getItem("analysis-lw-vwap::owner"))).toBe("1");
+  expect(await page.evaluate(() => localStorage.getItem("analysis-lw-volume::owner"))).toBe("1");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("canvas");
+  await page.getByRole("button", { name: "Indicators ▾" }).click();
+  await expect(page.getByLabel("VWAP", { exact: true })).toBeChecked();
+  await expect(page.getByLabel("Volume", { exact: true })).toBeChecked();
+  // Maximize recreates the chart; the series must come back without errors.
+  await page.getByTitle("Maximize").click();
+  await page.getByRole("button", { name: "Indicators ▾" }).click();
+  await expect(page.getByLabel("VWAP", { exact: true })).toBeChecked();
+  expect(errors).toEqual([]);
 });

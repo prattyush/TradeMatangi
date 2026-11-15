@@ -520,6 +520,29 @@ test('KLine respects authoritative and unavailable website P&L', async ({page}) 
   await expect(page.locator('.position-pnl-label')).toHaveText('-5.00%');
 });
 
+test('KLine bar P&L shows the day milestone and can be hidden', async ({page}) => {
+  await page.goto('/tests/phase22/harness.html');
+  await page.waitForSelector('.website-kline canvas');
+  await page.waitForFunction(() => (window as any).chart().getDataList().length > 0);
+  const milestones = (aggregatePnl:number) => (window as any).setProps({pnl:999,pnlAvailable:true,sessionCapital:100000,aggregatePnl,pnlDisplay:{mode:'milestones',maxWinPct:9,maxLossPct:6,showBarLabel:true}});
+  await page.evaluate(milestones, 2000);
+  await expect(page.locator('.position-pnl-label')).toHaveText('—');
+  await page.evaluate(milestones, 3000);
+  await expect(page.locator('.position-pnl-label')).toHaveText('Win 1/3');
+  await page.evaluate(milestones, 6500);
+  await expect(page.locator('.position-pnl-label')).toHaveText('Win 2/3');
+  await page.evaluate(milestones, -4000);
+  await expect(page.locator('.position-pnl-label')).toHaveText('Loss 2/3');
+  await page.evaluate(milestones, -9000);
+  await expect(page.locator('.position-pnl-label')).toHaveText('Max loss');
+  await page.evaluate(() => (window as any).setProps({pnlDisplay:{mode:'milestones',maxWinPct:9,maxLossPct:6,showBarLabel:false}}));
+  await expect(page.locator('.position-pnl-label')).toHaveCount(0);
+  await page.evaluate(() => (window as any).setProps({pnlDisplay:{mode:'currency',maxWinPct:9,maxLossPct:6,showBarLabel:false}}));
+  await expect(page.locator('.position-pnl-label')).toHaveCount(0);
+  await page.evaluate(() => (window as any).setProps({pnl:123.45,pnlDisplay:{mode:'currency',maxWinPct:9,maxLossPct:6,showBarLabel:true}}));
+  await expect(page.locator('.position-pnl-label')).toHaveText('+123.45');
+});
+
 test('inactive-pane tools activate their own chart before drawing', async ({page}) => {
   await page.goto('/tests/phase22/harness.html');
   await page.waitForSelector('.website-kline canvas');
@@ -724,6 +747,28 @@ for(const right of ['CE','PE'])test(`production ${right} right-click menu and ti
   expect(await page.evaluate(()=>(window as any).submittedTicket)).toMatchObject({ticket:{sessionId:'session',paneId:1,right,strike:24000,expiry:'2026-10-20',orderType:'LIMIT'},quantity:1});
 });
 
+test('production ticket switches between Qty, Capital % and Risk % for one order',async({page})=>{
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({menuHarness:true,paneType:'options',right:'CE',strike:24000,expiry:'2026-10-20',openOrders:[]}));
+  await page.waitForSelector('.website-kline canvas');
+  const open=async()=>{const rect=await page.locator('.kline').boundingBox();await page.mouse.click(rect!.x+250,rect!.y+150,{button:'right'});await page.getByText(/^Use as SL @/).click()};
+  await open();
+  const ticket=page.getByRole('dialog',{name:'Chart entry ticket'});
+  await expect(ticket.getByRole('button',{name:'Use fixed quantity for this order'})).toHaveAttribute('aria-pressed','true');
+  await ticket.getByRole('button',{name:'Use Risk % for this order'}).click();
+  await expect(ticket.getByRole('button',{name:'Risk 2%',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Limit',exact:true}).click();
+  await ticket.getByRole('button',{name:'Risk 2%',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).submittedTicket)).toMatchObject({quantity:null,riskRatioPct:2});
+  await open();
+  await ticket.getByRole('button',{name:'Use Capital % for this order'}).click();
+  await expect(ticket.getByRole('button',{name:'Capital 12%',exact:true})).toBeVisible();
+  await ticket.getByRole('button',{name:'Use fixed quantity for this order'}).click();
+  await page.getByRole('button',{name:'Limit',exact:true}).click();
+  await ticket.getByRole('button',{name:'Qty 5',exact:true}).click();
+  expect(await page.evaluate(()=>(window as any).submittedTicket)).toMatchObject({quantity:5});
+});
+
 test('website appearance settings apply two moving averages and hide symbol/OHLC without trading writes', async ({ page }) => {
   await page.goto('/tests/phase22/harness.html');
   await page.waitForSelector('.website-kline canvas');
@@ -762,3 +807,39 @@ test('website replay countdown follows market time and live countdown ticks', as
   await page.evaluate(() => (window as any).setProps({intervalMinutes:1440}));
   await expect(timer).toHaveCount(0);
 });
+
+test("Lightweight trading chart: VWAP and Volume are offered only with volume, and survive a renderer switch", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  // An index has no volume: the menu has no VWAP or Volume.
+  await page.goto("/tests/phase22/harness.html");
+  await page.waitForSelector(".website-kline canvas");
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await expect(page.getByLabel("EMA 9/21", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("VWAP", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Volume", { exact: true })).toHaveCount(0);
+
+  // With volume both are offered, off by default; the choice returns after switching renderers.
+  await page.goto("/tests/phase22/harness.html?volume=1");
+  await page.waitForSelector(".website-kline canvas");
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await expect(page.getByLabel("VWAP", { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel("Volume", { exact: true })).not.toBeChecked();
+  await page.getByLabel("VWAP", { exact: true }).check();
+  await page.getByLabel("Volume", { exact: true }).check();
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await page.evaluate(() => (window as any).switchRenderer("kline"));
+  await page.waitForSelector(".website-kline canvas");
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
+  await page.getByTitle("Indicators", { exact: true }).click();
+  await expect(page.getByLabel("VWAP", { exact: true })).toBeChecked();
+  await expect(page.getByLabel("Volume", { exact: true })).toBeChecked();
+  expect(errors).toEqual([]);
+});
+
