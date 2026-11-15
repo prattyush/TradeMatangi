@@ -54,8 +54,8 @@ export function simulateBlock<Trial, R>(
       rt = timing.windowMs
     } else if (response === 'timeout' || rt > timing.windowMs) { response = 'timeout'; rt = timing.windowMs }
     elapsed += rt
-    block.answer(response, rt, elapsed)
-    elapsed += timing.gapMs
+    const entry = block.answer(response, rt, elapsed)
+    elapsed += engine.gapAfter?.(entry.trial, entry.outcome) ?? timing.gapMs
   }
   return definition.summarise(block.log, level)
 }

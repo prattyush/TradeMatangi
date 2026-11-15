@@ -41,6 +41,8 @@ export interface TrialBlockApi<Trial, R, I = R> {
   /** False once a timed stimulus has vanished while its response window is still open. */
   visible: boolean
   banner: string | null
+  /** The trial that was just judged (feedback on the pause after it), until the next one starts. */
+  last: TrialLogEntry<Trial, R> | null
   /** Report a response. `timeStamp` must be the input event's own `timeStamp`. */
   respond: (input: I, timeStamp: number) => void
   /** Block clock in ms (paused while away); for the time bar. */
@@ -54,6 +56,7 @@ export function useTrialBlock<Trial, R, I = R>(options: TrialBlockOptions<Trial,
   const [trial, setTrial] = useState<Trial | null>(null)
   const [visible, setVisible] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
+  const [last, setLast] = useState<TrialLogEntry<Trial, R> | null>(null)
   const latest = useRef(options)
   latest.current = options
   const respondRef = useRef<(input: I, timeStamp: number) => void>(() => undefined)
@@ -111,7 +114,7 @@ export function useTrialBlock<Trial, R, I = R>(options: TrialBlockOptions<Trial,
 
     const showStimulus = (ts: number, t: Trial, tm: TrialTiming) => {
       timing = tm
-      flushSync(() => { setTrial(t); setVisible(true); setBanner(null) })
+      flushSync(() => { setTrial(t); setVisible(true); setBanner(null); setLast(null) })
       onset = ts
       hiddenAfter = null
       longestFrame = 0
@@ -135,11 +138,15 @@ export function useTrialBlock<Trial, R, I = R>(options: TrialBlockOptions<Trial,
     const resolve = (response: TrialResponse<R>, rt: number, now: number) => {
       if (phase !== 'stim' || timing === null) return
       const check = checkTrialTiming(timing.displayMs, hiddenAfter, frameMsFrom(deltas), longestFrame)
-      if (check.ok) block.answer(response, rt, elapsedAt(now))
-      else block.discard()
-      clearDisplay()
+      let entry: TrialLogEntry<Trial, R> | null = null
+      let gapMs = AFTER_DISCARD_MS
+      if (check.ok) {
+        entry = block.answer(response, rt, elapsedAt(now))
+        gapMs = engine.gapAfter?.(entry.trial, entry.outcome) ?? timing.gapMs
+      } else block.discard()
+      flushSync(() => { setTrial(null); setVisible(false); setBanner(null); setLast(entry) })
       phase = 'gap'
-      gapUntil = now + (check.ok ? timing.gapMs : AFTER_DISCARD_MS)
+      gapUntil = now + gapMs
     }
 
     // A fixed-cadence trial (n-back) lasts its whole window: inputs are gathered and judged together when it ends. A press under
@@ -206,6 +213,6 @@ export function useTrialBlock<Trial, R, I = R>(options: TrialBlockOptions<Trial,
 
   const respond = useCallback((input: I, timeStamp: number) => respondRef.current(input, timeStamp), [])
   const getElapsedMs = useCallback(() => elapsedRef.current(), [])
-  return { trial, visible, banner, respond, getElapsedMs }
+  return { trial, visible, banner, last, respond, getElapsedMs }
 }
 

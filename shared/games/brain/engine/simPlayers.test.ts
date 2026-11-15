@@ -18,6 +18,11 @@ import nBackStream from '../games/n_back_stream'
 import flankerFlock from '../games/flanker_flock'
 import needleFinder from '../games/needle_finder'
 import trackTheDots from '../games/track_the_dots'
+import ruleSwitch from '../games/rule_switch'
+import cardSorter from '../games/card_sorter'
+import flipMap from '../games/flip_map'
+import numberSprint from '../games/number_sprint'
+import makeTarget from '../games/make_target'
 import { quickMatchSim } from '../games/quick_match/engine'
 import { colourClashSim } from '../games/colour_clash/engine'
 import { greenLightSim } from '../games/green_light/engine'
@@ -27,6 +32,11 @@ import { nBackSim } from '../games/n_back_stream/engine'
 import { flankerSim } from '../games/flanker_flock/engine'
 import { needleFinderSim } from '../games/needle_finder/engine'
 import { trackDotsSim } from '../games/track_the_dots/engine'
+import { ruleSwitchSim } from '../games/rule_switch/engine'
+import { cardSorterSim } from '../games/card_sorter/engine'
+import { flipMapSim } from '../games/flip_map/engine'
+import { numberSprintSim } from '../games/number_sprint/engine'
+import { makeTargetSim } from '../games/make_target/engine'
 import { simulateBlock, simulateMany, type PlayerProfile, type SimPlayer } from './simPlayers'
 import type { TrialGameDefinition } from '../../core/types'
 
@@ -44,6 +54,11 @@ const GAMES: Array<[string, TrialGameDefinition<any, any>, SimPlayer<any, any>, 
   ['flanker_flock', flankerFlock, flankerSim, false, SEEDS],
   ['needle_finder', needleFinder, needleFinderSim, false, SEEDS],
   ['track_the_dots', trackTheDots, trackDotsSim, false, 60],
+  ['rule_switch', ruleSwitch, ruleSwitchSim, false, SEEDS],
+  ['card_sorter', cardSorter, cardSorterSim, false, SEEDS],
+  ['flip_map', flipMap, flipMapSim, false, SEEDS],
+  ['number_sprint', numberSprint, numberSprintSim, false, SEEDS],
+  ['make_target', makeTarget, makeTargetSim, false, 40],
 ]
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
 const percentile = (xs: number[], p: number) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))]

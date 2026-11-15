@@ -43,6 +43,8 @@ export interface TrialEngine<Trial, R> {
   next(): Trial | null
   timing(trial: Trial): TrialTiming
   evaluate(trial: Trial, response: TrialResponse<R>, rtMs: number): TrialOutcome
+  /** Pause after a judged trial, when it depends on the outcome (a wrong answer is shown for a second). Default: `timing.gapMs`. */
+  gapAfter?(trial: Trial, outcome: TrialOutcome): number
   progress?(): { span?: number; strikes?: number; lives?: number; trial?: number; of?: number }
   /** Staged rounds only: the steps of this round, in order. The last one is where the player answers (`ms: null`). */
   stages?(trial: Trial): StageSpec[]
