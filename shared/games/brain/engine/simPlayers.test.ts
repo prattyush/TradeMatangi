@@ -12,33 +12,52 @@ import { describe, expect, it } from 'vitest'
 import quickMatch from '../games/quick_match'
 import colourClash from '../games/colour_clash'
 import greenLight from '../games/green_light'
+import gridRecall from '../games/grid_recall'
+import sequenceEcho from '../games/sequence_echo'
+import nBackStream from '../games/n_back_stream'
+import flankerFlock from '../games/flanker_flock'
+import needleFinder from '../games/needle_finder'
+import trackTheDots from '../games/track_the_dots'
 import { quickMatchSim } from '../games/quick_match/engine'
 import { colourClashSim } from '../games/colour_clash/engine'
 import { greenLightSim } from '../games/green_light/engine'
+import { gridRecallSim } from '../games/grid_recall/engine'
+import { sequenceEchoSim } from '../games/sequence_echo/engine'
+import { nBackSim } from '../games/n_back_stream/engine'
+import { flankerSim } from '../games/flanker_flock/engine'
+import { needleFinderSim } from '../games/needle_finder/engine'
+import { trackDotsSim } from '../games/track_the_dots/engine'
 import { simulateBlock, simulateMany, type PlayerProfile, type SimPlayer } from './simPlayers'
 import type { TrialGameDefinition } from '../../core/types'
 
 const SEEDS = 200
 const LEVELS = [1, 10, 20] as const
 /* eslint-disable @typescript-eslint/no-explicit-any */
-const GAMES: Array<[string, TrialGameDefinition<any, any>, SimPlayer<any, any>, boolean]> = [
-  ['quick_match', quickMatch, quickMatchSim, false],
-  ['colour_clash', colourClash, colourClashSim, false],
-  ['green_light', greenLight, greenLightSim, true],
+// [name, game, player, is a detection game (always/never press), seeds for the random players]
+const GAMES: Array<[string, TrialGameDefinition<any, any>, SimPlayer<any, any>, boolean, number]> = [
+  ['quick_match', quickMatch, quickMatchSim, false, SEEDS],
+  ['colour_clash', colourClash, colourClashSim, false, SEEDS],
+  ['green_light', greenLight, greenLightSim, true, SEEDS],
+  ['grid_recall', gridRecall, gridRecallSim, false, SEEDS],
+  ['sequence_echo', sequenceEcho, sequenceEchoSim, false, SEEDS],
+  ['n_back_stream', nBackStream, nBackSim, true, SEEDS],
+  ['flanker_flock', flankerFlock, flankerSim, false, SEEDS],
+  ['needle_finder', needleFinder, needleFinderSim, false, SEEDS],
+  ['track_the_dots', trackTheDots, trackDotsSim, false, 60],
 ]
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
 const percentile = (xs: number[], p: number) => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))]
 
-describe.each(GAMES)('%s simulated players', (name, definition, sim, detection) => {
+describe.each(GAMES)('%s simulated players', (name, definition, sim, detection, seeds) => {
   describe.each(LEVELS)('level %i', level => {
     it('a perfect player scores 95 or more', () => {
       for (const seed of [1, 2, 3, 4, 5]) expect(simulateBlock(definition, sim, level, 'perfect', seed).score, `${name} seed ${seed}`).toBeGreaterThanOrEqual(95)
     })
     it.each<PlayerProfile>(['random', 'fastRandom'])('a %s player scores about nothing', profile => {
-      const scores = simulateMany(definition, sim, level, profile, SEEDS)
+      const scores = simulateMany(definition, sim, level, profile, seeds)
       expect(mean(scores)).toBeLessThanOrEqual(10)
       expect(percentile(scores, 0.9)).toBeLessThanOrEqual(30)
-      expect(scores.filter(score => score > 25).length / SEEDS).toBeLessThanOrEqual(0.15)
+      expect(scores.filter(score => score > 25).length / seeds).toBeLessThanOrEqual(0.15)
     })
     if (detection) {
       it.each<PlayerProfile>(['alwaysPress', 'neverPress'])('%s scores 5 or less (it scores 0)', profile => {

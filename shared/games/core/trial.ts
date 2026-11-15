@@ -15,6 +15,19 @@ export interface TrialTiming {
   gapMs: number
   /** A banner (new rule, cue) shown for this long before the stimulus appears; the block clock keeps running. */
   preMs?: number
+  /**
+   * The trial always lasts its whole window, whatever the player does (n-back keeps a fixed pace). Responses are collected
+   * during the window and judged together when it ends.
+   */
+  fixedCadence?: boolean
+}
+
+/** One step of a staged round (memory games, Track the Dots): shown for `ms`, or until the player submits when `ms` is null. */
+export interface StageSpec {
+  name: string
+  ms: number | null
+  /** Stimulus presentation: a long frame here discards the round and replaces it with a fresh one (spec 17.3). */
+  critical?: boolean
 }
 
 export interface TrialOutcome {
@@ -30,7 +43,9 @@ export interface TrialEngine<Trial, R> {
   next(): Trial | null
   timing(trial: Trial): TrialTiming
   evaluate(trial: Trial, response: TrialResponse<R>, rtMs: number): TrialOutcome
-  progress?(): { span?: number; strikes?: number; lives?: number }
+  progress?(): { span?: number; strikes?: number; lives?: number; trial?: number; of?: number }
+  /** Staged rounds only: the steps of this round, in order. The last one is where the player answers (`ms: null`). */
+  stages?(trial: Trial): StageSpec[]
 }
 
 export interface TrialLogEntry<Trial, R> {

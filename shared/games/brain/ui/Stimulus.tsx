@@ -2,12 +2,13 @@ import { PALETTE, NEUTRAL_GREY } from './palette'
 import { POLYGONS, polygonPath } from './shapes'
 
 /** Fill patterns so colour is never the only cue (colour-vision-safe, spec 17.3). Render `<PatternDefs/>` once per view. */
-export function PatternDefs() {
+/** `scale` shrinks the pattern tile (small shapes in a 100-unit arena); `prefix` keeps two sets of ids apart. */
+export function PatternDefs({ scale = 1, prefix = 'brain-pat' }: { scale?: number; prefix?: string } = {}) {
   return (
     <svg width="0" height="0" aria-hidden="true" style={{ position: 'absolute' }}>
       <defs>
         {PALETTE.map((colour, i) => (
-          <pattern key={colour.name} id={`brain-pat-${i}`} width="12" height="12" patternUnits="userSpaceOnUse">
+          <pattern key={colour.name} id={`${prefix}-${i}`} width="12" height="12" patternUnits="userSpaceOnUse" patternTransform={`scale(${scale})`}>
             <rect width="12" height="12" fill={colour.hex} />
             {colour.pattern === 'stripes' && <path d="M-2 2 L2 -2 M0 12 L12 0 M10 14 L14 10" stroke="#00000066" strokeWidth="2.5" />}
             {colour.pattern === 'dots' && <><circle cx="3" cy="3" r="1.8" fill="#ffffffaa" /><circle cx="9" cy="9" r="1.8" fill="#ffffffaa" /></>}
@@ -21,7 +22,7 @@ export function PatternDefs() {
   )
 }
 
-export const patternFill = (colourIndex: number): string => `url(#brain-pat-${((colourIndex % PALETTE.length) + PALETTE.length) % PALETTE.length})`
+export const patternFill = (colourIndex: number, prefix = 'brain-pat'): string => `url(#${prefix}-${((colourIndex % PALETTE.length) + PALETTE.length) % PALETTE.length})`
 
 interface ShapeProps {
   /** 0 = circle, 1-5 = the polygons in `shapes.ts`; or a named basic shape. */

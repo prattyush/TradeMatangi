@@ -30,8 +30,10 @@ export function simulateBlock<Trial, R>(
   const engine = definition.createEngine(params, createRng(seed))
   const playerRng = createRng((seed ^ 0x9e3779b9) >>> 0)
   const seconds = definition.session.kind === 'timed' ? definition.session.seconds : undefined
-  const block = createBlock(engine, { seconds })
-  const fast = params.rtFast, mid = (params.rtFast + params.rtSlow) / 2
+  // Staged games (recall, tracking) answer with no reaction time, so the anticipation rule does not apply to them.
+  const block = createBlock(engine, { seconds, anticipation: engine.stages === undefined })
+  // Games without a reaction-time scale (recall, tracking) just need a plausible, valid answer time.
+  const fast = params.rtFast ?? 1000, mid = ((params.rtFast ?? 1000) + (params.rtSlow ?? 1000)) / 2
   let elapsed = 0
   for (let guard = 0; guard < 5000; guard++) {
     const trial = block.issue(elapsed)
@@ -47,7 +49,10 @@ export function simulateBlock<Trial, R>(
       case 'alwaysPress': response = (player.alwaysPress ?? player.correct)(trial); rt = mid; break
       case 'neverPress': response = (player.neverPress ?? (() => 'timeout' as TrialResponse<R>))(trial); rt = mid; break
     }
-    if (response === 'timeout' || rt > timing.windowMs) { response = 'timeout'; rt = timing.windowMs }
+    if (timing.fixedCadence) {
+      // A fixed-cadence trial (n-back) always lasts its whole window; the response already carries its own reaction times.
+      rt = timing.windowMs
+    } else if (response === 'timeout' || rt > timing.windowMs) { response = 'timeout'; rt = timing.windowMs }
     elapsed += rt
     block.answer(response, rt, elapsed)
     elapsed += timing.gapMs

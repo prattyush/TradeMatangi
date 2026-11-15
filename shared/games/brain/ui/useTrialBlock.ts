@@ -12,26 +12,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import type { TrialEngine, TrialLogEntry, TrialResponse, TrialTiming } from '../../core/trial'
-import { checkTrialTiming, frameMsFrom } from '../engine/rt'
+import { ANTICIPATION_MS, checkTrialTiming, frameMsFrom } from '../engine/rt'
 import { createBlock } from '../engine/trialEngine'
 
-export interface TrialBlockOptions<Trial, R> {
+/** One input during a fixed-cadence trial: what was pressed, and the reaction time since onset. */
+export interface TrialInput<I> { input: I; rtMs: number }
+
+export interface TrialBlockOptions<Trial, R, I = R> {
   createEngine: () => TrialEngine<Trial, R>
-  seconds: number
+  /** Block length. Omit for a block that ends only when the engine does (a fixed number of trials). */
+  seconds?: number
+  /** Hard cap on counted trials. */
+  maxTrials?: number
+  /**
+   * For trials with `timing.fixedCadence`: the inputs collected during the window are turned into the one response the engine
+   * judges when the window ends. Without it the first input is the response.
+   */
+  combine?: (events: TrialInput<I>[]) => TrialResponse<R>
   suspended: boolean
   /** Text of a rule or cue banner shown before a trial's stimulus (its length is `timing.preMs`). */
   banner?: (trial: Trial) => string | null
   onFinish: (result: { log: TrialLogEntry<Trial, R>[]; discarded: number }) => void
 }
 
-export interface TrialBlockApi<Trial, R> {
+export interface TrialBlockApi<Trial, R, I = R> {
   /** The trial on screen (null between trials). */
   trial: Trial | null
   /** False once a timed stimulus has vanished while its response window is still open. */
   visible: boolean
   banner: string | null
   /** Report a response. `timeStamp` must be the input event's own `timeStamp`. */
-  respond: (response: R, timeStamp: number) => void
+  respond: (input: I, timeStamp: number) => void
   /** Block clock in ms (paused while away); for the time bar. */
   getElapsedMs: () => number
 }
@@ -39,19 +50,19 @@ export interface TrialBlockApi<Trial, R> {
 const AFTER_AWAY_MS = 500
 const AFTER_DISCARD_MS = 300
 
-export function useTrialBlock<Trial, R>(options: TrialBlockOptions<Trial, R>): TrialBlockApi<Trial, R> {
+export function useTrialBlock<Trial, R, I = R>(options: TrialBlockOptions<Trial, R, I>): TrialBlockApi<Trial, R, I> {
   const [trial, setTrial] = useState<Trial | null>(null)
   const [visible, setVisible] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
   const latest = useRef(options)
   latest.current = options
-  const respondRef = useRef<(response: R, timeStamp: number) => void>(() => undefined)
+  const respondRef = useRef<(input: I, timeStamp: number) => void>(() => undefined)
   const elapsedRef = useRef<() => number>(() => 0)
 
   useEffect(() => {
     const engine = latest.current.createEngine()
-    const block = createBlock(engine, { seconds: latest.current.seconds })
-    const totalMs = latest.current.seconds * 1000
+    const block = createBlock(engine, { seconds: latest.current.seconds, maxTrials: latest.current.maxTrials })
+    const totalMs = latest.current.seconds === undefined ? Infinity : latest.current.seconds * 1000
     let raf = 0
     let stopped = false
     let blockStart = -1
@@ -68,6 +79,7 @@ export function useTrialBlock<Trial, R>(options: TrialBlockOptions<Trial, R>): T
     let lastTs = 0
     const deltas: number[] = []
     let blurred = false
+    let events: TrialInput<I>[] = []
 
     const elapsedAt = (ts: number) => (blockStart < 0 ? 0 : ts - blockStart - pausedMs - (awaySince === null ? 0 : ts - awaySince))
     elapsedRef.current = () => elapsedAt(performance.now())
@@ -103,6 +115,7 @@ export function useTrialBlock<Trial, R>(options: TrialBlockOptions<Trial, R>): T
       onset = ts
       hiddenAfter = null
       longestFrame = 0
+      events = []
       phase = 'stim'
     }
 
@@ -129,12 +142,25 @@ export function useTrialBlock<Trial, R>(options: TrialBlockOptions<Trial, R>): T
       gapUntil = now + (check.ok ? timing.gapMs : AFTER_DISCARD_MS)
     }
 
-    respondRef.current = (response, timeStamp) => {
+    // A fixed-cadence trial (n-back) lasts its whole window: inputs are gathered and judged together when it ends. A press under
+    // 150 ms cannot be a reaction to this item (it belongs to the previous one), so it is ignored.
+    const resolveFixed = (now: number) => {
+      const combined = latest.current.combine
+        ? latest.current.combine(events)
+        : events.length ? (events[0].input as unknown as R) : 'timeout'
+      resolve(combined, timing?.windowMs ?? 0, now)
+    }
+
+    respondRef.current = (input, timeStamp) => {
       if (stopped || phase !== 'stim' || timing === null || awaySince !== null) return
       const rt = timeStamp - onset
       if (rt < 0) return // an event from before the stimulus was on screen
+      if (timing.fixedCadence) {
+        if (rt >= ANTICIPATION_MS && rt <= timing.windowMs) events.push({ input, rtMs: rt })
+        return
+      }
       if (rt > timing.windowMs) { resolve('timeout', timing.windowMs, performance.now()); return }
-      resolve(response, rt, timeStamp)
+      resolve(input as unknown as R, rt, timeStamp)
     }
 
     const loop = (ts: number) => {
@@ -156,7 +182,7 @@ export function useTrialBlock<Trial, R>(options: TrialBlockOptions<Trial, R>): T
           hiddenAfter = t
           flushSync(() => setVisible(false))
         }
-        if (t >= timing.windowMs) resolve('timeout', timing.windowMs, ts)
+        if (t >= timing.windowMs) { if (timing.fixedCadence) resolveFixed(ts); else resolve('timeout', timing.windowMs, ts) }
       }
       raf = requestAnimationFrame(loop)
     }
@@ -178,7 +204,7 @@ export function useTrialBlock<Trial, R>(options: TrialBlockOptions<Trial, R>): T
     }
   }, [])
 
-  const respond = useCallback((response: R, timeStamp: number) => respondRef.current(response, timeStamp), [])
+  const respond = useCallback((input: I, timeStamp: number) => respondRef.current(input, timeStamp), [])
   const getElapsedMs = useCallback(() => elapsedRef.current(), [])
   return { trial, visible, banner, respond, getElapsedMs }
 }
