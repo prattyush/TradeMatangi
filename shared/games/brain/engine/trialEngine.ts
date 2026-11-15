@@ -7,6 +7,11 @@ export interface BlockOptions {
   seconds?: number
   /** Hard cap on counted trials (a safety limit). */
   maxTrials?: number
+  /**
+   * Apply the "response under 150 ms is an anticipation" rule (default). Turn it off for games where the response is not a
+   * reaction to a stimulus (recalling a sequence, picking tracked dots).
+   */
+  anticipation?: boolean
 }
 
 export interface Block<Trial, R> {
@@ -41,7 +46,7 @@ export function createBlock<Trial, R>(engine: TrialEngine<Trial, R>, options: Bl
     answer(response, rtMs, atMs) {
       if (current === null) throw new Error('answer() without a current trial')
       const trial = current
-      const early = response !== 'timeout' && isAnticipation(rtMs)
+      const early = options.anticipation !== false && response !== 'timeout' && isAnticipation(rtMs)
       let outcome: TrialOutcome = engine.evaluate(trial, response, rtMs)
       // Too early to be a real reaction: an error, and not an RT.
       if (early) outcome = { ...outcome, correct: false, anticipated: true, tag: outcome.tag === 'fa' ? 'fa' : 'early' }
