@@ -284,7 +284,7 @@ def get_state(user_id: str, today: datetime | None = None) -> dict:
         if "LastEvaluatedKey" not in response:
             break
         kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
-    state = {"version": 1, "profile": None, "games": {}, "days": {}, "months": {}}
+    state = {"version": 1, "user_id": user_id, "profile": None, "games": {}, "days": {}, "months": {}}
     for item in items:
         record_id = item["record_id"]
         if record_id == "profile":

@@ -207,6 +207,29 @@ Three tools under the desktop **Tools** view (`windowsapp/src/tools/ToolsView.ts
 - **Differences from the website:** the saved flow is found by day, instrument type and right; Search shows the day's ATM contract (from the 09:15 price) for options flows; transition labels are short and numbered because KLine cuts marker text; no sharing actions (the website pages have none).
 - Plan, as-built notes and acceptance: `docs/spec-phase25-implementation-plan.md`, `docs/phase25-manual-acceptance.md`.
 
+## Games (Phase 25; desktop window, website and webapp)
+
+One shared codebase, `shared/games/`, used by the separate desktop **Games window**, the website and the webapp. Everything is client side; the only server contact is `GET`/`PUT /api/desktop/v1/games/state` (progress, `docs/architecture-backend.md`). Games never touch order, session, broker, stream, guardrail, strategy or analysis code (import-boundary test, below).
+
+```
+shared/games/
+  core/    ids.ts (31 ids, catalogue, categories), rng.ts (xmur3 + mulberry32, session seed), difficulty.ts (anchors + step
+           parameters, level rule), scoring.ts, types.ts (GameDefinition / TrialGameDefinition, `kind` discriminant),
+           registry.ts, progress.ts (records and `buildSessionPut`), client.ts (typed state calls, GamesHttpError),
+           paths.ts (`validGamesPath`), settings.ts, shell.ts (session state machine), uid.ts
+  data/    idb.ts + outbox.ts (IndexedDB queue of finished sessions, memory fallback), sync.ts (flush with re-apply on 409)
+  ui/      GamesApp.tsx (hub: Brain, Market, Dashboard, Warm-up, Settings), GameShell.tsx, useProgress.ts, games.css
+  games/   index.ts: one registration line per game (empty until Sprint B1; the hub lists the rest as "Coming soon")
+```
+
+- **Transports (injected `GamesRequest`).** Desktop: `windowsapp/src/gamesApi.ts` calls the Rust command `desktop_games_request` (bearer held by the host; allowlist `valid_games_path` in `lib.rs` mirrored by `validGamesPath` in `shared/games/core/paths.ts`, parity cases in `gamesApi.test.ts` and the cargo test `games_allowlist_is_exact_and_method_scoped`; only GET and PUT, only `availability`, `window`, `state`; only callable from the window labelled `games`). Website: `frontend/src/services/gamesRequest.ts` uses `fetch` with `X-User-Id`.
+- **Desktop window.** The toolbar button (shown only when `GET capabilities` lists `games`) calls `open_games_window` (main window only). The window loads `index.html?window=games`; `windowsapp/src/main.tsx` mounts `GamesWindow` (lazy) instead of the trading `App`. It shares no React tree or state with trading and is destroyed when the main window is. Needs a desktop rebuild.
+- **Website and webapp.** `frontend/src/components/games/GamesWorkspace.tsx` is a lazy fixed overlay under the header (z-index 20, the same as Browse, below every modal, popup and notification). Header icon `games` toggles `showGames` in `App.tsx`; opening Games closes Browse (and the reverse), opening Analysis closes Games. **The trading layout is never unmounted or hidden while a session runs**: it is unmounted only when idle and Browse or Games covers it, as for Browse. `App.tsx` passes one prop, `sessionKind` (`none | sim | paper | real`), for a banner; the workspace imports nothing from trading.
+- **Progress.** Every finished session goes into the outbox first (`recordSession`), then is sent: the body is rebuilt from the latest server state (`buildSessionPut`), so a 409 re-reads and re-applies; a session the server already holds (`last_mutation_id`) is dropped; a 422 is dropped and reported; offline or server errors leave it queued and `online` triggers a retry. Practice sessions only bump the practice counter. The month record is updated on each Progress session (a deviation from "roll up at month change", see the plan).
+- **Session shell.** `shell.ts` is a pure state machine (instructions, Practice or Progress, 3-2-1, play, result; Esc asks to quit; quitting or a void records nothing; a timed block cannot be paused; focus lost for 10 s voids the block). Keys are handled on the shell's own focused element only.
+- **Tests.** `shared/games/**/*.test.ts` run in the desktop vitest (`windowsapp/vite.config.ts` `test.include`), including `boundary.test.ts`. `fake-indexeddb` (dev dependency) stands in for IndexedDB, which plain-node vitest does not have; nothing of it ships.
+- Plan, as-built notes and acceptance: `docs/spec-phase25-implementation-plan.md`, `docs/phase25-manual-acceptance.md`.
+
 ## SSE Consumption (`useSSE.ts`)
 
 Wraps `EventSource` with exponential backoff reconnect (1 s → 30 s cap). The `onMessage` callback in `App.tsx` dispatches by `event.type`:

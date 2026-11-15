@@ -258,7 +258,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | B0 | Done (2026-11-15), awaiting owner review |
 | G0-close | Done (2026-11-15), see the table at the end of this file |
 | G2 | Done (2026-11-15), see "G2 as built" below |
-| G3a, B1–B6, G1, G3b, G4–G7 | Planned, order above |
+| G3a | Done (2026-11-15), see "G3a as built" below |
+| B1–B6, G1, G3b, G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -600,4 +601,25 @@ Backend persistence for Games progress. Branch `feat/games-persistence`, PR into
 - **Tests:** moto (`mock_aws`) like the other DynamoDB tests, so DynamoDB Local is not needed for the suite (the earlier plan text said it was). One manual smoke against the real DynamoDB Local on `:8000` also passed (create, idempotent retry, stale 409, read, cleanup).
 - **Docs updated:** spec §8.4 and §14, `architecture-backend.md`, `backend-technical-constraints.md`, `phase25-manual-acceptance.md` (section F), `CLAUDE.md` row.
 - **Manual acceptance:** section F of `docs/phase25-manual-acceptance.md`.
+
+## G3a as built (2026-11-15)
+
+Foundation shell for Games on the desktop, website and webapp. Branch `feat/games-foundation`, PR into `dev`. No game is playable yet (all 31 show "Coming soon"); the first games arrive in B1.
+
+- **Rust (needs a desktop rebuild):** `windowsapp/src-tauri/src/lib.rs`: `valid_games_path` (GET `availability`, `window`, `state`; PUT `state`; nothing else), `desktop_games_request` (only callable from the window labelled `games`), `open_games_window` (main window only; focuses an existing window), the main window's `Destroyed` event also destroys the Games window, both commands in the handler list, cargo test `games_allowlist_is_exact_and_method_scoped` (passes locally). `tauri.conf.json`: `"games"` in the capability's windows list.
+- **Shared code `shared/games/`:** `core` (ids and catalogue, `rng`, `difficulty` with step parameters and the level rule, `scoring`, `types` with the `kind` discriminant, `registry`, `progress`, `client`, `paths`, `settings`, `shell`, `uid`), `data` (IndexedDB outbox with memory fallback, `sync`), `ui` (`GamesApp` hub, `GameShell`, `useProgress`, CSS), `games/index.ts` (empty registry). Spec corrections applied: C5 (step parameters), C8 (boundary rules), C9 (`kind`), C10 (seed hash and `sessionNo`).
+- **Desktop glue:** `gamesApi.ts` (`gamesRequest`), `GamesWindow.tsx`, a `?window=games` branch in `main.tsx` (lazy; the trading `App` is not mounted), toolbar button in the desktop header (`App.tsx`), shown only when `GET capabilities` lists `games`; a `Games` icon in the shared `ToolbarIcon`.
+- **Website glue:** `services/gamesRequest.ts`, `components/games/GamesWorkspace.tsx` (Browse-style overlay), `NavIconButton` icon `games`, and in `App.tsx`: `showGames`, the nav button, the lazy mount, the `sessionKind` prop, mutual exclusion with Browse and Analysis, and one changed condition so an **idle** trading screen is not mounted under Games (`(showBrowse || showGames) && idle`). With a running session nothing is unmounted.
+- **Decisions and deviations**
+  - **IndexedDB, not the desktop SQLite, for the outbox.** The same code runs in all three clients; the desktop's SQLite is Rust-side and used by the trading cache. `fake-indexeddb` is a dev-only dependency so plain-node vitest can run the real outbox.
+  - **Outbox stores the session, not the final records.** The PUT body is rebuilt from the latest server state at send time, which makes the 409 re-apply trivial; a record's `last_mutation_id` tells whether a retry already landed.
+  - **The month record is updated on every Progress session** (a `month` entry in the same PUT, `days` counted when a day is first created) instead of rolling the previous month up when a new month starts. Simpler and exact; it costs one more item per write.
+  - **`emaScore` stores the moving rated score** (`0.7*prev + 0.3*SessionScore*levelFactor`); a category rating is the mean of its played games' `emaScore`. `best` is the best raw score.
+  - **`GET /state` now also returns `user_id`** (needed for the session seed; avoids a call outside the Games routes). G2 tests updated.
+  - **Esc and quit:** the shell handles Escape on its own focused element only; there are no global key listeners (tested).
+  - **Not done here, by design:** pause UI between rounds (no round-based game yet), the Dashboard's per-game history and Warm-up (B6/G7), a Playwright smoke file. The website flow was checked by hand in a browser against a local backend (below).
+- **Tests:** desktop vitest 734 (the shared Games tests run there: 27 core, 10 progress, 13 outbox/sync, 9 boundary, 31 transport); `tsc` clean for desktop and website; desktop and website builds; cargo test for the allowlist; backend `test_games_persistence.py` 68 and the full backend suite. `npm test` and `cargo test` are now steps in `.github/workflows/desktop-windows.yml` (the web assets are built before `cargo test`, because tauri embeds `../dist`).
+- **Checked in a real browser (Playwright, local backend, throwaway user):** the Games icon appears; the hub opens as a z-index 20 overlay with the trading screen still mounted; saving Sound, 120 % and Brain-only returned "Saved.", the server holds them, and after a reload the size is 120 %; the only Games request was `GET /api/desktop/v1/games/state`. The test user's record was deleted afterwards. The desktop window itself (Rust, new window) is not checked here: it needs a Windows build (acceptance section G).
+- **Shared files touched:** `frontend/src/App.tsx` (the hook above), `frontend/src/components/NavIconButton.tsx` (icon), `shared/analysis/kline/ToolbarIcon.tsx` (one icon entry), `windowsapp/src/App.tsx` (capability check and toolbar button), `windowsapp/src/main.tsx`, `windowsapp/src-tauri/src/lib.rs` and `tauri.conf.json`, `windowsapp/vite.config.ts` (test include), `windowsapp/package.json` and lock (fake-indexeddb), the desktop CI workflow, `backend/app/services/games_persistence_service.py` (`user_id`). No trading logic changed.
+- **Docs updated:** spec §14, `architecture-frontend.md`, `frontend-technical-constraints.md`, `windowsapp/README.md`, `phase25-manual-acceptance.md` (section G), this plan, `CLAUDE.md` row.
 

@@ -648,6 +648,16 @@ export default function App() {
     }).catch(() => undefined);
     return () => { disposed = true; setNotificationAccount(null); };
   }, [connection, serverUrl, browserToken, assignedId, swingRequest]);
+  // Games (Phase 25): shown only when the backend advertises the `games` feature, so an older server hides the button.
+  const [gamesAvailable, setGamesAvailable] = useState(false)
+  useEffect(() => {
+    if (connection !== 'connected' || assignedId || !('__TAURI_INTERNALS__' in window)) { setGamesAvailable(false); return }
+    let disposed = false
+    void invoke<{ features?: string[] }>('desktop_drawing_request', { baseUrl: serverUrl, path: 'capabilities', method: 'GET', body: {} })
+      .then(value => { if (!disposed) setGamesAvailable(Boolean(value.features?.includes('games'))) })
+      .catch(() => { if (!disposed) setGamesAvailable(false) })
+    return () => { disposed = true }
+  }, [connection, serverUrl, browserToken, assignedId])
   const swingSymbols = useCallback(async () => {
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/data/symbols`)
     if (!response.ok) throw new Error('Cannot load symbols')
@@ -818,7 +828,7 @@ export default function App() {
       if(mainTab==='Swing'&&view!=='Swing')void bounded(Promise.resolve(saveHandlers.current.get('swing-primary')?.()),SAVE_TIMEOUT_MS).then(change).catch(cause=>setSwingWindowError(String(cause)))
       else change()
     }}
-  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option><option value="Tools">Tools</option></select> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
+  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option><option value="Tools">Tools</option></select> : null}{!assignedId && gamesAvailable ? <ToolbarActionButton icon="Games" onClick={() => void invoke('open_games_window').catch(error => setCloseError(`Games: ${String(error)}`))}>Games</ToolbarActionButton> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
   if(windowClosing)return null;
   return <div>
     <div className="desktop-messages"><NotificationCenter source="Desktop" request={messageHistory} onRequestChange={setMessageHistory} showLauncher={connection === 'authentication_required' || loadFailed} /></div>

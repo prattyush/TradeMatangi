@@ -63,7 +63,7 @@ def test_every_registry_id_is_accepted(api, game_id):
 
 def test_empty_state(api):
     state = api.get("/api/desktop/v1/games/state", headers=headers()).json()
-    assert state == {"version": 1, "profile": None, "games": {}, "days": {}, "months": {}}
+    assert state == {"version": 1, "user_id": "alice", "profile": None, "games": {}, "days": {}, "months": {}}
 
 
 def test_round_trip_one_transaction_for_game_day_month_and_profile(api):
