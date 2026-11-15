@@ -84,11 +84,12 @@ function simulate(rng: Rng, dots: number, speed: number, motionMs: number): { fr
 export function createTrackDotsEngine(params: Record<string, number>, rng: Rng): TrialEngine<TdTrial, TdResponse> {
   const dots = Math.round(params.dots)
   const targetCount = Math.min(dots - 1, Math.round(params.targets))
-  let issued = 0
+  // Counted when judged, so a round replaced after a bad frame does not use up one of the eight.
+  let judged = 0
   const total = ROUND_COUNTS.track_the_dots
   return {
     next() {
-      if (issued >= total) return null
+      if (judged >= total) return null
       const order = rng.shuffle(Array.from({ length: dots }, (_, i) => i))
       const targets = order.slice(0, targetCount).sort((a, b) => a - b)
       const others = order.slice(targetCount)
@@ -98,7 +99,6 @@ export function createTrackDotsEngine(params: Record<string, number>, rng: Rng):
         for (let i = 0; i < 5; i++) flicker.push({ atMs: Math.round(800 + rng.next() * (params.motionMs - 1600)), durMs: 120, dots: rng.shuffle(others).slice(0, 2) })
         flicker.sort((a, b) => a.atMs - b.atMs)
       }
-      issued += 1
       return { dots, targets, speed: params.speed, markMs: params.markMs, motionMs: params.motionMs, occluder: params.occluder >= 1, flicker, frames, steps }
     },
     timing: (): TrialTiming => ({ displayMs: null, windowMs: 600_000, gapMs: 0 }),
@@ -108,10 +108,11 @@ export function createTrackDotsEngine(params: Record<string, number>, rng: Rng):
       { name: 'respond', ms: null },
     ],
     evaluate(trial, response): TrialOutcome {
+      judged += 1
       const hits = tdHits(trial, response === 'timeout' ? [] : response)
       return { correct: hits === trial.targets.length, tag: `${hits}/${trial.targets.length}` }
     },
-    progress: () => ({ trial: issued, of: total }),
+    progress: () => ({ trial: judged, of: total }),
   }
 }
 
@@ -120,11 +121,15 @@ export function tdHits(trial: TdTrial, response: TdResponse): number {
   return new Set(response.filter(dot => wanted.has(dot))).size
 }
 
-/** Skill of one trial: hit fraction corrected for picking at random (`targets / dots`). */
+/**
+ * Skill of one trial: hit fraction corrected for picking at random (`targets / dots`), so 0 is chance and 1 is perfect.
+ * It is deliberately NOT clamped here: the score applies the spec's formula to the accuracy over the whole session
+ * (clamp once at the end). Clamping every trial would turn chance-level luck into a positive average.
+ */
 export function tdSkill(trial: TdTrial, response: TdResponse): number {
   const fraction = tdHits(trial, response) / trial.targets.length
   const chance = trial.targets.length / trial.dots
-  return clamp01((fraction - chance) / (1 - chance))
+  return (fraction - chance) / (1 - chance)
 }
 
 export function summariseTrackDots(log: TrialLogEntry<TdTrial, TdResponse>[], level: number): SessionSummary {
@@ -138,8 +143,8 @@ export function summariseTrackDots(log: TrialLogEntry<TdTrial, TdResponse>[], le
     correct: entry.outcome.correct, rtMs: null,
   }))
   return {
-    // Eight trials; each trial's chance-corrected skill, averaged. Counting a missing trial as 0 keeps a partial block honest.
-    score: toSessionScore(100 * (skills.reduce((a, b) => a + b, 0) / ROUND_COUNTS.track_the_dots)),
+    // Eight trials; the mean chance-corrected skill, clamped once. A missing trial counts as 0, which keeps a partial block honest.
+    score: toSessionScore(100 * clamp01(skills.reduce((a, b) => a + b, 0) / ROUND_COUNTS.track_the_dots)),
     stats: {
       trials: log.length, accuracy: fractions.length ? round3(fractions.reduce((a, b) => a + b, 0) / fractions.length) : 0,
       perfect_trials: log.filter(entry => entry.outcome.correct).length, dots: Math.round(p.dots), targets: Math.round(p.targets), speed: Math.round(p.speed),

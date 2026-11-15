@@ -35,18 +35,20 @@ export function createNeedleEngine(params: Record<string, number>, rng: Rng): Tr
   const sizes = [Math.max(4, Math.round(baseSize * 0.5)), Math.max(4, Math.round(baseSize * 0.75)), baseSize]
   let sizeQueue: number[] = []
   let absentQueue: boolean[] = []
-  let issued = 0
+  // Rounds are counted when they are JUDGED, not when they are handed out: a screen thrown away for a bad frame is replaced for free.
+  let judged = 0
   const total = ROUND_COUNTS.needle_finder
 
   const distractor = (i: number): { colour: number; orient: 'v' | 'h' } => {
     if (mode === 0) return { colour: BLUE, orient: 'v' }
     if (mode === 1) return i % 2 ? { colour: RED, orient: 'h' } : { colour: BLUE, orient: 'v' }
-    return [{ colour: RED, orient: 'h' }, { colour: BLUE, orient: 'v' }, { colour: ORANGE, orient: 'h' }, { colour: GREEN, orient: 'v' }][i % 4]
+    const kinds: Array<{ colour: number; orient: 'v' | 'h' }> = [{ colour: RED, orient: 'h' }, { colour: BLUE, orient: 'v' }, { colour: ORANGE, orient: 'h' }, { colour: GREEN, orient: 'v' }]
+    return kinds[i % 4]
   }
 
   return {
     next() {
-      if (issued >= total) return null
+      if (judged >= total) return null
       if (!absentQueue.length) absentQueue = rng.shuffle([...Array(absent).fill(true), ...Array(Math.max(0, total - absent)).fill(false)])
       if (!sizeQueue.length) sizeQueue = rng.shuffle(sizes)
       const isAbsent = absentQueue.pop() as boolean
@@ -67,17 +69,17 @@ export function createNeedleEngine(params: Record<string, number>, rng: Rng): Tr
         target = rng.int(0, setSize - 1)
         items[target] = { ...items[target], colour: RED, orient: 'v' } // red vertical bar: the needle
       }
-      issued += 1
       return { items, target, setSize, mode, limitMs: params.limitMs, gapMs: params.gapMs }
     },
     timing: (trial): TrialTiming => ({ displayMs: null, windowMs: trial.limitMs, gapMs: trial.gapMs }),
     evaluate(trial, response): TrialOutcome {
+      judged += 1
       if (response === 'timeout') return { correct: false, tag: 'timeout' }
       if (response.type === 'absent') return trial.target === -1 ? { correct: true, tag: 'cr' } : { correct: false, tag: 'miss' }
       if (trial.target === -1) return { correct: false, tag: 'fa' }
       return response.index === trial.target ? { correct: true, tag: 'hit' } : { correct: false, tag: 'wrong' }
     },
-    progress: () => ({ trial: issued, of: total }),
+    progress: () => ({ trial: judged, of: total }),
   }
 }
 

@@ -260,7 +260,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | G2 | Done (2026-11-15), see "G2 as built" below |
 | G3a | Done (2026-11-15), see "G3a as built" below |
 | B1 | Done (2026-11-15), see "B1 as built" below |
-| B2–B6, G1, G3b, G4–G7 | Planned, order above |
+| B2 | Done (2026-11-15), see "B2 as built" below |
+| B3–B6, G1, G3b, G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -644,4 +645,25 @@ The trial-game framework and the three Speed games: **Quick Match, Colour Clash,
 - **Tests:** desktop vitest 841 (107 new in `shared/games/brain`: rt, block runner, scoring, generator host, shapes, three games' engines and scoring, simulated players, no-network, registration, and the boundary scans), `tsc` clean for desktop and website, desktop and website builds (Games chunk about 47 KB, 17 KB gzipped, lazy), cargo test unchanged.
 - **Shared files touched:** none outside `shared/games/` and the docs (the shell and hub changes are inside it). No trading logic changed.
 - **Docs updated:** spec §17.4, §17.7 and §17.11, `architecture-frontend.md`, `frontend-technical-constraints.md`, `phase25-manual-acceptance.md` (section H), this plan, `CLAUDE.md` row.
+
+## B2 as built (2026-11-15)
+
+Memory and Attention: **Grid Recall, Sequence Echo, N-Back Stream, Flanker Flock, Needle Finder, Track the Dots**. Branch `feat/brain-games-b2`, PR into `dev`. Dev was in sync with preprod at the start.
+
+- **Framework additions (`shared/games/`):** `core/trial.ts` (`TrialTiming.fixedCadence`, `StageSpec`, `engine.stages`), `brain/ui/useStagedRounds.ts` (rounds with timed stages, discard-and-replace on a bad frame, focus loss discards the round), `brain/ui/useTrialBlock.ts` (inputs collected for fixed-cadence trials via `combine`, optional block length and `maxTrials`), `brain/engine/span.ts` (span tracker and score shared by the two span games), `createBlock({ anticipation: false })` for answers that are not reactions, and `simPlayers` support for staged and fixed-cadence games.
+- **Games:** each is `brain/games/<id>/{engine.ts,View.tsx,index.ts}` with typed anchors in `config/difficulty.brain.ts`, registered in `games/index.ts`.
+  - **Grid Recall:** 3x3 to 6x6 grid, sequential (in order), all at once (any order, levels 8-11), reverse (from 12), the response grid turned or flipped by CSS from level 18; span cap `min(tiles - 2, 12)`, gain target `min(6, cap - start + 1)` and at most `gainTarget + 3` rounds (spec correction C1, so a perfect player's session ends and can reach 100).
+  - **Sequence Echo:** pads, digits (10+), letters (18+); backward from 8; grey dashed distractor flashes from 15 (intrusions counted); serial-position error profile.
+  - **N-Back Stream:** letters (and grid cells in dual mode from 16), exact match share per 20 trials, lures one step off n, fixed pace, a press under 150 ms ignored.
+  - **Flanker Flock:** 2 to 6 flankers per side, exact congruent/incongruent/neutral shares per 20, a decoy row and a cue banner from 14, vertical jitter from 10.
+  - **Needle Finder:** feature, then conjunction (7+), then extra distractor kinds (15+); set size varies inside a block (half, three quarters, full) so the search slope can be estimated.
+  - **Track the Dots:** fixed 120 Hz steps precomputed from the seed (exact replay), wall bounces with small random turns, an occluder from 12, blips on non-target dots from 16; canvas view, dots picked by position.
+- **Scoring decisions (also in spec 17.4):** chance-corrected recall accuracy; Needle Finder `100 * (hit rate - false-alarm rate) * speed bonus` (the spec's formula would give a "never found it" player about 25); Track the Dots clamps the mean skill once at the end; N-Back pools both keys. New spec corrections: C12 (Needle), C13 (Track the Dots clamping), C14 (counting judged rounds).
+- **Bug found by the browser check and fixed:** fixed-count engines (Needle Finder 20, Track the Dots 8) counted a round when it was handed out, so a round replaced after a bad frame used up one of the eight (a session ended with 7 judged trials). They now count judged rounds, with tests. Also learned: headless Chrome gives no frames during a plain sleep, so frame-driven games look frozen; wait on page text instead (noted in `frontend-technical-constraints.md`).
+- **Simulated players (levels 1, 10, 20; 200 seeds, 60 for Track the Dots):** perfect 98 to 100 everywhere (Needle Finder 98); N-Back always/never press exactly 0; random and fast-random: mean 0 to 7, 90th percentile 0 to 25, at most 7 % of runs above 25, worst single run 40 (N-Back level 10). Same statistical thresholds as B1.
+- **Checked in a real browser (Playwright, production build, local backend, throwaway user):** a bot reading the page played all six: Grid Recall 100 (spans 3, 5, 7), Sequence Echo (patterned pads, correct recall, no strikes), Needle Finder 98 (16 present, 4 absent, set sizes 4, 6, 8, search time measured at 910 ms for a 900 ms bot delay), N-Back 100 (45 items at the 2 s pace, 12 presses for 12 matches, no false alarms), Flanker 95 (69 trials, 100 % accuracy), Track the Dots (mark, move and answer stages, picking by canvas position, a full session; its trial count exposed the bug above). The test user's records were deleted.
+- **Not in B2:** Dashboard brain panels, Warm-up and Review replay (B6); the Web Worker is still unused (no heavy generator yet); the dual-mode N-Back, the distractor flashes and the decoy-row Flanker were exercised by engine tests but not played in a browser; the Windows build is yours to check (acceptance section I).
+- **Tests:** desktop vitest 973 (132 new for B2: span, six engines and scorings, simulated-player properties for nine games, registration), `tsc` clean for desktop and website, builds pass (Games chunk about 84 KB, 29 KB gzipped, lazy).
+- **Shared files touched:** none outside `shared/games/` and docs. No trading logic changed.
+- **Docs updated:** spec 17.4 and 17.11, `architecture-frontend.md`, `frontend-technical-constraints.md`, `phase25-manual-acceptance.md` (section I), this plan, `CLAUDE.md` row.
 

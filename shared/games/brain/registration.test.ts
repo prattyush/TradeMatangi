@@ -4,28 +4,32 @@ import { getGame, isPlayable, registeredIds } from '../core/registry'
 import '../games'
 
 describe('registered brain games', () => {
-  it('the three Speed games are registered and playable; the rest stay "Coming soon"', () => {
-    expect(registeredIds().sort()).toEqual(['colour_clash', 'green_light', 'quick_match'])
-    for (const entry of gamesIn('brain')) expect(isPlayable(entry.id)).toBe(['quick_match', 'colour_clash', 'green_light'].includes(entry.id))
+  const PLAYABLE = ['quick_match', 'colour_clash', 'green_light', 'grid_recall', 'sequence_echo', 'n_back_stream', 'flanker_flock', 'needle_finder', 'track_the_dots'] as const
+  // Games scored on reaction time carry the RT_fast / RT_slow scale; recall and tracking games do not need one.
+  const REACTION_TIME = ['quick_match', 'colour_clash', 'green_light', 'n_back_stream', 'flanker_flock', 'needle_finder'] as const
+  it('the Speed, Memory and Attention games are registered and playable; the rest stay "Coming soon"', () => {
+    expect(registeredIds().sort()).toEqual([...PLAYABLE].sort())
+    for (const entry of gamesIn('brain')) expect(isPlayable(entry.id)).toBe((PLAYABLE as readonly string[]).includes(entry.id))
   })
-  it('each is a timed trial game with instructions, an RT range and a View', () => {
-    for (const id of ['quick_match', 'colour_clash', 'green_light'] as const) {
+  it('each is a trial game with instructions and a View; timed blocks are the reaction-time games and n-back', () => {
+    const timed = ['quick_match', 'colour_clash', 'green_light', 'n_back_stream', 'flanker_flock']
+    for (const id of PLAYABLE) {
       const game = getGame(id)!
       expect(game.kind).toBe('trial')
       if (game.kind !== 'trial') continue
-      expect(game.session.kind).toBe('timed')
+      expect(game.session.kind).toBe(timed.includes(id) ? 'timed' : 'rounds')
       expect(game.instructions.length).toBeGreaterThan(2); expect(game.instructions.length).toBeLessThanOrEqual(6)
-      expect(Object.keys(game.paramTable)).toEqual(expect.arrayContaining(['rtFast', 'rtSlow']))
+      if ((REACTION_TIME as readonly string[]).includes(id)) expect(Object.keys(game.paramTable)).toEqual(expect.arrayContaining(['rtFast', 'rtSlow']))
       expect(typeof game.View).toBe('function')
     }
   })
   it('every parameter is defined at every level 1 to 20 and finite', async () => {
     const { paramsAt } = await import('../core/difficulty')
-    for (const id of ['quick_match', 'colour_clash', 'green_light'] as const) {
+    for (const id of PLAYABLE) {
       for (let level = 1; level <= 20; level++) {
         const params = paramsAt(getGame(id)!.paramTable, level)
         for (const [key, value] of Object.entries(params)) expect(Number.isFinite(value), `${id} L${level} ${key}`).toBe(true)
-        expect(params.rtFast).toBeLessThan(params.rtSlow)
+        if (params.rtFast !== undefined) expect(params.rtFast).toBeLessThan(params.rtSlow)
       }
     }
   })

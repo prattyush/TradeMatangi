@@ -5,6 +5,14 @@
 import quickMatch from '../brain/games/quick_match'
 import colourClash from '../brain/games/colour_clash'
 import greenLight from '../brain/games/green_light'
+import gridRecall from '../brain/games/grid_recall'
+import sequenceEcho from '../brain/games/sequence_echo'
+import nBackStream from '../brain/games/n_back_stream'
+import flankerFlock from '../brain/games/flanker_flock'
+import needleFinder from '../brain/games/needle_finder'
+import trackTheDots from '../brain/games/track_the_dots'
 import { isPlayable, registerGame } from '../core/registry'
 
-for (const definition of [quickMatch, colourClash, greenLight]) if (!isPlayable(definition.id)) registerGame(definition)
+for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots]) {
+  if (!isPlayable(definition.id)) registerGame(definition)
+}

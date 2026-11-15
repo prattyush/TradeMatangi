@@ -78,5 +78,19 @@ Needs the backend from `dev` and, on Windows, a desktop build that includes the 
 12. **No trading interference:** with a paper or replay session running, open Games on the website and play a block: the trading screen keeps updating underneath and nothing in it is delayed or changed. Network log: only `GET`/`PUT .../games/state` (once at the start, once at the end).
 13. Keyboard safety: keys you press in a game (S, D, Space, digits, Esc) do nothing in the trading screen behind it.
 
+## I. Brain games, Memory and Attention (B2): Windows build and the website
+Same setup as section H. Six more games are playable: **Grid Recall, Sequence Echo, N-Back Stream** (Memory) and **Flanker Flock, Needle Finder, Track the Dots** (Attention).
+1. Brain tab: nine games have a Play button (the three Speed games from section H plus these six); twelve say "Coming soon".
+2. **Grid Recall:** tiles light one by one; tap them in the same order. Level 1 uses a 3x3 grid and spans 3, 5, 7. A mistake is a strike (three end the game); the header shows span, round and strikes. From level 8 the tiles light together and order does not matter; from level 12 you tap in REVERSE; from level 18 the grid turns or flips before you answer (tap where the lit tiles went).
+3. **Sequence Echo:** pads (digits from level 10, letters from level 18) flash; repeat the sequence by clicking or pressing the key (Backspace undoes). From level 8 repeat it BACKWARDS; from level 15 grey dashed flashes appear that you must ignore.
+4. **N-Back Stream:** letters appear at a steady pace; press **M** when a letter equals the one n back (n=1 at level 1; the first n are just for remembering). From level 10 near misses appear; from level 16 the letter also moves on a grid: **A** for the same place, **L** for the same letter. Pressing nothing or always scores 0.
+5. **Flanker Flock:** press ← or → for the MIDDLE arrow only. From level 14 two rows appear after a short cue naming the row to judge.
+6. **Needle Finder:** click the red upright bar, or press **N** when it is not there (20 screens, a time limit each). From level 7 other bars are red or upright too. Clicking at random or always pressing N scores 0.
+7. **Track the Dots:** orange dots are marked for 2 s, then all dots look alike and move; when they stop, click the dots you followed (eight rounds). From level 12 the dots pass behind a screen; from level 16 other dots blink.
+8. Each result screen shows its stats and a Trial review; a Progress block saves, a Practice block never changes your level; Esc asks to quit and records nothing.
+9. **Focus loss:** during a round switch away for a few seconds: that round is discarded and replaced (it does not use up one of the 20 screens or 8 rounds, and costs no strike); away for over 10 s cancels the session.
+10. Timing sanity as in section H step 7 for Flanker and Needle Finder (search times of 1 to 3 s at level 1).
+11. With a paper or replay session running, play any of these on the website: the trading screen is unaffected (section H step 12).
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.
