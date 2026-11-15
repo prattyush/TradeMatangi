@@ -17,6 +17,7 @@ import TradeLabeling from './TradeLabeling'
 import TradeWalkthrough from './walkthrough/TradeWalkthrough'
 import TradeWhatIf from './whatif/TradeWhatIf'
 import StatsModal from './StatsModal'
+import LabelProgressBadge from './labeling/LabelProgressBadge'
 import PatternVsTradeComparison from './PatternVsTradeComparison'
 
 interface Props {
@@ -47,6 +48,8 @@ export interface SessionGroup {
   sessions: SessionSummary[]
   totalPnl: number
   totalTrades: number
+  /** Closed round trips with a positive net P&L; `undefined` when a session came from an older backend. */
+  winningTrades?: number
   totalCommission: number
   sessionCapital: number
 }
@@ -67,6 +70,7 @@ export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
         sessions: [],
         totalPnl: 0,
         totalTrades: 0,
+        winningTrades: 0,
         totalCommission: 0,
         sessionCapital: s.session_capital,
       })
@@ -75,6 +79,7 @@ export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
     g.sessions.push(s)
     g.totalPnl += s.net_pnl
     g.totalTrades += s.round_trip_count ?? s.trade_count
+    g.winningTrades = g.winningTrades === undefined || s.winning_round_trip_count === undefined ? undefined : g.winningTrades + s.winning_round_trip_count
     g.totalCommission += s.total_commission
   }
   return Array.from(map.values()).sort((a, b) => {
@@ -214,6 +219,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
           <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
             {sessionTypeLabel}{group.trading_style==='swing'?' · Swing':''}{group.sessions[0]?.shared ? ` · Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id}` : ''}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
           </div>
+          {group.trading_style !== 'swing' && <LabelProgressBadge sessionIds={group.sessions.map(s => s.session_id)} />}
         </div>
 
         <div style={{ minWidth: 80 }}>
@@ -245,6 +251,13 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
         <div style={{ minWidth: 60 }}>
           <div style={{ fontSize: 12, color: '#8b949e' }}>Trades</div>
           <div style={{ fontSize: 13, color: '#e6edf3' }}>{group.totalTrades}</div>
+        </div>
+
+        <div style={{ minWidth: 60 }} title="Closed round trips with a positive net P&L, as a share of all closed round trips">
+          <div style={{ fontSize: 12, color: '#8b949e' }}>Win %</div>
+          <div style={{ fontSize: 13, color: '#e6edf3', fontVariantNumeric: 'tabular-nums' }}>
+            {group.winningTrades !== undefined && group.totalTrades > 0 ? `${Math.round((group.winningTrades / group.totalTrades) * 100)}%` : '—'}
+          </div>
         </div>
 
         <div style={{ minWidth: 80 }}>

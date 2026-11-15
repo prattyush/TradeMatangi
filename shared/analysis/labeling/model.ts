@@ -27,6 +27,16 @@ export function isLabeled(label: TradeLabel | undefined): boolean {
   return Boolean(label && (label.expected_category || label.expected_strategy || label.actual_category || label.actual_strategy))
 }
 
+/** True when expected AND actual category and strategy are all filled in: the day's "done" test for Label Trades. */
+export function isFullyLabeled(label: TradeLabel | undefined): boolean {
+  return Boolean(label && label.expected_category && label.expected_strategy && label.actual_category && label.actual_strategy)
+}
+
+/** How many of these round trips are fully labelled (Label Trades shows it beside "Trade 1 of 5"). */
+export function labelProgress(trips: Array<Pick<LabeledRoundTrip, 'session_id' | 'index'>>, labels: Map<string, TradeLabel>): { done: number; total: number } {
+  return { done: trips.filter(trip => isFullyLabeled(labels.get(tripKey(trip)))).length, total: trips.length }
+}
+
 const identities = (trade: Pick<AnalysisTrade, 'trade_id' | 'execution_id' | 'stored_trade_id'>) =>
   [trade.trade_id, trade.execution_id, trade.stored_trade_id].filter((id): id is string => Boolean(id))
 

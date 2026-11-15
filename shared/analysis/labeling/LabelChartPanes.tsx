@@ -58,10 +58,22 @@ export default function LabelChartPanes({ symbol, date, trades, historicalDays, 
   const contract = contracts.find(item => item.key === selected) ?? contracts[0]
   const phone = usePhone()
   const [pane, setPane] = useState<'underlying' | 'strike'>('underlying')
+  // Inside the maximized (stacked) view each chart can itself be maximized: it then takes the whole area; Restore returns to both.
+  const [only, setOnly] = useState<'underlying' | 'strike' | null>(null)
   useEffect(() => { if (!contract) setPane('underlying') }, [contract])
   const stacked = maximized && !phone
-  const showUnderlying = stacked || pane === 'underlying' || !contract
-  const showStrike = Boolean(contract) && (stacked || pane === 'strike')
+  const alone = stacked && contract ? only : null
+  const showUnderlying = alone ? alone === 'underlying' : stacked || pane === 'underlying' || !contract
+  const showStrike = Boolean(contract) && (alone ? alone === 'strike' : stacked || pane === 'strike')
+  useEffect(() => { if (!stacked) setOnly(null) }, [stacked])
+  // Esc steps back one level: first the single chart returns to the pair, only then does the whole view restore. Capture phase and
+  // stopImmediatePropagation, so the view's own Esc handler (registered earlier) does not also fire.
+  useEffect(() => {
+    if (!alone) return
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopImmediatePropagation(); setOnly(null) } }
+    window.addEventListener('keydown', escape, true)
+    return () => window.removeEventListener('keydown', escape, true)
+  }, [alone])
   const pickContract = (key: string) => { setSelected(key); setPane('strike') }
   // Picking a price: show the chart it is for.
   const pickTarget = extras?.pickTarget
@@ -73,6 +85,7 @@ export default function LabelChartPanes({ symbol, date, trades, historicalDays, 
           <div className="tl-pane-chart">
             <AnalysisChart symbol={symbol} date={date} trades={trades} historicalDays={historicalDays} title={symbol}
               getMarkerText={getMarkerText} focusTime={focusTime} fill
+              isMaximized={alone === 'underlying'} onMaximize={stacked && contract ? () => setOnly(value => (value === 'underlying' ? null : 'underlying')) : undefined}
               pickMode={pickTarget === 'underlying'} onPick={extras?.onPick} onPickCancel={extras?.onPickCancel} pickHint={extras?.pickHint} whatIfMarkers={extras?.whatIfMarkers} />
           </div>
         </div>
@@ -89,6 +102,7 @@ export default function LabelChartPanes({ symbol, date, trades, historicalDays, 
           <div className="tl-pane-chart">
             <OptionsChart symbol={symbol} date={date} strike={contract.strike} expiry={contract.expiry} right={contract.right}
               trades={contract.trades} historicalDays={historicalDays} getMarkerText={getMarkerText} labelContractMarkers={labelContractMarkers} focusTime={focusTime} fill
+              isMaximized={alone === 'strike'} onMaximize={stacked ? () => setOnly(value => (value === 'strike' ? null : 'strike')) : undefined}
               pickMode={pickTarget === 'option'} onPick={extras?.onPick} onPickCancel={extras?.onPickCancel} pickHint={extras?.pickHint} whatIfMarkers={extras?.whatIfMarkers} />
           </div>
         </div>
