@@ -2,6 +2,8 @@
 
 **Status: Planned. Scope changed on 2026-11-14:** the Games are now built in `shared/games/` for the desktop app (`windowsapp/`, Tauri 2 + React + TypeScript), the website (`frontend/`) and the webapp (`webapp/`, which reuses the website code). The text below that says "desktop only" is superseded. A second track, porting **Patterns, Chart Structures and Fine Structures to the desktop** (on KLine), goes first. See `docs/spec-phase25-implementation-plan.md` for both tracks, the spec corrections found against the real code, and the shared files touched. All work lands on `dev` first via feature branches (see `CLAUDE.md` branch strategy). Nothing here goes to `preprod`/`main` until reviewed.
 
+**Update 2026-11-15 (Track B):** §17 adds **21 general cognitive games** (Lumosity-style: Speed, Memory, Attention, Flexibility, Math, Reasoning and Word, three each) to the same Games section, for the desktop, website and webapp. They are pure client code with no market data. Track B can start once G2 and G3 are merged; sprints B0–B6 are in §17.11. Sections of this document that say "ten games" refer to the **market games** (Track G); the registry now holds 31 games.
+
 Implementation plan and sprint table: §14 of this document (split out into `docs/spec-phase25-implementation-plan.md` after Sprint 0, following the Phase 22/23 convention).
 
 ---
@@ -37,13 +39,13 @@ It is a personal training tool for the platform owner. It is not a leaderboard, 
 | Reasoning | Choose structure and manage trades by logic | Strike Picker, Exit Discipline |
 | Discipline | Follow rules, avoid overtrading | No-Trade Day |
 
-Word games are **out of scope**.
+The table above lists the **market games** (§5). Each category also has three general **brain games** (including Word games), described in §17.
 
 ### 1.3 Decisions
 
 | Topic | Decision |
 |---|---|
-| Clients | Desktop app only. Games are a separate Tauri window (own WebView process). |
+| Clients | Desktop app (separate Tauri window, own WebView process), website and webapp (lazy Games workspace). Shared code in `shared/games/`. |
 | Where compute happens | **On the laptop.** Round generation, difficulty, scoring, option pricing and rendering all run in the desktop WebView. The server only (a) authenticates, (b) serves read-only slices of already-cached market data, and (c) stores small per-user progress records. |
 | Server database growth | Hard budget: **under ~1 MB of DynamoDB data per user per year** (§8.5). No per-round, per-tick or per-answer storage. |
 | Server CPU | No pandas modelling, no game logic, no scoring on the server. Data endpoints are cache-only file slices (optionally one resample). |
@@ -51,7 +53,7 @@ Word games are **out of scope**.
 | Real orders | Games **never** place, modify or cancel any order, paper or real, and never touch broker services. |
 | Language | TypeScript/React in `windowsapp/`; Python/FastAPI in `backend/` for the thin endpoints. |
 | Charts | A small purpose-built canvas chart (`GameChart`) for games. Do not reuse or modify the trading charts (`AnalysisChart`, `ChartTile`, KLine wrappers). |
-| Login | Reuse the existing desktop sign-in (tokens held by the Rust host). Progress is per signed-in user. No separate game accounts. |
+| Login | Reuse the existing sign-in: desktop bearer via the Rust host, website `X-User-Id` (accepted by `get_desktop_user_id`). Progress is per signed-in user. No separate game accounts. |
 | Persistence | Local cache (IndexedDB) for market-data windows and an offline outbox; DynamoDB only for compact progress. |
 | Option pricing | Real option premium history where cached; otherwise Black–Scholes modelled premium, clearly labelled "modelled". |
 | Costs | Configurable cost model (slippage points + flat per-lot round-trip cost). Placeholder defaults are shipped and the user edits them in Settings. No statutory rates are hard-coded. |
@@ -59,7 +61,7 @@ Word games are **out of scope**.
 
 ### 1.4 Out of scope
 
-Website/webapp support; multiplayer or leaderboards; live or streaming data; any order placement; mobile; AI Helper or LLM-generated content; word games; changes to real/paper trading, replay, stepwise, strategies, guardrails or analysis behaviour.
+Multiplayer or leaderboards; live or streaming data; any order placement; phone/mobile layouts; AI Helper or LLM-generated content; medical or IQ claims for the brain games (§17.1); changes to real/paper trading, replay, stepwise, strategies, guardrails or analysis behaviour.
 
 ---
 
@@ -201,6 +203,8 @@ interface GameDefinition<Round, Answer> {
 ```
 
 Adding a game = one folder in `games/` and one line in `registry.ts`. Nothing else may be edited (enforced in review, not code).
+
+The 21 brain games (Track B) use the trial-based `TrialGameDefinition` in §17.3; both definition types share `GameShell`, difficulty, scoring, the registry and the hub. `GameId` is extended with the brain-game ids in §17.2.
 
 ### 4.2 Session flow (shared `GameShell`)
 
@@ -450,7 +454,7 @@ Each game below defines: the skill, the round, the data it uses, controls, scori
 
 ### 6.3 Category rating
 
-`categoryRating = 0.7 × categoryRating_prev + 0.3 × (SessionScore × levelFactor)`, with `levelFactor = 0.6 + 0.4 × (level / 20)`, averaged over the games in the category. Displayed 0–100. Used by the dashboard and the Daily Warm-up.
+`categoryRating = 0.7 × categoryRating_prev + 0.3 × (SessionScore × levelFactor)`, with `levelFactor = 0.6 + 0.4 × (level / 20)`, averaged over the games in the category. Displayed 0–100. Used by the dashboard and the Daily Warm-up. With Track B, the average covers both the market and the brain games in a category (§17.8).
 
 ---
 
@@ -474,6 +478,8 @@ Designed to run before market open in about 10 minutes. Deterministic for a give
 5. One **random** other game, short version (5 rounds).
 
 Completion is recorded in the day record. Skipping individual games is allowed; the streak requires at least 4 of 5.
+
+With Track B the plan draws from a `warmupPool` setting (`both` | `market` | `brain`); see §17.8 for the pool rules.
 
 ### 7.3 Review mode
 
@@ -554,11 +560,11 @@ Behaviour: validates schema and size only; applies as one `TransactWriteItems`; 
 - **Records:**
   - `profile` — settings, createdAt, version. ≤ 4 KB.
   - `game#<gameId>` — `level`, `consecutiveHigh`, `consecutiveLow`, `sessions`, `best`, `emaScore`, `lastScores` (≤ 20 integers), `stats` (≤ 20 small numeric keys), `lastPlayed`, `revision`. ≤ 3 KB.
-  - `day#YYYY-MM-DD` — per-game `{n, avg, best}`, `warmupDone`, `minutes`, `categoryScores`, `expectancyR`, `discipline`. ≤ 2 KB. **TTL** attribute `expires_at` ≈ 400 days.
+  - `day#YYYY-MM-DD` — per-game `{n, avg, best}`, `warmupDone`, `minutes`, `categoryScores`, `expectancyR`, `discipline`. ≤ 2.5 KB. **TTL** attribute `expires_at` ≈ 200 days (reduced from 400 in Track B to keep the budget with 31 games; monthly rollups keep the history).
   - `month#YYYY-MM` — same shape aggregated monthly, written when a day item is created for a new month (client rolls up the previous month before its days expire). ≤ 2 KB. No TTL.
-- **Hard validation:** reject unknown `gameId`, items over 8 KB, `lastScores` over 20 entries, any field not in the schema.
-- **Budget:** ~10 × 3 KB + ~400 × 2 KB + 12 × 2 KB + 4 KB ≈ **0.9 MB per user at steady state**, constant over time (TTL and monthly rollups keep it bounded).
-- **Never stored on the server:** rounds, answers, windows, per-trade records, tick data, review sessions.
+- **Hard validation:** reject any `gameId` not in the registry (31 ids once Track B lands: 10 market and 21 brain), items over 8 KB, `lastScores` over 20 entries, any field not in the schema.
+- **Budget:** with all 31 games, ~31 × 3 KB + ~200 × 2.5 KB + 24 × 3 KB + 4 KB ≈ **0.67 MB per user at steady state**, constant over time (TTL and monthly rollups keep it bounded). With only the ten market games it is smaller still.
+- **Never stored on the server:** rounds, answers, windows, per-trade records, tick data, review sessions, brain-game trial logs.
 - **Write discipline:** one `PUT /state` per completed session (not per round). If offline, the write goes to the local outbox and is flushed on reconnect, merged by revision.
 
 ---
@@ -592,6 +598,8 @@ Behaviour: validates schema and size only; applies as one `TransactWriteItems`; 
 
 `tsc --noEmit`, `vitest run` (desktop) and the backend suite must pass for every sprint.
 
+Track B adds simulated-player, generator-uniqueness, timing and word-asset tests; see §17.10.
+
 ---
 
 ## 11. Non-functional requirements
@@ -616,7 +624,7 @@ Behaviour: validates schema and size only; applies as one `TransactWriteItems`; 
 
 ## 13. Open questions to verify in Sprint 0
 
-Record each answer in the implementation plan before coding.
+**Answered 2026-11-15 (Sprint G0-close): see the "G0-close" table in `docs/spec-phase25-implementation-plan.md`.** Original wording kept below for reference.
 
 1. **Second-level data coverage:** which symbols/dates have native second cadence in the cache? How many dates exist? Do option files exist for useful strikes/dates, and at what cadence? Confirm the semantics of `has_native_second_cadence` and the `observed` column in the files the games will read.
 2. **Window endpoint design:** is returning only observed rows correct, or should the flag be returned? Which existing helpers should the slice/resample reuse? What are the real file locations/formats (`parquet_path`, `pickle_path`) and their size, so the per-request cost is estimated?
@@ -639,7 +647,7 @@ Each sprint: one feature branch off `dev`, one PR into `dev`, tests green, this 
 
 | Sprint | Scope | Exit criteria | Status |
 |---|---|---|---|
-| 0 | Discovery: answer §13, write `docs/spec-phase25-implementation-plan.md`, finalise parameter anchor tables | Owner approves the plan; no code changed | Planned |
+| 0 | Discovery: answer §13, write `docs/spec-phase25-implementation-plan.md`, finalise parameter anchor tables | Owner approves the plan; no code changed | Done 2026-11-15 (§13 answered in the implementation plan) |
 | 1 | Backend data: `build-games-index.py`, `/availability`, `/window`, cache-only guarantees, tests | Backend tests pass; manual check of payload sizes; proves no broker/download call on miss | Planned |
 | 2 | Backend persistence: `GameProfiles`, `/state` GET/PUT, schema/size/TTL rules, `games` capability flag, tests | Round trip, idempotency, conflict and per-user isolation tests pass | Planned |
 | 3 | Desktop foundation: Rust `desktop_games_request` + allowlist, Games window + toolbar button, hub shell, engine core (`rng`, `difficulty`, `scoring`, `costModel`, `volUnit`), `GameChart`, `windowCache`, `outbox`, import-boundary test, **Tick Reader end-to-end** | Tick Reader playable from the hub at all levels; progress saved and restored; Rust change rebuilt and tested | Planned |
@@ -647,6 +655,8 @@ Each sprint: one feature branch off `dev`, one PR into `dev`, tests green, this 
 | 5 | Level Recall (`levels.ts`), Strike Picker (`optionPricing.ts`), Regime Switch (`regime.ts`) | Same | Planned |
 | 6 | Spot the Trap (`patterns.ts`), No-Trade Day | Same | Planned |
 | 7 | Dashboard, Daily Warm-up, Review mode, Settings, memory/perf pass against §3.5, docs (`CLAUDE.md`, architecture docs, §12), `docs/phase25-manual-acceptance.md` | Manual acceptance checklist passes on the Windows build | Planned |
+
+**Track B (brain games)** has its own sprints B0–B6 in §17.11; they follow G3 and do not need G1.
 
 **Rules for every sprint**
 - Never modify trading, replay, stepwise, analysis, guardrail or broker code except the single toolbar hook and Tauri window/transport entries listed above.
@@ -705,3 +715,365 @@ Values are anchors at levels 1 / 5 / 10 / 15 / 20; interpolate between them. The
 5. The Games window stays within the §3.5 memory budget at level 20 in manual testing.
 6. Dashboard, Daily Warm-up, Review mode and Settings work; progress syncs across sessions and survives offline play via the outbox.
 7. Import-boundary, engine, backend and manual acceptance tests pass; docs are updated.
+8. (Track B) All 21 brain games meet §17.12 on the desktop, website and webapp.
+
+---
+
+## 17. Track B — Brain Games (Lumosity-style cognitive games)
+
+Added 2026-11-15. This track adds **21 general cognitive games** (three per category, seven categories) to the same Games section as the ten market games in §5. They run on the **desktop** (Games window), the **website** and the **webapp** from one shared codebase. Everything in §1–§16 still applies unless this section says otherwise.
+
+### 17.1 Goal and principles
+
+1. **A classic brain-training set.** Speed, Memory, Attention, Flexibility, Math, Reasoning and Word games in the style of commercial brain-training apps, so there is a daily mental warm-up that is not tied to market data.
+2. **Standard paradigms, original product.** Every game implements a long-established cognitive task (same–different matching, Stroop, go/no-go, spatial span, n-back, Eriksen flanker, visual search, multiple-object tracking, task switching, card sorting, stimulus–response remapping, mental arithmetic, number-target puzzles, matrix reasoning, number series, code breaking, anagrams, word search, word ladders). Names, artwork, copy and sounds are **original**. Do not copy any commercial product's game names, artwork, layout, characters or audio. Do not mimic a specific product's look.
+3. **Pure client.** Brain games need no market data, no new server endpoints and no server computation. The only server contact is the small progress write already defined in §8.4. They work offline; progress queues in the outbox.
+4. **Same framework.** Levels 1–20 per game (§6), Practice and Progress modes (§4.2), result screen, dashboard and warm-up (§7), local review, the same `GameProfiles` storage (§8.5).
+5. **Honest framing.** These are practice tools. UI copy and docs must not claim IQ gains, "brain age", medical or clinical benefit, or improved trading results. Ratings mean "your practice progress on these tasks", nothing more. Include a one-line note on the Games settings page saying so.
+6. **Safe next to trading.** No brain-game code imports trading modules, calls trading or order routes, or registers global keyboard handlers (see §17.7).
+
+### 17.2 Catalogue
+
+Session type: **T** = timed block (seconds), **R** = fixed number of puzzles/rounds. Choice count `k` sets the chance level used for scoring (§17.4).
+
+| # | Game (`id`) | Category | Paradigm | Session | Input | Chance |
+|---|---|---|---|---|---|---|
+| 1 | Quick Match (`quick_match`) | Speed | Same–different matching of two items | T 60 | 2 keys / buttons | 0.5 |
+| 2 | Colour Clash (`colour_clash`) | Speed | Stroop (name the ink colour) | T 60 | 4–6 keys / buttons | 1/k |
+| 3 | Green Light (`green_light`) | Speed | Go / no-go | T 75 | 1 key | detection |
+| 4 | Grid Recall (`grid_recall`) | Memory | Spatial span | R (until 3 misses) | click tiles | span |
+| 5 | Sequence Echo (`sequence_echo`) | Memory | Serial recall, forward/backward | R (until 3 misses) | click pads / digits | span |
+| 6 | N-Back Stream (`n_back_stream`) | Memory | n-back working memory | T ≈ 90 | 1 key | detection |
+| 7 | Flanker Flock (`flanker_flock`) | Attention | Eriksen flanker | T 60 | 2 keys | 0.5 |
+| 8 | Needle Finder (`needle_finder`) | Attention | Visual search (feature/conjunction) | R 20 | click / "none" key | ≈ 0 |
+| 9 | Track the Dots (`track_the_dots`) | Attention | Multiple-object tracking | R 8 | click dots | t/N |
+| 10 | Rule Switch (`rule_switch`) | Flexibility | Task switching with cues | T 75 | 2 keys | 0.5 |
+| 11 | Card Sorter (`card_sorter`) | Flexibility | Hidden-rule card sorting | R 64 cards | click 1 of 4 | rule search |
+| 12 | Flip Map (`flip_map`) | Flexibility | Stimulus–response remapping | T 75 | 4 arrow keys | 0.25 |
+| 13 | Number Sprint (`number_sprint`) | Math | Mental arithmetic | T 90 | typed answer | ≈ 0 |
+| 14 | Equation Drop (`equation_drop`) | Math | Arithmetic under falling-time pressure | T 90 or 3 lives | typed answer | ≈ 0 |
+| 15 | Make Target (`make_target`) | Math | Reach a target from given numbers | R 8 | click numbers/operators | ≈ 0 |
+| 16 | Pattern Matrix (`pattern_matrix`) | Reasoning | Raven-style matrix completion | R 10 | click 1 of 6–8 | 1/k |
+| 17 | Number Series (`number_series`) | Reasoning | Inductive number series | R 12 | click 1 of 5 / typed | 1/k |
+| 18 | Code Breaker (`code_breaker`) | Reasoning | Mastermind-style deduction | R 6 codes | click/typed guesses | ≈ 0 |
+| 19 | Anagram Dash (`anagram_dash`) | Word | Anagram solving | T 90 | typed / click tiles | ≈ 0 |
+| 20 | Letter Grid (`letter_grid`) | Word | Boggle-type word search | T 120 | drag/click path or typed | ≈ 0 |
+| 21 | Word Ladder (`word_ladder`) | Word | One-letter-change word chains | R 5 | typed words | ≈ 0 |
+
+The registry (§4.1) now holds 31 game ids: the 10 market games and these 21. `GameId` is extended accordingly, and the server whitelist in §8.5 uses the registry ids.
+
+### 17.3 Framework additions
+
+Brain games are trial-based and usually timed, so they use a second definition type alongside `GameDefinition`. Both share `GameShell`, `difficulty.ts`, `scoring.ts`, the registry, the hub, the outbox and the result screen.
+
+```ts
+interface TrialGameDefinition<Trial, Response> {
+  id: GameId
+  category: Category
+  title: string
+  blurb: string
+  instructions: string[]                          // max 6 lines
+  session: { kind: 'timed'; seconds: number } | { kind: 'rounds'; count: (level: number) => number }
+                                                  // 'rounds' may end early (e.g. 3 misses)
+  params(level: number): Record<string, number>   // from config/difficulty.json
+  createEngine(params: Record<string, number>, rng: Rng): TrialEngine<Trial, Response>
+  summarise(log: TrialLog<Trial, Response>[], level: number): SessionSummary
+  View: React.ComponentType<TrialViewProps<Trial, Response>>
+}
+
+interface TrialEngine<Trial, Response> {
+  next(): Trial | null                            // null = session over (strikes, trial cap)
+  evaluate(trial: Trial, response: Response | 'timeout', rtMs: number): TrialOutcome
+  progress?(): { span?: number; strikes?: number; lives?: number }
+}
+```
+
+- **`GameShell`** gains a timed-block mode: instructions → 3-2-1 countdown → block with a visible time bar → result. Pause is **not** allowed in a block. Pressing Esc asks to quit; quitting a Progress block records nothing.
+- **Seeded RNG** (`rng.ts`) drives every stimulus and generator, so a session can be regenerated for Review from `userId + date + gameId + sessionNo`.
+- **Within-session adaptation** is limited to span-style games (span rises with success, three strikes end the game) and the staircase-free design elsewhere: difficulty comes from the level, not from live tuning. This keeps scores comparable across sessions.
+
+**Timing and input rules (all brain games)**
+
+1. Stimulus onset time = the `requestAnimationFrame` timestamp of the frame in which the stimulus is first painted. Response time = `event.timeStamp` of the key/pointer event minus that onset. Never use `Date.now()` or `setTimeout` durations as the RT source.
+2. Fixed timing parameters (display time, inter-stimulus interval) are scheduled from the rAF clock and measured, not assumed. A trial where the actual display time deviates by more than 2 frames, or where a frame longer than 100 ms is detected, is **discarded and replaced**, never scored.
+3. **Anticipations:** RT under 150 ms are not valid responses. Count as an error ("too early") and exclude from RT statistics.
+4. **Lapses:** no response within the trial window is a timeout (an error for choice tasks, a miss or correct rejection for detection tasks as appropriate).
+5. **Focus loss** (`visibilitychange`, window blur): the current trial is discarded; a timed block pauses its clock for at most 10 s, then voids the block (Progress mode records nothing).
+6. RTs from different devices, browsers or refresh rates are **not comparable**; the dashboard shows RT trends per device class only and the spec makes no cross-device claims.
+7. Keyboard is primary on laptop/desktop; every game is also playable with the mouse/trackpad. Touch and phone layouts are out of scope (consistent with `docs/spec-phase25-implementation-plan.md`).
+
+**Accessibility and comfort**
+
+- Colour-vision-safe default palette (Okabe–Ito set) and **never colour alone**: every colour-coded stimulus also carries a shape, pattern or text label (Colour Clash buttons show a pattern swatch plus position number).
+- "Reduce motion" setting: shortens animations; games that depend on motion (Track the Dots, Equation Drop) slow the minimum speed and warn that scoring is unchanged.
+- Sound is off by default. No flashing faster than 3 flashes per second anywhere (Grid Recall and Sequence Echo respect this by design: minimum 300 ms per flash with a gap).
+- Font sizes scale with a Games zoom setting (80–150%).
+
+### 17.4 Scoring for brain games
+
+All brain games return `SessionScore` 0–100 and plug into the §6.2 level rules unchanged. Because chance-level guessing must score near 0, scores are **chance-corrected**.
+
+- **Choice tasks (k options):** `skill = clamp((acc − 1/k) / (1 − 1/k), 0, 1)` where `acc` = correct valid trials / valid trials.
+- **Detection tasks (go/no-go, n-back):** `skill = clamp(hitRate − falseAlarmRate, 0, 1)` (Youden's J). Always pressing or never pressing scores 0.
+- **Speed factor:** `speedFactor = clamp((RT_slow − medianRT_correct) / (RT_slow − RT_fast), 0, 1)` with `RT_fast`/`RT_slow` per game and level in config.
+- **Speed-emphasis games** (Speed category, Flanker Flock, Rule Switch, Flip Map): `SessionScore = round(100 × skill × (0.6 + 0.4 × speedFactor))`.
+- **Accuracy-emphasis games** (memory, puzzles, word): the per-game formulas in §17.5.
+- **Volume check:** if the player completed fewer than `minTrialsFrac` (default 0.6) of the expected trials for a timed block, multiply the score by `completed / (minTrialsFrac × expected)`, capped at 1. This stops "answer two perfectly and idle" runs from scoring high.
+- **Required property (tested, §17.10):** a random responder scores ≤ 25 and a perfect responder ≥ 95 at every level of every game.
+
+### 17.5 The 21 games
+
+Common to all: instructions screen, 3-2-1 countdown, Practice/Progress choice, result screen with per-trial review (what was shown, what you answered, correct answer, RT). Level levers are given as **L1 → L20**; exact anchors live in `config/difficulty.json` and are interpolated per §6.1. "Stats" are the small numeric keys saved in the game's `stats` field (§8.5; ≤ 20 keys).
+
+#### Speed
+
+**1. Quick Match (`quick_match`)**
+- *Skill:* fast perceptual comparison.
+- *Trial:* two items appear side by side (or one above the other at higher levels). Press **S** (same) or **D** (different). Same/different split 50/50.
+- *Items:* L1–5 coloured circles; L6–12 coloured polygons; L13–20 rotated and **mirrored** polygons (mirror = different), plus small size differences.
+- *Levers:* display time unlimited → 1500 ms → 600 ms (then items vanish and the answer is still accepted for 400 ms); difficulty of "different" pairs (large → one-feature difference); response window 3000 → 1200 ms.
+- *Scoring:* choice task, `k = 2`, speed-emphasis; `RT_fast/RT_slow` 450/1800 ms (L1) → 350/1100 ms (L20).
+- *Stats:* median RT, accuracy, same-vs-different RT gap, errors by feature.
+
+**2. Colour Clash (`colour_clash`)**
+- *Skill:* inhibiting an automatic response (Stroop interference).
+- *Trial:* a colour word is shown in an ink colour. Answer the **ink** colour by clicking the matching swatch or pressing its number key.
+- *Levers:* colours 4 → 6; incongruent share 25% → 65%; response window 3000 → 1100 ms; at L12+ neutral trials (coloured bars, "XXXX") are mixed in; at L16+ the swatch order is **shuffled each trial** so position memory does not help.
+- *Scoring:* choice task `k` = colours, speed-emphasis; `RT_slow` 2200 → 1400 ms.
+- *Stats:* median RT congruent vs incongruent (the Stroop effect), accuracy, error rate on incongruent.
+
+**3. Green Light (`green_light`)**
+- *Skill:* response inhibition and sustained attention.
+- *Trial:* a stream of symbols, one at a time. Press **Space** for GO symbols, withhold for NO-GO.
+- *Levers:* L1–5 GO = green circle, NO-GO = red square; L6–12 GO = any circle, NO-GO = any square; L13–20 GO changes **mid-block** (a banner shows the new rule for 1.5 s, e.g. "GO = blue only"). Symbol display 1000 → 450 ms; interval jitter widens; NO-GO share 15% → 35% (prepotent response weakens as it rises).
+- *Scoring:* detection task, `skill = HR − FAR`; `SessionScore = round(100 × skill × (0.7 + 0.3 × speedFactor))`.
+- *Stats:* hit rate, false-alarm rate, median RT, RT variability (coefficient of variation).
+
+#### Memory
+
+**4. Grid Recall (`grid_recall`)**
+- *Skill:* visuo-spatial working memory (spatial span).
+- *Trial:* an n×n grid; `span` tiles light in sequence (or all at once at higher levels). After the display, click the tiles. Success raises `span` by 1 (or 2 at low levels), failure is a strike; **three strikes end the session**.
+- *Levers:* grid 3×3 → 6×6; starting span 3 → 5; flash 700 → 300 ms with a 200 ms gap (sequential mode); simultaneous display from L8; **reverse order** recall from L12; at L18+ the grid **rotates** 90° or flips before recall (the player must mentally map).
+- *Scoring:* `spanGain = peakSpan − startSpan + 1` (0 if the first trial failed); `progress = clamp(spanGain / gainTarget(level), 0, 1)`; `acc` = mean fraction of correct tiles over all trials; `SessionScore = round(100 × (0.7 × progress + 0.3 × acc))`. `gainTarget` defaults to 6.
+- *Stats:* peak span, mean accuracy, strike count, trials played.
+
+**5. Sequence Echo (`sequence_echo`)**
+- *Skill:* serial-order memory (phonological/visual loop).
+- *Trial:* a sequence of pads or digits is shown one by one; reproduce it in the same order (or reversed). Strikes and span progression as in Grid Recall.
+- *Levers:* items 4 pads → 9 digits/letters; starting span 3 → 6; item time 800 → 300 ms; backward recall from L8; from L15 a **distractor** flash (different colour) appears between items and must be ignored and not entered.
+- *Scoring:* as Grid Recall with `gainTarget` 6 (forward) or 5 (backward).
+- *Stats:* peak span forward/backward, serial-position error profile (first/middle/last), distractor intrusion count.
+
+**6. N-Back Stream (`n_back_stream`)**
+- *Skill:* updating working memory.
+- *Trial:* letters (or grid positions) appear one at a time. Press **M** when the current item equals the one **n** steps back.
+- *Levers:* n = 1 (L1–5), 2 (L6–12), 3 (L13–18), 4 (L19–20); match share 25–30%; item time 2000 → 1200 ms (with a 500 ms gap); from L16 a **dual** version (position and letter, two keys); lure trials (n±1 matches, which must be rejected) from L10.
+- *Scoring:* detection task, `skill = HR − FAR`; `SessionScore = round(100 × skill)`; the first `n` items of a block are not scored.
+- *Stats:* hit rate, false-alarm rate, lure false-alarm rate, n reached.
+
+#### Attention
+
+**7. Flanker Flock (`flanker_flock`)**
+- *Skill:* selective attention and distractor suppression (Eriksen flanker).
+- *Trial:* a row of arrows or chevrons; the **middle** one is the target. Press ← or → for its direction. Flankers point the same way (congruent), the other way (incongruent) or are neutral.
+- *Levers:* flankers 2 → 6 per side; incongruent share 33% → 66%; display 1500 → 500 ms; target position jitter; at L14+ a pre-cue marks the target row among two rows and one row is a decoy.
+- *Scoring:* choice task `k = 2`, speed-emphasis; `RT_slow` 1400 → 800 ms.
+- *Stats:* median RT congruent vs incongruent (flanker effect), accuracy, errors by condition.
+
+**8. Needle Finder (`needle_finder`)**
+- *Skill:* visual search and feature binding.
+- *Trial:* find the single target among distractors and click it, or press **N** if the target is absent (20% of trials, rising to 30%).
+- *Modes:* **feature search** (the target differs by one feature, e.g. a red bar among blue bars) at low levels; **conjunction search** (the target is "red vertical" among red horizontal and blue vertical bars) from L7.
+- *Levers:* set size 8 → 60; time limit 15 → 5 s per trial; item jitter and overlap; at L15+ a second distractor feature.
+- *Scoring:* per trial `trialScore = correct × (0.6 + 0.4 × speed)` where `speed = clamp(1 − t / T_trial, 0, 1)`; wrong click, false "absent" or timeout = 0. `SessionScore = round(100 × mean(trialScore))`.
+- *Stats:* accuracy, median search time, search-slope estimate (time per extra item, feature vs conjunction), absent-trial accuracy.
+
+**9. Track the Dots (`track_the_dots`)**
+- *Skill:* divided and sustained attention (multiple-object tracking).
+- *Trial:* `N` identical dots on a canvas; `t` flash as targets, then all look the same and move for `D` seconds with random bounces. When they stop, click the `t` targets.
+- *Levers:* N 8 → 16; t 2 → 6; speed 80 → 220 px/s; D 5 → 10 s; from L12 dots pass behind a translucent occluder; from L16 brief distractor flicker. Trajectories use a **fixed timestep** and the seeded RNG so Review can replay them.
+- *Scoring:* choice task with `chance = t/N`; `acc = targetsHit / t`; `SessionScore = round(100 × clamp((acc − t/N) / (1 − t/N), 0, 1))`, averaged over 8 trials.
+- *Stats:* accuracy by t, speed reached, first-hit time.
+
+#### Flexibility
+
+**10. Rule Switch (`rule_switch`)**
+- *Skill:* task-set shifting.
+- *Trial:* each card shows a digit and a letter (e.g. "7 K"). A **cue** (frame colour plus a text tag) says which rule to apply: **number rule** (odd/even) or **letter rule** (vowel/consonant). Two response keys: **F** for odd/vowel, **J** for even/consonant.
+- *Levers:* L1–5 predictable alternation (AABB) with a 1 s cue-to-card gap; L6–12 random switches (~50%), 500 ms gap; L13–20 the cue appears **with** the card (no preparation time) and a third rule is added at L16 (**size**: digit above or below 5 is "high/low").
+- *Scoring:* choice task `k = 2`, speed-emphasis, `RT_slow` 2200 → 1200 ms.
+- *Stats:* **switch cost** (switch RT − repeat RT), mixing cost, error switch cost, accuracy.
+
+**11. Card Sorter (`card_sorter`)**
+- *Skill:* learning a hidden rule from feedback and shifting when it changes (Wisconsin-style card sort).
+- *Trial:* four fixed reference cards differ in colour, shape and count. Each new card must be matched to one reference by a **hidden rule** (colour, shape or count). Feedback only says "match" or "no match". After `runLength` consecutive correct matches the rule changes silently.
+- *Levers:* rules in use 2 → 3 (L8+); `runLength` 10 → 5; ambiguous cards (matching a reference on more than one dimension) 0% → 25%; feedback delayed by 600 ms at L15+; 64 cards per session.
+- *Scoring:* `categoriesCompleted` (rule changes passed) over `categoryTarget(level)` (default 6); `perseverationRate` = errors that apply the **previous** rule / total errors; `SessionScore = round(100 × clamp(categoriesCompleted / categoryTarget, 0, 1) × (1 − 0.5 × perseverationRate))`.
+- *Stats:* categories completed, perseverative error rate, trials to first category, failures to maintain set.
+
+**12. Flip Map (`flip_map`)**
+- *Skill:* adapting a stimulus–response mapping.
+- *Trial:* an arrow appears at one of four positions. A mapping rule applies: **SAME** (press the key of the arrow's direction), **OPPOSITE** (press the opposite key) or, from L16, **TURN** (press the key 90° clockwise). The rule changes every `4–12` trials.
+- *Levers:* L1–6 a persistent banner shows the current rule; L7–12 the banner shows only for 1.5 s after a change; L13–20 **no banner**: the player infers a change from error feedback (a brief flash). Display 2000 → 900 ms.
+- *Scoring:* choice task `k = 4`, speed-emphasis, `RT_slow` 1800 → 1000 ms.
+- *Stats:* accuracy on the first 2 trials after a change vs steady state (adaptation cost), RT by rule, perseveration errors (old rule applied).
+
+#### Math
+
+**13. Number Sprint (`number_sprint`)**
+- *Skill:* fast, accurate mental arithmetic.
+- *Trial:* one problem at a time; type the answer and press Enter. Correct answers advance immediately; a wrong answer shows the right one for 1 s.
+- *Levers:* operations `+ −` → `× ÷` → mixed two-step; operand size 1 digit → 3 digits; carries/borrows; negative results from L12; fractions-as-decimals (`0.5 + 0.25`) from L16; per-problem soft time `T_q` 12 → 4 s; division only with exact results.
+- *Scoring:* per problem `w = +1 (correct) × (0.7 + 0.3 × speed)`, `−0.5` (wrong), `0` (skip/timeout); `SessionScore = round(100 × clamp(Σw / itemsTarget(level), 0, 1))`, where `itemsTarget` is the weighted total a full-skill player reaches in the block at that level (config, tuned in B0 from owner play).
+- *Stats:* problems solved, accuracy by operation, median time, most-missed operation (feeds the Warm-up).
+
+**14. Equation Drop (`equation_drop`)**
+- *Skill:* arithmetic under moving time pressure and multitasking.
+- *Trial:* equations ("14 + 9") fall from the top. Type the answer and press Enter: **every** falling equation with that value clears (so two equations with the same answer clear together and build a combo). An equation that reaches the bottom costs a life. Three lives or 90 s.
+- *Levers:* fall speed rises through the block; simultaneous equations 2 → 6; operations as Number Sprint; at L12+ some drops are "reverse" (an answer falls, and the player types the missing operand).
+- *Scoring:* `cleared` equations with combo weighting `Σ (1 + 0.1 × min(combo, 5))`; `SessionScore = round(100 × clamp(weightedCleared / target(level), 0, 1))`; losing all three lives before 60 s caps the score at 70.
+- *Stats:* equations cleared, longest combo, lives lost, accuracy of typed answers.
+
+**15. Make Target (`make_target`)**
+- *Skill:* flexible arithmetic reasoning and planning.
+- *Puzzle:* a target number and 4–6 given numbers. Combine them using `+ − × ÷`, each given number at most once, to reach the target. The UI builds the expression step by step (tap number, operator, number, producing a new number). Undo and reset are allowed.
+- *Generation:* a **solver** (exhaustive search, small enough for ≤ 6 numbers) enumerates solutions; the generator only accepts puzzles with a solution and records the minimum number of operations as the difficulty. At low levels any intermediate result must be a positive integer; division only when exact.
+- *Levers:* numbers 4 → 6; target 2-digit → 3-digit; minimum solution depth 2 → 5 operations; time per puzzle 60 → 30 s; at L1–6 "close enough" credit within ±2.
+- *Scoring:* exact solution `1`; within tolerance (L1–6 only) `0.5`; else `0`; plus `0.2 × speed` bonus on exact solutions (capped at 1). `SessionScore = round(100 × mean)`.
+- *Stats:* solved ratio, median solve time, average solution depth solved.
+
+#### Reasoning
+
+**16. Pattern Matrix (`pattern_matrix`)**
+- *Skill:* abstract, rule-based visual reasoning (Raven-style).
+- *Puzzle:* a 3×3 matrix of shapes with the last cell missing and 6–8 answer options. Shapes vary by **attributes** (shape, count, size, colour, rotation, shading); rules apply along rows, such as constant, progression (+1 step each cell), distribute-three (each value appears once per row) and, at high levels, a logical overlay (XOR/AND of two cells).
+- *Generation:* rule-driven and fully procedural from the seeded RNG; the correct cell is derived from the rules and **verified unique**: each distractor differs from the correct answer in exactly one attribute (low levels: several), and no distractor also satisfies all rules (checked by the generator).
+- *Levers:* simultaneous rules 1 → 4; options 6 → 8; time 90 → 40 s per puzzle; distractor similarity; logical overlay from L14.
+- *Scoring:* choice task `k` = options, `skill` chance-corrected over 10 puzzles; `SessionScore = round(100 × skill × (0.85 + 0.15 × speedFactor))`.
+- *Stats:* accuracy by rule type, median time, errors by distractor kind.
+
+**17. Number Series (`number_series`)**
+- *Skill:* inductive reasoning with numbers.
+- *Puzzle:* a series with the next term missing (5–8 terms shown). Choose from 5 options (typed answer at L15+). Rule library: arithmetic, geometric, alternating add/multiply, second-order differences, Fibonacci-like (sum of previous two), squares and cubes ± c, two interleaved series, and digit-sum rules at the top.
+- *Generation:* sample a rule and parameters, produce the prefix, and verify with a small **rule-solver** that no other rule in the library produces a different next term from the same prefix (puzzle is unambiguous). Distractors come from plausible mistakes (wrong rule, off-by-one in the step).
+- *Levers:* rule complexity (1 rule → composite rules), terms shown 8 → 5, time 60 → 25 s, option plausibility.
+- *Scoring:* as Pattern Matrix; 12 puzzles.
+- *Stats:* accuracy by rule family, median time.
+
+**18. Code Breaker (`code_breaker`)**
+- *Skill:* deductive reasoning and hypothesis testing (Mastermind / Bulls-and-Cows style).
+- *Puzzle:* a hidden code of `L` positions from `S` symbols (colours with shapes, or digits). Each guess returns **exact** (right symbol, right place) and **misplaced** (right symbol, wrong place) counts. Find the code within the guess limit. Six codes per session.
+- *Levers:* L 3 → 5; S 4 → 8; repeats off → on (L10+); guess limit 10 → 8; at L16+ one feedback value is **hidden** ("uncertain" cell) once per code.
+- *Scoring:* `par` = guesses a simple solver needs on that code; `puzzleScore = clamp(1 − (guesses − par) / par, 0, 1)` if solved, 0 if not; consistency bonus: `+0.1` if every guess was consistent with all earlier feedback. `SessionScore = round(100 × mean(min(1, puzzleScore)))`.
+- *Stats:* mean guesses vs par, consistency rate (share of guesses that could still be the code), solve rate.
+
+#### Word
+
+**19. Anagram Dash (`anagram_dash`)**
+- *Skill:* word retrieval and mental manipulation.
+- *Trial:* scrambled letters; form a valid word using **all** letters. Any dictionary word that fits is accepted (not just the intended one). **Shuffle** and **Hint** (reveal the first letter, costs 0.3 of the word's score) are available; **Skip** costs nothing but time.
+- *Levers:* word length 4 → 9; word frequency tier (common → less common); letter-pattern difficulty (few vowels, repeated letters); time per word 30 → 15 s soft cap; block 90 s.
+- *Scoring:* per word `value = lengthWeight × (0.7 + 0.3 × speed) × (hinted ? 0.7 : 1)`; `SessionScore = round(100 × clamp(Σvalue / target(level), 0, 1))`.
+- *Stats:* words solved, median time, longest word, hint rate.
+
+**20. Letter Grid (`letter_grid`)**
+- *Skill:* word search and flexible letter manipulation (Boggle-type).
+- *Puzzle:* an n×n grid of letters. Form words by chaining **adjacent** (including diagonal) letters without reusing a cell. Select by click-and-drag or by typing the word (the game highlights a valid path if one exists).
+- *Generation:* letters drawn from a realistic frequency distribution. A **solver** (trie + depth-first search) computes all valid words; the generator rejects grids with fewer than `minWords` solvable words or no word of length ≥ 6.
+- *Levers:* grid 4×4 → 5×5; minimum word length 3 → 4; time 120 s; target share of possible score 25% → 55%.
+- *Scoring:* word value by length (3: 1, 4: 2, 5: 4, 6: 7, 7+: 11); `SessionScore = round(100 × clamp(Σvalue / (targetShare(level) × maxPossibleValue), 0, 1))`. Repeats and invalid words score 0.
+- *Stats:* words found, longest word, share of possible value found.
+
+**21. Word Ladder (`word_ladder`)**
+- *Skill:* lexical network search and planning.
+- *Puzzle:* change one letter at a time to go from a start word to an end word; every step must be a valid word. The puzzle shows the shortest path length (**par**). Undo is allowed; a limited number of hints reveal the next word.
+- *Generation:* neighbour graph built locally from the common word list by wildcard buckets (`c_t` → cat, cot, cut). The generator picks pairs whose shortest path is the target length and whose endpoints are **common** words.
+- *Levers:* word length 3 → 5; par 3 → 8; time per puzzle 120 → 60 s; hints 3 → 0.
+- *Scoring:* solved: `clamp(par / steps, 0, 1)` (extra steps reduce the score) × hint factor; unsolved: 0; five puzzles per session.
+- *Stats:* mean steps vs par, solve rate, hint use.
+
+### 17.6 Content assets and generators
+
+- **Word lists** (`shared/games/brain/assets/words/`): a **common** list (about 20–30k words, used for targets, anagram answers and ladder endpoints) and a **valid** list (about 100k+ words, used only to accept player input and as the Letter Grid dictionary). Use only permissively licensed or public-domain lists and record each list's name, version and licence in a `NOTICE` file in the repo; **B0 chooses and verifies the licence** before any file is committed. Strip profanity and offensive terms from both lists. Do not scrape websites.
+- Size budget: each list ≤ 1.5 MB raw and ≤ 500 KB gzipped, **lazy-loaded** only when a Word game starts, never in the main bundle or the trading window. A trie/graph built from them stays under 40 MB in memory and is released when the Games workspace closes.
+- **Shapes and colours:** a small SVG/canvas symbol set drawn in code (circles, polygons, arrows), the Okabe–Ito palette (§17.3), and no third-party icon packs or fonts that need attribution.
+- **Generators** live in `engine/generators/`: `matrix.ts` (Pattern Matrix rules and uniqueness check), `series.ts` (rules and ambiguity solver), `makeTarget.ts` (solver), `mastermind.ts` (par solver), `boggle.ts` (grid and trie solver), `ladder.ts` (graph and BFS), `arithmetic.ts`. Each is pure and fully unit-tested (§17.10).
+
+### 17.7 Where the code lives, and isolation
+
+```
+shared/games/brain/
+  engine/        trialEngine.ts, rt.ts, scoringBrain.ts, generators/*
+  games/<id>/    index.ts (TrialGameDefinition), engine.ts, View.tsx
+  ui/            Stimulus, ResponsePad, TimeBar, LivesBar, ProgressDots, KeyHint, TrialReview
+  assets/words/  common.txt, valid.txt  (+ NOTICE entry)
+  config/        difficulty.brain.json   (anchors for the 21 games)
+```
+
+- **Desktop:** the brain games appear in the existing Games window (same hub). No new Rust is needed beyond what G3 adds. Hub tabs: **Brain**, **Market**, **Dashboard**, **Warm-up**.
+- **Website and webapp:** the lazy `GamesWorkspace` (G3) hosts the same hub. `webapp/` reuses the website code, so one website change covers both (`docs/spec-phase25-implementation-plan.md`).
+- **Progress transport:** the existing `gamesRequest` transport (Rust command on desktop, `fetch` on the website) with the §8.4 `/state` routes. The website sends `X-User-Id`, which `get_desktop_user_id` already accepts (implementation plan, correction #13). **No** brain-game code calls `/availability` or `/window`.
+- **Keyboard safety:** brain games attach key handlers **only to their own focused root element** (`tabIndex={0}`, focus on start, handlers on that element), never on `window` or `document`, and stop propagation of the keys they use. Esc handling follows the existing modal pattern. Nothing in the games registers a global shortcut.
+- **Website layout:** open Games the way Browse opens (a workspace replacing the main view). If a live or real session is active, the trading layout stays **mounted but hidden** (not unmounted) so streams, alerts and notifications continue; the games window must never delay or block them. B0 verifies this against how Browse handles `idle`/active sessions in `frontend/src/App.tsx`.
+- **Import boundary (extends §3.4):** `shared/games/brain/**` must not import trading modules (orders, tickets, sessions, strategies, guardrails, brokers, streams, analysis charts) or the market-data modules of Track G. A vitest/mjs scan fails on violation. Brain games must be shippable with Track G's data endpoints switched off.
+
+### 17.8 Dashboard, Warm-up and Review with brain games
+
+- **Category ratings** (§6.3) average **all** games in the category across both pools. The dashboard has a Brain/Market/All filter and shows per-category ratings, per-game level badges, last 30 sessions per game, and streaks. Brain-specific trend panels: **interference effects** (Stroop and flanker, ms), **switch cost** (Rule Switch), **adaptation cost** (Flip Map), **peak span** (Grid Recall, Sequence Echo), **n reached** (N-Back), and **perseveration rate** (Card Sorter).
+- **Daily Warm-up pool setting** (`warmupPool`: `both` | `market` | `brain`, default `both`). For `both`, steps alternate pools:
+  1. Physical warm-up: Hotkey Drill (market) or Quick Match 60 s when `brain`.
+  2. Weakest category: a game from that category; in `both`, use the brain game when the category's brain rating is lower than its market rating (or the only game available).
+  3. Second weakest category: same rule, preferring the **other** pool from step 2.
+  4. Risk Calculator (6 questions), or Number Sprint (45 s) when `brain`.
+  5. One random game from the remaining pool, short version.
+  Seed, "not played in the last 2 days" rule and streak rule (≥ 4 of 5) as §7.2.
+- **Review** (§7.3): brain sessions keep the seed and a compact **trial log** locally (≤ 250 trials × small tuples, last 20 sessions). Review shows per-trial stimulus, response and RT and can replay deterministic games (Track the Dots, matrices). Nothing is sent to the server.
+- **Settings** (§7.4) gain: palette (colour-vision-safe default), reduce motion, sound, zoom, `warmupPool`, and the "practice tool, not a medical product" note.
+
+### 17.9 Backend and data-model changes (small)
+
+No new routes. Changes to the G2 work:
+
+- `GameProfiles` validation (§8.5) accepts the **31 registry ids**; a brain game's `game#<id>` item uses the same schema (`level`, counters, `lastScores`, `stats`).
+- To keep the per-user budget under about 1 MB with more games: day records get **`expires_at` ≈ 200 days** (not 400) and a cap of **2.5 KB**; monthly rollups (≤ 3 KB, no TTL) preserve history. Estimate: 31 × 3 KB + 200 × 2.5 KB + 24 × 3 KB + 4 KB ≈ **0.67 MB** at steady state.
+- `stats` keys stay ≤ 20 per game; brain trial logs are **never** stored on the server.
+- The `games` feature flag (appended to `DesktopCapabilities.features`) covers both pools; no separate flag.
+
+### 17.10 Testing for Track B
+
+- **Generators:** determinism for a fixed seed; uniqueness checks (Pattern Matrix correct answer unique; Number Series unambiguous under the rule-solver; Make Target puzzles solvable and depth recorded; Letter Grid minimum words; Word Ladder par equals BFS shortest path); no NaN/Infinity.
+- **Simulated players** (`engine/simPlayers.test.ts`): a **perfect** player scores ≥ 95 and a **random** player ≤ 25 at levels 1, 10 and 20 for every game; for go/no-go and n-back, "always press" and "never press" score ≤ 5; a "fast but random" player scores ≤ 25 for choice games. This validates the chance correction in §17.4.
+- **RT and timing utilities:** anticipation exclusion, lapse handling, discarded-trial replacement, focus-loss voiding (use fake timers and a mocked `performance.now`/`requestAnimationFrame`).
+- **Scoring:** hand-computed cases for each game's `summarise`, bounds 0–100, volume-check scaling.
+- **Word assets:** loader returns the expected counts, no word contains forbidden characters, offensive terms are absent (compare against the exclusion list), trie solver matches a brute-force solver on sample grids.
+- **No network:** during a brain session, only the single progress write at the end may hit the transport (assert with a mocked transport).
+- **Import boundary and key-handler tests:** scan for forbidden imports; assert no `window.addEventListener('key…')` in `shared/games/brain/**`.
+- **Browser smoke (Playwright, website):** open Games → Brain → start Quick Match in Practice mode → complete a block → result screen → progress written; run in Chromium. Desktop vitest runs the engine tests (the desktop test environment is plain node, so UI components are tested through pure model functions).
+- **Manual acceptance** (add a Track B section to `docs/phase25-manual-acceptance.md`): play every brain game at levels 1, 10 and 20 on the Windows build and in Chrome; check RT plausibility on both; run a Warm-up in each `warmupPool` mode; verify the website live-session behaviour in §17.7; check memory with the Word games open (tries/graphs) and after closing them.
+
+### 17.11 Sprints for Track B
+
+Track B starts when G2 (persistence, `/state`, `games` flag) and G3 (foundation: shared engine core, hub, `GameShell`, difficulty, scoring, outbox, website/webapp nav) are merged. It does **not** depend on G1 (market data) or G4–G7, so it can run in parallel with them, or ahead of them if the owner prefers brain games first.
+
+| Sprint | Scope | Exit criteria |
+|---|---|---|
+| B0 | Discovery and calibration: confirm the G2/G3 interfaces, verify website live-session behaviour (§17.7), choose and verify word-list licences, finalise the palette and symbol set, set the first parameter anchors, write `docs/spec-phase25-implementation-plan.md` Track B section | Owner approves; no code changed |
+| B1 | Framework: `TrialGameDefinition`, timed `GameShell`, `rt.ts`, simulated-player harness, UI primitives, import-boundary and key-handler tests. Games: **Quick Match, Colour Clash, Green Light** end to end on desktop and website | Three Speed games playable at all levels in both clients; simulated-player tests pass |
+| B2 | Memory: **Grid Recall, Sequence Echo, N-Back Stream**. Attention: **Flanker Flock, Needle Finder, Track the Dots** | Six games playable; Track the Dots deterministic replay works in Review |
+| B3 | Flexibility: **Rule Switch, Card Sorter, Flip Map**. Math: **Number Sprint, Equation Drop, Make Target** (with solver) | Six games playable; solver and generator tests pass |
+| B4 | Reasoning: **Pattern Matrix, Number Series, Code Breaker** (generators with uniqueness checks) | Three games playable; uniqueness tests pass at every level |
+| B5 | Word: word-list assets and licences, **Anagram Dash, Letter Grid, Word Ladder**; lazy loading and memory checks | Three games playable; asset loading verified; word lists absent from the main bundle |
+| B6 | Hub tabs, dashboard filters and brain trend panels, Warm-up pools, Review for trial logs, settings, accessibility and performance pass, docs (`CLAUDE.md` row, architecture docs, §12 "How to add a game" with a `TrialGameDefinition` example), manual acceptance | Acceptance checklist passes on the Windows build and in Chrome |
+
+Rules for every Track B sprint: one feature branch off `dev`, one PR into `dev`; tests green (`cd windowsapp && npm run build && npm test`, `cd frontend && node node_modules/typescript/bin/tsc --noEmit`, backend tests for touched areas, Playwright smoke where added); the PR lists shared files touched (expected: `frontend/src/App.tsx` for the single nav hook already added in G3, nothing else existing) and confirms no trading logic changed.
+
+### 17.12 Acceptance criteria for Track B
+
+1. All 21 brain games are playable on the desktop Games window, the website and the webapp, at levels 1–20, in Practice and Progress modes, with result screens, per-trial review and persisted progress.
+2. Simulated-player tests prove chance-corrected scoring (random ≤ 25, perfect ≥ 95) for every game and level checked.
+3. Brain games make no market-data or trading requests; the only server traffic is the §8.4 progress write at the end of a Progress session (and its offline-outbox flush).
+4. Brain-game keyboard input cannot reach trading handlers; no global key listeners exist in `shared/games/brain/`.
+5. Word assets are lazy-loaded, licensed and recorded in `NOTICE`, free of offensive terms, and absent from the main and trading bundles.
+6. UI copy makes no claims of IQ, brain-age, clinical or trading-performance benefit.
+7. Dashboard, Warm-up (all three pools) and Review work with both game pools; server data per user stays under about 1 MB.
