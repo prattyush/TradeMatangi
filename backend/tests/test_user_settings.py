@@ -379,3 +379,36 @@ class TestTargetLevelsAndCandleAlertSettings:
         with patch("app.services.user_settings_service.update_settings") as update:
             assert client.put("/api/users/settings", json=body).status_code == 422
         update.assert_not_called()
+
+
+class TestMilestonesPnlDisplaySettings:
+    def test_defaults(self):
+        assert svc.DEFAULT_SETTINGS["pnl_max_win_pct"] == 10.0
+        assert svc.DEFAULT_SETTINGS["show_bar_pnl_label"] is True
+        assert svc.DEFAULT_SETTINGS["desktop_pnl_display_mode"] == "currency"
+
+    def test_old_records_get_defaults(self):
+        mock_resource, _ = _mock_db({"user_id": "user-123", "historical_days": 4})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            settings = svc.get_settings("user-123")
+        assert settings["pnl_max_win_pct"] == 10.0
+        assert settings["show_bar_pnl_label"] is True
+
+    def test_milestones_mode_max_win_and_bar_label_are_saved(self):
+        body = {"desktop_pnl_display_mode": "milestones", "pnl_max_win_pct": 6.5, "show_bar_pnl_label": False}
+        with patch("app.services.user_settings_service.update_settings", return_value=body) as update:
+            response = client.put("/api/users/settings", json=body)
+        assert response.status_code == 200
+        update.assert_called_once_with(FIXED_USER_ID, body)
+
+    @pytest.mark.parametrize("body", [
+        {"desktop_pnl_display_mode": "steps"},
+        {"pnl_max_win_pct": 0},
+        {"pnl_max_win_pct": 100.5},
+        {"pnl_max_win_pct": "nan"},
+        {"show_bar_pnl_label": "maybe"},
+    ])
+    def test_invalid_values_rejected(self, body):
+        with patch("app.services.user_settings_service.update_settings") as update:
+            assert client.put("/api/users/settings", json=body).status_code == 422
+        update.assert_not_called()

@@ -1,0 +1,44 @@
+import { describe, expect, it, vi } from 'vitest'
+import { patternsRequest, validPatternsPath } from './patternsApi'
+
+const OK: [string, string][] = [
+  ['GET', 'pattern/strategies'], ['GET', 'pattern/charts?symbol=NIFTY'], ['GET', 'pattern/chart/by-date?date=2026-10-01'],
+  ['GET', 'pattern/chart/abc-123'], ['POST', 'pattern/chart'], ['PUT', 'pattern/chart/abc_1'], ['DELETE', 'pattern/chart/abc'],
+  ['POST', 'pattern/charts/bulk-delete'], ['GET', 'pattern/ohlc/options?symbol=NIFTY'],
+  ['GET', 'chart-structures/types'], ['GET', 'chart-structures/ohlc/NIFTY/2026-10-01'], ['PUT', 'chart-structures/structure/s1'],
+  ['GET', 'fine-structures/flows'], ['POST', 'fine-structures/search'], ['DELETE', 'fine-structures/definition/d1'],
+  ['GET', 'fine-structures/ohlc-options/NIFTY/2026-10-01?right=CE'],
+  ['GET', 'data/symbols'], ['GET', 'data/price-at?symbol=NIFTY'], ['GET', 'data/options/find-strike-by-price?symbol=NIFTY'],
+]
+const BAD: [string, string][] = [
+  ['DELETE', 'pattern/strategies'], ['PUT', 'pattern/chart'], ['POST', 'pattern/chart/abc'], ['GET', 'pattern/chart/'],
+  ['GET', 'pattern/chart/a/b'], ['GET', 'pattern/chart/a%2Fb'], ['GET', '../analysis/sessions'], ['GET', '/pattern/strategies'],
+  ['GET', 'chart-structures/ohlc/NIFTY/2026-10-01/x'], ['GET', 'chart-structures/ohlc/NIFTY/not-a-date'],
+  ['GET', 'data/historical'], ['POST', 'data/symbols'], ['GET', 'orders'], ['GET', 'trading/orders'],
+  ['GET', 'pattern/chart/a\\b'], ['PATCH', 'pattern/chart/abc'], ['GET', ''],
+]
+
+describe('patterns allowlist (same cases as the Rust test)', () => {
+  it.each(OK)('allows %s %s', (method, path) => expect(validPatternsPath(path, method)).toBe(true))
+  it.each(BAD)('rejects %s %s', (method, path) => expect(validPatternsPath(path, method)).toBe(false))
+})
+
+describe('patternsRequest', () => {
+  it('calls the native command with the path and method', async () => {
+    const native = vi.fn().mockResolvedValue({ strategies: [] })
+    const result = await patternsRequest('http://x', native)('pattern/strategies', 'GET')
+    expect(result).toEqual({ strategies: [] })
+    expect(native).toHaveBeenCalledWith('desktop_patterns_request', { baseUrl: 'http://x', path: 'pattern/strategies', method: 'GET', body: null })
+  })
+  it('never reaches native for a disallowed path', async () => {
+    const native = vi.fn()
+    await expect(patternsRequest('http://x', native)('orders', 'GET')).rejects.toThrow('Invalid patterns request')
+    expect(native).not.toHaveBeenCalled()
+  })
+  it('rejects when already aborted', async () => {
+    const native = vi.fn()
+    const controller = new AbortController(); controller.abort()
+    await expect(patternsRequest('http://x', native)('pattern/strategies', 'GET', null, controller.signal)).rejects.toThrow()
+    expect(native).not.toHaveBeenCalled()
+  })
+})

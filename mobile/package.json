@@ -1,0 +1,39 @@
+{
+  "name": "tradematangi-phone",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node node_modules/vite/bin/vite.js",
+    "build": "node node_modules/typescript/bin/tsc --noEmit && node node_modules/vite/bin/vite.js build",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "test": "node node_modules/vitest/vitest.mjs run",
+    "test:ui": "node node_modules/@playwright/test/cli.js test",
+    "cap": "node node_modules/@capacitor/cli/bin/capacitor",
+    "sync": "npm run build && node node_modules/@capacitor/cli/bin/capacitor sync android"
+  },
+  "dependencies": {
+    "@aparajita/capacitor-secure-storage": "8.0.1",
+    "@capacitor/android": "8.6.0",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/browser": "^8.0.5",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/preferences": "8.0.1",
+    "klinecharts": "10.0.0",
+    "lightweight-charts": "^4.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-klinecharts-ui": "2.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "@playwright/test": "1.64.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.0",
+    "vitest": "2.1.9"
+  }
+}

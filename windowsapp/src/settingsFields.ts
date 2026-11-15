@@ -28,7 +28,9 @@ const toggle = (key: string, label: string): SettingsField => ({
 })
 export const sharedSettingsSections: Record<string, SettingsField[]> = {
   General: [
-    select('desktop_pnl_display_mode', 'P&L display', ['currency', 'percent']),
+    select('desktop_pnl_display_mode', 'P&L display', ['currency', 'percent', 'milestones']),
+    number('pnl_max_win_pct', 'Milestones: max win (% of capital)', 1, 100, 0.5),
+    toggle('show_bar_pnl_label', 'Show position P&L above the bar'),
     number('historical_days', 'Historical days', 1, 5),
     select('trading_roc_ratio_mode', 'Indicator ratio display', [
       'normalized',

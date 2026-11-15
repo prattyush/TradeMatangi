@@ -117,7 +117,7 @@ stop_session():
 | `routers/analysis.py` | `/api/analysis` | `GET /sessions`, `GET /sessions/{id}`, `GET /trades`, `GET /ohlc-context` |
 | `routers/auth.py` | `/api/auth` | `POST /login`, `/register`, `/change-password`, `GET /me` |
 | `routers/wallet.py` | `/api/wallet` | `GET /`, `POST /reset` |
-| `routers/admin.py` | `/api/admin` | Tokens, whitelist, stream-source toggle |
+| `routers/admin.py` | `/api/admin` | Tokens, whitelist, stream-source toggle, extra market holidays (`/holidays`) |
 | `routers/kotak.py` | `/api/kotak` | Login, status, funds, order-history, reconcile |
 | `routers/users.py` | `/api/users` | `GET /settings`, `PUT /settings` |
 
@@ -173,6 +173,7 @@ Strategies are in-process; cross-process cancellation writes `CANCELLED` to Dyna
 | `PatternNames` | `user_id` (S) | `name_key` (S) | — | Category/strategy name registry (`category#<name>`, `strategy#<name>`) |
 | `BehaviorQuestions` | `user_id` (S) | `question_id` (S) | — | Phase 23 behavior questions (`kind` entry/exit, `status` active/archived; never deleted) |
 | `BehaviorMarks` | `session_id` (S) | `mark_key` (S) `<round_trip_index:05d>#<question_id>` | `UserIdDateIndex` (`user_id`, `date`) | Phase 23 "yes" marks per round trip; lazy-created by `behavior_service`, deleted with the session |
+| `WhatIfScenarios` | `session_id` (S) | `scenario_id` (S, slug of the name) | GSI `UserIdDateIndex` (`user_id`, `date`) | Phase 24 saved What If scenarios: one named scenario per day-session holding the edited price and quantity of fills (`edits`) and a small `summary`; owner only; routes `/api/whatif` (day list, `/range` for Compare days, upsert, delete); lazy-created by `whatif_service`, deleted with the session; never touches trades, orders or labels |
 | `VideoLinks` | `session_id` (S) | `video_id` (S) | — | Phase 24 saved YouTube links for Video Maker videos (title, visibility, chapters; the link is rebuilt from the video id); owner only; lazy-created by `video_links_service`, deleted with the session |
 
 ---
@@ -273,6 +274,10 @@ All configuration is read at startup from `data/accesskeys.ini` and environment 
 A single fixed user (`00000000-0000-0000-0000-000000000001`) is seeded at startup. The `X-User-Id` header (set by the frontend from `localStorage`) is the primary auth token. Admin routes additionally check `X-Admin-Token`. bcrypt passwords are stored in the `Users` DynamoDB table.
 
 ---
+
+## Market holidays
+
+`app/utils.py` `is_trading_day` combines weekends, the built-in `NSE_HOLIDAYS` list (updated by hand each year) and holidays added at run time. The added ones live in `DATA_DIR/holidays.json` (`{"holidays": {"2026-11-11": "note"}}`), are re-read whenever the file changes (no restart, a hand edit works), and are managed by an admin with `GET/POST /api/admin/holidays` and `DELETE /api/admin/holidays/{date}`. A missing or unreadable file means no added holidays. Nothing fetches the NSE calendar automatically.
 
 ## Start Commands
 

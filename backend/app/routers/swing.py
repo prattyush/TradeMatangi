@@ -84,7 +84,7 @@ class ContextRequest(ContractModel):
 
 
 class PortfolioOrder(ContextRequest):
-    client: Literal["website", "desktop"] = "website"
+    client: Literal["website", "desktop", "phone"] = "website"
     side: TradeSide
     order_type: OrderType = OrderType.LIMIT
     quantity: int = Field(gt=0)

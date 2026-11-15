@@ -1,0 +1,47 @@
+# Phase 25 — Track P (Patterns, Chart Structures, Fine Structures on the desktop): manual acceptance
+
+Needs a Windows desktop build from `dev` that includes #833 (the Rust command `desktop_patterns_request`; an older build shows an unknown-command error in these tools) and a backend from `dev` (route mounts under `/api/desktop/v1/patterns`). Sign in to the desktop app with the account that has saved pattern charts on the website, so you can compare. Track G (the games) is not covered here yet.
+
+Unless a step says otherwise, use NIFTY and a recent trading day.
+
+## A. Tools menu
+1. Tools lists Trading Video Maker, **Pattern Library** and **Chart Structures**.
+2. Switch to Workspace and back: the tool you had open is still open and keeps its loaded day.
+3. Not offered in pop-out screen windows.
+4. The website (Patterns, Structures pages) works exactly as before. Nothing changed there.
+
+## B. Pattern Library
+1. **Load:** load a day as Underlying only; then as Underlying + CE/PE. The CE and PE strikes follow Settings: OTM offset, or Max Price (caps and the 09:30 pick) for indices. Check them against the website page for the same day.
+2. **Mark:** choose Entry UL, then click a candle: a marker lands on that candle at 1, 3, 5 and 15 minute intervals. Click the same candle again with the same tool, strategy and category: the mark is removed. Repeat for CE and PE.
+3. **Save and reload:** save with notes, close the tool, reopen it, open the chart from Saved charts: marks, notes, strikes and the candle interval are restored. Saving again updates the same chart (one per symbol, day and type).
+4. **Top Patterns:** set Top 1, Top 2 and Bottom 1 from the pairs among your marks; the ranked markers show the badge, and the choice survives save and reload.
+5. **R:R:** enter `R:R 1:` for a pattern: markers of that pattern show `(1:x)`; blank removes it. Survives save and reload.
+6. **Extra strike panes:** add a CE and a PE pane at another strike, maximize one, remove one. After save and reload the first CE and first PE strikes are the saved ones (`strike` and `strike_pe`, also visible on the website).
+7. **Drawings:** draw a horizontal line, a trendline, a rectangle and a fib on the underlying and on an option pane; leave and come back: they are still there (they persist per instrument, as on the trading charts). Marking works again after deselecting the drawing tool.
+8. **Saved charts:** the strategy, category and top-pattern filters narrow the table; Delete removes one; select several (and select all) and bulk delete with the confirm. Charts shared with you cannot be selected or deleted.
+9. A chart saved on the website opens on the desktop with its marks, and the other way round.
+
+## C. Chart Structures (Broad)
+1. The gallery lists days with their Opening, Midday and Closing badges. Each multi-select filter narrows the gallery; clearing them restores it.
+2. Sparklines fill in as cards scroll into view (not all at once).
+3. Open a card: the day shows on KLine with earlier days of context. Previous / next day move through the **filtered** list.
+4. **Edit classification:** on a system (predefined) or shared structure, change a class and save: you get your own copy and the original is unchanged. On your own structure, save updates it. Check on the website.
+5. Drawing tools work on the day view.
+
+## D. Chart Structures (Fine)
+1. The **Broad | Fine** switch works; going Fine and back keeps both states.
+2. **Definitions:** add a structure with sub-types, edit it, delete it. System definitions cannot be edited or deleted.
+3. **Builder, underlying:** load a day as Underlying only. Add three steps (structure, optional type, Bull or Bear), reorder and remove one. Select a step, click a candle: its transition bar is set and a numbered arrow appears (Bull up, Bear down). Clear the last transition.
+4. **Builder, CE/PE:** load Underlying + CE/PE and build a flow on each pane. Save. Switch to Search and Definitions and back: the half-built flow is still there. Reload the day: all three flows are restored with their transitions and chart interval. Flows saved for equity are not shown on an options day and the other way round.
+5. **Drawing tools** are usable in the builder after deselecting the step.
+6. **Search:** build the sequence of your three steps, search: the flow you saved is listed. Open it: transition bars and the matched steps are highlighted. Replace the middle step with **Any**: it still matches. Filter equity / options.
+7. An options result shows the CE or PE contract of that day (ATM from the 09:15 price). Compare with the website, which may show a different strike (it uses the first loaded candle); this difference is expected.
+8. Transition labels on the chart are short and numbered; the step list beside the chart has the full names.
+
+## E. Data and trading path
+1. Open the tools while a replay or paper session runs in the Workspace: the session, orders and charts are unaffected, and the tools do not slow the trading chart.
+2. With the network inspector or the backend log, every call from these tools is under `/api/desktop/v1/patterns/...`, `desktop_drawing_request` drawing calls, or the existing Settings read. No order, session, wallet, broker or stream call comes from them.
+3. A desktop token that has expired shows the sign-in prompt instead of an empty list.
+
+## Report back
+Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.

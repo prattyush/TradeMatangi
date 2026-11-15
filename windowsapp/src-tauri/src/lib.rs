@@ -663,21 +663,26 @@ async fn desktop_historical_page(
     trading_date: String,
     interval_minutes: u32,
     context_days: Option<u32>,
+    granularity: Option<String>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
     let token = host.access_token(&base_url).await?;
+    let mut query = vec![
+        ("symbol", symbol),
+        ("trading_date", trading_date),
+        ("interval_minutes", interval_minutes.to_string()),
+        ("context_days", context_days.unwrap_or(5).min(5).to_string()),
+    ];
+    if let Some(granularity) = minute_granularity(granularity) {
+        query.push(("granularity", granularity));
+    }
     let response = reqwest::Client::new()
         .get(format!(
             "{}/api/desktop/v1/historical/pages",
             base_url.trim_end_matches('/')
         ))
         .bearer_auth(token)
-        .query(&[
-            ("symbol", symbol),
-            ("trading_date", trading_date),
-            ("interval_minutes", interval_minutes.to_string()),
-            ("context_days", context_days.unwrap_or(5).min(5).to_string()),
-        ])
+        .query(&query)
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -750,23 +755,27 @@ async fn desktop_option_historical_page(
     strike: f64,
     right: String,
     interval_minutes: u32,
+    granularity: Option<String>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
-    desktop_get(
-        base_url,
-        "options/historical/pages",
-        vec![
-            ("symbol", symbol),
-            ("trading_date", trading_date),
-            ("expiry", expiry),
-            ("strike", strike.to_string()),
-            ("right", right),
-            ("interval_minutes", interval_minutes.to_string()),
-            ("context_days", "5".into()),
-        ],
-        host,
-    )
-    .await
+    let mut query = vec![
+        ("symbol", symbol),
+        ("trading_date", trading_date),
+        ("expiry", expiry),
+        ("strike", strike.to_string()),
+        ("right", right),
+        ("interval_minutes", interval_minutes.to_string()),
+        ("context_days", "5".into()),
+    ];
+    if let Some(granularity) = minute_granularity(granularity) {
+        query.push(("granularity", granularity));
+    }
+    desktop_get(base_url, "options/historical/pages", query, host).await
+}
+
+/// Browse asks for minute-level candles (`granularity=minute`); nothing else is ever forwarded to the server.
+fn minute_granularity(value: Option<String>) -> Option<String> {
+    value.filter(|value| value == "minute")
 }
 
 #[tauri::command]
@@ -1104,16 +1113,16 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
     if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if method == "POST" {
-        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks" | "video-links")
+        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks" | "video-links" | "whatif")
             || route.strip_prefix("behavior/questions/").and_then(|rest| rest.split_once('/')).map(|(id, action)| valid_id(id) && matches!(action, "update" | "archive" | "restore")).unwrap_or(false);
     }
-    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees" || route == "video-links"; }
+    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees" || route == "video-links" || route == "whatif"; }
     if method != "GET" { return false; }
     match route {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
-        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" => true,
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -1142,6 +1151,68 @@ async fn desktop_analysis_request(
     if !status.is_success() {
         let detail = response.text().await.unwrap_or_default();
         return Err(format!("Analysis request failed ({status}): {detail}"));
+    }
+    if status == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
+    response.json().await.map_err(|e| e.to_string())
+}
+
+/// Allowlist for the Patterns, Chart Structures and Fine Structures routes (`/api/desktop/v1/patterns/...`).
+/// Mirrored by `validPatternsPath` in `src/patternsApi.ts`; keep the two in step.
+fn valid_patterns_path(path: &str, method: &str) -> bool {
+    let route = path.split('?').next().unwrap_or("");
+    if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
+    let id = |v: &str| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let symbol = |v: &str| !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '&');
+    let date = |v: &str| v.len() == 10 && v.chars().all(|c| c.is_ascii_digit() || c == '-');
+    let seg: Vec<&str> = route.split('/').collect();
+    match (method, seg.as_slice()) {
+        ("GET", ["pattern", "strategies" | "categories" | "charts"]) => true,
+        ("GET", ["pattern", "chart", "by-date"]) => true,
+        ("GET", ["pattern", "chart", v]) => id(v),
+        ("GET", ["pattern", "ohlc", "equity" | "options"]) => true,
+        ("POST", ["pattern", "strategies" | "categories" | "chart" | "charts"]) => true,
+        ("POST", ["pattern", "charts", "bulk-delete"]) => true,
+        ("PUT" | "DELETE", ["pattern", "chart", v]) => id(v),
+        ("GET", ["chart-structures", "types" | "structures"]) => true,
+        ("GET", ["chart-structures", "structure", v]) => id(v),
+        ("GET", ["chart-structures", "ohlc", s, d]) => symbol(s) && date(d),
+        ("POST", ["chart-structures", "structure"]) => true,
+        ("PUT" | "DELETE", ["chart-structures", "structure", v]) => id(v),
+        ("GET", ["fine-structures", "definitions" | "flows"]) => true,
+        ("GET", ["fine-structures", "flow", v]) => id(v),
+        ("GET", ["fine-structures", "ohlc" | "ohlc-options", s, d]) => symbol(s) && date(d),
+        ("POST", ["fine-structures", "definition" | "flow" | "search"]) => true,
+        ("PUT" | "DELETE", ["fine-structures", "definition" | "flow", v]) => id(v),
+        ("GET", ["data", "symbols" | "price-at" | "expiry"]) => true,
+        ("GET", ["data", "options", "find-strike-by-price"]) => true,
+        _ => false,
+    }
+}
+
+#[tauri::command]
+async fn desktop_patterns_request(
+    base_url: String,
+    path: String,
+    method: String,
+    body: serde_json::Value,
+    host: tauri::State<'_, HostState>,
+) -> Result<serde_json::Value, String> {
+    if !valid_patterns_path(&path, &method) { return Err("Invalid patterns request".into()); }
+    let token = host.access_token(&base_url).await?;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/desktop/v1/patterns/{}", base_url.trim_end_matches('/'), path);
+    let request = match method.as_str() {
+        "GET" => client.get(url),
+        "POST" => client.post(url).json(&body),
+        "PUT" => client.put(url).json(&body),
+        "DELETE" => client.delete(url),
+        _ => return Err("Unsupported patterns request".into()),
+    };
+    let response = request.bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Patterns request failed ({status}): {detail}"));
     }
     if status == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
     response.json().await.map_err(|e| e.to_string())
@@ -2431,6 +2502,7 @@ pub fn run() {
             desktop_drawing_request,
             desktop_settings_request,
             desktop_analysis_request,
+            desktop_patterns_request,
             desktop_logout,
             queue_offline_mutation,
             pending_offline_mutations,
@@ -2477,7 +2549,37 @@ mod tests {
         assert!(!super::valid_analysis_path("performance/swing/extra", "GET"));
     }
 
+    #[test]
+    fn patterns_allowlist_is_exact_and_method_scoped() {
+        let ok = [
+            ("GET", "pattern/strategies"), ("GET", "pattern/charts?symbol=NIFTY"), ("GET", "pattern/chart/by-date?date=2026-10-01"),
+            ("GET", "pattern/chart/abc-123"), ("POST", "pattern/chart"), ("PUT", "pattern/chart/abc_1"), ("DELETE", "pattern/chart/abc"),
+            ("POST", "pattern/charts/bulk-delete"), ("GET", "pattern/ohlc/options?symbol=NIFTY"),
+            ("GET", "chart-structures/types"), ("GET", "chart-structures/ohlc/NIFTY/2026-10-01"), ("PUT", "chart-structures/structure/s1"),
+            ("GET", "fine-structures/flows"), ("POST", "fine-structures/search"), ("DELETE", "fine-structures/definition/d1"),
+            ("GET", "fine-structures/ohlc-options/NIFTY/2026-10-01?right=CE"),
+            ("GET", "data/symbols"), ("GET", "data/price-at?symbol=NIFTY"), ("GET", "data/options/find-strike-by-price?symbol=NIFTY"),
+        ];
+        for (method, path) in ok { assert!(super::valid_patterns_path(path, method), "{method} {path}"); }
+        let bad = [
+            ("DELETE", "pattern/strategies"), ("PUT", "pattern/chart"), ("POST", "pattern/chart/abc"), ("GET", "pattern/chart/"),
+            ("GET", "pattern/chart/a/b"), ("GET", "pattern/chart/a%2Fb"), ("GET", "../analysis/sessions"), ("GET", "/pattern/strategies"),
+            ("GET", "chart-structures/ohlc/NIFTY/2026-10-01/x"), ("GET", "chart-structures/ohlc/NIFTY/not-a-date"),
+            ("GET", "data/historical"), ("POST", "data/symbols"), ("GET", "orders"), ("GET", "trading/orders"),
+            ("GET", "pattern/chart/a\\b"), ("PATCH", "pattern/chart/abc"), ("GET", ""),
+        ];
+        for (method, path) in bad { assert!(!super::valid_patterns_path(path, method), "{method} {path}"); }
+    }
+
     use super::*;
+
+    #[test]
+    fn only_minute_granularity_is_forwarded_to_the_history_routes() {
+        assert_eq!(minute_granularity(Some("minute".into())), Some("minute".into()));
+        assert_eq!(minute_granularity(Some("second".into())), None);
+        assert_eq!(minute_granularity(Some(String::new())), None);
+        assert_eq!(minute_granularity(None), None);
+    }
 
     #[test]
     fn snapshot_candle_route_is_read_only_and_exact() {
@@ -2499,6 +2601,25 @@ mod tests {
         }
         for path in ["pattern/chart", "pattern/chart/by-date", "pattern/ohlc/equity", "pattern/strategies/extra"] {
             assert!(!valid_analysis_path(path, "POST"));
+        }
+    }
+
+    #[test]
+    fn whatif_allows_get_post_and_delete_on_the_exact_path_and_a_read_only_range() {
+        for method in ["GET", "POST", "DELETE"] {
+            assert!(valid_analysis_path("whatif", method), "{method}");
+        }
+        assert!(valid_analysis_path("whatif?session_id=s1", "GET"));
+        assert!(valid_analysis_path("whatif?session_id=s1&scenario_id=exit-at-close", "DELETE"));
+        assert!(!valid_analysis_path("whatif", "PUT"));
+        assert!(valid_analysis_path("whatif/range?start=2026-11-01&end=2026-11-30", "GET"));
+        for method in ["POST", "DELETE", "PUT"] {
+            assert!(!valid_analysis_path("whatif/range", method), "{method}");
+        }
+        for path in ["whatif/extra", "whatif/", "/whatif", "whatif/../labels", "what-if", "whatif%2Frange", "whatif/range/x"] {
+            for method in ["GET", "POST", "DELETE"] {
+                assert!(!valid_analysis_path(path, method), "{method} {path}");
+            }
         }
     }
 

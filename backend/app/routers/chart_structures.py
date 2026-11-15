@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.dependencies import get_request_user_id
+from app.services.minute_ohlc import load_candle_records
 from app.services import chart_structure_service as svc
 
 logger = logging.getLogger(__name__)
@@ -137,27 +138,8 @@ async def get_ohlc(
     user_id: str = Depends(get_request_user_id),
 ):
     try:
-        import pandas as pd
-        from app.utils import prior_trading_days
-        from app.services.broker_service import fetch_historical
-        from app.services.data_loader import load_dataframe, resample_to_candles, candles_to_records
-
-        # Load current date + up to N prior trading days for context
-        prior_dates = prior_trading_days(date, n=days_back)
-        all_dfs = []
-        for d in prior_dates:
-            try:
-                fetch_historical(symbol.upper(), d)
-                all_dfs.append(load_dataframe(symbol.upper(), d))
-            except (FileNotFoundError, RuntimeError):
-                pass
-        fetch_historical(symbol.upper(), date)
-        all_dfs.append(load_dataframe(symbol.upper(), date))
-        if not all_dfs:
-            raise FileNotFoundError
-        combined = pd.concat(all_dfs).sort_index()
-        candles = resample_to_candles(combined, interval_minutes)
-        records = candles_to_records(candles)
+        # Current date + up to N prior trading days for context, from minute data (not Breeze second-level downloads).
+        records = await load_candle_records(symbol.upper(), date, interval_minutes, days_back)
 
         structure = None
         try:
@@ -179,8 +161,8 @@ async def get_ohlc(
             candles=[OHLCItem(**r) for r in records],
             structure=ChartStructureItem(**structure) if structure else None,
         )
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No data for {symbol} on {date}")
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("ohlc error %s %s: %s", symbol, date, exc)
         raise HTTPException(status_code=500, detail="Failed to load OHLC")

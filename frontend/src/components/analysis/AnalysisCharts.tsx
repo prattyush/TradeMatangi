@@ -14,6 +14,7 @@ import type { AnalysisTrade, OHLCCandle } from '../../../../shared/analysis/api'
 import { rendererAccountKey } from '../../services/websiteChartPreferences'
 import { LightweightChartTools, useLightweightTools, type LightweightTools } from './LightweightChartTools'
 import { lightweightDrawingKey } from './lightweightDrawings'
+import { toVolumeCandles } from '../../indicators/volumeStudies'
 function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
   if (!trade.right) return trade.side
   if (trade.right === 'CE') return trade.side === 'BUY' ? 'BUY' : 'SELL'
@@ -69,12 +70,15 @@ function ChartToolbar({ title, isMaximized = false, onMaximize, tools }: {
         <button
           onClick={onMaximize}
           title={isMaximized ? 'Restore' : 'Maximize'}
-          style={{
-            background: 'none', border: 'none', color: '#484f58',
-            cursor: 'pointer', fontSize: 14, padding: '0 2px', lineHeight: 1,
+          style={isMaximized ? {
+            background: '#58a6ff', border: '1px solid #58a6ff', color: '#0d1117', borderRadius: 4,
+            cursor: 'pointer', fontSize: 12, fontWeight: 800, padding: '1px 8px', lineHeight: 1.4,
+          } : {
+            background: 'none', border: 'none', color: '#8b949e',
+            cursor: 'pointer', fontSize: 14, fontWeight: 700, padding: '0 2px', lineHeight: 1,
           }}
         >
-          {isMaximized ? '⤡' : '⤢'}
+          {isMaximized ? '⤡ Restore' : '⤢'}
         </button>
       )}
     </div>
@@ -185,13 +189,14 @@ export function WebsiteAnalysisChart({
     if (!seriesRef.current || !symbol || !date) return
     let cancelled = false
     setHistoryState('loading');setLoadedInterval(null)
-    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([])
+    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([]);tools.setVolumeData([])
     tradeMarkerPoolRef.current.forEach(marker=>{try{chartRef.current?.removeSeries(marker)}catch{}});tradeMarkerPoolRef.current=[]
     ;(async () => {
       try {
-        const toCandle = (c: OHLCCandle): CandlestickData => ({
+        const toCandle = (c: OHLCCandle): CandlestickData & { volume?: number | null } => ({
           time: c.time as Time,
           open: c.open, high: c.high, low: c.low, close: c.close,
+          volume: c.volume,
         })
         const [histResp, tradingDayCandles] = await Promise.all([
           api.getHistorical(symbol, date, intervalMinutes, historicalDays),
@@ -203,7 +208,7 @@ export function WebsiteAnalysisChart({
           ...histResp.candles.map(toCandle),
           ...tradingDayCandles.map(toCandle),
         ]
-        const byTime = new Map<number, CandlestickData>()
+        const byTime = new Map<number, CandlestickData & { volume?: number | null }>()
         all.forEach(c => byTime.set(c.time as number, c))
         const sorted = Array.from(byTime.values()).sort(
           (a, b) => (a.time as number) - (b.time as number)
@@ -211,6 +216,7 @@ export function WebsiteAnalysisChart({
         setLoadedInterval(intervalMinutes);setHistoryState(sorted.length?'ready':'empty')
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
+          tools.setVolumeData(toVolumeCandles(sorted))
 
           const closes = sorted.map(c => c.close)
           const ema9Vals = computeEMA(closes, 9)
@@ -444,18 +450,19 @@ export function WebsiteOptionsChart({
     if (!seriesRef.current || !symbol || !date || !strike || !expiry || !right) return
     let cancelled = false
     setHistoryState('loading');setLoadedInterval(null)
-    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([])
+    seriesRef.current.setData([]);ema9Ref.current?.setData([]);ema21Ref.current?.setData([]);tools.setVolumeData([])
     tradeMarkerPoolRef.current.forEach(marker=>{try{chartRef.current?.removeSeries(marker)}catch{}});tradeMarkerPoolRef.current=[]
     ;(async () => {
       try {
-        const toCandle = (c: OHLCCandle): CandlestickData => ({
+        const toCandle = (c: OHLCCandle): CandlestickData & { volume?: number | null } => ({
           time: c.time as Time,
           open: c.open, high: c.high, low: c.low, close: c.close,
+          volume: c.volume,
         })
         const histResp = await api.getOptionsHistorical(symbol, date, strike, expiry, right, intervalMinutes, historicalDays)
         if (cancelled || !seriesRef.current) return
 
-        const byTime = new Map<number, CandlestickData>()
+        const byTime = new Map<number, CandlestickData & { volume?: number | null }>()
         histResp.candles.map(toCandle).forEach(c => byTime.set(c.time as number, c))
         const sorted = Array.from(byTime.values()).sort(
           (a, b) => (a.time as number) - (b.time as number)
@@ -463,6 +470,7 @@ export function WebsiteOptionsChart({
         setLoadedInterval(intervalMinutes);setHistoryState(sorted.length?'ready':'empty')
         if (sorted.length > 0) {
           seriesRef.current.setData(sorted)
+          tools.setVolumeData(toVolumeCandles(sorted))
 
           const closes = sorted.map(c => c.close)
           const ema9Vals = computeEMA(closes, 9)
@@ -626,8 +634,8 @@ export function WebsiteAnalysisChartPanel({
             onClick={() => setMaximizedChart(null)}
             title="Restore"
             style={{
-              background: 'none', border: '1px solid #30363d', color: '#8b949e',
-              borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
+              background: '#58a6ff', border: '1px solid #58a6ff', color: '#0d1117',
+              borderRadius: 6, padding: '4px 12px', cursor: 'pointer', fontSize: 13, fontWeight: 800,
             }}
           >
             ⤡ Restore

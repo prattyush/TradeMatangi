@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from boto3.dynamodb.types import TypeDeserializer
 
-SESSION_TABLES = ("Trades", "Orders", "Strategies", "TradeLabels", "BehaviorMarks", "VideoLinks", "EventSnapshots", "AICommands", "AIDecisionLog", "BrokerProtectionRecovery")
+SESSION_TABLES = ("Trades", "Orders", "Strategies", "TradeLabels", "BehaviorMarks", "VideoLinks", "WhatIfScenarios", "EventSnapshots", "AICommands", "AIDecisionLog", "BrokerProtectionRecovery")
 CREATE_FIELDS = ("TableName", "KeySchema", "AttributeDefinitions", "GlobalSecondaryIndexes", "LocalSecondaryIndexes")
 
 

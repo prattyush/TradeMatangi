@@ -9,12 +9,15 @@ import StoredOrders from './StoredOrders'
 import SessionVideos from './SessionVideos'
 import { useAnalysisError } from './environment'
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { SessionSummary, SessionDetail, AnalysisTrade, EventSnapshot } from './api'
 import EventSnapshotViewer from './EventSnapshotViewer'
 import TradeLabeling from './TradeLabeling'
+import TradeWalkthrough from './walkthrough/TradeWalkthrough'
+import TradeWhatIf from './whatif/TradeWhatIf'
 import StatsModal from './StatsModal'
+import LabelProgressBadge from './labeling/LabelProgressBadge'
 import PatternVsTradeComparison from './PatternVsTradeComparison'
 
 interface Props {
@@ -45,6 +48,8 @@ export interface SessionGroup {
   sessions: SessionSummary[]
   totalPnl: number
   totalTrades: number
+  /** Closed round trips with a positive net P&L; `undefined` when a session came from an older backend. */
+  winningTrades?: number
   totalCommission: number
   sessionCapital: number
 }
@@ -65,6 +70,7 @@ export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
         sessions: [],
         totalPnl: 0,
         totalTrades: 0,
+        winningTrades: 0,
         totalCommission: 0,
         sessionCapital: s.session_capital,
       })
@@ -73,6 +79,7 @@ export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
     g.sessions.push(s)
     g.totalPnl += s.net_pnl
     g.totalTrades += s.round_trip_count ?? s.trade_count
+    g.winningTrades = g.winningTrades === undefined || s.winning_round_trip_count === undefined ? undefined : g.winningTrades + s.winning_round_trip_count
     g.totalCommission += s.total_commission
   }
   return Array.from(map.values()).sort((a, b) => {
@@ -144,7 +151,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const [loading, setLoading] = useState(false)
   const [viewingSnapshots, setViewingSnapshots] = useState<{ session: SessionSummary; snapshots: EventSnapshot[]; sessionIds: string[] } | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'trades' | 'labels'>('trades')
+  const [activeTab, setActiveTab] = useState<'trades' | 'labels' | 'walkthrough' | 'whatif'>('trades')
   const [detailError, setDetailError] = useState('')
   const [hasPattern, setHasPattern] = useState(false)
   const [showComparison, setShowComparison] = useState(false)
@@ -181,6 +188,10 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   }, [group.totalCommission])
 
   const allTrades = group.sessions.flatMap(s => details.get(s.session_id)?.trades ?? [])
+  // Stable inputs for Trade Walkthrough (it recomputes its story when these change).
+  const dayCycles = useMemo(() => [...details.values()].flatMap(d => d.cycles ?? []), [details])
+  const sessionTypes = useMemo(() => new Map(group.sessions.map(s => [s.session_id, s.session_type])), [group.sessions])
+  const sessionCapitals = useMemo(() => new Map(group.sessions.map(s => [s.session_id, s.session_capital])), [group.sessions])
   const multiSession = group.sessions.length > 1
 
   const pnlColor = group.totalPnl > 0 ? '#26a641' : group.totalPnl < 0 ? '#f85149' : '#8b949e'
@@ -208,6 +219,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
           <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
             {sessionTypeLabel}{group.trading_style==='swing'?' · Swing':''}{group.sessions[0]?.shared ? ` · Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id}` : ''}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
           </div>
+          {group.trading_style !== 'swing' && <LabelProgressBadge sessionIds={group.sessions.map(s => s.session_id)} />}
         </div>
 
         <div style={{ minWidth: 80 }}>
@@ -239,6 +251,13 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
         <div style={{ minWidth: 60 }}>
           <div style={{ fontSize: 12, color: '#8b949e' }}>Trades</div>
           <div style={{ fontSize: 13, color: '#e6edf3' }}>{group.totalTrades}</div>
+        </div>
+
+        <div style={{ minWidth: 60 }} title="Closed round trips with a positive net P&L, as a share of all closed round trips">
+          <div style={{ fontSize: 12, color: '#8b949e' }}>Win %</div>
+          <div style={{ fontSize: 13, color: '#e6edf3', fontVariantNumeric: 'tabular-nums' }}>
+            {group.winningTrades !== undefined && group.totalTrades > 0 ? `${Math.round((group.winningTrades / group.totalTrades) * 100)}%` : '—'}
+          </div>
         </div>
 
         <div style={{ minWidth: 80 }}>
@@ -345,7 +364,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
               }}
             >Trades</button>
             <button
-              onClick={() => setActiveTab('labels')}
+              onClick={() => { if (activeTab === 'whatif' && environment.confirmDiscard?.() === false) return; setActiveTab('labels') }}
               style={{
                 padding: '6px 16px', border: 'none',
                 borderBottom: activeTab === 'labels' ? '2px solid #58a6ff' : '2px solid transparent',
@@ -356,6 +375,30 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 borderRadius: '4px 4px 0 0',
               }}
             >Label Trades</button>
+            <button
+              onClick={() => { if (environment.confirmDiscard?.() !== false) setActiveTab('walkthrough') }}
+              style={{
+                padding: '6px 16px', border: 'none',
+                borderBottom: activeTab === 'walkthrough' ? '2px solid #58a6ff' : '2px solid transparent',
+                background: activeTab === 'walkthrough' ? '#1c2333' : 'transparent',
+                color: activeTab === 'walkthrough' ? '#58a6ff' : '#8b949e',
+                cursor: 'pointer', fontSize: 13,
+                fontWeight: activeTab === 'walkthrough' ? 600 : 400,
+                borderRadius: '4px 4px 0 0',
+              }}
+            >Walkthrough</button>
+            <button
+              onClick={() => { if (environment.confirmDiscard?.() !== false) setActiveTab('whatif') }}
+              style={{
+                padding: '6px 16px', border: 'none',
+                borderBottom: activeTab === 'whatif' ? '2px solid #58a6ff' : '2px solid transparent',
+                background: activeTab === 'whatif' ? '#1c2333' : 'transparent',
+                color: activeTab === 'whatif' ? '#58a6ff' : '#8b949e',
+                cursor: 'pointer', fontSize: 13,
+                fontWeight: activeTab === 'whatif' ? 600 : 400,
+                borderRadius: '4px 4px 0 0',
+              }}
+            >What If</button>
           </div>
 
           <SessionVideos sessionIds={group.sessions.map(s => s.session_id)} canAdd={!group.sessions.some(s => s.shared)} />
@@ -402,6 +445,28 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 historicalDays={historicalDays}
               />
             </>
+          ) : activeTab === 'whatif' ? (
+            <TradeWhatIf
+              readOnly={group.sessions.some(s => s.shared)}
+              symbol={group.symbol}
+              date={group.date}
+              sessionIds={group.sessions.map(s => s.session_id)}
+              allTrades={allTrades}
+              historicalDays={historicalDays}
+              cycles={dayCycles}
+              capitals={sessionCapitals}
+              sessionTypes={sessionTypes}
+            />
+          ) : activeTab === 'walkthrough' ? (
+            <TradeWalkthrough
+              symbol={group.symbol}
+              date={group.date}
+              sessionIds={group.sessions.map(s => s.session_id)}
+              allTrades={allTrades}
+              historicalDays={historicalDays}
+              cycles={dayCycles}
+              capitals={sessionCapitals}
+            />
           ) : (
             <TradeLabeling
               readOnly={group.sessions.some(s => s.shared)}

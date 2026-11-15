@@ -1,28 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import { rendererAccountKey } from '../../services/websiteChartPreferences'
+import { attachVolumeStudies, type VolumeStudies } from '../../indicators/volumeStudies'
+import { VWAP_COLOR, type VolumeCandle } from '../../indicators/vwap'
 import {
   LW_DRAW_ITEMS, LW_DRAW_LABEL, LightweightDrawingController, emptyLwSnapshot,
   type LwDrawMode, type LwDrawingSnapshot,
 } from './lightweightDrawings'
 
-const emaEvent = 'analysis-lw-ema'
-const emaKey = () => `analysis-lw-ema:${rendererAccountKey()}`
-const readEma = () => { try { return localStorage.getItem(emaKey()) !== '0' } catch { return true } }
-
-/** EMA 9/21 visibility shared by every Lightweight Analysis chart; on by default (it was always on). */
-function useEmaPreference() {
-  const [showEma, set] = useState(readEma)
+/** A boolean indicator preference shared by every Lightweight Analysis chart (localStorage per account, synced by an event). */
+function useFlagPreference(name: string, defaultValue: boolean) {
+  const key = () => `${name}:${rendererAccountKey()}`
+  const read = () => { try { const saved = localStorage.getItem(key()); return saved === null ? defaultValue : saved !== '0' } catch { return defaultValue } }
+  const [value, set] = useState(read)
   useEffect(() => {
-    const sync = () => set(readEma())
-    window.addEventListener(emaEvent, sync)
-    return () => window.removeEventListener(emaEvent, sync)
+    const sync = () => set(read())
+    window.addEventListener(name, sync)
+    return () => window.removeEventListener(name, sync)
   }, [])
-  const setShowEma = useCallback((value: boolean) => {
-    try { localStorage.setItem(emaKey(), value ? '1' : '0') } catch { /* Optional local UI preference. */ }
-    window.dispatchEvent(new Event(emaEvent))
+  const setValue = useCallback((next: boolean) => {
+    try { localStorage.setItem(key(), next ? '1' : '0') } catch { /* Optional local UI preference. */ }
+    window.dispatchEvent(new Event(name))
   }, [])
-  return [showEma, setShowEma] as const
+  return [value, setValue] as const
 }
 
 /**
@@ -36,21 +36,36 @@ export function useLightweightTools(storageKey: string | null) {
   const key = useRef(storageKey)
   key.current = storageKey
   const [state, setState] = useState<LwDrawingSnapshot>(emptyLwSnapshot)
-  const [showEma, setShowEma] = useEmaPreference()
+  // EMA 9/21 is on by default (it was always on); VWAP and Volume are opt-in.
+  const [showEma, setShowEma] = useFlagPreference('analysis-lw-ema', true)
+  const [showVwap, setShowVwap] = useFlagPreference('analysis-lw-vwap', false)
+  const [showVolume, setShowVolume] = useFlagPreference('analysis-lw-volume', false)
+  // Volume and VWAP are offered only when the loaded candles have volume (indices report none).
+  const [volumeAvailable, setVolumeAvailable] = useState(false)
+  const studies = useRef<VolumeStudies | null>(null)
+  const visible = useRef({ vwap: showVwap, volume: showVolume })
+  visible.current = { vwap: showVwap, volume: showVolume }
   const attach = useCallback((chart: IChartApi, series: ISeriesApi<'Candlestick'>) => {
     const ctl = new LightweightDrawingController(chart, series, key.current)
     controller.current = ctl
     const off = ctl.subscribe(() => setState(ctl.snapshot()))
     setState(ctl.snapshot())
+    const volume = attachVolumeStudies(chart, { ...visible.current, onAvailableChange: setVolumeAvailable })
+    studies.current = volume
     return () => {
       off()
       ctl.dispose()
       if (controller.current === ctl) controller.current = null
+      if (studies.current === volume) studies.current = null
     }
   }, [])
   useEffect(() => { controller.current?.setStorageKey(storageKey) }, [storageKey])
+  useEffect(() => { studies.current?.setVisible({ vwap: showVwap, volume: showVolume }) }, [showVwap, showVolume])
   return {
     attach, state, showEma, setShowEma,
+    showVwap, setShowVwap, showVolume, setShowVolume, volumeAvailable,
+    /** Feed the loaded candles (with volume) to the VWAP and volume series; [] clears them. */
+    setVolumeData: (candles: ReadonlyArray<VolumeCandle>) => studies.current?.setData(candles),
     setMode: (mode: LwDrawMode) => controller.current?.setMode(mode),
     clearLast: () => controller.current?.clearLast(),
   }
@@ -83,13 +98,25 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
   return (
     <span ref={root} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       <span style={{ position: 'relative' }}>
-        <button type="button" title="Indicators" style={buttonStyle(tools.showEma)} onClick={() => setOpen(v => v === 'indicators' ? null : 'indicators')}>Indicators ▾</button>
+        <button type="button" title="Indicators" style={buttonStyle(tools.showEma || (tools.volumeAvailable && (tools.showVwap || tools.showVolume)))} onClick={() => setOpen(v => v === 'indicators' ? null : 'indicators')}>Indicators ▾</button>
         {open === 'indicators' && (
           <div style={{ ...menuStyle, minWidth: 160 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: tools.showEma ? '#f0883e' : '#e6edf3' }}>
               <input type="checkbox" checked={tools.showEma} onChange={() => tools.setShowEma(!tools.showEma)} />
               <span>EMA 9/21</span>
             </label>
+            {tools.volumeAvailable && (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: tools.showVwap ? VWAP_COLOR : '#e6edf3' }}>
+                  <input type="checkbox" checked={tools.showVwap} onChange={() => tools.setShowVwap(!tools.showVwap)} />
+                  <span>VWAP</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer', fontSize: 11, color: tools.showVolume ? '#26a69a' : '#e6edf3' }}>
+                  <input type="checkbox" checked={tools.showVolume} onChange={() => tools.setShowVolume(!tools.showVolume)} />
+                  <span>Volume</span>
+                </label>
+              </>
+            )}
           </div>
         )}
       </span>

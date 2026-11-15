@@ -71,7 +71,12 @@ export interface DesktopTradingSession {
 export interface DesktopTradingSettings {
   desktop_hide_chart_labels: boolean
   desktop_order_size_mode: 'quantity' | 'funds_ratio' | 'risk_ratio'
-  desktop_pnl_display_mode: 'currency' | 'percent'
+  desktop_pnl_display_mode: 'currency' | 'percent' | 'milestones'
+  /** Milestones display: win target and loss limit, % of session capital. */
+  pnl_max_win_pct?: number
+  guardrail_ban_capital_pct?: number
+  /** Draw the live position's P&L above the current bar. */
+  show_bar_pnl_label?: boolean
   pnl_target_levels?: string
   desktop_confirm_flatten: boolean
   context_menu_sl_mode: 'longOnly' | 'both'

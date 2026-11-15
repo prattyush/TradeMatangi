@@ -37,6 +37,17 @@ export const allIndicators = [
 /** Indicators computed from traded volume; meaningless on instruments that report none (indices). */
 export const volumeIndicators = ["VOL", "VWAP"];
 
+/** Price-scale indicators drawn over the candles (a shared pane), not in a sub-pane of their own. */
+export const overlayIndicators = ["VWAP"];
+
+/**
+ * True when an indicator would draw nothing useful: volume indicators on an instrument with no volume (an index),
+ * and VWAP on daily bars, where it restarts every day and is just each bar's typical price.
+ * `hasVolume` unspecified means "unknown", so nothing is hidden for it.
+ */
+export const indicatorUnavailable = (name: string, options: { hasVolume?: boolean; interval?: string } = {}) =>
+  (volumeIndicators.includes(name) && options.hasVolume === false) || (name === "VWAP" && options.interval === "1D");
+
 export const indicatorLabel = (name: string) =>
   name === "PositionPnL"
     ? "Position P&L levels"

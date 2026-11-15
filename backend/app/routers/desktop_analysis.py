@@ -11,7 +11,7 @@ from typing import get_type_hints
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.routing import APIRoute
 from app.dependencies import get_desktop_user_id
-from app.routers import analysis, behavior, data, labels, pattern_logger, performance, snapshots, video_links
+from app.routers import analysis, behavior, data, labels, pattern_logger, performance, snapshots, video_links, whatif
 from app.services import analysis_service, performance_service
 from app.services.history_workers import desktop_history_scope, run_history
 
@@ -87,6 +87,8 @@ allowed = [
     }),
     # Phase 24 saved YouTube links for Video Maker videos. The router itself is owner only.
     (video_links.router, {"/api/video-links": {"GET", "POST", "DELETE"}, "/api/video-links/mine": {"GET"}}),
+    # Phase 24 saved What If scenarios (owner only; the router never touches trades, orders or labels).
+    (whatif.router, {"/api/whatif": {"GET", "POST", "DELETE"}, "/api/whatif/range": {"GET"}}),
 ]
 for source, paths in allowed:
     for route in source.routes:

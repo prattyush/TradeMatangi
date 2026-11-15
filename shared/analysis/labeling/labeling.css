@@ -134,3 +134,15 @@
 .tl-modal-card > header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .tl-modal-card > header h3 { flex: 1; margin: 0; font-size: 15px; }
 .bq-empty-picker { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--tl-muted); }
+
+/* The labelled-or-not mark on an Analysis date row. */
+.tl-day-badge-host { display: inline-block; min-height: 16px; margin-top: 3px; }
+.tl-day-badge { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; border: 1px solid #30363d; color: #8b949e; }
+.tl-day-badge[data-state="done"] { color: #3fb950; border-color: #238636; background: #23863622; }
+.tl-day-badge[data-state="todo"] { color: #d29922; border-color: #9e6a03; background: #9e6a0322; }
+
+/* Maximize / Restore of Label Trades, Walkthrough and What If: bold enough to find. */
+.tl-ghost.tl-maximize { font-weight: 800; color: #e6edf3; border: 1px solid #8b949e; background: #21262d; padding: 3px 10px; letter-spacing: .01em; }
+.tl-ghost.tl-maximize[aria-pressed="true"] { color: #0d1117; background: #58a6ff; border-color: #58a6ff; }
+.tl-counter small.tl-labelled-count { font-weight: 700; color: #d29922; }
+.tl-counter small.tl-labelled-count[data-done="true"] { color: #3fb950; }
