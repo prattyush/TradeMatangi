@@ -1,0 +1,26 @@
+/* Games own their tokens: the desktop has no theme variables and the website's are not shared. */
+.games-root { --g-bg: #0d1117; --g-panel: #161b22; --g-line: #30363d; --g-text: #e6edf3; --g-dim: #8b949e; --g-accent: #58a6ff; --g-warn: #d29922;
+  background: var(--g-bg); color: var(--g-text); min-height: 100%; box-sizing: border-box; padding: 12px 16px; font-family: system-ui, sans-serif; }
+.games-root h2, .games-root h3, .games-root h4 { margin: 0 0 6px; }
+.games-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.games-tabs { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
+.games-root button { background: #21262d; color: var(--g-text); border: 1px solid var(--g-line); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; }
+.games-root button:disabled { opacity: .5; cursor: default; }
+.games-root button.is-active { border-color: var(--g-accent); color: var(--g-accent); }
+.games-banner { background: var(--g-panel); border: 1px solid var(--g-warn); border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
+.games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.games-category { background: var(--g-panel); border: 1px solid var(--g-line); border-radius: 8px; padding: 10px; }
+.games-card { border-top: 1px solid var(--g-line); padding: 8px 0; }
+.games-card[data-playable="false"] { opacity: .75; }
+.games-card p { margin: 2px 0; color: var(--g-dim); }
+.games-meta { color: var(--g-dim); font-size: .85em; }
+.games-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.games-ratings { list-style: none; padding: 0; display: grid; gap: 6px; max-width: 520px; }
+.games-ratings li { display: grid; grid-template-columns: 110px 1fr 40px; gap: 8px; align-items: center; }
+.games-root label { display: block; margin: 6px 0; }
+.games-foot { margin-top: 16px; color: var(--g-dim); font-size: .8em; }
+.games-shell { outline: none; max-width: 760px; }
+.games-shell-head { display: flex; justify-content: space-between; color: var(--g-dim); margin-bottom: 8px; }
+.games-countdown { font-size: 5em; text-align: center; padding: 40px 0; }
+.games-confirm { position: fixed; inset: 0; background: #000a; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; }
+.games-root[data-reduce-motion] * { animation: none !important; transition: none !important; }

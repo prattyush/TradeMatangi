@@ -1218,6 +1218,64 @@ async fn desktop_patterns_request(
     response.json().await.map_err(|e| e.to_string())
 }
 
+/// Allowlist for the Games routes (`/api/desktop/v1/games/...`). Only these three families exist (spec section 3.4):
+/// `availability` and `window` are read-only market-data slices (served from G1), `state` is the progress record.
+/// Mirrored by `validGamesPath` in `src/gamesApi.ts`; keep the two in step (parity tests in both).
+fn valid_games_path(path: &str, method: &str) -> bool {
+    let route = path.split('?').next().unwrap_or("");
+    if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
+    matches!((method, route), ("GET", "availability" | "window" | "state") | ("PUT", "state"))
+}
+
+#[tauri::command]
+async fn desktop_games_request(
+    window: tauri::WebviewWindow,
+    base_url: String,
+    path: String,
+    method: String,
+    body: serde_json::Value,
+    host: tauri::State<'_, HostState>,
+) -> Result<serde_json::Value, String> {
+    // Games run in their own window only; no trading window can use this route family by accident.
+    if window.label() != "games" { return Err("Games requests are only available from the Games window".into()); }
+    if !valid_games_path(&path, &method) { return Err("Invalid games request".into()); }
+    let token = tokio::time::timeout(Duration::from_secs(30), host.access_token(&base_url)).await.map_err(|_| "Games authentication timed out")??;
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
+    let url = format!("{}/api/desktop/v1/games/{}", base_url.trim_end_matches('/'), path);
+    let request = match method.as_str() {
+        "GET" => client.get(url),
+        "PUT" => client.put(url).json(&body),
+        _ => return Err("Unsupported games request".into()),
+    };
+    let response = request.bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Games request failed ({status}): {detail}"));
+    }
+    if status == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
+    response.json().await.map_err(|e| e.to_string())
+}
+
+/// Open (or focus) the separate Games window. Only the main window may open it. The window holds no trading
+/// state and owns no streams, so closing it needs no handoff; it is destroyed with the main window.
+#[tauri::command]
+async fn open_games_window(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" { return Err("Only the main window can open Games".into()); }
+    if let Some(existing) = app.get_webview_window("games") {
+        existing.show().map_err(|error| error.to_string())?;
+        existing.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, "games", WebviewUrl::App("index.html?window=games".into()))
+        .title("Trade Matangi Games")
+        .inner_size(1100.0, 760.0)
+        .min_inner_size(800.0, 560.0)
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn desktop_drawing_request(
     window: tauri::WebviewWindow,
@@ -2472,6 +2530,10 @@ pub fn run() {
         .manage(video::VideoJobState::default())
         .manage(youtube_upload::UploadState::default())
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                // The Games window never outlives the main window (it would keep the app running with no way back).
+                if let Some(games) = window.app_handle().get_webview_window("games") { let _ = games.destroy(); }
+            }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) { schedule_window_close(&webview, window.state::<HostState>().inner().clone()); }
             }
@@ -2503,6 +2565,8 @@ pub fn run() {
             desktop_settings_request,
             desktop_analysis_request,
             desktop_patterns_request,
+            desktop_games_request,
+            open_games_window,
             desktop_logout,
             queue_offline_mutation,
             pending_offline_mutations,
@@ -2547,6 +2611,19 @@ mod tests {
             assert!(!super::valid_analysis_path("performance/swing", method));
         }
         assert!(!super::valid_analysis_path("performance/swing/extra", "GET"));
+    }
+
+    #[test]
+    fn games_allowlist_is_exact_and_method_scoped() {
+        let ok = [("GET", "state"), ("PUT", "state"), ("GET", "availability"), ("GET", "window?symbol=NIFTY&date=2026-10-01&start_sec=34200&duration_sec=300"), ("GET", "state?x=1")];
+        for (method, path) in ok { assert!(super::valid_games_path(path, method), "{method} {path}"); }
+        let bad = [
+            ("POST", "state"), ("DELETE", "state"), ("PUT", "availability"), ("PUT", "window"), ("GET", ""), ("GET", "/state"), ("GET", "state/"),
+            ("GET", "state/x"), ("GET", "states"), ("GET", "../analysis/sessions"), ("GET", "state/../x"), ("GET", "st%61te"), ("GET", "state#x"),
+            ("GET", "state\\x"), ("GET", "./state"), ("GET", "trades"), ("GET", "orders"), ("PATCH", "state"), ("get", "state"),
+            ("GET", "availability/x"), ("GET", "window/x"), ("GET", "?state"),
+        ];
+        for (method, path) in bad { assert!(!super::valid_games_path(path, method), "{method} {path}"); }
     }
 
     #[test]

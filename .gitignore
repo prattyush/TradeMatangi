@@ -24,6 +24,8 @@ node_modules/
 
 # Data files
 data/
+# ...but this folder is source code (Phase 25 Games: IndexedDB outbox and sync), not data files.
+!shared/games/data/
 
 # IDE
 .idea/

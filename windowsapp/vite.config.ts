@@ -18,6 +18,8 @@ export default defineConfig({
     },
   },
   plugins: [react()],
+  // Tests sit beside the code, including the shared Games code that the desktop, website and webapp all use.
+  test: { include: ['src/**/*.test.{ts,tsx}', '../shared/games/**/*.test.{ts,tsx}'] },
   clearScreen: false,
   server: { host: "127.0.0.1", port: 1420, strictPort: true },
 });

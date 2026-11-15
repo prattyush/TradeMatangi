@@ -24,6 +24,7 @@ export function ToolbarIcon({ name }: { name: string }) {
     Stepwise: 'M3 20v-6h6V8h6V3h6',
     Flatten: 'M3 12h18 M12 2v6 M8 4l4 4 4-4 M12 22v-6 M8 20l4-4 4 4',
     Block: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M6 6l12 12',
+    Games: 'M6 8h12a3 3 0 0 1 3 3v3a3 3 0 0 1-5 2l-1-1H9l-1 1a3 3 0 0 1-5-2v-3a3 3 0 0 1 3-3z M8 10.5v3 M6.5 12h3 M15.5 11.5h.01 M17.5 13.5h.01',
   }
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>
 }

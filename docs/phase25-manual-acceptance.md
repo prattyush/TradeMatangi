@@ -50,5 +50,17 @@ Unless a step says otherwise, use NIFTY and a recent trading day.
 4. `GET /api/desktop/v1/capabilities` (same header) lists `"games"` in `features`.
 5. Nothing in the trading screens changes; no trading route shows in the backend log for these calls.
 
+## G. Games shell (G3a): Windows build and website
+Needs the backend from `dev` (G2) and a **rebuilt** desktop app.
+1. Desktop: the toolbar shows a **Games** button after sign-in. With an older backend (no `games` feature) it is not shown.
+2. Click it: a separate window opens with tabs Brain, Market, Dashboard, Warm-up, Settings; every game is listed as "Coming soon". Click again: the same window is focused, not duplicated.
+3. Close the main window: the Games window closes with it. Close only the Games window: the trading window is unaffected.
+4. Settings: turn Sound on, set size to 120 %, Warm-up games to Brain only, Save ("Saved."). Close and reopen Games: the values are back. On the website (same account) the same values appear.
+5. Website and webapp: the header has a controller icon (tooltip "Games"). It opens an overlay under the header; the icon toggles it closed. Opening Browse closes Games and the reverse; opening Trade Analysis closes Games.
+6. With a **paper or replay session running**, open Games: the session keeps running underneath (charts keep updating, notifications still appear above Games). Close Games: the trading screen is exactly as before. With a **real** session, a banner says so.
+7. Stop the backend, reopen Games: a message says the server is not reachable (no crash). Start it again and reload: the hub loads.
+8. Network log: Games only calls `/api/desktop/v1/games/state` (website) or the Rust command (desktop). Nothing else, no order, session, wallet or broker route.
+9. Dashboard shows empty category bars and "Play a game in Progress mode..."; the footer says these are practice tools.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.

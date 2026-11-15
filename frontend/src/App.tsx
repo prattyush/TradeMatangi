@@ -33,6 +33,8 @@ import React from 'react'
 import { BROWSE_HEADER_SLOT } from './components/browse/browseSlot'
 // Browse (read-only charts, a symbol per pane) is the landing view when no session is running; loaded on first use.
 const BrowseWorkspace = lazy(() => import('./components/browse/BrowseWorkspace'))
+// Games (Phase 25): a lazy overlay like Browse; nothing loads until it is opened.
+const GamesWorkspace = lazy(() => import('./components/games/GamesWorkspace'))
 import PatternLibrary from './pages/PatternLibrary'
 import ChartStructures from './pages/ChartStructures'
 import type { ChartVisibleRange, PaneType } from './components/Chart'
@@ -324,6 +326,9 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   const [showBrowse, setShowBrowse] = useState(() => {
     try { return !JSON.parse(localStorage.getItem(`tradematangi_workspace_${authUser.userId}`) ?? '{}')?.sessionId } catch { return true }
   })
+  // Games overlay (opened from the header). Opening Analysis closes it; opening Browse closes it.
+  const [showGames, setShowGames] = useState(false)
+  useEffect(() => { if (showAnalysis) setShowGames(false) }, [showAnalysis])
   // Starting or attaching a session always leaves Browse for the trading screen.
   useEffect(() => { if (sim.sessionState !== 'idle' && sim.sessionState !== 'ended') setShowBrowse(false) }, [sim.sessionState])
 
@@ -2271,9 +2276,11 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             )}
           </div>
         )}
-        <NavIconButton icon={showBrowse ? 'trading' : 'browse'} active={showBrowse} onClick={() => setShowBrowse(value => !value)}
+        <NavIconButton icon={showBrowse ? 'trading' : 'browse'} active={showBrowse} onClick={() => { setShowGames(false); setShowBrowse(value => !value) }}
           label={showBrowse ? 'Back to Trading' : 'Browse — read-only charts: any symbol, any day, side by side'} />
         <span id={BROWSE_HEADER_SLOT} style={{ display: 'inline-flex' }} />
+        <NavIconButton icon="games" active={showGames} onClick={() => { setShowBrowse(false); setShowGames(value => !value) }}
+          label={showGames ? 'Close Games' : 'Games — practice tools for speed, memory, attention and trading skills'} />
         <NavIconButton icon="swing" onClick={() => setShowSwing(true)} label="Swing portfolio — hold positions across days" />
         {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
@@ -2501,6 +2508,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       {/* Browse: read-only charts, a symbol and a day per pane (the landing view when no session is running) */}
       {/* (Not mounted while Analysis is open on top of it: one set of charts on screen at a time.) */}
       {showBrowse && !showAnalysis && <Suspense fallback={null}><BrowseWorkspace userId={authUser.userId} /></Suspense>}
+      {/* Games: a fixed overlay like Browse. The trading layout below stays mounted while a session runs. */}
+      {showGames && !showAnalysis && <Suspense fallback={null}><GamesWorkspace sessionKind={idle ? 'none' : sim.sessionType === 'real' ? 'real' : sim.sessionType === 'paper' ? 'paper' : 'sim'} /></Suspense>}
 
       {/* Trade Analysis modal */}
       {showAnalysis && (
@@ -2660,7 +2669,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 12px' }}
         >
           {/* While Browse covers an idle trading screen its charts are not mounted, so they download nothing in the background. */}
-          {showBrowse && idle ? null : renderLayout()}
+          {(showBrowse || showGames) && idle ? null : renderLayout()}
         </div>
 
         {/* Right sidebar — collapsible */}
