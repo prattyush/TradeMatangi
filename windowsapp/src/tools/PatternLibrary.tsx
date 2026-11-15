@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AnalysisProvider, useAnalysisEnvironment } from '../../../shared/analysis/environment'
+import { AnalysisProvider } from '../../../shared/analysis/environment'
 import DesktopAnalysisChart from '../AnalysisChart'
 import { usePatternsRuntime } from './usePatternsRuntime'
+import { IntervalBridge } from './IntervalBridge'
 import type { PatternAnnotation, PatternChartMeta } from '../../../shared/analysis/api'
 import { cleanTopPatterns } from '../../../shared/analysis/patternMarkers'
 import '../../../shared/analysis/kline/desktopAnalysis.css'
@@ -12,14 +13,6 @@ interface Props { baseUrl: string; token: string; onUnauthorized: () => void; ac
 interface Loaded { symbol: string; date: string; instrumentType: 'equity' | 'options'; strikes: { ce: number; pe: number } | null; expiry: string | null }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
-
-/** Reports the shared candle interval upward and lets the host set it (a saved chart restores its own). */
-function IntervalBridge({ requested, onChange }: { requested: number | null; onChange: (minutes: number) => void }) {
-  const env = useAnalysisEnvironment()
-  useEffect(() => { onChange(env.intervalMinutes ?? 3) }, [env.intervalMinutes, onChange])
-  useEffect(() => { if (requested != null) env.setIntervalMinutes?.(requested) }, [requested]) // eslint-disable-line react-hooks/exhaustive-deps
-  return null
-}
 
 /**
  * Pattern Library on the desktop: mark entries and exits on the underlying and CE/PE charts, rank the top patterns,

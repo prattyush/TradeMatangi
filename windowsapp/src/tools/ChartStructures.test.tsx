@@ -12,6 +12,12 @@ describe('ChartStructures (initial render)', () => {
     expect(html).toContain('Opening: All')
     expect(html).toContain('Midday: All')
     expect(html).toContain('Closing: All')
+    expect(html).toContain('Broad')
+    expect(html).toContain('Fine')
+    // Fine stays mounted behind its tab: builder, search and definitions are all there before any day is loaded.
+    expect(html).toContain('Underlying only')
+    expect(html).toContain('Search by sequence')
+    expect(html).toContain('Add definition')
     expect(html).not.toContain('desktop-analysis-chart')
   })
 })

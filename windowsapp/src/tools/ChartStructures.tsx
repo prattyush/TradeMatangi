@@ -5,6 +5,7 @@ import '../../../shared/analysis/kline/desktopAnalysis.css'
 import './patternTools.css'
 import type { ChartStructureItem, PatternsClient, StructureCandle, StructureType, StructureTypes } from '../patternsClient'
 import { usePatternsRuntime } from './usePatternsRuntime'
+import FineStructures from './FineStructures'
 import { classificationOf, saveMode, shortLabel, sparklinePoints, toggleValue, typeColor } from './chartStructuresModel'
 
 interface Props { baseUrl: string; token: string; onUnauthorized: () => void; active: boolean }
@@ -93,6 +94,7 @@ export default function ChartStructures({ baseUrl, token, onUnauthorized, active
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState<ChartStructureItem | null>(null)
+  const [tab, setTab] = useState<'broad' | 'fine'>('broad')
 
   useEffect(() => { if (active) void client.structureTypes().then(setTypes).catch(e => setError(errorText(e))) }, [active, client])
   const refresh = useCallback(async () => {
@@ -104,8 +106,15 @@ export default function ChartStructures({ baseUrl, token, onUnauthorized, active
 
   return <AnalysisProvider value={environment}>
     <div className="pl cs">
-      <header className="pl-head"><h2>Chart Structures</h2></header>
-      {open
+      <header className="pl-head"><h2>Chart Structures</h2>
+        <div className="pl-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === 'broad'} onClick={() => setTab('broad')}>Broad</button>
+          <button role="tab" aria-selected={tab === 'fine'} onClick={() => setTab('fine')}>Fine</button>
+        </div>
+      </header>
+      {/* Fine stays mounted so a half-built flow survives a look at Broad. */}
+      <div hidden={tab !== 'fine'}><FineStructures client={client} settings={settings} active={active && tab === 'fine'} /></div>
+      <div hidden={tab === 'fine'}>{open
         ? <DayView client={client} item={open} structures={structures} types={types} historicalDays={settings.historicalDays} onNavigate={setOpen} onClose={() => setOpen(null)} onSaved={() => void refresh()} />
         : <>
           <div className="pl-bar">
@@ -123,7 +132,7 @@ export default function ChartStructures({ baseUrl, token, onUnauthorized, active
               <Sparkline client={client} item={s} />
               {!s.can_delete && !s.is_predefined && <span className="pl-muted">Shared</span>}
             </button>)}</div>}
-        </>}
+        </>}</div>
     </div>
   </AnalysisProvider>
 }
