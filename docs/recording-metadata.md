@@ -43,10 +43,21 @@ Code: `shared/recordingMeta.ts` (builder), `shared/recordingClocks.ts` (the two 
 ## Safety
 The metadata code only reads state that already exists, runs on a 1-second timer, and every call into it is wrapped so that a failure only means a missing or incomplete `.json`. It makes no backend calls and never touches orders, sessions or streams. The video is saved first and exactly as before.
 
+## Automatic stop when the session ends
+The recording stops by itself 10 seconds after every session on the recorded screen has ended (Stop pressed, or the replay/session finished). The video and the `.rec.json` are saved as for a normal stop and a notice says why it stopped.
+- It only starts watching after a session has been seen running during that recording. Recording before a session starts, or on a screen whose session already ended, never stops by itself.
+- A new session started within the 10 seconds (a quick Stop then Start) keeps the recording going and restarts the countdown.
+- A recording that spans several sessions therefore ends after the last one; a later session needs a new recording.
+- The check lives in `SessionEndWatcher` (`shared/recordingMeta.ts`) and is fed by the same once-a-second sampler, inside the same try/catch, so it cannot affect trading.
+- Dev only (2026-11-09). Recordings made on a `preprod` build do not stop by themselves until this reaches `preprod`; press Stop recording as before.
+
 ## Limits
 - A recording covers the session shown on the screen where it was started. Pop-out windows and other linked sessions are not sampled.
 - Chrome may ask once to allow multiple downloads.
 - Only recordings made after this change have the file.
+
+## Manual check (automatic stop)
+Record a replay or paper session, press Stop on the session, wait about 10 seconds: the recording ends, the video and `.rec.json` download and the notice appears. Also start recording before any session exists and wait over 10 seconds: it must keep recording.
 
 ## Manual check
 1. Record a replay session with one pause and resume. Open the `.json`: `events` shows start, pause, resume, stop; `samples` has about one entry per second; `videoDurationMs` is shorter than the wall time by the pause.

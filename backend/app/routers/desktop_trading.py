@@ -1691,6 +1691,7 @@ async def start_strategy(session_id: str, req: DesktopStartStrategyRequest, user
         req.strike, req.expiry = contract["strike"], contract["expiry"]
     from app.routers.strategies import start_strategy as web_start_strategy
     response = web_start_strategy(req, user_id=user_id)
+    replaced = (response.replaced_strategy_ids if isinstance(response, StrategyResponse) else response.get("replaced_strategy_ids")) or []
     if contract:
         strategy_id = response.strategy_id if isinstance(response, StrategyResponse) else response.get("strategy_id")
         instance = next((item for item in strategy_service.list_running(session_id) if item.strategy_id == strategy_id), None)
@@ -1701,7 +1702,7 @@ async def start_strategy(session_id: str, req: DesktopStartStrategyRequest, user
                 "desktop_expiry": contract["expiry"],
             })
             strategy_service._write_strategy_to_db(instance)
-            return _strategy_response(instance)
+            return _strategy_response(instance).model_copy(update={"replaced_strategy_ids": list(replaced)})
     return response
 
 

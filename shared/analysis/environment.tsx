@@ -3,6 +3,7 @@ import type { OHLCCandle } from './api'
 import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
 import type { HabitLedger } from './habits/types'
+import type { VideoLinksSource } from './videoLinks'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -21,6 +22,8 @@ export interface AnalysisEnvironment {
   /** Scopes locally-stored chart preferences (indicators) to the signed-in account. */
   accountKey?: string
   api: AnalysisApi
+  /** YouTube videos uploaded for a session (owner only). Absent => Analysis shows no videos. */
+  videoLinks?: VideoLinksSource
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
     getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>

@@ -195,6 +195,14 @@ def _active_boundary(interval_minutes: int, now: int | None = None) -> int:
     return (timestamp // interval_seconds) * interval_seconds
 
 
+def _candle(row: dict) -> dict:
+    """Desktop candle from a ``candles_to_records`` row; ``volume`` only when the row has one."""
+    candle = {"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
+    if row.get("volume") is not None:
+        candle["volume"] = row["volume"]
+    return candle
+
+
 def _completed_current_candles(frame, interval_minutes: int) -> list[dict]:
     """Resample only closed selected-interval buckets from today's source.
 
@@ -212,7 +220,7 @@ def _completed_current_candles(frame, interval_minutes: int) -> list[dict]:
     bucket_start = (latest // interval_seconds) * interval_seconds
     complete_before = bucket_start + interval_seconds if latest >= bucket_start + interval_seconds - 1 else bucket_start
     return [
-        {"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
+        _candle(row)
         for row in records
         if row["time"] < complete_before
     ]
@@ -266,7 +274,7 @@ async def _load_history(tile: dict) -> list[dict]:
             if day == today:
                 candles.extend(_completed_current_candles(frame, interval))
             else:
-                candles.extend({"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles_to_records(resample_to_candles(frame, interval)))
+                candles.extend(_candle(row) for row in candles_to_records(resample_to_candles(frame, interval)))
         if not candles:
             raise RuntimeError(f"No historical data available for {instrument.get('symbol') or instrument.get('underlying')}")
         tile["history_gaps"] = gaps
@@ -305,7 +313,7 @@ async def _load_current_date_seconds(tile: dict) -> list[dict]:
             return []
 
         return [
-            {"timestamp": row["time"], "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]}
+            _candle(row)
             for row in candles_to_records(frame)
         ]
 

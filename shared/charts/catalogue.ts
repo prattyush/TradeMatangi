@@ -19,6 +19,7 @@ export const allIndicators = [
   "MA",
   "EMA",
   "BOLL_TV",
+  "VOL",
   "VWAP",
   "SuperTrend",
   "Ichimoku",
@@ -33,9 +34,14 @@ export const allIndicators = [
   "CCI_TV",
 ];
 
+/** Indicators computed from traded volume; meaningless on instruments that report none (indices). */
+export const volumeIndicators = ["VOL", "VWAP"];
+
 export const indicatorLabel = (name: string) =>
   name === "PositionPnL"
     ? "Position P&L levels"
     : name === "PnLTargets"
       ? "Target P&L levels"
-      : name.replace("_TV", "").replace("_Ribbon", " Ribbon");
+      : name === "VOL"
+        ? "Volume"
+        : name.replace("_TV", "").replace("_Ribbon", " Ribbon");

@@ -30,6 +30,7 @@ export function websiteRecordingSessions(input: {
     candleSeconds: finite(input.candleSeconds) ? input.candleSeconds : undefined,
     replaySpeed: finite(input.speed) ? input.speed : undefined,
     stepwise: input.stepwise,
+    ended: input.sessionState === 'ended',
   }]
 }
 
@@ -64,5 +65,6 @@ export function desktopRecordingSessions(input: {
     candleSeconds: finite(input.candleSeconds) ? input.candleSeconds : undefined,
     replaySpeed: finite(s.speed) ? s.speed : undefined,
     stepwise: input.mode === 'Stepwise' ? true : undefined,
+    ended,
   }]
 }

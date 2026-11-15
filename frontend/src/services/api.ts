@@ -28,6 +28,32 @@ async function behaviorRequest<T>(path: string, method: 'GET' | 'POST', body?: u
   return res.json()
 }
 
+/** Saved YouTube links of one of the user's own sessions. A 404 (not the owner, or no links yet) is thrown with "404" in the message. */
+export async function getVideoLinks(sessionId: string): Promise<import('../../../shared/analysis/videoLinks').SavedLink[]> {
+  const res = await fetch(`${BACKEND_URL}/api/video-links?session_id=${encodeURIComponent(sessionId)}`, { headers: _authHeaders() })
+  if (!res.ok) throw new Error(`Saved videos request failed: ${res.status}`)
+  return (await res.json()).links
+}
+
+/** Saves (or updates) one video under a session of the user. Only the video id is sent; the server builds the address. */
+export async function saveVideoLink(link: { sessionId: string; videoId: string; title: string; privacy: 'private' | 'unlisted' | 'public'; chapters: string }): Promise<import('../../../shared/analysis/videoLinks').SavedLink> {
+  const res = await fetch(`${BACKEND_URL}/api/video-links`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify({ session_id: link.sessionId, video_id: link.videoId, title: link.title, privacy: link.privacy, chapters: link.chapters }),
+  })
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null))?.detail
+    throw new Error(typeof detail === 'string' ? detail : `Saving the video link failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+/** Removes the saved link only; the video on YouTube is untouched. */
+export async function removeVideoLink(sessionId: string, videoId: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/video-links?session_id=${encodeURIComponent(sessionId)}&video_id=${encodeURIComponent(videoId)}`, { method: 'DELETE', headers: _authHeaders() })
+  if (!res.ok) throw new Error(`Removing the video link failed: ${res.status}`)
+}
+
 export function _authHeaders(): Record<string, string> {
   try {
     const stored = localStorage.getItem('auth_user')
@@ -45,6 +71,8 @@ export interface OHLCCandle {
   high: number
   low: number
   close: number
+  /** Traded quantity in the bar; absent when the instrument has none (indices) or the file predates volume. */
+  volume?: number
 }
 
 export interface ChartStructureItem {
@@ -108,6 +136,8 @@ export interface TickEvent {
   high: number
   low: number
   close: number
+  /** Quantity traded in this one-second tick (replay/stepwise history); absent for live ticks. */
+  volume?: number
   right?: string   // "CE" or "PE" for options dual-stream; undefined for equity
 }
 
@@ -251,6 +281,8 @@ export interface StrategyResponse {
   target_profit_value?: number | null
   target_profit_size?: 'full' | 'half'
   target_profit_is_pct?: boolean
+  /** AutoStop only: older waiting AutoStops on the same contract that this start replaced. */
+  replaced_strategy_ids?: string[]
 }
 
 export interface StartStrategyRequest {
@@ -780,6 +812,12 @@ export interface GuardRailSettings {
   guardrail_maxsize_mode: "percentage" | "value"
   guardrail_maxsize_pct: number
   guardrail_maxsize_value: number
+  guardrail_maxentry_enabled?: boolean
+  guardrail_maxentry_mode?: "percentage" | "value"
+  guardrail_maxentry_pct?: number
+  guardrail_maxentry_value?: number
+  guardrail_mingap_enabled?: boolean
+  guardrail_mingap_minutes?: number
 }
 
 export interface GuardRailStatusResponse {

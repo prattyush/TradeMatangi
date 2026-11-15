@@ -179,7 +179,9 @@ async def test_shared_loss_guard_runs_before_a_pending_entry_and_reset_preserves
 
 
 @pytest.mark.asyncio
-async def test_expiry_quote_closes_paper_option_without_closing_equity_context(db):
+async def test_expiry_quote_closes_paper_option_without_closing_equity_context(db, monkeypatch):
+    # The option expires 2026-11-03; entries close once the portfolio date passes it.
+    monkeypatch.setattr("app.services.swing_market.today", lambda: "2026-11-02")
     parent = store.create("u", "paper", 100000)
     option = service.attach_context(
         "u",

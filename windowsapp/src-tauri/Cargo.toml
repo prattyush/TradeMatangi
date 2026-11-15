@@ -13,8 +13,9 @@ tauri-build = { version = "2.0", features = [] }
 [dependencies]
 base64 = "0.22"
 getrandom = "0.4"
-keyring = "3.6"
+keyring = { version = "3.6", features = ["windows-native"] }
 futures-util = "0.3"
+rfd = "0.15"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "blocking"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

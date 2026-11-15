@@ -1,0 +1,15 @@
+Trade Matangi Charts includes FFmpeg (ffmpeg.exe) for the Trading Video Maker tool.
+
+FFmpeg is a separate program that the app starts as its own process to convert and cut screen
+recordings on this computer. It is not linked into the app.
+
+Build:    FFmpeg 9.0.2 "essentials" build for Windows by Gyan Doshi
+          https://www.gyan.dev/ffmpeg/builds/
+          https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2
+Licence:  GNU General Public License version 3 or later (this build includes libx264). The full
+          text is in FFMPEG-LICENSE.txt next to this file.
+Source:   FFmpeg source code: https://ffmpeg.org/download.html
+          Build scripts and the matching source: https://github.com/GyanD/codexffmpeg
+          x264 source: https://www.videolan.org/developers/x264.html
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.

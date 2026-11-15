@@ -180,7 +180,9 @@ def start_strategy(req: StartStrategyRequest, user_id: str = Depends(get_request
         right=right,
         metadata=metadata,
     )
+    replaced = strategy_service.cancel_replaced_autostops(session.session_id, instance)
     return StrategyResponse(
+        replaced_strategy_ids=replaced,
         strategy_id=instance.strategy_id,
         strategy_type=instance.strategy_type,
         symbol=instance.symbol,

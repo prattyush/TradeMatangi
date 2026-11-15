@@ -134,6 +134,12 @@ const GUARDRAIL_MAXSIZE_ENABLED_KEY = 'guardrailMaxSizeEnabled'
 const GUARDRAIL_MAXSIZE_MODE_KEY = 'guardrailMaxSizeMode'
 const GUARDRAIL_MAXSIZE_PCT_KEY = 'guardrailMaxSizePct'
 const GUARDRAIL_MAXSIZE_VALUE_KEY = 'guardrailMaxSizeValue'
+const GUARDRAIL_MAXENTRY_ENABLED_KEY = 'guardrailMaxEntryEnabled'
+const GUARDRAIL_MAXENTRY_MODE_KEY = 'guardrailMaxEntryMode'
+const GUARDRAIL_MAXENTRY_PCT_KEY = 'guardrailMaxEntryPct'
+const GUARDRAIL_MAXENTRY_VALUE_KEY = 'guardrailMaxEntryValue'
+const GUARDRAIL_MINGAP_ENABLED_KEY = 'guardrailMinGapEnabled'
+const GUARDRAIL_MINGAP_MINUTES_KEY = 'guardrailMinGapMinutes'
 
 const ENTRY_AUTO_SL_DELAY_KEY = 'entryAutoSlDelay'
 
@@ -189,6 +195,28 @@ export function loadGuardRailMaxSizePct(): number {
 export function loadGuardRailMaxSizeValue(): number {
   const v = parseFloat(localStorage.getItem(GUARDRAIL_MAXSIZE_VALUE_KEY) ?? '')
   return isNaN(v) || v < 0 ? 0 : v
+}
+
+export function loadGuardRailMaxEntryEnabled(): boolean {
+  return localStorage.getItem(GUARDRAIL_MAXENTRY_ENABLED_KEY) === 'true'
+}
+export function loadGuardRailMaxEntryMode(): 'percentage' | 'value' {
+  return localStorage.getItem(GUARDRAIL_MAXENTRY_MODE_KEY) === 'value' ? 'value' : 'percentage'
+}
+export function loadGuardRailMaxEntryPct(): number {
+  const v = parseFloat(localStorage.getItem(GUARDRAIL_MAXENTRY_PCT_KEY) ?? '')
+  return isNaN(v) || v <= 0 ? 12 : v
+}
+export function loadGuardRailMaxEntryValue(): number {
+  const v = parseFloat(localStorage.getItem(GUARDRAIL_MAXENTRY_VALUE_KEY) ?? '')
+  return isNaN(v) || v < 0 ? 0 : v
+}
+export function loadGuardRailMinGapEnabled(): boolean {
+  return localStorage.getItem(GUARDRAIL_MINGAP_ENABLED_KEY) === 'true'
+}
+export function loadGuardRailMinGapMinutes(): number {
+  const v = parseInt(localStorage.getItem(GUARDRAIL_MINGAP_MINUTES_KEY) ?? '')
+  return isNaN(v) || v < 1 || v > 390 ? 5 : v
 }
 
 export function loadEntryAutoSlDelay(): number {
@@ -503,6 +531,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [grMaxSizeMode, setGrMaxSizeMode] = useState<"percentage" | "value">(loadGuardRailMaxSizeMode() as "percentage" | "value")
   const [grMaxSizePctInput, setGrMaxSizePctInput] = useState(() => String(loadGuardRailMaxSizePct()))
   const [grMaxSizeValueInput, setGrMaxSizeValueInput] = useState(() => String(loadGuardRailMaxSizeValue()))
+  const [grMaxEntryEnabled, setGrMaxEntryEnabled] = useState(loadGuardRailMaxEntryEnabled)
+  const [grMaxEntryMode, setGrMaxEntryMode] = useState<'percentage' | 'value'>(loadGuardRailMaxEntryMode)
+  const [grMaxEntryPctInput, setGrMaxEntryPctInput] = useState(() => String(loadGuardRailMaxEntryPct()))
+  const [grMaxEntryValueInput, setGrMaxEntryValueInput] = useState(() => String(loadGuardRailMaxEntryValue()))
+  const [grMinGapEnabled, setGrMinGapEnabled] = useState(loadGuardRailMinGapEnabled)
+  const [grMinGapMinutesInput, setGrMinGapMinutesInput] = useState(() => String(loadGuardRailMinGapMinutes()))
 
   // Admin section — broker tokens
   const [iciciInput, setIciciInput] = useState('')
@@ -692,6 +726,18 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, s.guardrail_maxsize_mode ?? '')
       localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(s.guardrail_maxsize_pct ?? ''))
       localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(s.guardrail_maxsize_value ?? ''))
+      if (s.guardrail_maxentry_enabled !== undefined) setGrMaxEntryEnabled(s.guardrail_maxentry_enabled)
+      if (s.guardrail_maxentry_mode !== undefined) setGrMaxEntryMode(s.guardrail_maxentry_mode)
+      if (s.guardrail_maxentry_pct !== undefined) setGrMaxEntryPctInput(String(s.guardrail_maxentry_pct))
+      if (s.guardrail_maxentry_value !== undefined) setGrMaxEntryValueInput(String(s.guardrail_maxentry_value))
+      if (s.guardrail_mingap_enabled !== undefined) setGrMinGapEnabled(s.guardrail_mingap_enabled)
+      if (s.guardrail_mingap_minutes !== undefined) setGrMinGapMinutesInput(String(s.guardrail_mingap_minutes))
+      localStorage.setItem(GUARDRAIL_MAXENTRY_ENABLED_KEY, String(s.guardrail_maxentry_enabled ?? ''))
+      localStorage.setItem(GUARDRAIL_MAXENTRY_MODE_KEY, s.guardrail_maxentry_mode ?? '')
+      localStorage.setItem(GUARDRAIL_MAXENTRY_PCT_KEY, String(s.guardrail_maxentry_pct ?? ''))
+      localStorage.setItem(GUARDRAIL_MAXENTRY_VALUE_KEY, String(s.guardrail_maxentry_value ?? ''))
+      localStorage.setItem(GUARDRAIL_MINGAP_ENABLED_KEY, String(s.guardrail_mingap_enabled ?? ''))
+      localStorage.setItem(GUARDRAIL_MINGAP_MINUTES_KEY, String(s.guardrail_mingap_minutes ?? ''))
     }
     onGuardRailSettingsChange?.({ blockBars: guardrails.guardrail_block_bars, cooldownBlockBars: guardrails.guardrail_cooldown_block_bars, cooldownLosses: guardrails.guardrail_cooldown_losses, banCapitalPct: guardrails.guardrail_ban_capital_pct, banLossTradePct: guardrails.guardrail_ban_loss_trade_pct, banMinTrades: guardrails.guardrail_ban_min_trades ?? 5, banEnabled: guardrails.guardrail_ban_enabled, banHalfwayAlertEnabled: guardrails.guardrail_ban_halfway_alert_enabled ?? false, highTierPnlThresholdPct: guardrails.high_tier_pnl_threshold_pct ?? 0, cooldownEnabled: guardrails.guardrail_cooldown_enabled, maxSizeEnabled: guardrails.guardrail_maxsize_enabled ?? false, maxSizeMode: guardrails.guardrail_maxsize_mode ?? 'percentage', maxSizePct: guardrails.guardrail_maxsize_pct ?? 20, maxSizeValue: guardrails.guardrail_maxsize_value ?? 0, maxSizeAlertEnabled: guardrails.guardrail_maxsize_alert_enabled ?? false })
   }
@@ -936,6 +982,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     const banMinTrades = parseInt(grBanMinTradesInput)
     const maxSizePct = parseFloat(grMaxSizePctInput)
     const maxSizeValue = parseFloat(grMaxSizeValueInput)
+    const maxEntryPct = parseFloat(grMaxEntryPctInput)
+    const maxEntryValue = parseFloat(grMaxEntryValueInput)
+    const minGapMinutes = parseInt(grMinGapMinutesInput)
     const highTierPnlThresholdPct = parseFloat(grHighTierThresholdInput)
     if (isNaN(blockBars) || blockBars < 0 || blockBars > 20) { setStatus('Block bars must be 0–20'); return }
     if (isNaN(cooldownBlockBars) || cooldownBlockBars < 1 || cooldownBlockBars > 20) { setStatus('Cooldown block bars must be 1–20'); return }
@@ -946,6 +995,9 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     if (isNaN(highTierPnlThresholdPct) || highTierPnlThresholdPct < -100 || highTierPnlThresholdPct > 100) { setStatus('High tier P&L % threshold must be -100–100'); return }
     if (grMaxSizeMode === 'percentage' && (isNaN(maxSizePct) || maxSizePct < 1 || maxSizePct > 100)) { setStatus('Max size % must be 1–100'); return }
     if (grMaxSizeMode === 'value' && (isNaN(maxSizeValue) || maxSizeValue < 0)) { setStatus('Max size value must be ≥ 0'); return }
+    if (grMaxEntryMode === 'percentage' && (isNaN(maxEntryPct) || maxEntryPct < 1 || maxEntryPct > 100)) { setStatus('Max per entry % must be 1–100'); return }
+    if (grMaxEntryMode === 'value' && (isNaN(maxEntryValue) || maxEntryValue < 0)) { setStatus('Max per entry value must be ≥ 0'); return }
+    if (isNaN(minGapMinutes) || minGapMinutes < 1 || minGapMinutes > 390) { setStatus('Minimum gap must be 1–390 minutes'); return }
     try {
       await api.updateGuardRailSettings({
         guardrail_block_bars: blockBars,
@@ -963,6 +1015,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
         guardrail_maxsize_mode: grMaxSizeMode,
         guardrail_maxsize_pct: maxSizePct,
         guardrail_maxsize_value: maxSizeValue,
+        guardrail_maxentry_enabled: grMaxEntryEnabled,
+        guardrail_maxentry_mode: grMaxEntryMode,
+        guardrail_maxentry_pct: isNaN(maxEntryPct) ? 12 : maxEntryPct,
+        guardrail_maxentry_value: isNaN(maxEntryValue) ? 0 : maxEntryValue,
+        guardrail_mingap_enabled: grMinGapEnabled,
+        guardrail_mingap_minutes: minGapMinutes,
       })
       localStorage.setItem(GUARDRAIL_BLOCK_BARS_KEY, String(blockBars))
       localStorage.setItem(GUARDRAIL_COOLDOWN_BLOCK_BARS_KEY, String(cooldownBlockBars))
@@ -976,6 +1034,12 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
       localStorage.setItem(GUARDRAIL_MAXSIZE_MODE_KEY, grMaxSizeMode)
       localStorage.setItem(GUARDRAIL_MAXSIZE_PCT_KEY, String(maxSizePct))
       localStorage.setItem(GUARDRAIL_MAXSIZE_VALUE_KEY, String(maxSizeValue))
+      localStorage.setItem(GUARDRAIL_MAXENTRY_ENABLED_KEY, String(grMaxEntryEnabled))
+      localStorage.setItem(GUARDRAIL_MAXENTRY_MODE_KEY, grMaxEntryMode)
+      localStorage.setItem(GUARDRAIL_MAXENTRY_PCT_KEY, String(isNaN(maxEntryPct) ? 12 : maxEntryPct))
+      localStorage.setItem(GUARDRAIL_MAXENTRY_VALUE_KEY, String(isNaN(maxEntryValue) ? 0 : maxEntryValue))
+      localStorage.setItem(GUARDRAIL_MINGAP_ENABLED_KEY, String(grMinGapEnabled))
+      localStorage.setItem(GUARDRAIL_MINGAP_MINUTES_KEY, String(minGapMinutes))
       onGuardRailSettingsChange?.({ blockBars, cooldownBlockBars, cooldownLosses, banCapitalPct, banLossTradePct, banMinTrades, banEnabled: grBanEnabled, banHalfwayAlertEnabled: grBanHalfwayAlertEnabled, highTierPnlThresholdPct, cooldownEnabled: grCooldownEnabled, maxSizeEnabled: grMaxSizeEnabled, maxSizeMode: grMaxSizeMode, maxSizePct, maxSizeValue, maxSizeAlertEnabled: grMaxSizeAlertEnabled })
       publishTradingDisplaySettings({ guardrail_maxsize_enabled: grMaxSizeEnabled, guardrail_maxsize_alert_enabled: grMaxSizeAlertEnabled, guardrail_maxsize_mode: grMaxSizeMode, guardrail_maxsize_pct: maxSizePct, guardrail_maxsize_value: maxSizeValue })
       setStatus('GuardRail settings saved')
@@ -2460,6 +2524,79 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                       <span style={{ fontSize: 12, color: '#8b949e' }}>₹</span>
                     </div>
                   )}
+                </div>
+
+                {/* MAX PER ENTRY guardrail */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#79c0ff', fontWeight: 600, flex: 1 }}>MAX PER ENTRY</div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={grMaxEntryEnabled} onChange={e => setGrMaxEntryEnabled(e.target.checked)} style={{ cursor: 'pointer' }} />
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>Enabled</span>
+                    </label>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
+                    Caps the size of a single new entry. An entry larger than the cap is reduced to it (24% requested with a 12% cap places 12%).
+                    Exits are never reduced. If even one lot costs more than the cap, the entry is rejected.
+                  </div>
+                  <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
+                    <label style={{ fontSize: 12, color: '#e6edf3', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <input type="radio" name="maxentryMode" checked={grMaxEntryMode === 'percentage'} onChange={() => setGrMaxEntryMode('percentage')} style={{ cursor: 'pointer' }} />
+                      Percentage of Capital
+                    </label>
+                    <label style={{ fontSize: 12, color: '#e6edf3', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <input type="radio" name="maxentryMode" checked={grMaxEntryMode === 'value'} onChange={() => setGrMaxEntryMode('value')} style={{ cursor: 'pointer' }} />
+                      Exact Value
+                    </label>
+                  </div>
+                  {grMaxEntryMode === 'percentage' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Max capital per entry</span>
+                      <input
+                        type="number" min={1} max={100} step={0.5}
+                        value={grMaxEntryPctInput}
+                        onChange={e => setGrMaxEntryPctInput(e.target.value)}
+                        style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>%</span>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Max capital per entry</span>
+                      <input
+                        type="number" min={0} step={100}
+                        value={grMaxEntryValueInput}
+                        onChange={e => setGrMaxEntryValueInput(e.target.value)}
+                        style={{ width: 100, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                      />
+                      <span style={{ fontSize: 12, color: '#8b949e' }}>₹</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* MIN GAP BETWEEN ORDERS guardrail */}
+                <div style={{ borderTop: '1px solid #21262d', paddingTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, color: '#79c0ff', fontWeight: 600, flex: 1 }}>MIN GAP BETWEEN ORDERS</div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={grMinGapEnabled} onChange={e => setGrMinGapEnabled(e.target.checked)} style={{ cursor: 'pointer' }} />
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>Enabled</span>
+                    </label>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
+                    A new entry must wait this many minutes after the previous entry was filled (session time, so it follows replay time).
+                    Exits and stoplosses are never held back.
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, color: '#8b949e', flex: 1 }}>Minutes between entries</span>
+                    <input
+                      type="number" min={1} max={390} step={1}
+                      value={grMinGapMinutesInput}
+                      onChange={e => setGrMinGapMinutesInput(e.target.value)}
+                      style={{ width: 70, background: '#0d1117', border: '1px solid #30363d', borderRadius: 4, color: '#e6edf3', padding: '4px 8px', fontSize: 12 }}
+                    />
+                    <span style={{ fontSize: 12, color: '#8b949e' }}>min</span>
+                  </div>
                 </div>
 
                 {/* Save */}

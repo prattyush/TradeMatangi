@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only Nifty 100 mapping/quote probe. Never places/modifies/cancels orders.
+"""Read-only catalogue mapping/quote probe. Never places/modifies/cancels orders.
+
+--catalogue picks the pinned snapshot: nifty100 (default), extras (Midcap 50 / sectoral
+constituents in index_extras.json) or all. The five original symbols are probed with
+--catalogue legacy or all.
 
 Run with the project Python environment. Existing service credential loaders are
 used; no credentials are emitted. --quotes additionally checks provider access.
@@ -47,6 +51,9 @@ def positive_quote(value):
 def probe(provider, stock, quotes):
     from app.services import kite_service, kotak_service, broker_service
     symbol = stock['symbol']
+    index = stock.get('isin') is None  # NIFTY / SENSEX: no ISIN, no equity quote key; mapping only
+    if index:
+        quotes = False
     if provider == 'kite':
         exchange, token = kite_service.fetch_equity_instrument_token(symbol)
         if quotes:
@@ -63,6 +70,8 @@ def probe(provider, stock, quotes):
             if not positive_quote(value):
                 raise ValueError('Missing quote')
         return token
+    if index:
+        return 'index'
     # ISIN avoids ambiguous renamed-company/name matching.
     row = breeze_equities().get(stock['isin'])
     if not row or row['ShortName'] != stock['breeze_stock_code']:
@@ -74,16 +83,35 @@ def probe(provider, stock, quotes):
     return row['Token']
 
 
+LEGACY = [
+    {'symbol': 'NIFTY', 'nse_symbol': 'NIFTY', 'isin': None, 'breeze_stock_code': 'NIFTY'},
+    {'symbol': 'BSESEN', 'nse_symbol': 'SENSEX', 'isin': None, 'breeze_stock_code': 'BSESEN'},
+]
+
+
+def load_catalogue(name):
+    resources = ROOT / 'backend/app/resources'
+    stocks = []
+    if name in ('legacy', 'all'):
+        stocks += LEGACY
+    if name in ('nifty100', 'all'):
+        stocks += json.loads((resources / 'nifty100.json').read_text())['stocks']
+    if name in ('extras', 'all'):
+        stocks += json.loads((resources / 'index_extras.json').read_text())['stocks']
+    return stocks
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--providers', nargs='+', choices=['kite','kotak','breeze'], default=['kite','kotak','breeze'])
     parser.add_argument('--quotes', action='store_true')
-    parser.add_argument('--limit', type=int, default=100)
+    parser.add_argument('--catalogue', choices=['nifty100','extras','legacy','all'], default='nifty100')
+    parser.add_argument('--limit', type=int, default=None, help='probe only the first N symbols of the catalogue')
     parser.add_argument('--output', type=Path, default=ROOT / '.cache/phase21-swing/provider-validation.json')
     args = parser.parse_args()
-    if not 1 <= args.limit <= 100:
-        parser.error('--limit must be between 1 and 100')
-    stocks = json.loads((ROOT / 'backend/app/resources/nifty100.json').read_text())['stocks'][:args.limit]
+    if args.limit is not None and args.limit < 1:
+        parser.error('--limit must be at least 1')
+    stocks = load_catalogue(args.catalogue)[:args.limit]
     results = []
     for provider in args.providers:
         for stock in stocks:

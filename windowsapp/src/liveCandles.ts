@@ -36,12 +36,24 @@ export const reconcileLiveTicks = (localTicks: Candle[], backendTicks: Candle[])
 export const aggregateLiveCandles = (history: Candle[], ticks: Candle[], intervalMinutes: number): Candle[] => {
   const intervalSeconds = intervalMinutes * 60
   const byTimestamp = new Map(history.map(candle => [candle.timestamp, candle]))
+  // Volume is summed only into bars the ticks started: a bar that came from history
+  // already includes those seconds, so adding them again would double the volume.
+  const builtFromTicks = new Set<number>()
   for (const tick of ticks) {
     const timestamp = Math.floor(tick.timestamp / intervalSeconds) * intervalSeconds
     const current = byTimestamp.get(timestamp)
-    byTimestamp.set(timestamp, current
-      ? { timestamp, open: current.open, high: Math.max(current.high, tick.high), low: Math.min(current.low, tick.low), close: tick.close }
-      : { timestamp, open: tick.open, high: tick.high, low: tick.low, close: tick.close })
+    if (current) {
+      const next: Candle = { timestamp, open: current.open, high: Math.max(current.high, tick.high), low: Math.min(current.low, tick.low), close: tick.close }
+      if (builtFromTicks.has(timestamp)) {
+        if (current.volume !== undefined || tick.volume !== undefined) next.volume = (current.volume ?? 0) + (tick.volume ?? 0)
+      } else if (current.volume !== undefined) next.volume = current.volume
+      byTimestamp.set(timestamp, next)
+    } else {
+      const started: Candle = { timestamp, open: tick.open, high: tick.high, low: tick.low, close: tick.close }
+      if (tick.volume !== undefined) started.volume = tick.volume
+      builtFromTicks.add(timestamp)
+      byTimestamp.set(timestamp, started)
+    }
   }
   return [...byTimestamp.values()].sort((left, right) => left.timestamp - right.timestamp)
 }

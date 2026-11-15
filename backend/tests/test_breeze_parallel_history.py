@@ -17,7 +17,7 @@ def test_chunks_complete_out_of_order_but_return_in_window_order():
     assert history.fetch_chunks(list(range(12)), fetch) == list(range(12))
 
 
-def test_one_global_three_worker_limit_across_downloads():
+def test_one_global_worker_limit_across_downloads():
     lock = threading.Lock()
     active = maximum = 0
     def fetch(index, cancelled):
@@ -31,7 +31,7 @@ def test_one_global_three_worker_limit_across_downloads():
         return [index]
     with ThreadPoolExecutor(max_workers=4) as callers:
         results = list(callers.map(lambda _: history.fetch_chunks(list(range(8)), fetch), range(4)))
-    assert maximum == 3
+    assert maximum == history._MAX_IN_FLIGHT == 2
     assert all(value == list(range(8)) for value in results)
 
 
@@ -45,7 +45,7 @@ def test_auth_failure_stops_submitting_and_preserves_original_error():
         return [index]
     with pytest.raises(BreezeTokenError, match="expired"):
         history.fetch_chunks(list(range(50)), fetch)
-    assert len(calls) <= 3
+    assert len(calls) <= history._MAX_IN_FLIGHT
     # All remaining reads completed/cancelled before fetch_chunks returned.
     before = len(calls)
     time.sleep(.03)

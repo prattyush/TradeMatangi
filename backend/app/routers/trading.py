@@ -113,6 +113,28 @@ def _direct_trade_quantity(session, right, price, funds_ratio_pct):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _apply_entry_guardrails(session, price, quantity, side, right):
+    """Per-entry cap (reduces the order) and minimum gap (refuses a too-early entry)."""
+    from app.services.guardrail_service import cap_entry_quantity, check_min_gap
+    lot_size = LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1
+    strike = _strike_for_right(session, right)
+    try:
+        quantity, requested = cap_entry_quantity(
+            session, price, quantity, side, right=right, strike=strike, expiry=session.expiry, lot_size=lot_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    blocked, reason = check_min_gap(session, side, quantity, right=right, strike=strike, expiry=session.expiry)
+    if blocked:
+        raise HTTPException(status_code=403, detail=reason)
+    return quantity, requested
+
+
+def _with_entry_cap_note(analytics, requested):
+    if requested is not None:
+        analytics["entry_cap_requested_qty"] = requested
+    return analytics
+
+
 @router.post("/buy")
 async def buy(req: TradeRequest):
     session = sim_svc.get_session(req.session_id)
@@ -134,6 +156,7 @@ async def buy(req: TradeRequest):
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
     quantity = _direct_trade_quantity(session, right, price, req.funds_ratio_pct)
+    quantity, entry_cap_requested = _apply_entry_guardrails(session, price, quantity, "BUY", right)
 
     if session.session_type == "real":
         from app.services.guardrail_service import check_maxsize
@@ -160,7 +183,7 @@ async def buy(req: TradeRequest):
         )
         trade = trading_svc.record_trade(
             req.session_id, TradeSide.BUY, price=price, timestamp=timestamp,
-            analytics=snapshot(session, quantity=quantity, price=price, side="BUY", capital_fraction=req.funds_ratio_pct, margin_rate=_margin_rate_for(session, right), entry_method="MARKET", exit_method="MARKET"),
+            analytics=_with_entry_cap_note(snapshot(session, quantity=quantity, price=price, side="BUY", capital_fraction=req.funds_ratio_pct, margin_rate=_margin_rate_for(session, right), entry_method="MARKET", exit_method="MARKET"), entry_cap_requested),
             symbol=session.symbol,
             instrument_type=session.instrument_type,
             strike=_strike_for_right(session, right),
@@ -198,6 +221,7 @@ async def sell(req: TradeRequest):
         raise HTTPException(status_code=400, detail="No valid price available yet")
 
     quantity = _direct_trade_quantity(session, right, price, req.funds_ratio_pct)
+    quantity, entry_cap_requested = _apply_entry_guardrails(session, price, quantity, "SELL", right)
 
     if session.session_type == "real":
         from app.services.guardrail_service import check_maxsize
@@ -224,7 +248,7 @@ async def sell(req: TradeRequest):
         )
         trade = trading_svc.record_trade(
             req.session_id, TradeSide.SELL, price=price, timestamp=timestamp,
-            analytics=snapshot(session, quantity=quantity, price=price, side="SELL", capital_fraction=req.funds_ratio_pct, margin_rate=_margin_rate_for(session, right), entry_method="MARKET", exit_method="MARKET"),
+            analytics=_with_entry_cap_note(snapshot(session, quantity=quantity, price=price, side="SELL", capital_fraction=req.funds_ratio_pct, margin_rate=_margin_rate_for(session, right), entry_method="MARKET", exit_method="MARKET"), entry_cap_requested),
             symbol=session.symbol,
             instrument_type=session.instrument_type,
             strike=_strike_for_right(session, right),

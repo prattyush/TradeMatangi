@@ -143,3 +143,9 @@
 - Habits (Stats → Habits): every statistic is computed in `shared/analysis/habits/habitStats.ts` from the backend ledger rows — never from the dashboard's paged `cycles`. A % total over trades with no P&L % is unavailable (null → "—"), not 0, and must sort last. Which value a column shows for the selected unit/statistic lives only in `metric()`. Verdicts use means and % of capital (₹ fallback); do not change thresholds without updating the in-app help text and spec §10.
 - Habits charts (`MultiLineChart`, `DivergingBars`) draw in real pixels (viewBox = rendered width via `useWidth`), never a fixed 1000-unit viewBox scaled down — that makes text unreadable on a phone. Per-day series: counts/sums are 0 and averages/shares are gaps on days without the habit; never plot a gap as 0. Period-comparison tone/flag rules live only in `habitSeries.ts` (`toneFor`, `compareHabit`) and are documented in the UI footnote and spec §10.9 — change all three together.
 - Do not name a `.ts` module and a `.tsx` component the same apart from case (e.g. `habitDeepDive.ts` vs `HabitDeepDive.tsx`): on the case-insensitive Windows/WSL `/mnt/d` filesystem the import resolves to the wrong file. Habits uses `deepDiveStats.ts` for the logic of `HabitDeepDive.tsx`.
+
+## Volume on KLine charts (Phase 24)
+
+- Candles may carry `volume` (optional). `mergeKLineTick` (website) and `aggregateLiveCandles` (desktop) add per-second tick volume only into a bar the stream itself started, and remember the last counted second, so a bar loaded from history is never doubled and a re-delivered tick is never counted twice.
+- `VOL` and `VWAP` are created by the shared `KLineChart` only when the loaded candles contain volume; indices show neither. `sameCandle`/`sameCandles` compare volume, so a volume-only change redraws.
+- The legacy Lightweight Chart (`Chart.tsx`) is unchanged.

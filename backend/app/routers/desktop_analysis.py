@@ -11,7 +11,7 @@ from typing import get_type_hints
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.routing import APIRoute
 from app.dependencies import get_desktop_user_id
-from app.routers import analysis, behavior, data, labels, pattern_logger, performance, snapshots
+from app.routers import analysis, behavior, data, labels, pattern_logger, performance, snapshots, video_links
 from app.services import analysis_service, performance_service
 from app.services.history_workers import desktop_history_scope, run_history
 
@@ -85,6 +85,8 @@ allowed = [
         "/api/behavior/stats": {"GET"},
         "/api/behavior/habit-ledger": {"GET"},
     }),
+    # Phase 24 saved YouTube links for Video Maker videos. The router itself is owner only.
+    (video_links.router, {"/api/video-links": {"GET", "POST", "DELETE"}, "/api/video-links/mine": {"GET"}}),
 ]
 for source, paths in allowed:
     for route in source.routes:

@@ -56,6 +56,7 @@ import { mergeScreenDraft, screenContentKey, type ScreenDraft } from './screenCo
 import { enqueueScreenSave, saveScreenRecord } from './screenSave'
 
 const DesktopAnalysis = lazy(() => import('./DesktopAnalysis'))
+const ToolsView = lazy(() => import('./tools/ToolsView'))
 
 interface HistoricalPage { candles: Candle[]; available?: boolean; unavailable_reason?: string }
 interface Instrument { symbol: string; display_name: string; exchange: string; chart_type?: string; option_eligible: boolean; supported_intervals: number[] }
@@ -526,10 +527,11 @@ export default function App() {
   const [messageHistory, setMessageHistory] = useState<HistoryRequest | null>(null)
   useEffect(() => startPerformanceDiagnostics(), [])
   const assignedId = new URLSearchParams(window.location.search).get('screen_id')
-  const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing'>('Workspace')
+  const [mainTab, setMainTab] = useState<'Workspace' | 'Analysis' | 'Swing' | 'Tools'>('Workspace')
   const [analysisPortfolio,setAnalysisPortfolio]=useState<string|undefined>()
   useEffect(()=>{if(assignedId||!('__TAURI_INTERNALS__' in window))return;let cancelled=false;const listener=listen<{portfolioId:string}>('desktop-swing-analysis',event=>{if(!cancelled&&[...navigationGuards.current.values()].every(guard=>guard())){setAnalysisPortfolio(event.payload.portfolioId);setAnalysisVisited(true);setMainTab('Analysis')}});return()=>{cancelled=true;void listener.then(stop=>stop())}},[])
   const [analysisVisited, setAnalysisVisited] = useState(false)
+  const [toolsVisited, setToolsVisited] = useState(false)
   const [analysisContextDays,setAnalysisContextDays] = useState(2)
   const [screens, setScreens] = useState<Screen[]>([newScreen(1)])
   const setDayScreens=useCallback((update:Screen[]|((previous:Screen[])=>Screen[]))=>setScreens(previous=>updateDayScreens(previous,update)),[])
@@ -796,15 +798,15 @@ export default function App() {
     }
   };
   const viewSelector = <>{!assignedId && connection !== 'authentication_required' ? <select
-    className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace and Analysis"
+    className="desktop-view-select" aria-label="Desktop view" title="Switch between Workspace, Analysis, Swing and Tools"
     value={mainTab} onChange={event => {
       if(!mayNavigate())return;
-      const view=event.target.value as 'Workspace'|'Analysis'|'Swing'
-      const change=()=>{if(view==='Analysis'){setAnalysisPortfolio(undefined);setAnalysisVisited(true)}setMainTab(view)}
+      const view=event.target.value as 'Workspace'|'Analysis'|'Swing'|'Tools'
+      const change=()=>{if(view==='Analysis'){setAnalysisPortfolio(undefined);setAnalysisVisited(true)}if(view==='Tools')setToolsVisited(true);setMainTab(view)}
       if(mainTab==='Swing'&&view!=='Swing')void bounded(Promise.resolve(saveHandlers.current.get('swing-primary')?.()),SAVE_TIMEOUT_MS).then(change).catch(cause=>setSwingWindowError(String(cause)))
       else change()
     }}
-  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option></select> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
+  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option><option value="Tools">Tools</option></select> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
   if(windowClosing)return null;
   return <div>
     <div className="desktop-messages"><NotificationCenter source="Desktop" request={messageHistory} onRequestChange={setMessageHistory} showLauncher={connection === 'authentication_required' || loadFailed} /></div>
@@ -820,6 +822,7 @@ export default function App() {
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection!=='connected' && <main><p>{connection==='authentication_required'?'Sign in in the main window to reconnect this portfolio.':'Waiting for the backend connection. The portfolio stays attached to its saved book.'}</p><button onClick={()=>void invoke('focus_main_window')}>Main window</button></main>}
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${assignedId}`} navigationControls={<><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button><NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>} request={swingRequest} subscribe={swingSubscribe} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
     {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis onNavigationReady={guard=>registerNavigationGuard("analysis",guard)} initialPortfolioId={analysisPortfolio} viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
+    {!assignedId && toolsVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Tools…</p>}><ToolsView key={`${serverUrl}:${browserToken}`} viewSelector={viewSelector} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} active={mainTab === 'Tools'} /></Suspense>}
   </div>
 }
 
@@ -837,7 +840,7 @@ function ScreenController(props: ScreenControllerProps) {
   const [email, setEmail] = useState('admin@tradematangi.com'), [password, setPassword] = useState('admin123'), [loginError, setLoginError] = useState(''), [mode, setMode] = useState<DesktopMode>(initial?.mode ?? 'Browse'), [catalogue, setCatalogue] = useState<Instrument[]>(fallbackCatalogue), [chartSettings, setChartSettings] = useState<ChartSettings>(defaultChartSettings), [showSettings, setShowSettings] = useState(false), [replay, setReplay] = useState<ReplaySnapshot | null>(null), [replayError, setReplayError] = useState(''), [runDate, setRunDate] = useState(initial?.run_date ?? screens.find(screen => screen.id === activeScreenId)?.tiles[0]?.tradingDate ?? paperMarketDate()), [runStartTime, setRunStartTime] = useState(initial?.start_time ?? '09:15'), [replaySpeed, setReplaySpeed] = useState(initial?.speed ?? '1'), [live, setLive] = useState<LiveSnapshot | null>(null), [liveError, setLiveError] = useState('')
   // Clock for the `.rec.json` saved beside each recording. A plain closure: the hook reads it through a
   // ref when it samples, so it always sees the current screen state (declared further down).
-  const { recordingState, recordingError, startRecording, stopRecording, pauseRecording, resumeRecording } = useRecording(() => {
+  const { recordingState, recordingError, recordingNotice, startRecording, stopRecording, pauseRecording, resumeRecording } = useRecording(() => {
     const intervals = activeScreen.tiles.map(tile => Number(tile.interval) * 60).filter(value => Number.isFinite(value) && value > 0)
     return desktopRecordingSessions({
       session: trading?.session, mode, nowMs: Date.now(), candleSeconds: intervals.length ? Math.min(...intervals) : undefined,
@@ -2301,10 +2304,11 @@ function ScreenController(props: ScreenControllerProps) {
       if ('risk_pct' in sizing) body.risk_ratio_pct = Number(sizing.risk_pct) / 100
       else Object.assign(body, sizing)
     }
-    await desktopTradingRequest(`${trading.session.session_id}/strategies/start`, 'POST', body)
+    const started = await desktopTradingRequest<{ replaced_strategy_ids?: string[] }>(`${trading.session.session_id}/strategies/start`, 'POST', body)
     setTrading(await desktopTradingRequest<DesktopTradingSnapshot>(`${trading.session.session_id}/snapshot`, 'GET'))
     clearTradingError()
-    setTradingNotice(`${strategyType === 'AutoStop' ? (ticket?.orderType === 'AUTO_STOP_LIMIT' ? 'Auto stop limit' : 'Auto stop') : strategyType.replace(/([A-Z])/g, ' $1').trim()} started.`)
+    const replacedNote = started?.replaced_strategy_ids?.length ? ' It replaced the earlier one of the same kind on this contract.' : ''
+    setTradingNotice(`${strategyType === 'AutoStop' ? (ticket?.orderType === 'AUTO_STOP_LIMIT' ? 'Auto stop limit' : 'Auto stop') : strategyType.replace(/([A-Z])/g, ' $1').trim()} started.${replacedNote}`)
   }
   const placeTicketOrder = async (ticket: TradeTicket, entryPrice?: number) => {
     if (!trading || !ticket.sizeKey || !ticket.orderType || !ticket.settings) return
@@ -2811,6 +2815,7 @@ function ScreenController(props: ScreenControllerProps) {
       {!companion && (recordingState === 'recording' || recordingState === 'paused') && <ToolbarActionButton icon={recordingState === 'paused' ? 'Play' : 'Pause'} onClick={() => recordingState === 'paused' ? resumeRecording() : pauseRecording()}>{recordingState === 'paused' ? 'Resume recording' : 'Pause recording'}</ToolbarActionButton>}
       {!companion && trading && <ToolbarActionButton icon="Snapshot" aria-pressed={snapshotsActive} onClick={() => setSnapshotsActive(value => !value)}>Event snapshots {snapshotsActive ? 'on' : 'off'}</ToolbarActionButton>}
       {recordingError && <small role="alert">{recordingError}</small>}
+      {recordingNotice && <small role="status">{recordingNotice}</small>}
       <label className="layout-control">Layout <select value={activeScreen.layout} onChange={event => setLayout(event.target.value as Layout)}><option value="1">1 chart</option><option value="2-side">2 side-by-side</option><option value="2-stacked">2 stacked</option><option value="3-wide-top">3 wide-top</option><option value="4-grid">4 grid</option><option value="4-one-three">4 panes — 1+3</option><option value="5-equal">5 panes — Equal</option><option value="5-wide-right">5 panes — Wide R</option></select></label>
       <button className="icon-button" title="Chart settings" aria-label="Chart settings" onClick={() => setShowSettings(true)}>⚙</button><span tabIndex={0} className={`connection connection-dot ${connection}`} aria-label={`Connection: ${connection}`} data-tooltip={`Backend: ${connection}${live?.feed ? ` · Feed: ${live.feed.connection} (${live.feed.actual_provider ?? live.feed.selected_provider})` : ''}`} title={`Backend: ${connection}`}>●</span><ToolbarActionButton icon="Logout" onClick={logoutDesktop}>Log out</ToolbarActionButton>
     </header>

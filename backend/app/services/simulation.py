@@ -307,6 +307,12 @@ class SimulationSession:
     guardrail_maxsize_mode: str = "percentage"
     guardrail_maxsize_pct: float = 20.0
     guardrail_maxsize_value: float = 0.0
+    guardrail_maxentry_enabled: bool = False   # per-entry cap: an entry is reduced to this size
+    guardrail_maxentry_mode: str = "percentage"
+    guardrail_maxentry_pct: float = 12.0
+    guardrail_maxentry_value: float = 0.0
+    guardrail_mingap_enabled: bool = False     # minimum minutes between entries
+    guardrail_mingap_minutes: int = 5
     # Auto-close at end of day (15:09)
     _auto_closed: bool = field(default=False, init=False, repr=False)
 

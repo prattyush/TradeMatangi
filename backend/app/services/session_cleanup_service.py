@@ -1,7 +1,7 @@
 """
 Session cleanup service — cascade delete all data for a session.
 
-Deletes records from: Trades, Orders, Strategies, TradeLabels, BehaviorMarks, EventSnapshots,
+Deletes records from: Trades, Orders, Strategies, TradeLabels, BehaviorMarks, VideoLinks, EventSnapshots,
 AICommands, AIDecisionLog, and the Sessions record itself.
 Also resets the wallet entry for the given user+date.
 """
@@ -90,6 +90,14 @@ def delete_session_cascade(session_id: str, user_id: str, date: str, reset_walle
     from botocore.exceptions import ClientError
     try:
         _batch_delete_composite_key("BehaviorMarks", "session_id", "mark_key", session_id)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "ResourceNotFoundException":
+            raise
+
+    # VideoLinks (PK: session_id, SK: video_id), lazily created like BehaviorMarks. Only the
+    # saved links go; the videos on YouTube are not touched.
+    try:
+        _batch_delete_composite_key("VideoLinks", "session_id", "video_id", session_id)
     except ClientError as exc:
         if exc.response["Error"]["Code"] != "ResourceNotFoundException":
             raise

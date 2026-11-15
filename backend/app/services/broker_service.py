@@ -90,15 +90,15 @@ def _get_breeze_unlocked():
     if _cached_breeze is not None and _cached_breeze_creds == creds_key:
         return _cached_breeze
 
+    from app.services.breeze_history import install_history_timeout
+    # Importing the SDK (inside install_history_timeout) undoes its own partial state when it fails; see import_sdk.
     try:
+        install_history_timeout()
         from breeze_connect import BreezeConnect
     except ImportError as e:
         raise ImportError(
             "breeze-connect is not installed. Run: pip install breeze-connect"
         ) from e
-
-    from app.services.breeze_history import install_history_timeout
-    install_history_timeout()
     breeze = BreezeConnect(api_key=creds["api_key"])
     try:
         result = breeze.generate_session(

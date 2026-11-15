@@ -457,6 +457,19 @@ TABLES = [
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
+    # ── Phase 24 Video Maker: saved YouTube links ────────────────────────────
+    {
+        "TableName": "VideoLinks",
+        "KeySchema": [
+            {"AttributeName": "session_id", "KeyType": "HASH"},
+            {"AttributeName": "video_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "session_id", "AttributeType": "S"},
+            {"AttributeName": "video_id", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
 ]
 
 

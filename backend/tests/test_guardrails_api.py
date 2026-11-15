@@ -49,6 +49,12 @@ def _make_mock_session(
     sess.guardrail_maxsize_mode = "percentage"
     sess.guardrail_maxsize_pct = 20.0
     sess.guardrail_maxsize_value = 0.0
+    sess.guardrail_maxentry_enabled = False
+    sess.guardrail_maxentry_mode = "percentage"
+    sess.guardrail_maxentry_pct = 12.0
+    sess.guardrail_maxentry_value = 0.0
+    sess.guardrail_mingap_enabled = False
+    sess.guardrail_mingap_minutes = 5
     sess.queue = MagicMock()
     return sess
 

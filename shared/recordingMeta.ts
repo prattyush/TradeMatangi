@@ -28,6 +28,8 @@ export interface RecordingClockSession {
   /** Replay pacing as stored on the session (wall seconds per market second). */
   replaySpeed?: number
   stepwise?: boolean
+  /** True once the session has been stopped or has finished. */
+  ended?: boolean
 }
 
 export type RecordingClock = () => RecordingClockSession[]
@@ -160,6 +162,36 @@ export class RecordingMetaRecorder {
       stepwise: s.stepwise ?? known?.stepwise,
     }
     this.sessions.set(s.sessionId, next)
+  }
+}
+
+/** How long every session must stay ended before the recording is stopped for the user. */
+export const SESSION_END_GRACE_MS = 10_000
+
+/**
+ * Decides when a recording should stop because the trading session was stopped.
+ *
+ * It only starts watching once a session has been seen running during this recording, so recording
+ * before a session starts (or after one already ended) never stops anything. Once every reported
+ * session has ended (or none is reported any more) for the whole grace period, it says 'stop'. A new
+ * running session inside the grace period, such as a quick Stop and Start, keeps the recording going.
+ */
+export class SessionEndWatcher {
+  private armed = false
+  private endedSince: number | null = null
+
+  constructor(private readonly graceMs: number = SESSION_END_GRACE_MS) {}
+
+  observe(sessions: RecordingClockSession[] | null | undefined, nowMs: number): 'continue' | 'stop' {
+    const list = Array.isArray(sessions) ? sessions.filter(s => s && typeof s.sessionId === 'string' && s.sessionId) : []
+    if (list.some(s => !s.ended)) {
+      this.armed = true
+      this.endedSince = null
+      return 'continue'
+    }
+    if (!this.armed) return 'continue'
+    if (this.endedSince === null) this.endedSince = nowMs
+    return nowMs - this.endedSince >= this.graceMs ? 'stop' : 'continue'
   }
 }
 

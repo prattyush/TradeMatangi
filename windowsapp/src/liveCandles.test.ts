@@ -3,6 +3,27 @@ import { aggregateLiveCandles, aggregateLiveTileCandles, appendLiveTick, mergeHi
 
 const candle = (timestamp: number, close: number) => ({ timestamp, open: close, high: close, low: close, close })
 
+const withVolume = (timestamp: number, close: number, volume: number) => ({ ...candle(timestamp, close), volume })
+
+describe('desktop live candle volume', () => {
+  const start = 9 * 3600 + 24 * 60
+  it('sums the seconds of a candle the ticks started', () => {
+    const ticks = [withVolume(start + 10, 100, 4), withVolume(start + 20, 104, 6)]
+    expect(aggregateLiveCandles([], ticks, 3)).toEqual([{ timestamp: start, open: 100, high: 104, low: 100, close: 104, volume: 10 }])
+  })
+  it('does not add seconds to a history candle that already contains them', () => {
+    const history = [{ ...candle(start, 90), volume: 500 }]
+    const ticks = [withVolume(start + 10, 100, 4), withVolume(start + 20, 104, 6)]
+    expect(aggregateLiveCandles(history, ticks, 3)[0].volume).toBe(500)
+  })
+  it('keeps history volume on candles the ticks do not touch and reports none without it', () => {
+    const history = [{ ...candle(start - 180, 90), volume: 700 }]
+    const result = aggregateLiveCandles(history, [candle(start + 10, 100)], 3)
+    expect(result[0].volume).toBe(700)
+    expect(result[1].volume).toBeUndefined()
+  })
+})
+
 describe('desktop live candle aggregation', () => {
   it('builds independent intervals from the same raw ticks', () => {
     const ticks = [candle(9 * 3600 + 24 * 60 + 10, 100), candle(9 * 3600 + 24 * 60 + 20, 104)]

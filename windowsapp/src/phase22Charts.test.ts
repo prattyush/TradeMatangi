@@ -47,6 +47,36 @@ describe("Phase 22 chart data compatibility", () => {
       close: 106,
     });
   });
+  describe("tick volume (replay and stepwise seconds)", () => {
+    const volumeTick = (time: number, volume: number, close = 106) => ({ ...tick(time, close), volume });
+    it("sums per-second volume into the bar the stream started", () => {
+      let rows = mergeKLineTick([], volumeTick(360, 10), 3);
+      rows = mergeKLineTick(rows, volumeTick(361, 5, 107), 3);
+      rows = mergeKLineTick(rows, volumeTick(362, 7, 107), 3);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].volume).toBe(22);
+    });
+    it("does not count a re-delivered second twice", () => {
+      let rows = mergeKLineTick([], volumeTick(360, 10), 3);
+      rows = mergeKLineTick(rows, volumeTick(361, 5), 3);
+      const again = mergeKLineTick(rows, volumeTick(361, 5), 3);
+      expect(again).toBe(rows);
+      expect(again[0].volume).toBe(15);
+    });
+    it("leaves a history bar's complete volume alone", () => {
+      const history = { ...bar, volume: 4000 };
+      const rows = mergeKLineTick([history], volumeTick(200, 10), 3);
+      expect(rows[0].volume).toBe(4000);
+    });
+    it("shows no volume for bars built from live ticks that carry none", () => {
+      const rows = mergeKLineTick(mergeKLineTick([], tick(360), 3), tick(361, 107), 3);
+      expect(rows[0].volume).toBeUndefined();
+    });
+    it("sameCandles notices a volume change", () => {
+      expect(sameCandles([{ ...bar, volume: 1 }], [{ ...bar, volume: 2 }])).toBe(false);
+      expect(sameCandles([{ ...bar, volume: 1 }], [{ ...bar, volume: 1 }])).toBe(true);
+    });
+  });
   it("ignores out-of-order ticks", () => {
     const rows = [bar];
     expect(mergeKLineTick(rows, tick(100), 3)).toBe(rows);

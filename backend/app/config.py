@@ -132,10 +132,17 @@ SUPPORTED_SYMBOLS: dict[str, dict] = {
 }
 
 
-# Pinned constituent/master snapshot: keep legacy canonical keys and cache names.
+# Pinned constituent/master snapshots: keep legacy canonical keys and cache names.
+# nifty100.json = the Nifty 100; index_extras.json = Midcap 50 / Auto / FMCG / IT / Bank / Metal / Oil & Gas
+# constituents that are not in the Nifty 100 (built by scripts/update_index_extras.py).
 import json as _catalogue_json
 _NIFTY100 = _catalogue_json.loads((Path(__file__).parent / "resources" / "nifty100.json").read_text())["stocks"]
-for _stock in _NIFTY100:
+_INDEX_EXTRAS = _catalogue_json.loads((Path(__file__).parent / "resources" / "index_extras.json").read_text())["stocks"]
+_catalogue_isins: set[str] = set()
+for _stock in _NIFTY100 + _INDEX_EXTRAS:
+    if _stock["isin"] in _catalogue_isins:
+        raise RuntimeError(f"Duplicate ISIN in symbol catalogue: {_stock['symbol']} {_stock['isin']}")
+    _catalogue_isins.add(_stock["isin"])
     _definition = {"display_name": _stock["display_name"], "exchange_code": "NSE",
         "breeze_stock_code": _stock["breeze_stock_code"], "nse_symbol": _stock["nse_symbol"],
         "product_type": "cash", "options_only": False, "isin": _stock["isin"]}

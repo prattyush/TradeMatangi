@@ -253,3 +253,13 @@ windows retain their original instructions after amendment. Combined price/quant
 entry amendments reserve the final amount once. Cancel means cancel the pending
 order, never delete executions or flatten a position. Keep Day quantity rules
 separate from portfolio-scoped Swing amendments.
+
+- **AutoStop is one waiting instance per contract, direction and entry type.** `strategy_service.cancel_replaced_autostops` (called from `routers/strategies.start_strategy`, which desktop also uses) cancels older RUNNING AutoStops with the same right, strike, expiry, direction and `autostop_order_type` when a new one starts; AS (TARGET) and ASL (LIMIT) keep separate slots and can coexist. A fired (COMPLETED) AutoStop is never touched. The start response lists `replaced_strategy_ids` so clients can drop them.
+
+## Volume in historical OHLC data (Phase 24)
+
+- Volume comes from the history providers (Kite `volume`, Breeze `volume`, Kotak column 6) and is stored in the day parquet files next to open/high/low/close. A bar's volume is the **sum** of its rows' volume (`resample_to_candles`); API candles (`/api/data/historical`, `options-historical`, desktop history, replay snapshots) carry an integer `volume`.
+- **Filled seconds carry no volume.** Gap filling forward/back-fills every column, so `validate_and_fill_gaps` and `_validate_options_gaps` set volume to 0 on rows the provider did not return. `data_loader.clean_volume` applies the same rule on read: rows with `observed = false`, or, in older files with no `observed` column, rows identical to the previous row in open/high/low/close/volume (and the leading back-filled run). Real zero-volume seconds stay 0; negative or missing values become 0. Sums on pre-existing option files therefore drop 1 to 3% against the raw column.
+- **Indices have no volume.** `load_dataframe` drops the column for `options_only` symbols (NIFTY, BSESEN), so their candles and ticks have no volume (`null` in the response models). Contracts, including index options, keep it.
+- Files saved without a `volume` column still load (OHLC only); loaders must never assume the column.
+- Replay and stepwise ticks (`iter_ticks`, `options_iter_ticks`) carry the second's `volume` when present. **Live** ticks (Kite, Kotak, Breeze, Fyers) do not yet: that is Phase 24 B2 (cumulative-to-delta per token, reconnect and failover guards).

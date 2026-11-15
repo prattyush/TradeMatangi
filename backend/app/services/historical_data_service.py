@@ -105,8 +105,11 @@ def _path(provider: str, symbol: str, date: str, strike: int | float | None, exp
 
 def _normalize(frame: pd.DataFrame, date: str) -> pd.DataFrame:
     from app.config import get_market_close
-    columns = ["open", "high", "low", "close"] + (["observed"] if "observed" in frame.columns else [])
-    frame = frame.rename(columns=str.lower)[columns].copy()
+    from app.services.data_loader import clean_volume
+    frame = clean_volume(frame.rename(columns=str.lower))
+    columns = (["open", "high", "low", "close"] + (["volume"] if "volume" in frame.columns else [])
+               + (["observed"] if "observed" in frame.columns else []))
+    frame = frame[columns].copy()
     if frame.index.tzinfo is None:
         frame.index = frame.index.tz_localize("UTC")
     else:
