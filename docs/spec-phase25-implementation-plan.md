@@ -125,8 +125,8 @@ I will **not** add a global `GZipMiddleware` (it would change every route, inclu
 | P1 | Backend desktop mounts, helper routes, Rust `desktop_patterns_request`, `patternsApi.ts`, parity tests | In PR into `dev` (branch `feat/desktop-patterns-transport`) |
 | P2 | Pattern Library on KLine (desktop-only, core) | Core merged (#834); P2b (drawing tools, R:R, Top Patterns, extra panes, bulk delete) in PR (branch `feat/desktop-pattern-library-full`) |
 | P3 | Chart Structures (Broad) | Merged (#836) |
-| P4 | Fine Structures | In PR into `dev` (branch `feat/desktop-fine-structures`) |
-| P5 | Docs, Windows acceptance | Planned |
+| P4 | Fine Structures | Merged (#837) |
+| P5 | Docs, Windows acceptance | Docs done (`architecture-frontend.md`, `CLAUDE.md`, `docs/phase25-manual-acceptance.md`); Windows acceptance is the owner's |
 
 ### P1 as built
 - Backend `routers/desktop_patterns.py`: re-registers every route of `pattern_logger`, `chart_structures` and `fine_structures` under `/api/desktop/v1/patterns/{pattern,chart-structures,fine-structures}/...`, plus four read-only `data` helpers (`symbols`, `price-at`, `expiry`, `options/find-strike-by-price`). It swaps the website identity for a **desktop bearer only** (`get_patterns_user_id`; `X-User-Id` gives 401), and runs the legacy sync handlers on the bounded history pool (`run_history`), as `desktop_analysis.adapt` does. The website routers are unchanged.
