@@ -125,8 +125,102 @@ export const TRACK_DOTS_PARAMS: ParamTable = {
   flicker: steps([1, 0], [16, 1]),
 }
 
-export const BLOCK_SECONDS = { quick_match: 60, colour_clash: 60, green_light: 75, n_back_stream: 90, flanker_flock: 60 } as const
-export const ROUND_COUNTS = { needle_finder: 20, track_the_dots: 8 } as const
+// ---- Flexibility -------------------------------------------------------------------------------------------------------
+export const RULE_SWITCH_PARAMS: ParamTable = {
+  // number rule and letter rule; the size rule (digit above or below 5) joins at level 16
+  rules: steps([1, 2], [16, 3]),
+  // 0 predictable alternation AABB | 1 random switches (about half of the trials)
+  schedule: steps([1, 0], [6, 1]),
+  // time between the cue and the card; 0 = the cue appears WITH the card (no preparation, level 13+)
+  cueMs: steps([1, 1000], [6, 500], [13, 0]),
+  windowMs: a(3500, 3000, 2500, 2200, 2000),
+  gapMs: a(400, 350, 300, 300, 300),
+  rtFast: a(600, 560, 520, 490, 460),
+  rtSlow: a(2200, 1900, 1700, 1450, 1200),
+}
+
+export const CARD_SORTER_PARAMS: ParamTable = {
+  // colour and shape only, then count too from level 8
+  rules: steps([1, 2], [8, 3]),
+  // consecutive correct cards that complete a category; the rule then changes silently
+  runLength: a(10, 8, 7, 6, 5),
+  // share of cards that match two reference cards on two dimensions at once (the answer then does not reveal the rule)
+  ambiguousPct: a(0, 5, 10, 18, 25),
+  // feedback ("match" / "no match") appears this long after the click (level 15+)
+  feedbackDelayMs: steps([1, 0], [15, 600]),
+  // categories that earn the full score (spec default 6; scaled down at low levels where ten correct cards per category make six unreachable)
+  categoryTarget: a(4, 4, 5, 6, 6),
+  gapMs: a(900, 900, 900, 900, 900),
+}
+
+export const FLIP_MAP_PARAMS: ParamTable = {
+  // SAME and OPPOSITE; TURN (the key 90 degrees clockwise) joins at level 16
+  rules: steps([1, 2], [16, 3]),
+  // 0 the rule stays on screen | 1 the rule shows for 1.5 s after a change | 2 no banner: infer the change from the error flash
+  banner: steps([1, 0], [7, 1], [13, 2]),
+  displayMs: a(2000, 1800, 1500, 1200, 900),
+  windowMs: a(2600, 2300, 1900, 1600, 1300),
+  gapMs: a(400, 380, 350, 320, 300),
+  rtFast: a(450, 430, 410, 390, 370),
+  rtSlow: a(1800, 1600, 1350, 1150, 1000),
+}
+
+// ---- Math --------------------------------------------------------------------------------------------------------------
+export const NUMBER_SPRINT_PARAMS: ParamTable = {
+  // 0 plus and minus | 1 plus, minus, times, divide | 2 half of the problems are two-step
+  ops: steps([1, 0], [5, 1], [10, 2]),
+  addMax: a(9, 30, 99, 300, 999),
+  mulMax: a(5, 9, 12, 20, 30),
+  // carries and borrows are allowed from level 3 (before, additions never carry and subtractions never borrow)
+  carry: steps([1, 0], [3, 1]),
+  negatives: steps([1, 0], [12, 1]),
+  decimals: steps([1, 0], [16, 1]),
+  // soft time: the speed bonus runs out here; the problem is dropped (scores 0) at windowMs
+  tqMs: a(12000, 10000, 8000, 6000, 4000),
+  windowMs: a(24000, 20000, 16000, 12000, 8000),
+  gapMs: a(120, 120, 120, 120, 120),
+  // weighted total a full-skill player reaches in the 90 s block (provisional, tuned from the owner's play)
+  itemsTarget: a(40, 36, 30, 25, 20, false),
+  rtFast: a(1800, 2000, 2400, 2800, 3000),
+  rtSlow: a(12000, 10000, 8000, 6000, 4000),
+}
+
+export const EQUATION_DROP_PARAMS: ParamTable = {
+  maxDrops: a(2, 3, 4, 5, 6),
+  // seconds a drop takes to fall: it starts at fallStartMs and shortens linearly to fallEndMs by the end of the block
+  fallStartMs: a(10000, 9000, 8000, 7000, 6000),
+  fallEndMs: a(7000, 6000, 5000, 4000, 3000),
+  ops: steps([1, 0], [5, 1], [10, 2]),
+  addMax: a(9, 20, 50, 99, 200),
+  mulMax: a(5, 9, 12, 15, 20),
+  // from level 12 some drops are "reverse": an answer falls and the player types the missing number
+  reverse: steps([1, 0], [12, 1]),
+  // weighted clears that earn the full score (provisional)
+  target: a(33, 52, 55, 50, 46, false),
+  // Fastest sustained clearing time per equation (typing included). Equations never spawn faster than 1.1 x this, so a perfect player can always keep up.
+  rtFast: a(1500, 1600, 1800, 2000, 2200),
+  // Slowest clear a player would manage (about the time a drop takes to fall); only the registry check and the random player use it.
+  rtSlow: a(9000, 8000, 7000, 6000, 5000),
+}
+
+export const MAKE_TARGET_PARAMS: ParamTable = {
+  numbers: a(4, 4, 5, 5, 6),
+  targetMax: a(60, 99, 300, 700, 999),
+  // fewest operations any solution needs (the solver proves it)
+  minDepth: a(2, 2, 3, 4, 5),
+  // big numbers (25, 50, 75, 100) mixed in among the small ones
+  bigNumbers: a(0, 0, 1, 1, 2),
+  limitMs: a(60000, 55000, 45000, 38000, 30000),
+  // up to level 6 a submitted value this close to the target earns half credit
+  tolerance: steps([1, 2], [7, 0]),
+  gapMs: a(600, 600, 600, 600, 600),
+  rtFast: a(12000, 11000, 9000, 7600, 6000),
+  // The time limit: a puzzle solved at the limit earns no speed bonus.
+  rtSlow: a(60000, 55000, 45000, 38000, 30000),
+}
+
+export const BLOCK_SECONDS = { quick_match: 60, colour_clash: 60, green_light: 75, n_back_stream: 90, flanker_flock: 60, rule_switch: 75, flip_map: 75, number_sprint: 90, equation_drop: 90 } as const
+export const ROUND_COUNTS = { needle_finder: 20, track_the_dots: 8, card_sorter: 64, make_target: 8 } as const
 /** Three strikes end a span game. */
 export const MAX_STRIKES = 3
 /** Hard ceiling on the span in the two span games (spec 17.5, correction C1). */

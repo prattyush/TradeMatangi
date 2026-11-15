@@ -261,7 +261,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | G3a | Done (2026-11-15), see "G3a as built" below |
 | B1 | Done (2026-11-15), see "B1 as built" below |
 | B2 | Done (2026-11-15), see "B2 as built" below |
-| B3–B6, G1, G3b, G4–G7 | Planned, order above |
+| B3 | Done (2026-11-15), see "B3 as built" below |
+| B4–B6, G1, G3b, G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -667,3 +668,23 @@ Memory and Attention: **Grid Recall, Sequence Echo, N-Back Stream, Flanker Flock
 - **Shared files touched:** none outside `shared/games/` and docs. No trading logic changed.
 - **Docs updated:** spec 17.4 and 17.11, `architecture-frontend.md`, `frontend-technical-constraints.md`, `phase25-manual-acceptance.md` (section I), this plan, `CLAUDE.md` row.
 
+## B3 as built (2026-11-15)
+
+Flexibility and Math: **Rule Switch, Card Sorter, Flip Map, Number Sprint, Equation Drop, Make Target**. Branch `feat/brain-games-b3`, PR into `dev`. Dev was in sync with preprod at the start (`check-preprod-synced.sh` OK).
+
+- **Framework additions (`shared/games/`):** `TrialEngine.gapAfter(trial, outcome)` (a pause that depends on the outcome: Number Sprint shows a wrong answer for 1 s), `useTrialBlock` returns `last` (the entry just judged, for feedback during the pause) and uses `gapAfter`, `simPlayers` honours `gapAfter`, `brain/engine/arithmetic.ts` (seeded problems shared by Number Sprint and Equation Drop: exact division, carry/borrow control, two-step with brackets, decimals computed in hundredths, the reverse form), and the **Web Worker is now used**: `make_target/solver.ts` is the generator, `makeTarget.worker.ts` the module worker entry, `make_target/host.ts` builds the puzzle set in the worker and falls back to the calling thread (no Worker, blocked by policy, a build without the file).
+- **Games:** each is `brain/games/<id>/{engine.ts,View.tsx,index.ts}` with anchors in `config/difficulty.brain.ts`, registered in `games/index.ts`.
+  - **Rule Switch:** number / letter (and size from level 16) rule on a digit-and-letter card; F and J keys; predictable A A B B pairs to level 5, random switches (about half) from 6, cue lead 1000 ms, 500 ms, then none. Switch cost, error switch cost.
+  - **Card Sorter:** four fixed reference cards (card `i` has colour `i`, shape `i`, `i+1` symbols, so a card's value in a dimension is the reference it matches), a hidden rule that changes after `runLength` correct in a row, ambiguous cards (two dimensions point at one reference), 600 ms feedback delay from level 15, perseverative errors and failures to maintain set. The 64 cards are counted when judged.
+  - **Flip Map:** SAME / OPPOSITE (TURN from 16), a rule period of 4 to 12 arrows, banner modes (always, 1.5 s after a change, none with a red flash after a mistake), adaptation cost and perseveration.
+  - **Number Sprint:** typed answer, Enter submits, Tab skips; `+ -`, then `x /`, then two-step, negatives from 12, decimals from 16.
+  - **Equation Drop:** `createDropSim` is a pure, clock-free simulation stepped by the view each frame (and by the tests on a virtual clock); reverse equations from level 12; combo weighting; the early-death cap of 70.
+  - **Make Target:** BFS solver over multisets of the numbers still available (the first layer holding the target is the minimum number of operations), generator builds a reachable target from a random combination and rejects ones with a shorter solution, depth recorded; click number, operator, number, or keys 1-9, + - * /, Backspace undo, R reset.
+- **Scoring decisions (also in spec 17.4):** new spec corrections C15 (Card Sorter category target), C16 (Number Sprint soft time and drop time), C17 (Equation Drop wrong-entry cost and spawn pace), C18 (Make Target exact credit).
+- **Simulated players (levels 1, 10, 20; 200 seeds, 40 for Make Target):** perfect 100 everywhere (Equation Drop tested at all 20 levels with its own virtual-clock player, perfect never loses a life); random and fast-random about 0 (Rule Switch mean 5, Flip Map 3, Card Sorter and Number Sprint 0, Equation Drop 0 because the random typist dies early).
+- **Make Target solver:** matches an independent brute-force search on 300 random small puzzles (reachable and unreachable targets), every generated puzzle replays against the rules and its recorded depth equals the solver's, generation of a whole set at level 20 about 0.5 s (so it must not run on the main thread: the 8 ms budget is why the worker exists).
+- **Checked in a real browser (Playwright, production build of the real `GameShell` with the website's Vite config, bots reading the page):** Make Target built its puzzles in a real Worker (`makeTarget.worker-*.js` requested) and a solver bot solved all 8 through the click UI (score 100); Number Sprint level 16 (59 problems, wrong answers shown, two-step and decimals); Equation Drop level 12 (43 cleared, reverse equations solved, combo 43, score 100, the same figures as the simulation); Rule Switch level 8 (49 cards, 26 switches, RT about 670 ms for a 650 ms bot delay); Flip Map level 10; Card Sorter level 15 (a rule-learning bot, feedback arriving about 610 ms after the click). **Not run:** the website's own Games overlay (DynamoDB Local is not available in this WSL: Docker is off, so a user cannot register), nor Windows; the harness mounted the same `GameShell` the overlay uses.
+- **Not in B3:** Dashboard brain panels, Warm-up (Number Sprint's `most_missed_op` feeds it) and Review replay (B6); the "Reduce motion" setting for Equation Drop (B6); calibration of `itemsTarget`, `target`, `categoryTarget` and the RT anchors from the owner's play (all provisional); the Windows build is yours to check (acceptance section J).
+- **Tests:** desktop vitest 1114 (141 new: arithmetic, six engines and scorings, Make Target solver/generator/host, Equation Drop simulation, registration, simulated-player properties for five more games), `tsc` clean for desktop and website, website build passes (Games chunk 124 KB, 41 KB gzip, lazy; the worker 3 KB).
+- **Shared files touched:** none outside `shared/games/` and docs. No trading logic changed.
+- **Docs updated:** spec 17.4 and 17.11, `architecture-frontend.md`, `frontend-technical-constraints.md`, `phase25-manual-acceptance.md` (section J), this plan, `CLAUDE.md` row.

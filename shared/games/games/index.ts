@@ -11,8 +11,14 @@ import nBackStream from '../brain/games/n_back_stream'
 import flankerFlock from '../brain/games/flanker_flock'
 import needleFinder from '../brain/games/needle_finder'
 import trackTheDots from '../brain/games/track_the_dots'
+import ruleSwitch from '../brain/games/rule_switch'
+import cardSorter from '../brain/games/card_sorter'
+import flipMap from '../brain/games/flip_map'
+import numberSprint from '../brain/games/number_sprint'
+import equationDrop from '../brain/games/equation_drop'
+import makeTarget from '../brain/games/make_target'
 import { isPlayable, registerGame } from '../core/registry'
 
-for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots]) {
+for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget]) {
   if (!isPlayable(definition.id)) registerGame(definition)
 }
