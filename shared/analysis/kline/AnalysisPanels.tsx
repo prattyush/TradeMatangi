@@ -19,8 +19,9 @@ export default function AnalysisPanels({ symbol, date, allTrades, historicalDays
   useEffect(()=>{
     // The website environment has no `active` flag; only an explicitly inactive (hidden desktop) tab ignores Escape.
     if (!max || environment.active === false) return
-    const escape=(e:KeyboardEvent)=>{ if(e.key==='Escape') setMax(null) }
-    window.addEventListener('keydown',escape); return()=>window.removeEventListener('keydown',escape)
+    // Capture phase and stopImmediatePropagation: Esc first returns this chart to the pair, and the surrounding maximized view (its own Esc handler) stays.
+    const escape=(e:KeyboardEvent)=>{ if(e.key==='Escape'){ e.stopImmediatePropagation(); setMax(null) } }
+    window.addEventListener('keydown',escape,true); return()=>window.removeEventListener('keydown',escape,true)
   },[max,environment.active])
   // Picking a price: show the chart it is for (a phone shows one pane at a time).
   useEffect(()=>{ if(pickTarget==='option'&&tabs.length)setPane('option'); else if(pickTarget==='underlying')setPane('underlying') },[pickTarget,tabs.length])

@@ -341,7 +341,7 @@ export default function DesktopAnalysisChart(props: Props) {
       {toolsAvailable&&<button className="kline-tools-toggle" type="button" aria-pressed={toolsVisible} aria-label={toolsVisible?'Hide drawing tools':'Show drawing tools'} title={toolsVisible?'Hide drawing tools':'Show drawing tools'} onClick={toggleTools}>✎</button>}
       <KLineIndicatorMenu names={indicators.names} toggle={indicators.toggle} clear={indicators.clear} />
       <button aria-label="Fit chart" title="Fit chart" onClick={()=>{const chart=chartRef.current;if(chart&&container.current){chart.setBarSpace(Math.max(1,container.current.clientWidth/Math.max(1,candles.length)));chart.scrollToRealTime(0)}}}><ToolbarIcon name="Fit" /></button>
-      {(props.onMaximize||props.onMax)&&<button title={props.isMaximized?'Restore chart':'Maximize chart'} aria-label={props.isMaximized?'Restore chart':'Maximize chart'} onClick={props.onMaximize??props.onMax}><ToolbarIcon name={props.isMaximized?'Restore':'Maximize'} /></button>}
+      {(props.onMaximize||props.onMax)&&<button className={props.isMaximized?'chart-restore':undefined} title={props.isMaximized?'Restore chart (Esc)':'Maximize chart'} aria-label={props.isMaximized?'Restore chart':'Maximize chart'} onClick={props.onMaximize??props.onMax}><ToolbarIcon name={props.isMaximized?'Restore':'Maximize'} />{props.isMaximized&&<span>Restore</span>}</button>}
     </header>
     {toolsAvailable&&toolsVisible&&<KLineToolsRail drawings={drawings} />}
     {props.pickMode&&<div className="analysis-pick-hint" role="status">{props.pickHint??'Click the chart to set the price'} · Esc cancels</div>}

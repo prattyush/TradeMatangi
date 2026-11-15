@@ -137,6 +137,7 @@ def compute_session_summary(session: dict, trades: list[dict], cycles: list[dict
         "total_commission": round(total_commission, 4),
         "trade_count": len(trades),
         "round_trip_count": sum(c["state"] == "closed" for c in cycles),
+        "winning_round_trip_count": sum(c["state"] == "closed" and c["net_pnl"] > 0 for c in cycles),
         "buy_count": buy_count,
         "sell_count": sell_count,
     }

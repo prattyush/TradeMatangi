@@ -41,6 +41,8 @@ class SessionSummary(BaseModel):
     total_commission: float = 0.0
     trade_count: int = 0
     round_trip_count: int = 0
+    # Closed round trips with a positive net P&L (the Analysis list shows win %).
+    winning_round_trip_count: int = 0
     buy_count: int = 0
     sell_count: int = 0
 
