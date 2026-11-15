@@ -256,7 +256,7 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | Sprint | Status |
 |---|---|
 | B0 | Done (2026-11-15), awaiting owner review |
-| G0-close | Planned (doc only) |
+| G0-close | Done (2026-11-15), see the table at the end of this file |
 | G2, G3a, B1–B6, G1, G3b, G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
@@ -557,3 +557,27 @@ Per sprint (all): branch off `dev`, PR into `dev` (merge commit), docs updated, 
 #### Real-trading-path check
 Track B adds no backend route, no Rust beyond G3a, and no change to order, session, broker, stream, guardrail or strategy code. Shared file touched in B-work: only `frontend/src/App.tsx` via the G3a nav hook (already in the G3 plan). `App.tsx` is the live-trading screen, so that hook is the one place to review: it adds `showGames`, one `NavIconButton`, one lazy mount and one prop (`sessionKind`).
 
+
+
+---
+
+## G0-close: answers to spec §13 (2026-11-15, doc only)
+
+Most answers were verified against the code during Track P discovery and are collected here in one place. "Plan #n" points to the numbered corrections under "Track G" above.
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Second-level coverage; semantics of `has_native_second_cadence` and `observed` | NIFTY 236 dates (about 370 KB per file), BSESEN 150, NIFTY option files for 232 dates (about 3,177 files, up to 39 contracts a day). Other symbols have 3–15 dates, so games list **NIFTY and BSESEN only**. `has_native_second_cadence` is always true on gap-filled cached frames, so the index script reads the parquet metadata `native_interval_seconds` and requires `_MIN_DAY_ROWS=20000`. Rows are flagged by the `observed` column (`observed_frame` / `infer_observed` in `desktop_preparation.py`) (plan #1, #2, #12) |
+| 2 | Window endpoint: observed rows or flag; helpers; file formats and sizes | Return **observed rows only**, no flag (keeps payloads small and removes the back-fill risk). Read with `pd.read_parquet` plus `observed_frame`; do not use `load_dataframe` (it drops `observed` and downloads in live mode). Real directory is `config.OHLCDATA_DIR` (`/mnt/d/data/dbfolder/ohlcdata` here), not `data/ohlcdata`. `resample_to_candles` is minute-only: **5 s and 15 s resampling is done on the client** from 1 s data (also removes server CPU); the server serves 1 s and 60 s only. Per-request cost is one file read of about 370 KB plus a slice |
+| 3 | Where the index script runs; existing maintenance-script pattern | `scripts/` holds ad-hoc scripts run by hand (for example `backup-ddb.py`, `classify_chart_structures.py`); there is no `ddb_maintenance` module and no cron convention in the repo. `scripts/build-games-index.py` is incremental and run **by hand** after data refreshes (documented in `architecture-backend.md` in G1); the endpoint returns `index_missing: true` rather than scanning |
+| 4 | Tauri windows and the toolbar button | `open_screen_window` (`windowsapp/src-tauri/src/lib.rs:782`) builds the label `screen:<id>`; `schedule_window_close` (`:897`) and the window-event handler only know `main` and `screen:*`. The capability is inline in `tauri.conf.json` (`"windows": ["main", "screen:*"]`, lines 27–30): add `"games"` there and add `games` handling in `schedule_window_close` and the window-event handler. The toolbar uses `ToolbarActionButton.tsx` / `ToolbarIcon.tsx`; `windowsapp/src/main.tsx` has no `?window=` routing today, so G3a adds that branch (plan #11) |
+| 5 | Rust transport and the "three copies" rule | Copy `desktop_settings_request` (`lib.rs:1079`) and `valid_analysis_path` (`:1111`). Three copies, as in Phase 23: backend router (`desktop_games.py`), TS mirror (`gamesApi`/transport with its path validator), Rust command with an exact allowlist (`/api/desktop/v1/games/{availability,window,state}`, GET and PUT only). Parity tests run the same allow/deny cases in vitest and `cargo test`, as `patternsApi.test.ts` does |
+| 6 | `DesktopCapabilities` shape | `features: list[str]` in `routers/desktop.py:28`; append `"games"`. No booleans (plan #3) |
+| 7 | Persistence helpers; table declaration | `desktop_persistence_service` creates tables lazily (`_ensure_tables`, `PAY_PER_REQUEST`, line 19) and has the revision pattern (`update_screen`: `revision` condition, `mutation_id`). It does not do multi-item transactions, so G2 uses `analysis_sharing.py`'s `transact_write_items` with `TypeSerializer` and `Decimal`/integer conversion (plan #7). Tables are also declared in `scripts/setup-dynamodb-tables.py` (`TABLES` list): add `GameProfiles` there too. No TTL exists anywhere: G2 calls `update_time_to_live` and writes an epoch-seconds `expires_at`; DynamoDB Local does not enforce TTL, so tests assert the attribute only (plan #6) |
+| 8 | Existing hotkeys for Hotkey Drill | **None**: the desktop has no hotkey store, so Hotkey Drill uses its own defaults (plan #9). The website has only Escape handlers (B.2) |
+| 9 | Config sources for lots, strikes, expiry, symbols | `config.LOT_SIZES` (`config.py:55`), `config.SUPPORTED_SYMBOLS` (`:91`), `options_service.STRIKE_INTERVALS` (`:30`) and `get_expiry_date` (`:103`). NIFTY lot size is 65 in the code, not 75 as the spec example says (plan #8). `/availability` reads these, never copies them |
+| 10 | Desktop CI and WebView2 | `.github/workflows/desktop-windows.yml` runs `npm ci` and `tauri build` only; it runs **neither `npm test` nor `cargo test`**, so G3a adds both. A Rust change needs a rebuild and ships with the next desktop release; the updater and version bump follow the existing process. WebView2 (offline installer in `tauri.conf.json`) supports IndexedDB; quota behaviour is checked in G3b with the window cache |
+| 11 | Test tooling | Desktop vitest `2.1.9`, plain node environment, no jsdom; components are tested through pure model functions. `fake-indexeddb` is **not** installed and is added as a dev dependency in G3a (outbox) and used again in G3b (window cache). The website has no unit-test runner: use `node --test` `*.test.mjs` for pure code and Playwright for browser smoke |
+| 12 | Per-user rate limiter | None exists (the broker history modules have their own provider limits, not per-user). G1 writes a small in-process token bucket in `games_data_service.py`; no global `GZipMiddleware` (it would change every route): compress in the games route only (plan #5) |
+
+**Resampling decision (recorded):** client-side for 5 s and 15 s. **Market anchors:** the §15 table stays as the first pass; G3b/G4–G6 tune it from the owner's play. Spec §13 now points here.

@@ -624,7 +624,7 @@ Track B adds simulated-player, generator-uniqueness, timing and word-asset tests
 
 ## 13. Open questions to verify in Sprint 0
 
-Record each answer in the implementation plan before coding.
+**Answered 2026-11-15 (Sprint G0-close): see the "G0-close" table in `docs/spec-phase25-implementation-plan.md`.** Original wording kept below for reference.
 
 1. **Second-level data coverage:** which symbols/dates have native second cadence in the cache? How many dates exist? Do option files exist for useful strikes/dates, and at what cadence? Confirm the semantics of `has_native_second_cadence` and the `observed` column in the files the games will read.
 2. **Window endpoint design:** is returning only observed rows correct, or should the flag be returned? Which existing helpers should the slice/resample reuse? What are the real file locations/formats (`parquet_path`, `pickle_path`) and their size, so the per-request cost is estimated?
@@ -647,7 +647,7 @@ Each sprint: one feature branch off `dev`, one PR into `dev`, tests green, this 
 
 | Sprint | Scope | Exit criteria | Status |
 |---|---|---|---|
-| 0 | Discovery: answer §13, write `docs/spec-phase25-implementation-plan.md`, finalise parameter anchor tables | Owner approves the plan; no code changed | Planned |
+| 0 | Discovery: answer §13, write `docs/spec-phase25-implementation-plan.md`, finalise parameter anchor tables | Owner approves the plan; no code changed | Done 2026-11-15 (§13 answered in the implementation plan) |
 | 1 | Backend data: `build-games-index.py`, `/availability`, `/window`, cache-only guarantees, tests | Backend tests pass; manual check of payload sizes; proves no broker/download call on miss | Planned |
 | 2 | Backend persistence: `GameProfiles`, `/state` GET/PUT, schema/size/TTL rules, `games` capability flag, tests | Round trip, idempotency, conflict and per-user isolation tests pass | Planned |
 | 3 | Desktop foundation: Rust `desktop_games_request` + allowlist, Games window + toolbar button, hub shell, engine core (`rng`, `difficulty`, `scoring`, `costModel`, `volUnit`), `GameChart`, `windowCache`, `outbox`, import-boundary test, **Tick Reader end-to-end** | Tick Reader playable from the hub at all levels; progress saved and restored; Rust change rebuilt and tested | Planned |
