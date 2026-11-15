@@ -123,7 +123,7 @@ I will **not** add a global `GZipMiddleware` (it would change every route, inclu
 |---|---|---|
 | P0 | Discovery (this section) | Done, awaiting owner review |
 | P1 | Backend desktop mounts, helper routes, Rust `desktop_patterns_request`, `patternsApi.ts`, parity tests | In PR into `dev` (branch `feat/desktop-patterns-transport`) |
-| P2 | Pattern Library on KLine (desktop-only, core) | In PR into `dev` (branch `feat/desktop-pattern-library`); P2b (drawing tools, R:R, Top Patterns, extra panes, bulk delete) planned |
+| P2 | Pattern Library on KLine (desktop-only, core) | Core merged (#834); P2b (drawing tools, R:R, Top Patterns, extra panes, bulk delete) in PR (branch `feat/desktop-pattern-library-full`) |
 | P3 | Chart Structures (Broad) | Planned |
 | P4 | Fine Structures | Planned |
 | P5 | Docs, Windows acceptance | Planned |
@@ -142,3 +142,13 @@ Deviation from the plan above: **no `shared/patterns` refactor and no change to 
 - Not in P2 (planned as P2b): drawing tools (hline, trend, fib, rectangle), R:R indicator, Top Patterns editing, adding or removing extra strike panes, bulk delete, pattern sharing. The candle interval is the Analysis chart's own selector and is saved with the chart.
 - Tests: `patternLibraryModel.test.ts` (7), `PatternLibrary.test.tsx` (initial render). Needs manual acceptance on the Windows build (P1's Rust command must be rebuilt): marks land on the clicked candle at every interval, saved charts reload with their marks and interval, Max Price strikes follow Settings.
 - No trading logic touched: only `windowsapp/src/tools/ToolsView.tsx` (one list entry) among existing files.
+
+### P2b as built (owner: "add the full Pattern first")
+The desktop Pattern Library now has the website page's feature set, except sharing (the website page itself has no share action, only a "Shared" badge on charts it cannot delete).
+- **Top Patterns:** Top 1, Top 2 and Bottom 1 pickers over the distinct category/strategy pairs among the marks; saved as `top_patterns`; ranked markers get the badge as on the website.
+- **R:R:** `R:R 1:` field per category and strategy, saved as `risk_reward_ratios`, shown as `(1:x)` on that pattern's markers. This needed one optional prop, `riskRewardRatios`, on the shared `shared/analysis/kline/AnalysisChart.tsx` (passed to `buildMarkers`, which already supported it); no other host sets it, so Analysis is unchanged.
+- **Strike panes:** add a CE or PE strike pane, remove or maximize any option pane; the first CE and first PE pane are saved as `strike` and `strike_pe`. Opening a saved chart restores its strikes.
+- **Drawing tools:** the Analysis chart's own drawing rail (hline, trend, rectangle, fib), switched on by giving the tool the desktop drawing transport (`desktop_drawing_request`) and the catalogue instrument lookup, so drawings persist per instrument exactly as on the trading charts.
+- **Bulk delete:** row checkboxes, select all, confirm; only the user's own charts are selectable; calls `pattern/charts/bulk-delete`.
+- Tests: `patternLibraryModel.test.ts` grows to 11 (ranking, R:R, saved strike pair). Desktop vitest 623, tsc clean on desktop and website. Manual acceptance on the Windows build: drawings persist and reappear, strike panes added/removed and saved, ranked and R:R markers.
+- Shared file touched: `shared/analysis/kline/AnalysisChart.tsx` (one optional prop). No trading logic touched.

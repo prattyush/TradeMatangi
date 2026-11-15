@@ -47,6 +47,8 @@ interface Props {
   openOrders?: Array<{side:string;order_type:string;trigger_price:number;limit_price:number;quantity:number}>
   position?: {side:string;quantity:number;avg_entry_price:number} | null
   annotations?: PatternAnnotation[]; activeStrategy?: string | null; activeCategory?: string | null; topPatterns?: TopPatterns
+  /** `category::strategy` -> reward multiple, shown in the marker text as `(1:x)`. */
+  riskRewardRatios?: Record<string, string>
 }
 let registered = false
 function registerAnalysisOverlays() {
@@ -328,10 +330,10 @@ export default function DesktopAnalysisChart(props: Props) {
     }
     const annotations=(props.annotations??[]).filter(a=>props.right?a.instrument===props.right:a.instrument==='underlying')
 
-    annotations.sort((a,b)=>a.time-b.time).forEach(a=>{const style=buildMarkers([a],props.activeStrategy??null,props.activeCategory??null,props.topPatterns)[0];const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:Math.floor(a.time/(intervalMinutes*60))*(intervalMinutes*60)*1000,value:a.price}],extendData:{color:style?.color??'#fbbf24',text:`${a.type==='entry'?'↑':'↓'} ${style?.text??a.text}`}});if(typeof id==='string')overlays.current.push(id)})
+    annotations.sort((a,b)=>a.time-b.time).forEach(a=>{const style=buildMarkers([a],props.activeStrategy??null,props.activeCategory??null,props.topPatterns,props.riskRewardRatios)[0];const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:Math.floor(a.time/(intervalMinutes*60))*(intervalMinutes*60)*1000,value:a.price}],extendData:{color:style?.color??'#fbbf24',text:`${a.type==='entry'?'↑':'↓'} ${style?.text??a.text}`}});if(typeof id==='string')overlays.current.push(id)})
     const levels=[...(props.openOrders??[]).map(order=>({price:order.trigger_price||order.limit_price,text:`${order.side} ${order.order_type} ${order.quantity}`})), ...(props.position?[{price:props.position.avg_entry_price,text:`Captured ${props.position.side} ${props.position.quantity}`}]:[]), ...(props.barTime!=null&&props.currentPrice!=null?[{price:props.currentPrice,text:'Captured current price'}]:[])]
     for(const order of levels){const price=order.price;if(!price||!candles.length)continue;const id=chart.createOverlay({name:'analysisLevel',lock:true,points:[{timestamp:candles[candles.length-1].time*1000,value:price}],extendData:{text:order.text}});if(typeof id==='string')overlays.current.push(id)}
-  },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.openOrders,props.position,props.currentPrice,intervalMinutes])
+  },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.riskRewardRatios,props.openOrders,props.position,props.currentPrice,intervalMinutes])
   return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''} ${props.pickMode?'picking':''} ${toolsAvailable&&toolsVisible?'has-tools-rail':''}`} data-contract-labels={props.right?(props.labelContractMarkers?'on':'off'):undefined} onPointerEnter={()=>setHovered(true)} onPointerLeave={()=>setHovered(false)}>
     <header>{props.toolbarStart}<strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · {intervalMinutes}m · IST</strong>
       {!props.right&&trades.some(t=>t.right)&&<select aria-label="Underlying markers" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option>CE</option><option>PE</option></select>}

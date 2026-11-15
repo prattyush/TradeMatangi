@@ -14,9 +14,11 @@
 .pl-tool.exit { border-left: 3px solid #f85149; }
 .pl-danger { background: #7f1d1d; border-color: #f87171; }
 .pl-charts { display: grid; gap: 8px; flex: 1; min-height: 340px; grid-template-columns: 1fr; }
-.pl-charts[data-panes="3"] { grid-template-columns: 2fr 1fr 1fr; }
-.pl-pane { min-width: 0; min-height: 320px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
+.pl-pane { position: relative; min-width: 0; min-height: 320px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
 .pl-pane > * { flex: 1; min-height: 0; }
+.pl-pane[hidden] { display: none; }
+.pl-pane > .pl-pane-tools { position: absolute; top: 4px; right: 4px; z-index: 5; flex: none; display: flex; gap: 4px; }
+.pl-pane-tools button { padding: 0 6px; line-height: 20px; }
 .pl-notes { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #cbd5e1; }
 .pl-notes textarea { background: #181d27; color: #e5e7eb; border: 1px solid #3b4659; border-radius: 6px; padding: 6px 8px; font: inherit; resize: vertical; }
 .pl-gallery table { width: 100%; border-collapse: collapse; font-size: 13px; }

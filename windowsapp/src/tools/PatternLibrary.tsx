@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { AnalysisProvider, useAnalysisEnvironment, type AnalysisEnvironment } from '../../../shared/analysis/environment'
 import DesktopAnalysisChart from '../AnalysisChart'
@@ -9,7 +9,7 @@ import type { PatternAnnotation, PatternChartMeta } from '../../../shared/analys
 import { cleanTopPatterns } from '../../../shared/analysis/patternMarkers'
 import '../../../shared/analysis/kline/desktopAnalysis.css'
 import './patternTools.css'
-import { TOOL_OPTIONS, buildSaveBody, defaultPatternDate, resolveStrikes, strikesOf, toggleAnnotation, type OptionStrikes } from './patternLibraryModel'
+import { RANKS, TOOL_OPTIONS, buildSaveBody, defaultPatternDate, resolveStrikes, riskRewardKey, savedStrikePair, setRank, setRiskReward, strikesOf, toggleAnnotation, uniquePatterns, type ExtraPane, type OptionStrikes } from './patternLibraryModel'
 
 interface Props { baseUrl: string; token: string; onUnauthorized: () => void; active: boolean }
 interface Loaded { symbol: string; date: string; instrumentType: 'equity' | 'options'; strikes: { ce: number; pe: number } | null; expiry: string | null }
@@ -26,9 +26,9 @@ function IntervalBridge({ requested, onChange }: { requested: number | null; onC
 }
 
 /**
- * Pattern Library on the desktop: mark entries and exits on the underlying and CE/PE charts, save them per day and
- * browse the saved charts. Built on the Analysis KLine chart (it already draws the saved markers and can pick a point).
- * Drawing tools, R:R, Top Patterns, extra panes and bulk delete come in a follow-up.
+ * Pattern Library on the desktop: mark entries and exits on the underlying and CE/PE charts, rank the top patterns,
+ * note an R:R per pattern, add or remove strike panes, draw on the charts, save per day and browse the saved charts.
+ * Built on the Analysis KLine chart (it already draws the saved markers and can pick a point).
  */
 export default function PatternLibrary({ baseUrl, token, onUnauthorized, active }: Props) {
   const client = useMemo(() => {
@@ -53,9 +53,21 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
     return () => { cancelled = true }
   }, [baseUrl, active])
 
+  // Drawing tools persist through the same desktop transport and instrument keys as the trading charts.
+  const drawingRequest = useCallback((path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}) =>
+    native ? invoke<unknown>('desktop_drawing_request', { baseUrl, path, method, body }) : Promise.reject(new Error('Drawing tools need the desktop app')), [baseUrl])
+  const catalogue = useRef<Promise<Array<{ symbol: string; exchange: string; chart_type?: string }>> | null>(null)
+  const resolveSymbolInstrument = useCallback(async (symbol: string) => {
+    if (!native) return undefined
+    const request = catalogue.current ?? (catalogue.current = drawingRequest('catalogue', 'GET').then(value => (value as { instruments: Array<{ symbol: string; exchange: string; chart_type?: string }> }).instruments).catch(error => { catalogue.current = null; throw error }))
+    const item = (await request).find(entry => entry.symbol === symbol)
+    return item ? { kind: item.chart_type ?? 'equity', exchange: item.exchange } : undefined
+  }, [drawingRequest])
+
   const environment: AnalysisEnvironment = useMemo(() => ({
     api: adapter.api, performance: adapter.performance, desktop: true, active, historicalDays: settings.historicalDays,
-  }), [adapter, active, settings.historicalDays])
+    chartPicking: true, drawingRequest: native ? drawingRequest : undefined, resolveSymbolInstrument,
+  }), [adapter, active, settings.historicalDays, drawingRequest, resolveSymbolInstrument])
 
   const [view, setView] = useState<'create' | 'view'>('create')
   const [symbol, setSymbol] = useState('NIFTY')
@@ -79,6 +91,14 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
   const [interval, setIntervalMinutes] = useState(3)
   const [requestedInterval, setRequestedInterval] = useState<number | null>(null)
   const [topPatterns, setTopPatterns] = useState<ReturnType<typeof cleanTopPatterns>>({})
+  const [riskReward, setRiskRewardRatios] = useState<Record<string, string>>({})
+  const [extraPanes, setExtraPanes] = useState<ExtraPane[]>([])
+  const paneId = useRef(1)
+  const [addRight, setAddRight] = useState<'CE' | 'PE'>('CE')
+  const [addStrike, setAddStrike] = useState('')
+  const [maximizedPane, setMaximizedPane] = useState<number | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [confirmBulk, setConfirmBulk] = useState(false)
 
   const [gallery, setGallery] = useState<PatternChartMeta[]>([])
   const [filterStrategy, setFilterStrategy] = useState('')
@@ -97,7 +117,8 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
   useEffect(() => { if (active) void names().catch(() => undefined) }, [active, names])
   useEffect(() => { if (active) void refreshGallery() }, [active, refreshGallery])
 
-  const resetChart = () => { setAnnotations([]); setChartId(null); setNotes(''); setTopPatterns({}); setMessage(null) }
+  const resetChart = () => { setAnnotations([]); setChartId(null); setNotes(''); setTopPatterns({}); setRiskRewardRatios({}); setExtraPanes([]); setMaximizedPane(null); setMessage(null) }
+  const panesFor = (strikes: { ce: number; pe: number } | null): ExtraPane[] => strikes ? [{ id: paneId.current++, right: 'CE', strike: strikes.ce }, { id: paneId.current++, right: 'PE', strike: strikes.pe }] : []
 
   const loadDay = useCallback(async () => {
     setLoading(true); resetChart(); setLoaded(null)
@@ -107,12 +128,14 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
       const existing = await client.getChartByDate(symbol, date, instrumentType, strikes ? 'CE' : undefined)
       if (existing) {
         setAnnotations(existing.annotations); setChartId(existing.chart_id); setNotes(existing.notes ?? '')
-        setTopPatterns(cleanTopPatterns(existing.top_patterns || {}))
+        setTopPatterns(cleanTopPatterns(existing.top_patterns || {})); setRiskRewardRatios(existing.risk_reward_ratios ?? {})
         const first = existing.annotations[0]
         if (first) { setStrategy(first.strategy_name); setCategory(first.category || '') }
         if (existing.interval_minutes) setRequestedInterval(existing.interval_minutes)
       }
-      setLoaded({ symbol, date, instrumentType, strikes: strikes ? { ce: strikes.ce, pe: strikes.pe } : null, expiry: strikes?.expiry ?? null })
+      const saved = existing && instrumentType === 'options' ? strikesOf(existing) : null
+      setExtraPanes(panesFor(saved ?? (strikes ? { ce: strikes.ce, pe: strikes.pe } : null)))
+      setLoaded({ symbol, date, instrumentType, strikes: saved ?? (strikes ? { ce: strikes.ce, pe: strikes.pe } : null), expiry: strikes?.expiry ?? null })
     } catch (error) { fail(error) } finally { setLoading(false) }
   }, [client, symbol, date, instrumentType, offset, settings, fail])
 
@@ -125,7 +148,8 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
       const expiry = strikes ? (await client.getExpiry(chart.symbol, chart.date)).expiry : null
       setSymbol(chart.symbol); setDate(chart.date); setInstrumentType(type)
       setAnnotations(chart.annotations); setChartId(chart.chart_id); setNotes(chart.notes ?? '')
-      setTopPatterns(cleanTopPatterns(chart.top_patterns || {}))
+      setTopPatterns(cleanTopPatterns(chart.top_patterns || {})); setRiskRewardRatios(chart.risk_reward_ratios ?? {})
+      setExtraPanes(panesFor(strikes))
       const first = chart.annotations[0]
       if (first) { setStrategy(first.strategy_name); setCategory(first.category || '') }
       setRequestedInterval(chart.interval_minutes ?? 3)
@@ -148,17 +172,19 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
     if (!loaded) return
     if (!effectiveCategory || !effectiveStrategy) { setMessage({ kind: 'error', text: 'Specify a category and a strategy before saving.' }); return }
     try {
-      const body = buildSaveBody({ symbol: loaded.symbol, date: loaded.date, instrumentType: loaded.instrumentType, annotations, notes, intervalMinutes: interval, strikes: loaded.strikes })
+      const body = buildSaveBody({ symbol: loaded.symbol, date: loaded.date, instrumentType: loaded.instrumentType, annotations, notes, intervalMinutes: interval, strikes: savedStrikePair(extraPanes) })
+      const top = Object.keys(topPatterns).length ? topPatterns : undefined
+      const ratios = Object.keys(riskReward).length ? riskReward : undefined
       const saved = chartId
-        ? await client.updateChart(chartId, { annotations, notes, right: body.right, strike: body.strike, strike_pe: body.strike_pe, interval_minutes: interval, top_patterns: Object.keys(topPatterns).length ? topPatterns : undefined })
-        : await client.createChart({ ...body, top_patterns: Object.keys(topPatterns).length ? topPatterns : undefined })
+        ? await client.updateChart(chartId, { annotations, notes, right: body.right, strike: body.strike, strike_pe: body.strike_pe, interval_minutes: interval, top_patterns: top, risk_reward_ratios: ratios })
+        : await client.createChart({ ...body, top_patterns: top, risk_reward_ratios: ratios })
       setChartId(saved.chart_id)
       setMessage({ kind: 'ok', text: 'Saved' })
       if (!strategy && newStrategy.trim()) { setStrategy(newStrategy.trim()); setNewStrategy('') }
       if (!category && newCategory.trim()) { setCategory(newCategory.trim()); setNewCategory('') }
       await Promise.all([names(), refreshGallery()])
     } catch (error) { fail(error) }
-  }, [loaded, effectiveCategory, effectiveStrategy, annotations, notes, interval, chartId, client, topPatterns, strategy, newStrategy, category, newCategory, names, refreshGallery, fail])
+  }, [loaded, effectiveCategory, effectiveStrategy, annotations, notes, interval, chartId, client, topPatterns, riskReward, extraPanes, strategy, newStrategy, category, newCategory, names, refreshGallery, fail])
 
   const remove = useCallback(async (id: string) => {
     try {
@@ -169,13 +195,32 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
     } catch (error) { fail(error) }
   }, [client, chartId, names, refreshGallery, fail])
 
-  const panes: Array<{ key: string; title: string; instrument: 'underlying' | 'CE' | 'PE'; strike?: number; right?: string }> = loaded ? [
-    { key: 'ul', title: loaded.symbol, instrument: 'underlying' },
-    ...(loaded.strikes ? [
-      { key: 'ce', title: `CE ${loaded.strikes.ce}`, instrument: 'CE' as const, strike: loaded.strikes.ce, right: 'CE' },
-      { key: 'pe', title: `PE ${loaded.strikes.pe}`, instrument: 'PE' as const, strike: loaded.strikes.pe, right: 'PE' },
-    ] : []),
+  const panes: Array<{ key: string; id: number | null; title: string; instrument: 'underlying' | 'CE' | 'PE'; strike?: number; right?: string }> = loaded ? [
+    { key: 'ul', id: null, title: loaded.symbol, instrument: 'underlying' },
+    ...extraPanes.map(p => ({ key: `p${p.id}`, id: p.id, title: `${p.right} ${p.strike}`, instrument: p.right, strike: p.strike, right: p.right })),
   ] : []
+  const hasRight = (right: 'CE' | 'PE') => extraPanes.some(p => p.right === right)
+  const patterns = uniquePatterns(annotations)
+  const ratioKey = riskRewardKey(effectiveCategory, effectiveStrategy)
+  const addPane = () => {
+    const strike = Number.parseInt(addStrike, 10)
+    if (!Number.isFinite(strike) || strike <= 0) { setMessage({ kind: 'error', text: 'Enter a valid strike price.' }); return }
+    if (extraPanes.some(p => p.right === addRight && p.strike === strike)) { setMessage({ kind: 'error', text: `${addRight} ${strike} is already shown.` }); return }
+    setMessage(null); setExtraPanes(prev => [...prev, { id: paneId.current++, right: addRight, strike }]); setAddStrike('')
+  }
+  const removePane = (id: number) => { setExtraPanes(prev => prev.filter(p => p.id !== id)); setMaximizedPane(prev => prev === id ? null : prev) }
+  const deletable = gallery.filter(c => c.can_delete !== false)
+  const bulkDelete = async () => {
+    const ids = deletable.filter(c => selected.has(c.chart_id)).map(c => c.chart_id)
+    if (!ids.length) return
+    try {
+      const result = await client.bulkDeleteCharts(ids)
+      if (chartId && result.deleted.includes(chartId)) { resetChart(); setLoaded(null) }
+      setSelected(new Set()); setConfirmBulk(false)
+      setMessage(result.failed.length ? { kind: 'error', text: `${result.failed.length} chart(s) could not be deleted.` } : { kind: 'ok', text: `Deleted ${result.deleted.length} chart(s).` })
+      await Promise.all([names(), refreshGallery()])
+    } catch (error) { fail(error) }
+  }
   const marks = (instrument: string) => annotations.filter(a => a.instrument === instrument).length
 
   return <AnalysisProvider value={environment}>
@@ -206,24 +251,44 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
             {!category && <input placeholder="New category" value={newCategory} onChange={e => setNewCategory(e.target.value)} size={14} />}
             <label>Strategy <select value={strategy} onChange={e => setStrategy(e.target.value)}><option value="">— new —</option>{strategies.map(s => <option key={s}>{s}</option>)}</select></label>
             {!strategy && <input placeholder="New strategy" value={newStrategy} onChange={e => setNewStrategy(e.target.value)} size={14} />}
+            {effectiveCategory && effectiveStrategy && <label title="Reward per 1 of risk for this pattern; shown on its markers">R:R 1: <input value={riskReward[ratioKey] ?? ''} onChange={e => setRiskRewardRatios(prev => setRiskReward(prev, ratioKey, e.target.value))} placeholder="1.5" size={5} /></label>}
           </div>
+          <div className="pl-bar" aria-label="Top patterns">
+            <span className="pl-muted">🏆 Top patterns:</span>
+            {patterns.length === 0 ? <span className="pl-muted">Mark candles to rank their patterns</span> : RANKS.map(({ rank, label }) => {
+              const chosen = topPatterns[rank]
+              return <label key={rank}>{label} <select value={chosen ? `${chosen.strategy_name}::${chosen.category}` : ''} onChange={e => setTopPatterns(prev => setRank(prev, rank, e.target.value))}>
+                <option value="">— none —</option>{patterns.map(p => <option key={p.identity} value={p.identity}>{p.category}/{p.strategy_name}</option>)}
+              </select></label>
+            })}
+          </div>
+          {loaded.instrumentType === 'options' && <div className="pl-bar" aria-label="Strike panes">
+            <span className="pl-muted">Strike panes:</span>
+            <select value={addRight} onChange={e => setAddRight(e.target.value as 'CE' | 'PE')} aria-label="Right"><option>CE</option><option>PE</option></select>
+            <input type="number" value={addStrike} onChange={e => setAddStrike(e.target.value)} placeholder="Strike" style={{ width: 80 }} aria-label="Strike" onKeyDown={e => { if (e.key === 'Enter') addPane() }} />
+            <button onClick={addPane} disabled={!addStrike}>Add pane</button>
+          </div>}
           <div className="pl-bar">
             <span className="pl-muted">Mark:</span>
-            {TOOL_OPTIONS.filter(t => t.instrument === 'underlying' || loaded.strikes).map(t =>
+            {TOOL_OPTIONS.filter(t => t.instrument === 'underlying' || hasRight(t.instrument)).map(t =>
               <button key={t.key} aria-pressed={toolKey === t.key} className={`pl-tool ${t.type}`} onClick={() => setToolKey(t.key)}>{t.label}</button>)}
             <button onClick={() => setAnnotations(a => a.slice(0, -1))} disabled={!annotations.length}>Undo</button>
             <button onClick={() => setAnnotations([])} disabled={!annotations.length}>Clear marks</button>
             <span className="pl-muted">{annotations.length} marks · candle {interval}m (set on a chart)</span>
             <button className="pl-save" onClick={() => void save()}>{chartId ? 'Update' : 'Save'}</button>
           </div>
-          <div className="pl-charts" data-panes={panes.length}>
-            {panes.map(pane => <div className="pl-pane" key={`${loaded.symbol}-${loaded.date}-${pane.key}-${pane.strike ?? ''}`}>
+          <div className="pl-charts" style={{ gridTemplateColumns: maximizedPane == null ? `repeat(${panes.length}, minmax(0, 1fr))` : '1fr' }}>
+            {panes.map(pane => <div className="pl-pane" key={`${loaded.symbol}-${loaded.date}-${pane.key}-${pane.strike ?? ''}`} hidden={maximizedPane != null && maximizedPane !== pane.id}>
+              {pane.id != null && <div className="pl-pane-tools">
+                <button onClick={() => setMaximizedPane(prev => prev === pane.id ? null : pane.id)} title="Maximize or restore">{maximizedPane === pane.id ? '⤡' : '⤢'}</button>
+                <button onClick={() => removePane(pane.id!)} title="Remove this pane" aria-label={`Remove ${pane.title}`}>✕</button>
+              </div>}
               <DesktopAnalysisChart
                 symbol={loaded.symbol} date={loaded.date} title={`${pane.title} · ${marks(pane.instrument)} marks`}
                 strike={pane.strike} right={pane.right} expiry={pane.right ? loaded.expiry ?? undefined : undefined}
                 historicalDays={settings.historicalDays}
                 annotations={annotations.filter(a => a.instrument === pane.instrument)} activeStrategy={effectiveStrategy || null} activeCategory={effectiveCategory || null}
-                topPatterns={topPatterns}
+                topPatterns={topPatterns} riskRewardRatios={riskReward}
                 pickMode={tool.instrument === pane.instrument} onPick={pick} pickHint={`${tool.label} — click a candle (click the same candle again to remove)`}
               />
             </div>)}
@@ -236,12 +301,15 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
           <label>Strategy <select value={filterStrategy} onChange={e => setFilterStrategy(e.target.value)}><option value="">All</option>{strategies.map(s => <option key={s}>{s}</option>)}</select></label>
           <label>Category <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}><option value="">All</option>{categories.map(c => <option key={c}>{c}</option>)}</select></label>
           <label><input type="checkbox" checked={topOnly} onChange={e => setTopOnly(e.target.checked)} /> Top patterns only</label>
+          {selected.size > 0 && (confirmBulk
+            ? <><button className="pl-danger" onClick={() => void bulkDelete()}>Confirm delete {selected.size}</button><button onClick={() => setConfirmBulk(false)}>Cancel</button></>
+            : <button onClick={() => setConfirmBulk(true)}>Delete selected ({selected.size})</button>)}
         </div>
         {message && <p className={message.kind === 'error' ? 'pl-error' : 'pl-ok'}>{message.text}</p>}
         {gallery.length === 0 ? <p className="pl-muted">No saved charts match.</p> : <table>
-          <thead><tr><th>Date</th><th>Symbol</th><th>Type</th><th>Strikes</th><th>Strategies</th><th>Categories</th><th>▲</th><th>▼</th><th /></tr></thead>
+          <thead><tr><th><input type="checkbox" aria-label="Select all" checked={deletable.length > 0 && deletable.every(c => selected.has(c.chart_id))} onChange={e => { setConfirmBulk(false); setSelected(e.target.checked ? new Set(deletable.map(c => c.chart_id)) : new Set()) }} /></th><th>Date</th><th>Symbol</th><th>Type</th><th>Strikes</th><th>Strategies</th><th>Categories</th><th>▲</th><th>▼</th><th /></tr></thead>
           <tbody>{gallery.map(chart => { const strikes = chart.instrument_type === 'options' ? strikesOf(chart) : null; return <tr key={chart.chart_id}>
-            <td>{chart.date}</td><td>{chart.symbol}</td><td>{chart.instrument_type}</td>
+            <td>{chart.can_delete !== false && <input type="checkbox" aria-label={`Select ${chart.date} ${chart.symbol}`} checked={selected.has(chart.chart_id)} onChange={e => { setConfirmBulk(false); setSelected(prev => { const next = new Set(prev); if (e.target.checked) next.add(chart.chart_id); else next.delete(chart.chart_id); return next }) }} />}</td><td>{chart.date}</td><td>{chart.symbol}</td><td>{chart.instrument_type}</td>
             <td>{strikes ? (strikes.ce === strikes.pe ? strikes.ce : `CE ${strikes.ce} / PE ${strikes.pe}`) : '—'}</td>
             <td>{chart.strategy_names.join(', ')}</td><td>{chart.categories.join(', ')}</td><td>{chart.entry_count}</td><td>{chart.exit_count}</td>
             <td className="pl-actions">
