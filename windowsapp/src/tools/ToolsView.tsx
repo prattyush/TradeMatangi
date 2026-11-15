@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import VideoMaker from './VideoMaker'
 import PatternLibrary from './PatternLibrary'
+import ChartStructures from './ChartStructures'
 import './videoTools.css'
 
 interface ToolsViewProps {
@@ -11,7 +12,7 @@ interface ToolsViewProps {
   active: boolean
 }
 
-const TOOLS = [{ id: 'video', label: 'Trading Video Maker' }, { id: 'patterns', label: 'Pattern Library' }] as const
+const TOOLS = [{ id: 'video', label: 'Trading Video Maker' }, { id: 'patterns', label: 'Pattern Library' }, { id: 'structures', label: 'Chart Structures' }] as const
 type ToolId = (typeof TOOLS)[number]['id']
 
 /** Desktop "Tools" view: a list of tools on the left, the chosen tool on the right. */
@@ -27,6 +28,7 @@ export default function ToolsView({ viewSelector, baseUrl, token, onUnauthorized
       <section className="tools-content">
         {tool === 'video' && <VideoMaker baseUrl={baseUrl} token={token} onUnauthorized={onUnauthorized} />}
         {tool === 'patterns' && <PatternLibrary baseUrl={baseUrl} token={token} onUnauthorized={onUnauthorized} active={active} />}
+        {tool === 'structures' && <ChartStructures baseUrl={baseUrl} token={token} onUnauthorized={onUnauthorized} active={active} />}
       </section>
     </div>
   </div>

@@ -6,6 +6,17 @@ const query = (values: Record<string, unknown>) => {
   return q ? `?${q}` : ''
 }
 
+export interface StructureType { value: string; label: string }
+export interface ChartStructureItem {
+  chart_structure_id: string; symbol: string; date: string
+  opening_type: string; midday_type: string; closing_type: string
+  is_predefined: boolean; user_id: string; created_at: string; updated_at: string; can_delete: boolean
+}
+export interface StructureTypes { opening_types: StructureType[]; midday_types: StructureType[]; closing_types: StructureType[] }
+export interface StructureFilters { opening_types?: string[]; midday_types?: string[]; closing_types?: string[] }
+export interface StructureClassification { opening_type: string; midday_type: string; closing_type: string }
+export interface StructureCandle { time: number; open: number; high: number; low: number; close: number }
+
 export interface SaveChartBody {
   symbol: string; date: string; instrument_type: string
   annotations: PatternAnnotation[]; notes: string
@@ -32,6 +43,14 @@ export function createPatternsClient(request: PatternsRequest) {
       request<PatternChart>(`pattern/chart/${encodeURIComponent(chartId)}`, 'PUT', body),
     deleteChart: (chartId: string) => request<void>(`pattern/chart/${encodeURIComponent(chartId)}`, 'DELETE'),
     bulkDeleteCharts: (chartIds: string[]) => request<{ deleted: string[]; failed: Array<{ chart_id: string; reason: string }> }>('pattern/charts/bulk-delete', 'POST', { chart_ids: chartIds }),
+    structureTypes: () => request<StructureTypes>('chart-structures/types', 'GET'),
+    listStructures: (filters: StructureFilters = {}) => request<{ structures: ChartStructureItem[] }>(`chart-structures/structures${query({
+      opening_types: filters.opening_types?.join(','), midday_types: filters.midday_types?.join(','), closing_types: filters.closing_types?.join(','),
+    })}`, 'GET'),
+    structureOhlc: (symbol: string, date: string, intervalMinutes = 3, daysBack?: number) =>
+      request<{ candles: StructureCandle[]; structure: ChartStructureItem | null }>(`chart-structures/ohlc/${encodeURIComponent(symbol)}/${date}${query({ interval_minutes: intervalMinutes, days_back: daysBack })}`, 'GET'),
+    createStructure: (body: StructureClassification & { symbol: string; date: string }) => request<ChartStructureItem>('chart-structures/structure', 'POST', body),
+    updateStructure: (id: string, body: StructureClassification) => request<ChartStructureItem>(`chart-structures/structure/${encodeURIComponent(id)}`, 'PUT', body),
     getExpiry: (symbol: string, date: string) => request<{ expiry: string }>(`data/expiry${query({ symbol, date })}`, 'GET'),
     getPriceAt: (symbol: string, date: string, time: string) =>
       request<{ price: number }>(`data/price-at${query({ symbol, date, time, history_mode: 'replay', granularity: 'minute' })}`, 'GET'),

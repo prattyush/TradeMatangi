@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { AnalysisProvider, useAnalysisEnvironment, type AnalysisEnvironment } from '../../../shared/analysis/environment'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AnalysisProvider, useAnalysisEnvironment } from '../../../shared/analysis/environment'
 import DesktopAnalysisChart from '../AnalysisChart'
-import { analysisRequest, createAnalysisApi, type AnalysisRequest } from '../analysisApi'
-import { createPatternsClient } from '../patternsClient'
-import { patternsRequest, type PatternsRequest } from '../patternsApi'
+import { usePatternsRuntime } from './usePatternsRuntime'
 import type { PatternAnnotation, PatternChartMeta } from '../../../shared/analysis/api'
 import { cleanTopPatterns } from '../../../shared/analysis/patternMarkers'
 import '../../../shared/analysis/kline/desktopAnalysis.css'
@@ -14,7 +11,6 @@ import { RANKS, TOOL_OPTIONS, buildSaveBody, defaultPatternDate, resolveStrikes,
 interface Props { baseUrl: string; token: string; onUnauthorized: () => void; active: boolean }
 interface Loaded { symbol: string; date: string; instrumentType: 'equity' | 'options'; strikes: { ce: number; pe: number } | null; expiry: string | null }
 
-const native = '__TAURI_INTERNALS__' in window
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /** Reports the shared candle interval upward and lets the host set it (a saved chart restores its own). */
@@ -31,43 +27,7 @@ function IntervalBridge({ requested, onChange }: { requested: number | null; onC
  * Built on the Analysis KLine chart (it already draws the saved markers and can pick a point).
  */
 export default function PatternLibrary({ baseUrl, token, onUnauthorized, active }: Props) {
-  const client = useMemo(() => {
-    const request: PatternsRequest = patternsRequest(baseUrl, (command, args) => invoke(command, args))
-    return createPatternsClient(request)
-  }, [baseUrl])
-  const adapter = useMemo(() => {
-    const nativeRequest: AnalysisRequest | undefined = native
-      ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
-    return createAnalysisApi(analysisRequest(baseUrl, token, nativeRequest, onUnauthorized))
-  }, [baseUrl, token, onUnauthorized])
-  useEffect(() => () => adapter.dispose(), [adapter])
-
-  const [settings, setSettings] = useState({ mode: 'otm', ceCap: 0, peCap: 0, historicalDays: 2 })
-  useEffect(() => {
-    if (!active || !native) return
-    let cancelled = false
-    void invoke<Record<string, unknown>>('desktop_drawing_request', { baseUrl, path: 'trading/settings/current', method: 'GET', body: {} }).then(value => {
-      if (cancelled) return
-      setSettings({ mode: String(value.max_price_mode ?? 'otm'), ceCap: Number(value.max_price_threshold_ce) || 0, peCap: Number(value.max_price_threshold_pe) || 0, historicalDays: Number(value.historical_days) || 2 })
-    }).catch(() => undefined)
-    return () => { cancelled = true }
-  }, [baseUrl, active])
-
-  // Drawing tools persist through the same desktop transport and instrument keys as the trading charts.
-  const drawingRequest = useCallback((path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body: Record<string, unknown> = {}) =>
-    native ? invoke<unknown>('desktop_drawing_request', { baseUrl, path, method, body }) : Promise.reject(new Error('Drawing tools need the desktop app')), [baseUrl])
-  const catalogue = useRef<Promise<Array<{ symbol: string; exchange: string; chart_type?: string }>> | null>(null)
-  const resolveSymbolInstrument = useCallback(async (symbol: string) => {
-    if (!native) return undefined
-    const request = catalogue.current ?? (catalogue.current = drawingRequest('catalogue', 'GET').then(value => (value as { instruments: Array<{ symbol: string; exchange: string; chart_type?: string }> }).instruments).catch(error => { catalogue.current = null; throw error }))
-    const item = (await request).find(entry => entry.symbol === symbol)
-    return item ? { kind: item.chart_type ?? 'equity', exchange: item.exchange } : undefined
-  }, [drawingRequest])
-
-  const environment: AnalysisEnvironment = useMemo(() => ({
-    api: adapter.api, performance: adapter.performance, desktop: true, active, historicalDays: settings.historicalDays,
-    chartPicking: true, drawingRequest: native ? drawingRequest : undefined, resolveSymbolInstrument,
-  }), [adapter, active, settings.historicalDays, drawingRequest, resolveSymbolInstrument])
+  const { client, environment, settings } = usePatternsRuntime(baseUrl, token, onUnauthorized, active)
 
   const [view, setView] = useState<'create' | 'view'>('create')
   const [symbol, setSymbol] = useState('NIFTY')

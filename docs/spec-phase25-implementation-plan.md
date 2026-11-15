@@ -124,7 +124,7 @@ I will **not** add a global `GZipMiddleware` (it would change every route, inclu
 | P0 | Discovery (this section) | Done, awaiting owner review |
 | P1 | Backend desktop mounts, helper routes, Rust `desktop_patterns_request`, `patternsApi.ts`, parity tests | In PR into `dev` (branch `feat/desktop-patterns-transport`) |
 | P2 | Pattern Library on KLine (desktop-only, core) | Core merged (#834); P2b (drawing tools, R:R, Top Patterns, extra panes, bulk delete) in PR (branch `feat/desktop-pattern-library-full`) |
-| P3 | Chart Structures (Broad) | Planned |
+| P3 | Chart Structures (Broad) | In PR into `dev` (branch `feat/desktop-chart-structures`) |
 | P4 | Fine Structures | Planned |
 | P5 | Docs, Windows acceptance | Planned |
 
@@ -152,3 +152,12 @@ The desktop Pattern Library now has the website page's feature set, except shari
 - **Bulk delete:** row checkboxes, select all, confirm; only the user's own charts are selectable; calls `pattern/charts/bulk-delete`.
 - Tests: `patternLibraryModel.test.ts` grows to 11 (ranking, R:R, saved strike pair). Desktop vitest 623, tsc clean on desktop and website. Manual acceptance on the Windows build: drawings persist and reappear, strike panes added/removed and saved, ranked and R:R markers.
 - Shared file touched: `shared/analysis/kline/AnalysisChart.tsx` (one optional prop). No trading logic touched.
+
+### P3 as built (Chart Structures, Broad)
+Desktop Tools > **Chart Structures**, `windowsapp/src/tools/ChartStructures.tsx`, on the same Analysis KLine chart as the Pattern Library; the website page is untouched.
+- Gallery of daily structures with Opening, Midday and Closing multi-select filters (comma-joined to the route), colour badges, and a close-price sparkline per card. Sparklines load only when a card scrolls into view (the website fetches every card up front), from 15-minute candles for that day.
+- Opening a day shows its KLine chart (with the account's historical days of context), previous and next day through the filtered list, and the classification editor. Saving follows the website's rule (`saveMode`): a system (predefined) or shared structure is never edited, the user gets a custom copy via POST; their own structure is updated via PUT.
+- `usePatternsRuntime.ts` now holds the shared setup (patterns client, Analysis environment with drawing transport, account settings); Pattern Library uses it too (pure refactor, no behaviour change). The Fine tab arrives with P4.
+- Tests: `chartStructuresModel.test.ts` (8: sparkline day filter and scaling, save rule, filter query, OHLC path, POST/PUT) and `ChartStructures.test.tsx` (initial render).
+- No new Rust or backend code (the P1 allowlist and routes already cover `chart-structures/*`). Shared files touched: none. One list entry in `ToolsView.tsx`. No trading logic touched.
+- Manual acceptance on the Windows build: filters narrow the gallery, a card opens its day on KLine, previous/next move through the filtered list, saving a system structure creates your own copy and saving your own updates it.
