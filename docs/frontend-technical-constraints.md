@@ -177,4 +177,5 @@
 - **Main thread (website).** Games share the renderer with live trading. No Games task may block the main thread for more than 8 ms while a session is active; heavy generators (Track B) run in a module Web Worker. The Games chunk is lazy: nothing loads until Games opens.
 - **Rust changes need a desktop rebuild.** `desktop_games_request` and `open_games_window` are new commands; an older desktop build shows an unknown-command error when the Games button is used.
 - **Parity.** `valid_games_path` (Rust), `validGamesPath` (shared TS) and their test cases must stay identical.
+- **`data/` is gitignored.** The repo ignores `data/` (runtime data), so `.gitignore` carries `!shared/games/data/` for the Games outbox and sync code. Never rely on `git add <folder>` alone: check `git status` shows every new file. A test in `boundary.test.ts` fails if any file under `shared/games` or in the host glue matches an ignore rule. (This once left four files out of a PR and only CI's clean build noticed.)
 
