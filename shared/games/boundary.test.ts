@@ -5,6 +5,7 @@
  *  - Brain games may import only the framework (`core`, `data`, `ui`) and other brain files, never `market/**`.
  *  - No Games code registers a global key handler on `window` or `document`; keys are handled on a focused root element.
  */
+import { spawnSync } from 'node:child_process'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,6 +25,17 @@ const sources = (dir: string) => walk(dir).filter(file => /\.(ts|tsx)$/.test(fil
 const importsOf = (text: string): string[] => [...text.matchAll(/(?:^|\n)\s*(?:import|export)\s[^'"\n]*?from\s+['"]([^'"]+)['"]|(?:^|\n)\s*import\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g)].map(m => m[1] ?? m[2] ?? m[3])
 
 const ALLOWED_PACKAGES = new Set(['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'])
+
+describe('Games files are not gitignored', () => {
+  // The repo ignores `data/` (runtime data). A Games folder with that name was once silently left out of a commit, which
+  // only CI noticed. Every file under shared/games must be committable, whatever the folder is called.
+  it('no file under shared/games or in the host glue matches a .gitignore rule', () => {
+    const files = [...walk(gamesDir), ...['windowsapp/src/GamesWindow.tsx', 'windowsapp/src/gamesApi.ts', 'frontend/src/services/gamesRequest.ts', 'frontend/src/components/games/GamesWorkspace.tsx'].map(f => resolve(root, f))]
+    const result = spawnSync('git', ['check-ignore', ...files], { cwd: root, encoding: 'utf8' })
+    if (result.error || result.status === 128) return // not a git checkout (or no git): nothing to check
+    expect(result.stdout.trim().split('\n').filter(Boolean).map(f => relative(root, f))).toEqual([])
+  })
+})
 
 describe('boundary scanner self-check', () => {
   it('sees every import form, so a violation cannot slip through', () => {
