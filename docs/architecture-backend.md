@@ -120,6 +120,7 @@ stop_session():
 | `routers/admin.py` | `/api/admin` | Tokens, whitelist, stream-source toggle, extra market holidays (`/holidays`) |
 | `routers/kotak.py` | `/api/kotak` | Login, status, funds, order-history, reconcile |
 | `routers/users.py` | `/api/users` | `GET /settings`, `PUT /settings` |
+| `routers/desktop_games.py` | `/api/desktop/v1/games` | `GET /state`, `PUT /state` (Phase 25 Games progress; the cache-only data routes arrive in G1) |
 
 ---
 
@@ -175,6 +176,7 @@ Strategies are in-process; cross-process cancellation writes `CANCELLED` to Dyna
 | `BehaviorMarks` | `session_id` (S) | `mark_key` (S) `<round_trip_index:05d>#<question_id>` | `UserIdDateIndex` (`user_id`, `date`) | Phase 23 "yes" marks per round trip; lazy-created by `behavior_service`, deleted with the session |
 | `WhatIfScenarios` | `session_id` (S) | `scenario_id` (S, slug of the name) | GSI `UserIdDateIndex` (`user_id`, `date`) | Phase 24 saved What If scenarios: one named scenario per day-session holding the edited price and quantity of fills (`edits`) and a small `summary`; owner only; routes `/api/whatif` (day list, `/range` for Compare days, upsert, delete); lazy-created by `whatif_service`, deleted with the session; never touches trades, orders or labels |
 | `VideoLinks` | `session_id` (S) | `video_id` (S) | — | Phase 24 saved YouTube links for Video Maker videos (title, visibility, chapters; the link is rebuilt from the video id); owner only; lazy-created by `video_links_service`, deleted with the session |
+| `GameProfiles` | `user_id` (S) | `record_id` (S): `profile`, `game#<id>`, `day#YYYY-MM-DD`, `month#YYYY-MM` | — | Phase 25 Games progress only (levels, last scores, small stats, daily totals). `day#` items carry `expires_at` (epoch seconds, about 200 days, TTL on). Lazy-created by `games_persistence_service`, also in `scripts/setup-dynamodb-tables.py` |
 
 ---
 
@@ -306,3 +308,15 @@ alternatives, fallback matrix, history handoff and authentication follow-up.
 This architecture remains process-local and requires one API worker. Extracting
 a feed worker later also requires session ownership and command/event routing;
 adding workers alone duplicates feeds and loses access to in-memory sessions.
+
+## Games progress (Phase 25, G2)
+
+`routers/desktop_games.py` (`/api/desktop/v1/games`, auth `get_desktop_user_id`: desktop bearer or website `X-User-Id`) and `services/games_persistence_service.py`. It stores compact progress only; it never touches orders, sessions, brokers or market data, and a test scans its imports for that.
+
+- **`GET /state`**: one consistent range query (`record_id BETWEEN day#<today-30d> AND profile`). Sort keys order `day# < game# < month# < profile`, so a single query returns the last 30 calendar days, every game, every month and the profile. Response: `{version, profile, games{id}, days{date}, months{YYYY-MM}}`; storage keys and `expires_at` are not exposed.
+- **`PUT /state`**: one `TransactWriteItems` for the optional `game`, `day`, `month` and `profile` entries, each `{id|date|month, revision, item}`. `revision` is what the client read (0 = new record). A stale revision cancels the whole transaction and returns **409** with `current` (the present records) so the client can re-read and re-apply. `mutation_id` (8–64 chars) makes retries idempotent: if every target record already carries it as `last_mutation_id`, nothing is written and `applied: false` is returned.
+- **Validation (422):** game ids must be in the 31-id registry (10 market and 21 brain); every field is whitelisted; `level` 1–20; `lastScores` at most 20 integers 0–100; `stats` at most 20 keys; day/month shape fixed; sizes of the compact JSON: profile 4 KB, game 3 KB, day 2.5 KB, month 3 KB, hard limit 8 KB.
+- **TTL:** only `day#` items get `expires_at` (now + 200 days). The table's TTL is switched on at creation. DynamoDB Local accepts the call but does not enforce expiry; real AWS does. Month rollups (no TTL) keep the history.
+- **Limiter:** `services/games_rate_limit.py`, an in-process per-user token bucket (2 requests/s, burst 10) on both routes, returning 429 with `Retry-After`. It is per process; G1 reuses it for the data routes. There is no global gzip middleware.
+- **Capability flag:** `"games"` is appended to `DesktopCapabilities.features` so a client can hide Games against an older backend.
+- **Tests:** `tests/test_games_persistence.py` (moto `mock_aws`, as the other DynamoDB tests): registry, round trip, idempotency, 409 and atomicity, per-user isolation, validation, size caps, TTL attribute, recent-days window, limiter, import scan.

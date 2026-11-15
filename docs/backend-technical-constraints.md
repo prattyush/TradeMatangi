@@ -272,3 +272,11 @@ separate from portfolio-scoped Swing amendments.
 - `GET /api/data/price-at` and `GET /api/data/options/find-strike-by-price` take an optional `granularity=minute` for read-only screens. The minute `price-at` is the open of the bar that starts at the time (the price at that instant); the minute strike pick is `desktop_preparation.find_max_price_strike`, the single resolver shared with `prepare()` (last observed prices before the reference time, no ATM fallback). A minute bar is only known once it has finished, so never read a minute bar's close for a time inside it.
 - A pattern chart stores the CE strike in `strike` and the PE strike in `strike_pe` (absent on charts saved before Max Price in Patterns: readers use `strike`).
 
+## Games progress storage (Phase 25)
+
+- `GameProfiles` holds compact progress only (about 0.67 MB per user at steady state). Never store rounds, answers, market windows, per-trade records, review sessions or brain-game trial logs there.
+- Writes are one transaction per finished session with per-record `revision` and `mutation_id`; do not add per-round writes.
+- **DynamoDB Local does not enforce TTL**, so `expires_at` is asserted in tests but expiry only happens on real AWS. Do not rely on expiry in local tests.
+- Tests for this table use moto, which supports `transact_write_items` and TTL; the DynamoDB getters are patched in the fixture (`app.services.db.get_dynamodb_resource` and `get_dynamodb_client`) and `games_persistence_service._ENSURED` is reset.
+- The Games routes must not import order, session, broker, stream, guardrail or strategy modules.
+
