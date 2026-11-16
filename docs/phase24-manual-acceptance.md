@@ -32,6 +32,14 @@ Needs a Windows desktop build that includes Sprints 1-4 (the CI job `Desktop Win
 6. Saving to a full or read-only folder shows an error.
 7. Time check: note how long a 1-hour recording takes (progress should move steadily) and the CPU use. If the machine has an NVIDIA, Intel or AMD GPU, note which encoder the result reports (it should say so after "Finished").
 
+## K. Milestones risk switch (added 2026-11-16; website, webapp and Windows app)
+Set Settings > General > P&L Display Mode to **Milestones** and note your GuardRails **Capital loss limit (%)** (Max loss), for example 6%.
+1. Start a replay or paper session. With a small loss (under 3% of capital) the Day P&L pill and the chart label show a step ("—", "Loss 1/3"), the header is normal.
+2. Take the day loss to **50% of Max loss** (3% of capital for a 6% limit; it counts realized and unrealized): the Day P&L pill, the right pane and the chart labels switch to **a %** that moves with every tick, the **header turns red**, and a warning notification says the loss is past 50% of Max loss. Order labels and trade history now show P&L, as in % mode.
+3. Let the loss recover a little, to between 40% and 50% of Max loss (2.4% to 3% here): it **stays** in % mode and red. Recover below 40%: it goes back to Milestones, the header is normal and a notification says Milestones are back. Check the same during an open trade, not only after closing.
+4. With P&L Display Mode set to Monetary or % of Capital nothing changes at 50% (no switch, no red header from this). The older GuardRails halfway alert still works as before.
+5. Do this on the website, the Windows app and, if you use it, the webapp.
+
 ## E. Recording stops with the session, and YouTube (added 2026-11-09)
 Recording auto-stop (needs the build with #790):
 1. Start a recording, start a replay or paper session, then press Stop on the session. About 10 seconds later the recording stops by itself, `video.webm` and `video.rec.json` download, and a notice says why.

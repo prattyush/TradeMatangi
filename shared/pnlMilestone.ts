@@ -57,3 +57,38 @@ export function pnlMilestone(dayPnl: number, capital: number, maxLossPct: number
   }
   return none
 }
+
+// ── Risk switch: Milestones turn into a live % view once the loss is half way to Max loss ──────────────────────────────
+// In Milestones mode the player sees thirds, which hides how deep a loss is. When the DAY loss reaches half of Max loss the
+// display switches to P&L % (a number that moves with every tick) and the header turns red, so the player slows down and
+// recovers. It goes back to Milestones only after the loss has recovered clearly below half, so a P&L hovering near the
+// line does not flip the screen back and forth on every tick.
+
+/** The share of Max loss at which the switch happens (inclusive). */
+export const RISK_SWITCH_ENTER = 0.5
+/** The share the loss must fall below to go back to Milestones. */
+export const RISK_SWITCH_EXIT = 0.4
+
+/** The day loss as a share of Max loss: 0 for a profit, flat, or when capital or the limit is not usable. */
+export function lossShare(dayPnl: number, capital: number, maxLossPct: number): number {
+  if (![dayPnl, capital, maxLossPct].every(Number.isFinite) || capital <= 0 || maxLossPct <= 0 || dayPnl >= 0) return 0
+  return (-dayPnl / capital) * 100 / maxLossPct
+}
+
+/** The next state of the switch, given whether it is on now. Hysteresis: on at `RISK_SWITCH_ENTER`, off below `RISK_SWITCH_EXIT`. */
+export function riskSwitchActive(active: boolean, dayPnl: number, capital: number, maxLossPct: number): boolean {
+  const share = lossShare(dayPnl, capital, maxLossPct)
+  return share >= (active ? RISK_SWITCH_EXIT : RISK_SWITCH_ENTER) - EPSILON
+}
+
+/** The mode to draw with: Milestones becomes percent while the switch is on; every other mode is left alone. */
+export function effectiveDisplayMode(mode: PnlDisplayMode, riskActive: boolean): PnlDisplayMode {
+  return mode === 'milestones' && riskActive ? 'percent' : mode
+}
+
+export function riskSwitchMessage(entering: boolean, dayPnl: number, capital: number, maxLossPct: number): string {
+  const loss = capital > 0 ? (-dayPnl / capital) * 100 : 0
+  return entering
+    ? `Loss is ${loss.toFixed(2)}% of capital, past ${Math.round(RISK_SWITCH_ENTER * 100)}% of your Max loss (${maxLossPct}%). P&L now shows in %: slow down and recover.`
+    : `Loss has recovered below ${Math.round(RISK_SWITCH_EXIT * 100)}% of your Max loss. Milestones are back.`
+}

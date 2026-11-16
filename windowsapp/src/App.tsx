@@ -1,5 +1,6 @@
 import { createDesktopBehaviorApi } from './behaviorApi'
 import { DEFAULT_MAX_LOSS_PCT, DEFAULT_MAX_WIN_PCT, pnlMilestone } from '../../shared/pnlMilestone'
+import { useRiskSwitch } from '../../shared/useRiskSwitch'
 import BehaviorManagerModal from '../../shared/analysis/behavior/BehaviorManagerModal'
 import BehaviorPicker from '../../shared/analysis/behavior/BehaviorPicker'
 import { useBehaviorData } from '../../shared/analysis/behavior/useBehaviorData'
@@ -880,7 +881,18 @@ function ScreenController(props: ScreenControllerProps) {
   const [realClosing, setRealClosing] = useState(false)
   const [realDay, setRealDay] = useState<RealTradingDayStatus | null>(null)
   const [realActionPending, setRealActionPending] = useState(false)
-  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [strategyError, setStrategyError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<PricePickAction | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
+  const [tradingRaw, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [strategyError, setStrategyError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<PricePickAction | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
+  // Risk switch (Milestones only): once the day loss is half way to Max loss the header turns red and P&L shows in %, on every
+  // surface that reads `trading.settings.desktop_pnl_display_mode`. `tradingRaw` is what the server sent; `trading` is what the screen draws.
+  const riskSwitch = useRiskSwitch({
+    enabled: tradingRaw?.settings.desktop_pnl_display_mode === 'milestones' && tradingRaw.session.state !== 'ended',
+    dayPnl: tradingRaw?.pnl.day ?? 0, capital: tradingRaw?.session.session_capital ?? 0,
+    maxLossPct: Number(tradingRaw?.settings.guardrail_ban_capital_pct ?? DEFAULT_MAX_LOSS_PCT),
+  })
+  const trading = useMemo<DesktopTradingSnapshot | null>(
+    () => (riskSwitch && tradingRaw ? { ...tradingRaw, settings: { ...tradingRaw.settings, desktop_pnl_display_mode: 'percent' } } : tradingRaw),
+    [tradingRaw, riskSwitch],
+  )
   useDismissMessage(loginError, setLoginError, 10_000)
   useDismissMessage(replayError, setReplayError, 10_000)
   useDismissMessage(tradingError, setTradingError, 10_000)
@@ -2807,7 +2819,7 @@ function ScreenController(props: ScreenControllerProps) {
     pct: Number(guardRailSettingsRecord.guardrail_maxsize_pct ?? 20),
     value: Number(guardRailSettingsRecord.guardrail_maxsize_value ?? 0),
   }, maxSizePositions, screenSessionCapital, trading?.session.instrument_type)
-  const screenHeaderAlert = headerAlertColor({ redAlert: screenGuardRailAlertActive, banActive: Boolean(trading?.guardrails?.ban_active), maxSizeAlert: screenMaxSizeAlert })
+  const screenHeaderAlert = headerAlertColor({ redAlert: screenGuardRailAlertActive || riskSwitch, banActive: Boolean(trading?.guardrails?.ban_active), maxSizeAlert: screenMaxSizeAlert })
   const screenHighTierDisabled = Boolean(guardRailSettingsRecord.guardrail_ban_enabled)
     && screenClosedPnlPct <= Number(guardRailSettingsRecord.high_tier_pnl_threshold_pct ?? -Infinity)
   return <main>
