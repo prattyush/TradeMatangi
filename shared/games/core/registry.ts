@@ -1,4 +1,5 @@
 /** Registry of playable games. Adding a game = one folder plus one `registerGame` line in `games/index.ts` (spec 4.1). */
+import { DEFAULT_LEVEL_RULES, type LevelRules } from './difficulty'
 import { catalogueEntry, isGameId, type GameId } from './ids'
 import type { AnyGameDefinition } from './types'
 
@@ -15,6 +16,8 @@ export function registerGame(definition: AnyGameDefinition): void {
   registry.set(definition.id, definition)
 }
 
+/** The thresholds a game levels by: its own, or the default 70 up and 40 down. */
+export const levelRulesFor = (id: GameId): LevelRules => registry.get(id)?.levelRules ?? DEFAULT_LEVEL_RULES
 export const getGame = (id: GameId): AnyGameDefinition | undefined => registry.get(id)
 export const isPlayable = (id: GameId): boolean => registry.has(id)
 export const registeredIds = (): GameId[] => [...registry.keys()]

@@ -1,7 +1,7 @@
 /** Game definition contracts (spec 4.1 and 17.3). The two kinds share the shell, difficulty, scoring, registry and hub. */
 import type { ComponentType } from 'react'
 import type { Category, GameId } from './ids'
-import type { ParamTable } from './difficulty'
+import type { LevelRules, ParamTable } from './difficulty'
 import type { Rng } from './rng'
 import type { MarketHost } from '../market/host'
 import type { ReviewRow, TrialEngine, TrialLogEntry } from './trial'
@@ -48,6 +48,8 @@ interface DefinitionBase {
   /** Parameter tables from `config/difficulty*.json`, interpolated by `difficulty.ts`. */
   paramTable: ParamTable
   View: ComponentType<GameViewProps>
+  /** Level-up and level-down thresholds when the default 70 / 40 does not suit the game's scale (spec 6.2 "overridable per game in config"). */
+  levelRules?: LevelRules
   /** Games whose difficulty is movement: the parameters to use when "Reduce motion" is on (slower, scoring unchanged). */
   reducedMotionParams?(params: Record<string, number>): Record<string, number>
 }

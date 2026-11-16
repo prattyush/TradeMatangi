@@ -108,6 +108,8 @@ export const TREND_PANELS: readonly TrendPanel[] = [
   { id: 'hotkey_rt', title: 'Hotkey reaction time', gameId: 'hotkey_drill', key: 'median_rt_ms', unit: 'ms', better: 'lower', note: 'Median time to complete a prompt, per step.' },
   { id: 'hotkey_errors', title: 'Fat-finger rate', gameId: 'hotkey_drill', key: 'error_rate', unit: '%', better: 'lower', note: 'Wrong keys, wrong lots and missed prompts as a share of all answers.' },
   { id: 'risk_time', title: 'Risk answer time', gameId: 'risk_calculator', key: 'median_ms', unit: 'ms', better: 'lower', note: 'Median time to answer a risk question.' },
+  { id: 'sniper_efficiency', title: 'Entry efficiency', gameId: 'entry_sniper', key: 'mean_efficiency', unit: '%', better: 'higher', note: 'How close your entries came to the best one in the window.' },
+  { id: 'exit_capture', title: 'Exit capture ratio', gameId: 'exit_discipline', key: 'capture_ratio', unit: '%', better: 'higher', note: 'The share of the best available result that you kept.' },
   { id: 'persev', title: 'Perseveration rate', gameId: 'card_sorter', key: 'persev_error_pct', unit: '%', better: 'lower', note: 'Errors that keep using the rule that just stopped working.' },
 ]
 

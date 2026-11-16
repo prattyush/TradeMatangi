@@ -268,7 +268,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | G1 | Done (2026-11-16), see "G1 as built" below |
 | G3b | Done (2026-11-16), see "G3b as built" below |
 | G4a | Done (2026-11-16), see "G4a as built" below (Risk Calculator and Hotkey Drill) |
-| G4b, G5–G7 | Planned, order above (G4b = Entry Sniper and Exit Discipline) |
+| G4b | Done (2026-11-16), see "G4b as built" below (Entry Sniper and Exit Discipline) |
+| G5–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -781,3 +782,16 @@ Two market-pool games that need no market data: **Risk Calculator** (Math) and *
 - **Warm-up:** both games are now offered (`hotkey_drill` is the physical step and `risk_calculator` the math step when the pool allows market games). Hotkey Drill takes 3 to 4 minutes and Risk Calculator 3 to 5, so a full warm-up is longer than the 8 to 10 minutes of the brain-only routine.
 - **Checked in a real browser (throwaway harness, in-memory server):** the Market tab lists three playable games; a Risk Calculator practice session (prompts, a wrong answer's working line, the Enter flow); a Hotkey Drill session driven by a bot that reads each prompt and types it (level 10, three blocks), with deliberate wrong keys counted as errors. **Not run:** the Windows window, the website overlay, sound, a real keyboard's key repeat and layouts.
 - **Docs updated:** spec 5.4 and 5.5, this plan, `phase25-manual-acceptance.md` (section P), `architecture-frontend.md`, `CLAUDE.md` row.
+
+## G4b as built (2026-11-16)
+
+The two data-driven trade games, **Entry Sniper** (Attention) and **Exit Discipline** (Reasoning), on one shared trade simulation. Branch `feat/games-g4b`, PR into `dev`. No Rust, backend or trading change.
+
+- **New code:** `shared/games/market/engine/tradeSim.ts` (`simulateTrade`, `openTrade` stepper with trail, lock, exit and expire, cost in R), `market/games/entry_sniper/` and `market/games/exit_discipline/` (engine, View, index, tests), parameters and constants in `config/difficulty.market.ts`, `market/engine/fixture.long.json` (two real 765 second NIFTY windows for tests).
+- **Existing files changed (inside `shared/games/`):** `core/types.ts` and `core/registry.ts` (optional per-game `levelRules` and `levelRulesFor`), `data/sync.ts` (uses it), `core/dashboard.ts` (two trend panels), `ui/games.css`, `games/index.ts`.
+- **Spec corrections:** **C34** Entry Sniper (stop scaled to the horizon, direction chosen from the window to set the trap share, window speed); **C35** Exit Discipline (stop scale, limits on the player's plan, speeds 3 times, direction chosen from the window, trail and lock rules); **C36** per-game level thresholds (Exit Discipline levels at 50 and 20). Details and the calibration numbers in spec 5.2 and 5.3 "As built (G4b)".
+- **Calibrated on 300 real windows** (NIFTY and Sensex, 900 second windows from the games index): see C34 and C35 for the numbers. The realized trap share and class mix are above or below the spec targets where the data does not offer the wanted kind; three candidate windows per round is the cap.
+- **Warm-up:** both are offered when the pool allows market games (Exit Discipline rounds are about a minute each).
+- **Checked in a real browser (throwaway harness, the real backend and data cache, progress stubbed):** Entry Sniper practice at level 15 (14 rounds, enter and pass with the keys, result lines with the best entry and the trap message, one session result); Exit Discipline at level 8 (blank plan fields, a bad plan refused with a sentence, the plan accepted, trail to cost and exit with the keys, regret panel text, six rounds to a result). **Not run:** the Windows window, the website overlay, sound, Reduce motion in play.
+- **Tests:** desktop vitest 1476 (47 new: trade simulation 14, Entry Sniper 13, Exit Discipline 20); `tsc` clean for desktop and website.
+- **Docs updated:** spec 5.2, 5.3 and 14, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section Q), this plan, `CLAUDE.md` row.

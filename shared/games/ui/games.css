@@ -85,3 +85,8 @@
 .games-hotkey-panel kbd { border: 1px solid var(--g-line); border-radius: 4px; padding: 0 5px; margin-left: 4px; color: var(--g-dim); }
 .games-hotkey-lots { display: inline-flex; gap: 6px; align-items: center; }
 .games-hotkey-message { min-height: 1.4em; color: #f85149; margin: 0; }
+.games-sniper-setup { margin: 0; font-size: 1.05em; }
+.games-exit-plan { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; max-width: 720px; }
+.games-exit-plan label { margin: 0; }
+.games-exit-plan input { width: 100px; }
+.games-exit-plan p { flex-basis: 100%; margin: 0; }

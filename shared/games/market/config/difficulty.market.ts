@@ -94,3 +94,62 @@ export const RISK_CALCULATOR = {
   /** A correct answer scores 0.7 + 0.3 x speed. */
   baseCredit: 0.7,
 } as const
+
+/** Entry Sniper (spec 5.2, 15). The first parameters are the spec's anchors; the others are filled in where it was silent (C34). */
+export const ENTRY_SNIPER_PARAMS: ParamTable = {
+  rounds: a(8, 10, 12, 14, 16),
+  /** Seconds of market time the player may choose an entry in. */
+  windowSec: a(45, 35, 25, 15, 10),
+  /** How fast the window plays: market seconds per real second (so a 45 second window is 15 real seconds at level 1). */
+  windowSpeed: a(3, 2.5, 2, 1.5, 1, false),
+  stopMult: a(1.5, 1.3, 1.1, 0.9, 0.8, false),
+  rr: a(1, 1.3, 1.6, 1.8, 2, false),
+  /** Share of rounds where the stated direction never offers a profitable entry (passing is right). */
+  trapShare: a(0, 0.1, 0.2, 0.25, 0.3, false),
+  /** Seconds a trade may run after the entry. */
+  horizonSec: a(180, 150, 120, 90, 60),
+  slipMult: a(0, 0.4, 0.8, 1.2, 1.5, false),
+  /** After the entry the replay runs this many times faster than real time. */
+  replaySpeed: a(8, 8, 8, 8, 8, false),
+}
+
+export const ENTRY_SNIPER = {
+  deltaProxy: 0.5,
+  /** Credit for passing a trap round. */
+  passCredit: 0.5,
+  /** A round is a trap when the best entry in the window is worth less than this many R. */
+  trapBelowR: 0.25,
+  /** `roundScore = clamp(R_user / max(R_opt, floor))`. */
+  optFloorR: 0.5,
+  /** An entry in the first seconds of the window is "chasing". */
+  earlySec: 2,
+  contextSec: 60,
+  minCoverage: 0.8,
+} as const
+
+/** Exit Discipline (spec 5.3, 15). Speeds are 3 times the spec's 1x to 4x (C35): a 3 to 10 minute trade in real time is too slow to practise. */
+export const EXIT_DISCIPLINE_PARAMS: ParamTable = {
+  rounds: a(5, 6, 6, 7, 8),
+  horizonSec: a(180, 240, 300, 420, 600),
+  speed: a(3, 4.5, 6, 9, 12, false),
+  stopMult: a(1.5, 1.3, 1.1, 0.9, 0.8, false),
+  slipMult: a(0, 0.4, 0.8, 1.2, 1.5, false),
+  /** 1 while the plan fields are filled in for the player (levels 1 to 5), 0 from level 6. */
+  prefilled: steps([1, 1], [6, 0]),
+}
+
+export const EXIT_DISCIPLINE = {
+  deltaProxy: 0.5,
+  /** The suggested target is this many R. */
+  rr: 2,
+  /** LOCK moves the stop to keep this share of the open profit. */
+  lockFraction: 0.5,
+  /** Ending worse than the plan after overriding it costs this much of the round score. */
+  overridePenalty: 0.2,
+  /** The stop the player may enter, as a multiple of the suggested one (so a very wide stop cannot make every round look captured), and the target as a multiple of their stop. */
+  stopMin: 0.5, stopMax: 1.5, targetMin: 0.5, targetMax: 6,
+  /** Round mix (spec): give-back, straight to target, straight to stop. */
+  mix: { giveback: 0.4, target: 0.3, stop: 0.3 },
+  contextSec: 60,
+  minCoverage: 0.8,
+} as const

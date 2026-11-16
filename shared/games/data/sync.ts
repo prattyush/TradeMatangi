@@ -1,4 +1,5 @@
 /** Send queued sessions to the server, re-applying each on top of the latest state when a revision moved (spec 8.4). */
+import { levelRulesFor } from '../core/registry'
 import { buildSessionPut, alreadyApplied, type ProgressState } from '../core/progress'
 import { isConflict, isRejected, type GamesClient } from '../core/client'
 import type { Outbox } from './outbox'
@@ -28,7 +29,7 @@ export async function flushOutbox(outbox: Outbox, client: GamesClient): Promise<
         const state = await client.getState()
         report.state = state
         if (alreadyApplied(state, entry.session)) { await outbox.remove(entry.id); report.dropped += 1; settled = true; break }
-        await client.putState(buildSessionPut(state, entry.session))
+        await client.putState(buildSessionPut(state, entry.session, levelRulesFor(entry.session.gameId)))
         await outbox.remove(entry.id)
         report.sent += 1
         settled = true
