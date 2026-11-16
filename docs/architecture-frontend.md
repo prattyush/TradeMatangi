@@ -207,6 +207,16 @@ Three tools under the desktop **Tools** view (`windowsapp/src/tools/ToolsView.ts
 - **Differences from the website:** the saved flow is found by day, instrument type and right; Search shows the day's ATM contract (from the 09:15 price) for options flows; transition labels are short and numbered because KLine cuts marker text; no sharing actions (the website pages have none).
 - Plan, as-built notes and acceptance: `docs/spec-phase25-implementation-plan.md`, `docs/phase25-manual-acceptance.md`.
 
+## Patterns Deep Dive (Phase 26; shared module, desktop and website)
+
+`shared/deepdive/` is the host-agnostic part of the Deep Dive (one strategy studied across marked days, with **tags** marked valid / not valid and frequency percentages). Nothing in it knows a chart library or a transport.
+
+- `types.ts`: the shapes of `/api/deep-dive` and `DeepDiveApi`, the injectable client every screen takes (like `BehaviorApi`).
+- `client.ts`: `createDeepDiveClient(request)` builds every call from one list of `deep-dive/...` paths. The website passes a fetch over `${BACKEND_URL}/api/` (`deepDiveApi` in `frontend/src/services/api.ts`, errors read from `detail`); the desktop reuses its patterns transport (`createPatternsClient(...).deepDive`, which the Rust and TS allowlists already cover). Because the paths are shared, a test asserts that `validPatternsPath` accepts every path the client builds.
+- `model.ts`: pure logic: `orderSetups` (date ascending, Buy before Sell), calendar `cycleDay` / `diffDayMarks`, tag states (`tagState`, `toggleTag`, `restNotValid`), gaps (`gaps`, `isComplete`, `nextGapIndex`, `unmarkedDaysForTag`), `validateTagName`, position and date labels, and the percentage wording (`formatPct`, `tagLine` "Double top: 70% (n=14)", `thinNote`, `successLine`, `findStats`, `defaultSideForTrade`). An archived tag never counts as missing.
+- Tests: `windowsapp/src/deepDive.test.ts` (the desktop vitest is the only runner that reaches `shared/`).
+- Screens (desktop Pattern Library tab, website mode) and the label-form panel come in later sprints; see `docs/spec-phase26-implementation-plan.md`.
+
 ## Games (Phase 25; desktop window, website and webapp)
 
 One shared codebase, `shared/games/`, used by the separate desktop **Games window**, the website and the webapp. Everything is client side; the only server contact is `GET`/`PUT /api/desktop/v1/games/state` (progress) and, for the market games only, the cache-only `GET availability` and `GET window` (`docs/architecture-backend.md`). Games never touch order, session, broker, stream, guardrail, strategy or analysis code (import-boundary test, below).

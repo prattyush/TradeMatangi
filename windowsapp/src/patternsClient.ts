@@ -1,5 +1,6 @@
 import type { PatternAnnotation, PatternChart, PatternChartMeta, TopPatterns } from '../../shared/analysis/api'
 import type { PatternsRequest } from './patternsApi'
+import { createDeepDiveClient } from '../../shared/deepdive/client'
 
 const query = (values: Record<string, unknown>) => {
   const q = new URLSearchParams(Object.entries(values).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, String(v)])).toString()
@@ -39,6 +40,8 @@ export interface SaveChartBody {
 /** Pattern Library calls on the desktop transport; same shapes as the website's `services/api.ts` methods. */
 export function createPatternsClient(request: PatternsRequest) {
   return {
+    /** Deep Dive (Phase 26) over the same transport and allowlist. */
+    deepDive: createDeepDiveClient((path, method, body) => request(path, method, body)),
     listStrategies: () => request<{ strategies: string[] }>('pattern/strategies', 'GET'),
     listCategories: () => request<{ categories: string[] }>('pattern/categories', 'GET'),
     addStrategy: (name: string) => request<{ strategies: string[] }>('pattern/strategies', 'POST', { name }),

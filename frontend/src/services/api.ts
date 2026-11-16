@@ -9,6 +9,7 @@ import type { PositionSnapshot } from './positionAccounting'
 import { measureRequest } from './performanceDiagnostics'
 import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
+import { createDeepDiveClient } from '../../../shared/deepdive/client'
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); this.name = 'ApiError' }
@@ -27,6 +28,23 @@ async function behaviorRequest<T>(path: string, method: 'GET' | 'POST', body?: u
   }
   return res.json()
 }
+
+/** Deep Dive (Phase 26): same `deep-dive/...` paths as the desktop transport; validation text is in `detail`. */
+async function deepDiveRequest<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
+  const res = await fetch(`${BACKEND_URL}/api/${path}`, {
+    method,
+    headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ..._authHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null))?.detail
+    throw new Error(typeof detail === 'string' ? detail : `Deep dive request failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+/** The Deep Dive client for the website and webapp. */
+export const deepDiveApi = createDeepDiveClient(deepDiveRequest)
 
 /** Saved YouTube links of one of the user's own sessions. A 404 (not the owner, or no links yet) is thrown with "404" in the message. */
 export async function getVideoLinks(sessionId: string): Promise<import('../../../shared/analysis/videoLinks').SavedLink[]> {
