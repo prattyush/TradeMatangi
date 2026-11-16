@@ -45,6 +45,8 @@ interface DefinitionBase {
   /** Parameter tables from `config/difficulty*.json`, interpolated by `difficulty.ts`. */
   paramTable: ParamTable
   View: ComponentType<GameViewProps>
+  /** Games whose difficulty is movement: the parameters to use when "Reduce motion" is on (slower, scoring unchanged). */
+  reducedMotionParams?(params: Record<string, number>): Record<string, number>
 }
 
 /** Market games: rounds built from cached market data (Track G). */

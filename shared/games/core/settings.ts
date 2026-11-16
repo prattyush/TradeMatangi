@@ -1,5 +1,7 @@
 /** Games settings, saved in the profile record (spec 7.4, 17.8). Unknown or out-of-range values fall back to defaults. */
 export type WarmupPool = 'both' | 'market' | 'brain'
+/** `safe` = the Okabe-Ito set (default), `contrast` = the same hues, lighter and with thicker outlines. */
+export type PaletteName = 'safe' | 'contrast'
 
 export interface GamesSettings {
   sound: boolean
@@ -7,11 +9,12 @@ export interface GamesSettings {
   /** Font scale, percent, 80..150. */
   zoom: number
   warmupPool: WarmupPool
+  palette: PaletteName
   /** Halves resident data in market games (G3b onward). */
   lowMemory: boolean
 }
 
-export const DEFAULT_SETTINGS: GamesSettings = { sound: false, reduceMotion: false, zoom: 100, warmupPool: 'both', lowMemory: false }
+export const DEFAULT_SETTINGS: GamesSettings = { sound: false, reduceMotion: false, zoom: 100, warmupPool: 'both', palette: 'safe', lowMemory: false }
 
 export function normalizeSettings(raw: unknown): GamesSettings {
   const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
@@ -22,6 +25,7 @@ export function normalizeSettings(raw: unknown): GamesSettings {
     reduceMotion: input.reduceMotion === true,
     zoom,
     warmupPool: pool,
+    palette: input.palette === 'contrast' ? 'contrast' : 'safe',
     lowMemory: input.lowMemory === true,
   }
 }

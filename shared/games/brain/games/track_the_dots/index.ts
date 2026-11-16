@@ -13,6 +13,7 @@ const trackTheDots: TrialGameDefinition<TdTrial, TdResponse> = {
     'Eight rounds. Picking at random scores nothing.',
   ],
   paramTable: TRACK_DOTS_PARAMS,
+  reducedMotionParams: params => ({ ...params, speed: Math.round(params.speed * 0.7) }),
   session: { kind: 'rounds', count: () => ROUND_COUNTS.track_the_dots },
   createEngine: createTrackDotsEngine,
   summarise: summariseTrackDots,

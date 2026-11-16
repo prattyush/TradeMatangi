@@ -1,7 +1,7 @@
 /** Minimal promise wrapper over IndexedDB. One database for Games, one object store per concern. */
 export const DB_NAME = 'tradematangi-games'
-export const DB_VERSION = 1
-export const STORES = { outbox: 'outbox' } as const
+export const DB_VERSION = 2
+export const STORES = { outbox: 'outbox', sessions: 'sessions' } as const
 
 export function openGamesDb(factory: IDBFactory | undefined = typeof indexedDB === 'undefined' ? undefined : indexedDB): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -10,6 +10,7 @@ export function openGamesDb(factory: IDBFactory | undefined = typeof indexedDB =
     open.onupgradeneeded = () => {
       const db = open.result
       if (!db.objectStoreNames.contains(STORES.outbox)) db.createObjectStore(STORES.outbox, { keyPath: 'id' })
+      if (!db.objectStoreNames.contains(STORES.sessions)) db.createObjectStore(STORES.sessions, { keyPath: 'id' })
     }
     open.onsuccess = () => resolve(open.result)
     open.onerror = () => reject(open.error ?? new Error('IndexedDB open failed'))

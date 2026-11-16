@@ -6,8 +6,9 @@ import { FOCUS_LOSS_LIMIT_MS, initialShell, shellReducer, shouldRecord } from '.
 import { isTimedBlock, type AnyGameDefinition, type SessionMode, type SessionSummary } from '../core/types'
 import { localDate } from '../core/uid'
 import { TrialReview } from './TrialReview'
+import { playTone } from './sound'
 
-export interface ShellDone { mode: SessionMode; level: number; summary: SessionSummary; minutes: number }
+export interface ShellDone { mode: SessionMode; level: number; summary: SessionSummary; minutes: number; seed: number }
 interface Props {
   definition: AnyGameDefinition
   /** The player's current level (Progress mode plays at it). */
@@ -17,19 +18,39 @@ interface Props {
   /** Called once with a finished session; nothing is called for a quit or a void. */
   onDone: (done: ShellDone) => void
   onExit: () => void
+  /** Slower movement in the two games that depend on it (Settings, spec 17.3). */
+  reduceMotion?: boolean
+  /** Tones on the countdown and the result (Settings, off by default). */
+  sound?: boolean
+  /** Review: play exactly the session that was played (same seed, same level) in Practice mode. */
+  replay?: { seed: number; level: number }
+  /** Daily Warm-up: a line above the game ("Step 2 of 5") and a way to leave the step without finishing it. */
+  stepLabel?: string
+  onSkip?: () => void
 }
 
 /** instructions -> Practice/Progress -> 3-2-1 -> game View -> result. Keys are handled on this element only. */
-export function GameShell({ definition, level, userId, sessionNo, onDone, onExit }: Props) {
+export function GameShell({ definition, level, userId, sessionNo, onDone, onExit, reduceMotion = false, sound = false, replay, stepLabel, onSkip }: Props) {
   const timed = isTimedBlock(definition)
   const [state, dispatch] = useReducer(shellReducer, undefined, () => initialShell(timed, level))
   const root = useRef<HTMLDivElement>(null)
   const startedAt = useRef(0)
   const recorded = useRef(false)
   const entry = catalogueEntry(definition.id)
-  const [practiceLevel, setPracticeLevel] = useState(level)
+  const [practiceLevel, setPracticeLevel] = useState(replay?.level ?? level)
 
+  const seed = useMemo(() => replay?.seed ?? sessionSeed(userId, localDate(), definition.id, sessionNo), [replay, userId, definition.id, sessionNo])
+  const params = useMemo(() => {
+    const base = paramsAt(definition.paramTable, state.level)
+    return reduceMotion && definition.reducedMotionParams ? definition.reducedMotionParams(base) : base
+  }, [definition, state.level, reduceMotion])
   useEffect(() => { root.current?.focus() }, [state.phase])
+  useEffect(() => {
+    if (!sound) return
+    if (state.phase === 'countdown') playTone('tick')
+    else if (state.phase === 'playing' && state.countdown === 0) playTone('go')
+  }, [sound, state.phase, state.countdown])
+  useEffect(() => { if (sound && state.phase === 'result' && state.summary) playTone(state.summary.score >= 50 ? 'good' : 'low') }, [sound, state.phase, state.summary])
 
   useEffect(() => {
     if (state.phase !== 'countdown' || state.quitFrom) return
@@ -62,11 +83,9 @@ export function GameShell({ definition, level, userId, sessionNo, onDone, onExit
   useEffect(() => {
     if (!shouldRecord(state) || recorded.current || !state.summary) return
     recorded.current = true
-    onDone({ mode: state.mode, level: state.level, summary: state.summary, minutes: Math.max(0.1, Math.round(((performance.now() - startedAt.current) / 60000) * 10) / 10) })
-  }, [state, onDone])
+    onDone({ mode: state.mode, level: state.level, summary: state.summary, minutes: Math.max(0.1, Math.round(((performance.now() - startedAt.current) / 60000) * 10) / 10), seed })
+  }, [state, onDone, seed])
 
-  const params = useMemo(() => paramsAt(definition.paramTable, state.level), [definition, state.level])
-  const seed = useMemo(() => sessionSeed(userId, localDate(), definition.id, sessionNo), [userId, definition.id, sessionNo])
   const rng = useMemo(() => createRng(seed), [seed])
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -80,20 +99,34 @@ export function GameShell({ definition, level, userId, sessionNo, onDone, onExit
   const View = definition.View
   return (
     <div ref={root} className="games-shell" tabIndex={0} onKeyDown={onKeyDown} data-phase={state.phase}>
+      {stepLabel && <p className="games-step" role="status">{stepLabel}{onSkip && state.phase !== 'playing' && state.phase !== 'countdown' && <> <button onClick={onSkip}>Skip this step</button></>}</p>}
       <header className="games-shell-head"><strong>{definition.title}</strong><span>{entry.category}{timed ? ' · timed' : ''}</span></header>
       {state.phase === 'instructions' && (
         <section>
           <p>{definition.blurb}</p>
           <ul>{definition.instructions.map(line => <li key={line}>{line}</li>)}</ul>
-          <p>Your level: {level}</p>
-          <div className="games-row">
-            <button onClick={() => dispatch({ type: 'start', mode: 'progress', level })}>Progress (level {level})</button>
-            <button onClick={onExit}>Back</button>
-          </div>
-          <div className="games-row">
-            <label>Practice at level <input type="number" min={1} max={20} value={practiceLevel} onChange={event => setPracticeLevel(Math.min(20, Math.max(1, Math.round(Number(event.target.value)) || 1)))} style={{ width: 56 }} /></label>
-            <button onClick={() => dispatch({ type: 'start', mode: 'practice', level: practiceLevel })}>Practice</button>
-          </div>
+          {reduceMotion && definition.reducedMotionParams && <p className="games-meta">Reduce motion is on: things move more slowly in this game. Your score is calculated the same way.</p>}
+          {replay ? (
+            <>
+              <p>Replaying a past session: the same puzzles, at level {replay.level}. Nothing is saved.</p>
+              <div className="games-row">
+                <button onClick={() => dispatch({ type: 'start', mode: 'practice', level: replay.level })}>Replay</button>
+                <button onClick={onExit}>Back</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p>Your level: {level}</p>
+              <div className="games-row">
+                <button onClick={() => dispatch({ type: 'start', mode: 'progress', level })}>Progress (level {level})</button>
+                <button onClick={onExit}>Back</button>
+              </div>
+              <div className="games-row">
+                <label htmlFor="games-practice-level">Practice at level <input id="games-practice-level" type="number" min={1} max={20} value={practiceLevel} onChange={event => setPracticeLevel(Math.min(20, Math.max(1, Math.round(Number(event.target.value)) || 1)))} style={{ width: 56 }} /></label>
+                <button onClick={() => dispatch({ type: 'start', mode: 'practice', level: practiceLevel })}>Practice</button>
+              </div>
+            </>
+          )}
         </section>
       )}
       {state.phase === 'countdown' && <div className="games-countdown" role="status">{state.countdown}</div>}
