@@ -162,5 +162,14 @@ No backend or Rust change; a frontend rebuild only. Both are in the Market tab (
 5. **Warm-up** can now include them (with the pool set to Brain and market): check the step opens and finishes.
 6. Tell me whether the time limits and the number ugliness feel right, whether three one-minute blocks is too long, and whether any key on your keyboard layout does not work.
 
+## Q. Entry Sniper and Exit Discipline (G4b): Windows build and the website
+Needs the backend with the Games index built (section N). Both are in the Market tab (five games are playable now). No Rust or backend change.
+1. **Entry Sniper:** Play, Progress. A line says LONG or SHORT with a stop and a target in points, and the chart forms second by second (a 45 second window plays in about 15 real seconds at level 1). Press **Enter** to take the entry at the current price, or **P** to pass; letting the window run out is a pass. After an entry the trade runs fast to the stop, the target or the time limit. The result lines say your R, the best entry in the window (marked on the chart), whether you were chasing (an entry in the first two seconds) and whether the round was a trap. The market, day and time are named. **Space** goes on.
+2. **Exit Discipline:** Play. A trade is on in the direction shown. Level 1 to 5 fill in a suggested stop and target; from level 6 they are blank and you type them (the stop must be half to one and a half times the suggested one, the target half to six times your stop: a wrong value is refused with a sentence). Enter or the button starts the replay. **E** exits, **T** moves the stop to your entry (only while in profit), **L** locks half of the open profit; the stop and the target are enforced for you. The result panel gives your R, the plan's R, the best the window offered, and whether overriding made it worse.
+3. **Scoring:** Entry Sniper out of 100 with 50 as break-even (passing traps scores half); Exit Discipline is the share of the best available result you captured, and it levels at 50 up and 20 down, not the usual 70 and 40.
+4. **Dashboard:** trend lines for entry efficiency and exit capture appear after a few Progress sessions.
+5. **Failures:** stop the backend and press Play: a message says the server could not be reached and nothing is recorded.
+6. Tell me whether the window length, the stop sizes and the replay speeds feel right, whether three trap rounds in ten is what you want, and how the Exit Discipline plan limits feel.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.
