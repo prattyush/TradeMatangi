@@ -3,6 +3,7 @@ import type { ComponentType } from 'react'
 import type { Category, GameId } from './ids'
 import type { ParamTable } from './difficulty'
 import type { Rng } from './rng'
+import type { MarketHost } from '../market/host'
 import type { ReviewRow, TrialEngine, TrialLogEntry } from './trial'
 
 export type SessionMode = 'progress' | 'practice'
@@ -29,6 +30,8 @@ export interface GameViewProps {
   seed: number
   /** True while a dialog (quit?) is open over the game: a timed block treats it like losing focus. */
   suspended: boolean
+  /** Market games only: cached market data and the player's cost settings. Brain games get nothing here. */
+  market?: MarketHost
   /** The game calls this once with its result. */
   onFinish: (summary: SessionSummary) => void
   /** The shell owns Esc; a game that must stop (data failed to load) calls this instead. */

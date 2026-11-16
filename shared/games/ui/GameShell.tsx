@@ -5,6 +5,7 @@ import { createRng, sessionSeed } from '../core/rng'
 import { FOCUS_LOSS_LIMIT_MS, initialShell, shellReducer, shouldRecord } from '../core/shell'
 import { isTimedBlock, type AnyGameDefinition, type SessionMode, type SessionSummary } from '../core/types'
 import { localDate } from '../core/uid'
+import type { MarketHost } from '../market/host'
 import { TrialReview } from './TrialReview'
 import { playTone } from './sound'
 
@@ -27,10 +28,12 @@ interface Props {
   /** Daily Warm-up: a line above the game ("Step 2 of 5") and a way to leave the step without finishing it. */
   stepLabel?: string
   onSkip?: () => void
+  /** Market games: data access and cost settings (G3b). */
+  market?: MarketHost
 }
 
 /** instructions -> Practice/Progress -> 3-2-1 -> game View -> result. Keys are handled on this element only. */
-export function GameShell({ definition, level, userId, sessionNo, onDone, onExit, reduceMotion = false, sound = false, replay, stepLabel, onSkip }: Props) {
+export function GameShell({ definition, level, userId, sessionNo, onDone, onExit, reduceMotion = false, sound = false, replay, stepLabel, onSkip, market }: Props) {
   const timed = isTimedBlock(definition)
   const [state, dispatch] = useReducer(shellReducer, undefined, () => initialShell(timed, level))
   const root = useRef<HTMLDivElement>(null)
@@ -131,7 +134,7 @@ export function GameShell({ definition, level, userId, sessionNo, onDone, onExit
       )}
       {state.phase === 'countdown' && <div className="games-countdown" role="status">{state.countdown}</div>}
       {(state.phase === 'playing' || state.phase === 'paused') && (
-        <View level={state.level} mode={state.mode} params={params} rng={rng} seed={seed} suspended={state.quitFrom !== null}
+        <View level={state.level} mode={state.mode} params={params} rng={rng} seed={seed} market={market} suspended={state.quitFrom !== null}
           onFinish={summary => dispatch({ type: 'finish', summary })} onAbort={reason => dispatch({ type: 'void', reason })} />
       )}
       {state.phase === 'result' && state.summary && (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CATEGORY_LABEL, CATEGORIES, gamesIn, type GameId, type Pool } from '../core/ids'
 import type { GamesRequest } from '../core/client'
 import { getGame, isPlayable } from '../core/registry'
@@ -7,6 +7,10 @@ import type { LocalSession } from '../core/dashboard'
 import { newId, localDate } from '../core/uid'
 import type { SessionResult } from '../core/progress'
 import { applyPalette } from '../brain/ui/palette'
+import { normalizeCost } from '../market/engine/costModel'
+import { createMarketData } from '../market/data/marketData'
+import { createWindowCache, DEFAULT_CACHE_BYTES, LOW_MEMORY_CACHE_BYTES } from '../market/data/windowCache'
+import type { MarketHost } from '../market/host'
 import { GameShell, type ShellDone } from './GameShell'
 import { useProgress } from './useProgress'
 import { useSessionLog } from './useSessionLog'
@@ -43,6 +47,12 @@ export default function GamesApp({ request, sessionKind = 'none', onClose }: Gam
 
   useEffect(() => { applyPalette(settings.palette) }, [settings.palette])
 
+  // One market-data object per launch (one availability fetch, one throttle, one cache); the cap follows the low-memory setting.
+  const marketData = useMemo(() => createMarketData({ request, cache: createWindowCache(settings.lowMemory ? LOW_MEMORY_CACHE_BYTES : DEFAULT_CACHE_BYTES) }), [request, settings.lowMemory])
+  const costKey = `${settings.slippagePtsPerSide}|${settings.roundTripCostPerLotRs}|${settings.defaultLots}`
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const market = useMemo<MarketHost>(() => ({ data: marketData, cost: normalizeCost(settings), userId, today }), [marketData, costKey, userId, today])
+
   const finished = useCallback((id: GameId, done: ShellDone, extra: { warmupStep?: number; replay?: boolean }) => {
     sessionNo.current += 1
     if (extra.replay) return
@@ -60,7 +70,7 @@ export default function GamesApp({ request, sessionKind = 'none', onClose }: Gam
     if (!definition) return <p role="alert">This game is not available.</p>
     return (
       <GameShell key={`${id}-${options.replay?.seed ?? 'new'}`} definition={definition} level={progress.state.games[id]?.level ?? 1} userId={userId} sessionNo={sessionNo.current}
-        reduceMotion={settings.reduceMotion} sound={settings.sound} replay={options.replay} stepLabel={options.stepLabel} onSkip={options.onSkip}
+        reduceMotion={settings.reduceMotion} sound={settings.sound} market={market} replay={options.replay} stepLabel={options.stepLabel} onSkip={options.onSkip}
         onDone={done => { finished(id, done, { warmupStep: options.warmupStep, replay: options.replay !== undefined }); options.onFinished?.() }}
         onExit={options.onExit} />
     )

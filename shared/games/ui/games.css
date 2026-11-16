@@ -61,3 +61,17 @@
 .games-review-table { max-height: 50vh; overflow: auto; }
 @media (max-width: 720px) { .games-review-layout { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .games-root * { animation: none !important; transition: none !important; } }
+
+/* Market games (G3b) */
+.games-market { display: flex; flex-direction: column; gap: 8px; outline: none; max-width: 740px; }
+.games-chart { display: block; background: #0d1117; border: 1px solid var(--g-line); border-radius: 6px; }
+.games-chart-placeholder { height: 300px; max-width: 720px; border: 1px dashed var(--g-line); border-radius: 6px; }
+.games-countdown-bar { height: 6px; background: var(--g-panel); border-radius: 3px; overflow: hidden; visibility: hidden; max-width: 720px; }
+.games-countdown-bar[data-active="true"] { visibility: visible; }
+.games-countdown-bar > div { height: 100%; background: var(--g-accent); transform-origin: left center; }
+.games-market-pad { display: flex; gap: 8px; max-width: 720px; }
+.games-market-pad button { flex: 1; padding: 10px 12px; font-size: 1.05em; }
+.games-market-pad kbd { border: 1px solid var(--g-line); border-radius: 4px; padding: 0 5px; margin-left: 4px; color: var(--g-dim); }
+.games-market-flash { background: var(--g-panel); border: 1px solid var(--g-line); border-radius: 6px; padding: 6px 10px; max-width: 720px; }
+.games-market-flash p { margin: 3px 0; }
+.games-hint { color: var(--g-dim); font-size: .85em; margin: 0; }

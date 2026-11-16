@@ -8,7 +8,7 @@ describe('registered brain games', () => {
   // Games scored on reaction time carry the RT_fast / RT_slow scale; recall and tracking games do not need one.
   const REACTION_TIME = ['quick_match', 'colour_clash', 'green_light', 'n_back_stream', 'flanker_flock', 'needle_finder', 'rule_switch', 'flip_map', 'number_sprint', 'equation_drop', 'make_target', 'pattern_matrix', 'number_series', 'code_breaker', 'anagram_dash', 'letter_grid', 'word_ladder'] as const
   it('the Speed, Memory, Attention, Flexibility, Math, Reasoning and Word games are registered and playable; the rest stay "Coming soon"', () => {
-    expect(registeredIds().sort()).toEqual([...PLAYABLE].sort())
+    expect(registeredIds().filter(id => gamesIn('brain').some(entry => entry.id === id)).sort()).toEqual([...PLAYABLE].sort())
     for (const entry of gamesIn('brain')) expect(isPlayable(entry.id)).toBe((PLAYABLE as readonly string[]).includes(entry.id))
   })
   it('each is a trial game with instructions and a View; timed blocks are the reaction-time games and n-back', () => {

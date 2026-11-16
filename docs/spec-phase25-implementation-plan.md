@@ -266,7 +266,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | B5 | Done (2026-11-16), see "B5 as built" below |
 | B6 | Done (2026-11-16), see "B6 as built" below |
 | G1 | Done (2026-11-16), see "G1 as built" below |
-| G3b, G4–G7 | Planned, order above |
+| G3b | Done (2026-11-16), see "G3b as built" below |
+| G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -756,3 +757,15 @@ Backend market data for the market games. Branch `feat/games-g1`, PR into `dev`.
 - **Carry-forward to G3b:** the desktop's `reqwest` has no `gzip` feature, so the desktop gets plain JSON (34 KB for the longest window); add the feature in the Rust change G3b needs anyway. The recent days in the cache have few option contracts (NIFTY 2026-11-09 lists one strike): G3b's window picker must read `availability` and handle a day without options. Run `python scripts/build-games-index.py` on every machine that serves the Games (the index file is not in git) and after each data refresh.
 - **Shared files touched:** `backend/app/config.py` (two constants) and `backend/app/routers/desktop_games.py`; no existing route, loader or trading module changed. No trading logic changed.
 - **Docs updated:** spec 8.2 and 14, `architecture-backend.md`, `backend-technical-constraints.md`, `live-history-providers.md`, `phase25-manual-acceptance.md` (section N), this plan, `CLAUDE.md` row.
+
+## G3b as built (2026-11-16)
+
+Market foundation and the first market game, Tick Reader. Branch `feat/games-g3b`, PR into `dev`. **No Rust, backend or trading change**: the desktop and website only need their frontend rebuilt.
+
+- **New code:** `shared/games/market/` (`engine/` series, volUnit, costModel, windows, roundSource; `data/` marketData, windowCache, seenWindows; `config/difficulty.market.ts`; `host.ts`; `games/tick_reader/` engine, View, index, format, `fixture.windows.json`), `shared/games/chart/` (`chartModel.ts`, `drawChart.ts`, `GameChart.tsx`). Tests: `market/market.test.ts` (32), `games/tick_reader/tickReader.test.ts` (15), `chart/chart.test.ts` (10).
+- **Existing files changed (all inside `shared/games/`):** `core/types.ts` (`market?: MarketHost` on the view props), `core/settings.ts` (three cost settings), `core/dashboard.ts` (one trend panel), `data/idb.ts` (database version 3, stores `windows` and `windowMeta`; a test upgrades a version 2 database), `ui/GameShell.tsx`, `ui/GamesApp.tsx` (one market-data object per launch), `ui/SettingsPanel.tsx` ("Market game costs"), `ui/Dashboard.tsx` (trend panels follow the pool filter), `ui/games.css`, `games/index.ts` (one line), `brain/registration.test.ts` (brain ids only).
+- **Spec corrections:** **C29** the chart stands still while deciding (entry is the last price shown); **C30** `k` is 0.4 (calibrated on 398 real windows, numbers in spec 5.1); **C31** identity is revealed in the per-round result line, and market sessions have no Review rows. Details in spec 5.1 "As built (G3b)".
+- **Decisions:** the window cache stores typed arrays (4 bytes a value) rather than compressed JSON, same size order and no decompress step; the desktop's `reqwest` is left without `gzip` (recorded in G1's carry-forward, now closed); no Rust change is needed; the Warm-up now offers Tick Reader when the pool setting allows market games (it needs the server's index; a step that cannot load data is voided and can be skipped); `lowMemory` halves the window cache.
+- **Checked in a real browser (Playwright, a throwaway harness mounting the real `GamesApp`, the real backend and the real data cache, progress stubbed in memory):** the Market tab, instructions, a Practice session at level 20 (25 rounds, decisions by keys, the result line with symbol, day and time), a full Progress session at level 1 (15 rounds, score 45 for a bot pressing keys at random, one `PUT` with the game, day and month records and the eight stats), the only requests being `GET availability` and `GET window` (about 3 per round: the round source keeps the best of up to three candidates) plus the state calls. **Not run:** the Windows window, the website overlay, Low memory mode, a real-trading session next to it, sound, a network failure in the middle of a session.
+- **Open for the owner's play:** the `k`, `noEdgeShare`, `targetEr` and `slipMult` anchors and the level-up bar (see C30); whether three candidate windows per round (about 3 requests a round, each about 3 to 5 KB) is acceptable or one is enough.
+- **Docs updated:** spec 5.1 and 9 and 14, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section O), this plan, `CLAUDE.md` row.

@@ -95,7 +95,7 @@ export interface TrendPanel {
   note: string
 }
 
-/** The brain trend panels of spec 17.8. Market panels (expectancy, capture ratio...) join when those games exist. */
+/** The trend panels of spec 17.8 and 7.1: brain stats, and the market ones (expectancy; capture ratio and the rest join with their games). */
 export const TREND_PANELS: readonly TrendPanel[] = [
   { id: 'stroop', title: 'Colour interference', gameId: 'colour_clash', key: 'stroop_effect', unit: 'ms', better: 'lower', note: 'How much slower you are when the word and the ink disagree.' },
   { id: 'flanker', title: 'Flanker interference', gameId: 'flanker_flock', key: 'flanker_effect', unit: 'ms', better: 'lower', note: 'How much slower you are when the side arrows point the other way.' },
@@ -104,6 +104,7 @@ export const TREND_PANELS: readonly TrendPanel[] = [
   { id: 'span_grid', title: 'Peak span, Grid Recall', gameId: 'grid_recall', key: 'peak_span', unit: 'tiles', better: 'higher', note: 'The longest pattern you reproduced.' },
   { id: 'span_seq', title: 'Peak span, Sequence Echo', gameId: 'sequence_echo', key: 'peak_span', unit: 'items', better: 'higher', note: 'The longest sequence you repeated.' },
   { id: 'nback', title: 'N reached', gameId: 'n_back_stream', key: 'n_reached', unit: 'back', better: 'higher', note: 'The n the block ended on.' },
+  { id: 'tick_expectancy', title: 'Tick Reader expectancy', gameId: 'tick_reader', key: 'expectancy_pts', unit: 'pts', better: 'higher', note: 'Average net option points per trade after costs.' },
   { id: 'persev', title: 'Perseveration rate', gameId: 'card_sorter', key: 'persev_error_pct', unit: '%', better: 'lower', note: 'Errors that keep using the rule that just stopped working.' },
 ]
 

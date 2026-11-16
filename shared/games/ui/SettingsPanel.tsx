@@ -33,9 +33,16 @@ export function SettingsPanel({ settings, disabled, onSave }: { settings: GamesS
         <label><input type="checkbox" checked={draft.lowMemory} onChange={event => set('lowMemory', event.target.checked)} /> Low memory mode</label>
       </fieldset>
       <fieldset>
+        <legend>Market game costs</legend>
+        <p className="games-meta">Placeholder numbers: enter your broker's real ones. They only change the practice scores of the market games.</p>
+        <label>Slippage per side (option points) <input type="number" min={0} max={20} step={0.05} value={draft.slippagePtsPerSide} onChange={event => set('slippagePtsPerSide', Number(event.target.value))} style={{ width: 72 }} /></label>
+        <label>Round-trip cost per lot (₹) <input type="number" min={0} max={5000} step={1} value={draft.roundTripCostPerLotRs} onChange={event => set('roundTripCostPerLotRs', Number(event.target.value))} style={{ width: 72 }} /></label>
+        <label>Lots <input type="number" min={1} max={100} step={1} value={draft.defaultLots} onChange={event => set('defaultLots', Number(event.target.value))} style={{ width: 56 }} /></label>
+      </fieldset>
+      <fieldset>
         <legend>Daily Warm-up</legend>
         <label>Warm-up games <select value={draft.warmupPool} onChange={event => set('warmupPool', event.target.value as GamesSettings['warmupPool'])}><option value="both">Brain and market</option><option value="market">Market only</option><option value="brain">Brain only</option></select></label>
-        <p className="games-meta">Until the market games arrive, every choice uses brain games.</p>
+        <p className="games-meta">A market choice falls back to brain games when no market game can be played.</p>
       </fieldset>
       <div className="games-row">
         <button disabled={disabled || !dirty} onClick={() => { setMessage('Saving…'); onSave(draft).then(() => setMessage('Saved.'), error => setMessage(`Could not save: ${String(error instanceof Error ? error.message : error)}`)) }}>Save settings</button>

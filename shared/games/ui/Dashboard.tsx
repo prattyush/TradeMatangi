@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ALL_GAME_IDS, CATEGORIES, CATEGORY_LABEL, type GameId } from '../core/ids'
+import { ALL_GAME_IDS, CATEGORIES, CATEGORY_LABEL, catalogueEntry, type GameId } from '../core/ids'
 import { categoryRatings } from '../core/scoring'
 import { levelBand } from '../core/difficulty'
 import { isPlayable } from '../core/registry'
@@ -18,7 +18,7 @@ export function Dashboard({ state, sessions, today }: { state: ProgressState; se
   const rows = useMemo(() => gameRows(state, filter).sort((a, b) => Number(isPlayable(b.id)) - Number(isPlayable(a.id))), [state, filter])
   const streak = useMemo(() => warmupStreak(state.days, today), [state.days, today])
   const played = rows.filter(row => row.sessions > 0).length
-  const panels = filter === 'market' ? [] : TREND_PANELS
+  const panels = filter === 'all' ? TREND_PANELS : TREND_PANELS.filter(panel => catalogueEntry(panel.gameId).pool === filter)
 
   return (
     <section aria-labelledby="games-dash-title">
