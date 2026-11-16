@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { withTags, withSetups, toDiveSetup, strikeLabel } from '../../../../shared/deepdive/model'
 import type { DeepDiveSetup, DeepDiveTag, Dive } from '../../../../shared/deepdive/types'
-import { fullFields, markCount, needsStrikes, optionEligible, strikeForSide, strikeModeFor, toolsFor } from './inDepthModel'
-import { SaveQueue, type SaveState } from './saveQueue'
-import DayStrip from './DayStrip'
-import GapsPanel from './GapsPanel'
-import TagPanel from './TagPanel'
+import { fullFields, markCount, needsStrikes, optionEligible, strikeForSide, strikeModeFor, toolsFor } from '../../../../shared/deepdive/ui/inDepthModel'
+import { SaveQueue, type SaveState } from '../../../../shared/deepdive/ui/saveQueue'
+import DayStrip from '../../../../shared/deepdive/ui/DayStrip'
+import GapsPanel from '../../../../shared/deepdive/ui/GapsPanel'
+import TagPanel from '../../../../shared/deepdive/ui/TagPanel'
 
 const tag = (id: string, name = id, status: 'active' | 'archived' = 'active'): DeepDiveTag => ({ tag_id: id, name, status, sort_order: 0, created_at: '', archived_at: null })
 const raw = (date: string, side: 'buy' | 'sell', tag_values: Record<string, boolean> = {}): DeepDiveSetup => ({

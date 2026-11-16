@@ -1,5 +1,5 @@
-import { formatDay, gaps, sideLabel } from '../../../../shared/deepdive/model'
-import type { DeepDiveTag, DiveSetup } from '../../../../shared/deepdive/types'
+import { formatDay, gaps, sideLabel } from '../model'
+import type { DeepDiveTag, DiveSetup } from '../types'
 
 interface Props { setups: DiveSetup[]; tags: DeepDiveTag[]; onJump: (index: number) => void }
 

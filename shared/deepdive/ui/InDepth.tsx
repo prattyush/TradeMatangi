@@ -1,23 +1,19 @@
 import { useCallback, useMemo, useState } from 'react'
-import { readableError } from '../../../../shared/analysis/behavior/types'
+import { readableError } from '../../analysis/behavior/types'
 import {
   applyTagValues, formatDay, nextGapIndex, positionLabel, stepIndex, toDiveSetup, withSetups, withTags,
-} from '../../../../shared/deepdive/model'
-import type { DeepDiveApi, DeepDiveTag, Dive, DiveSetup, SetupFields, TagValue } from '../../../../shared/deepdive/types'
-import type { PatternsClient } from '../../patternsClient'
-import type { PatternSettings } from '../usePatternsRuntime'
+} from '../model'
+import type { DeepDiveTag, Dive, DiveSetup, SetupFields, TagValue } from '../types'
 import DayStrip from './DayStrip'
 import DayWorkspace from './DayWorkspace'
 import GapsPanel from './GapsPanel'
+import { useDeepDiveHost } from './host'
 import { fullFields } from './inDepthModel'
 import { SaveQueue, type SaveState } from './saveQueue'
 
 interface Props {
-  client: PatternsClient
-  api: DeepDiveApi
   dive: Dive
   setDive: (update: (dive: Dive) => Dive) => void
-  settings: PatternSettings
   onGoMark: () => void
   /** A day to open on (from the results table); otherwise the first day. */
   focus?: DiveSetup | null
@@ -30,7 +26,8 @@ const sameDay = (a: DiveSetup, b: DiveSetup) => a.date === b.date && a.symbol ==
  * is flagged on its chip, in a banner and in the "Needs marking" list (a tag added on the 20th is open on the 11th). Every
  * change shows on screen at once and is saved in the background, in order.
  */
-export default function InDepth({ client, api, dive, setDive, settings, onGoMark, focus }: Props) {
+export default function InDepth({ dive, setDive, onGoMark, focus }: Props) {
+  const { api } = useDeepDiveHost()
   const [index, setIndex] = useState(() => Math.max(0, dive.setups.findIndex(s => focus && sameDay(s, focus))))
   const [save, setSave] = useState<SaveState>({ status: 'idle' })
   const [failure, setFailure] = useState<string | null>(null)
@@ -95,8 +92,8 @@ export default function InDepth({ client, api, dive, setDive, settings, onGoMark
       <summary>Needs marking: {dive.incomplete_days} {dive.incomplete_days === 1 ? 'day' : 'days'}{dive.unmarked_total ? ` · ${dive.unmarked_total} tag marks open` : ''}</summary>
       <GapsPanel setups={setups} tags={dive.tags} onJump={go} />
     </details>
-    <DayWorkspace key={`${setup.symbol}|${setup.date}|${setup.side}`} client={client} setup={setup} setups={setups} tags={dive.tags}
-      category={dive.category} strategy={dive.strategy} canEdit={canEdit} settings={settings} change={change} markTags={markTags}
+    <DayWorkspace key={`${setup.symbol}|${setup.date}|${setup.side}`} setup={setup} setups={setups} tags={dive.tags}
+      category={dive.category} strategy={dive.strategy} canEdit={canEdit} change={change} markTags={markTags}
       addTag={addTag} archiveTag={id => changeTagStatus(id, 'archive')} restoreTag={id => changeTagStatus(id, 'restore')} />
     <p className="pl-muted dd-foot">{formatDay(setup.date)} · {setup.symbol}</p>
   </div>

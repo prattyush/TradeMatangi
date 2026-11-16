@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnalysisProvider } from '../../../shared/analysis/environment'
 import DesktopAnalysisChart from '../AnalysisChart'
 import { usePatternsRuntime } from './usePatternsRuntime'
-import DeepDive from './deepdive/DeepDive'
+import DeepDive from '../../../shared/deepdive/ui/DeepDive'
+import { useDesktopDeepDiveHost } from './deepdive/desktopHost'
 import { IntervalBridge } from './IntervalBridge'
 import type { PatternAnnotation, PatternChartMeta } from '../../../shared/analysis/api'
 import { cleanTopPatterns } from '../../../shared/analysis/patternMarkers'
@@ -22,6 +23,7 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
  */
 export default function PatternLibrary({ baseUrl, token, onUnauthorized, active }: Props) {
   const { client, environment, settings } = usePatternsRuntime(baseUrl, token, onUnauthorized, active)
+  const deepDiveHost = useDesktopDeepDiveHost(client, settings)
 
   const [view, setView] = useState<'create' | 'view' | 'deepdive'>('create')
   const [symbol, setSymbol] = useState('NIFTY')
@@ -251,7 +253,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
           <label className="pl-notes">Notes <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What made this setup work or fail?" /></label>
         </>}
       </>}
-      {view === 'deepdive' && <DeepDive client={client} settings={settings} />}
+      {view === 'deepdive' && <DeepDive host={deepDiveHost} />}
       {view === 'view' && <div className="pl-gallery">
         <div className="pl-bar">
           <label>Strategy <select value={filterStrategy} onChange={e => setFilterStrategy(e.target.value)}><option value="">All</option>{strategies.map(s => <option key={s}>{s}</option>)}</select></label>

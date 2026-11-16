@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useAnalysisEnvironment } from '../../../../shared/analysis/environment'
+import { useAnalysisEnvironment } from '../../analysis/environment'
 
 /**
  * Puts the day's saved candle interval on the charts and reports a change the user makes. It ignores everything until the charts

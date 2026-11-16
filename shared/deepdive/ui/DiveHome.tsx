@@ -1,19 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
-import PatternNameSelect from '../../../../shared/analysis/PatternNameSelect'
-import { readableError } from '../../../../shared/analysis/behavior/types'
-import type { DiveRef, DiveSummary } from '../../../../shared/deepdive/types'
-import type { PatternsClient } from '../../patternsClient'
+import PatternNameSelect from '../../analysis/PatternNameSelect'
+import { readableError } from '../../analysis/behavior/types'
+import type { DiveRef, DiveSummary } from '../types'
+import { useDeepDiveHost } from './host'
 
 interface Props {
-  client: PatternsClient
   loading: boolean
   error: string | null
   onOpen: (ref: DiveRef, symbol: string | undefined, ownerId?: string) => void
 }
 
 /** The list of deep dives and the form that starts one: a category and a strategy, then the symbol. */
-export default function DiveHome({ client, loading, error, onOpen }: Props) {
-  const api = client.deepDive
+export default function DiveHome({ loading, error, onOpen }: Props) {
+  const { api, names } = useDeepDiveHost()
   const [dives, setDives] = useState<DiveSummary[] | null>(null)
   const [categories, setCategories] = useState<string[]>([])
   const [strategies, setStrategies] = useState<string[]>([])
@@ -24,10 +23,10 @@ export default function DiveHome({ client, loading, error, onOpen }: Props) {
 
   const refresh = useCallback(async () => {
     try {
-      const [list, c, s] = await Promise.all([api.listDives(), client.listCategories(), client.listStrategies()])
-      setDives(list); setCategories(c.categories); setStrategies(s.strategies); setFailure(null)
+      const [list, c, s] = await Promise.all([api.listDives(), names.categories(), names.strategies()])
+      setDives(list); setCategories(c); setStrategies(s); setFailure(null)
     } catch (e) { setFailure(readableError(e)) }
-  }, [api, client])
+  }, [api, names])
   useEffect(() => { void refresh() }, [refresh])
 
   const createName = (add: (name: string) => Promise<unknown>) => async (name: string) => { await add(name); return name }
@@ -39,9 +38,9 @@ export default function DiveHome({ client, loading, error, onOpen }: Props) {
       <p className="pl-muted">Study one strategy across the days it occurred: mark the days, then tag what each day showed. Pick a category and a strategy (or add new ones).</p>
       <div className="pl-bar">
         <label>Category <PatternNameSelect noun="category" value={category} options={categories} placeholder="— select —" style={{}} onChange={setCategory}
-          onCreate={createName(client.addCategory)} /></label>
+          onCreate={createName(names.addCategory)} /></label>
         <label>Strategy <PatternNameSelect noun="strategy" value={strategy} options={strategies} placeholder="— select —" style={{}} onChange={setStrategy}
-          onCreate={createName(client.addStrategy)} /></label>
+          onCreate={createName(names.addStrategy)} /></label>
         <label>Symbol <input list="dd-symbols" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} size={9} /></label>
         <datalist id="dd-symbols"><option value="NIFTY" /><option value="BSESEN" /></datalist>
         <button className="pl-primary" disabled={!category || !strategy || !symbol || loading} onClick={() => onOpen({ category, strategy }, symbol)}>

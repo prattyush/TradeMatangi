@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { toDiveSetup, withSetups } from '../../../../shared/deepdive/model'
-import type { DeepDiveApi, DeepDiveSetup, DeepDiveTag, Dive } from '../../../../shared/deepdive/types'
-import Results from './Results'
+import type { DeepDiveSetup, DeepDiveTag, Dive } from '../../../../shared/deepdive/types'
+import Results from '../../../../shared/deepdive/ui/Results'
+import { WithHost } from './testHost'
 
 const tag = (id: string, name: string, status: 'active' | 'archived' = 'active'): DeepDiveTag => ({ tag_id: id, name, status, sort_order: 0, created_at: '', archived_at: null })
 const day = (date: string, side: 'buy' | 'sell', tag_values: Record<string, boolean>, extra: Partial<DeepDiveSetup> = {}): DeepDiveSetup => ({
@@ -14,8 +15,7 @@ const tags = [tag('t1', 'Second leg'), tag('t2', 'Double top'), tag('old', 'Reti
 const build = (setups: DeepDiveSetup[], can_edit = true): Dive => withSetups({
   category: 'Breakout', strategy: 'ORB', owner_id: 'u', can_edit, setups: [], tags, incomplete_days: 0, unmarked_total: 0,
 }, setups.map(s => toDiveSetup(s, tags)))
-const api = {} as DeepDiveApi
-const render = (dive: Dive) => renderToStaticMarkup(<Results api={api} dive={dive} onOpenDay={() => undefined} />)
+const render = (dive: Dive) => renderToStaticMarkup(<WithHost><Results dive={dive} onOpenDay={() => undefined} /></WithHost>)
 
 describe('Results', () => {
   const dive = build([
@@ -71,7 +71,7 @@ describe('Results', () => {
 
   it('explains an empty dive and a dive with no tags', () => {
     expect(render(build([]))).toContain('nothing to count')
-    expect(renderToStaticMarkup(<Results api={api} onOpenDay={() => undefined}
-      dive={withSetups({ ...build([]), tags: [] }, [toDiveSetup(day('2026-10-06', 'buy', {}), [])])} />)).toContain('No tags yet')
+    expect(renderToStaticMarkup(<WithHost><Results onOpenDay={() => undefined}
+      dive={withSetups({ ...build([]), tags: [] }, [toDiveSetup(day('2026-10-06', 'buy', {}), [])])} /></WithHost>)).toContain('No tags yet')
   })
 })

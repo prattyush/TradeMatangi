@@ -1,24 +1,20 @@
 import { useMemo, useState } from 'react'
-import DesktopAnalysisChart from '../../AnalysisChart'
-import { toggleAnnotation } from '../patternLibraryModel'
-import { formatDay, optionRight, sideLabel, strikeLabel } from '../../../../shared/deepdive/model'
-import type { DeepDiveTag, DiveSetup, Outcome, SetupFields, TagValue } from '../../../../shared/deepdive/types'
-import type { PatternsClient } from '../../patternsClient'
-import type { PatternSettings } from '../usePatternsRuntime'
+import { toggleAnnotation } from '../marking'
+import { formatDay, optionRight, sideLabel, strikeLabel } from '../model'
+import type { DeepDiveTag, DiveSetup, Outcome, SetupFields, TagValue } from '../types'
 import DayIntervalBridge from './DayIntervalBridge'
+import { useDeepDiveHost } from './host'
 import TagPanel from './TagPanel'
 import { markCount, optionEligible, strikeForSide, toolsFor } from './inDepthModel'
 import { useDayStrikes } from './useDayStrikes'
 
 interface Props {
-  client: PatternsClient
   setup: DiveSetup
   setups: DiveSetup[]
   tags: DeepDiveTag[]
   category: string
   strategy: string
   canEdit: boolean
-  settings: PatternSettings
   /** Change the day on screen at once and save it in the background. */
   change: (patch: Partial<DiveSetup>, fields?: SetupFields) => void
   markTags: (values: Record<string, TagValue | null>) => void
@@ -32,9 +28,10 @@ interface Props {
  * PE) with the setup's mark tools, and beside them the outcome, the tags and the notes. Mount it with a key per day.
  */
 export default function DayWorkspace(props: Props) {
-  const { client, setup, setups, tags, category, strategy, canEdit, settings, change, markTags, addTag, archiveTag, restoreTag } = props
+  const { setup, setups, tags, category, strategy, canEdit, change, markTags, addTag, archiveTag, restoreTag } = props
   const right = optionRight(setup.side)
-  const strikes = useDayStrikes(client, setup, settings, canEdit, fields => change({ ...fields } as Partial<DiveSetup>, fields))
+  const { settings, Chart } = useDeepDiveHost()
+  const strikes = useDayStrikes(setup, canEdit, fields => change({ ...fields } as Partial<DiveSetup>, fields))
   const hasOptionChart = optionEligible(setup.symbol) && strikes.state === 'ready'
   const tools = useMemo(() => toolsFor(setup.side, hasOptionChart), [setup.side, hasOptionChart])
   const [toolKey, setToolKey] = useState('entry-underlying')
@@ -63,14 +60,14 @@ export default function DayWorkspace(props: Props) {
       </div>}
       <div className="dd-charts">
         <div className="dd-chartbox">
-          <DesktopAnalysisChart key={`${setup.symbol}-${setup.date}-ul`} symbol={setup.symbol} date={setup.date}
+          <Chart key={`${setup.symbol}-${setup.date}-ul`} symbol={setup.symbol} date={setup.date}
             title={`${setup.symbol} · ${formatDay(setup.date)} · ${markCount(setup, 'underlying')} marks`} historicalDays={settings.historicalDays}
             annotations={setup.annotations.filter(a => a.instrument === 'underlying')} activeStrategy={strategy} activeCategory={category}
             pickMode={canEdit && tool?.instrument === 'underlying'} onPick={pick} pickHint={`${tool?.label ?? ''} — click a candle`} />
         </div>
         {optionEligible(setup.symbol) && <div className="dd-chartbox">
           {strikes.state === 'ready'
-            ? <DesktopAnalysisChart key={`${setup.symbol}-${setup.date}-${right}-${strikeForSide(setup.side, strikes)}`} symbol={setup.symbol} date={setup.date}
+            ? <Chart key={`${setup.symbol}-${setup.date}-${right}-${strikeForSide(setup.side, strikes)}`} symbol={setup.symbol} date={setup.date}
               title={`${strikeText} · ${markCount(setup, right)} marks`} strike={strikeForSide(setup.side, strikes)} right={right} expiry={strikes.expiry}
               historicalDays={settings.historicalDays} annotations={setup.annotations.filter(a => a.instrument === right)}
               activeStrategy={strategy} activeCategory={category} pickMode={canEdit && tool?.instrument === right} onPick={pick}
