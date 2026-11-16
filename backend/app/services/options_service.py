@@ -508,7 +508,7 @@ def get_underlying_price_at(symbol: str, date: str, unix_ts: int) -> float | Non
         return None
 
 
-_MAX_SCAN_INTERVALS = 30  # max strikes to scan outward from ATM (increased for high-value underlyings like BSESEN)
+_MAX_SCAN_INTERVALS = 50  # max strikes to scan outward from ATM (30 before Phase 26; keep equal to desktop_preparation.MAX_PRICE_SCAN_STRIKES)
 
 
 def find_strike_by_max_price(

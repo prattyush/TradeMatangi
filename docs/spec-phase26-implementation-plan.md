@@ -97,7 +97,7 @@ No separate dive table: a dive exists when it has setups or tags. Sharing reads 
 | Sprint | Scope | Tests | Exit |
 |---|---|---|---|
 | **S0** Docs | `docs/spec-phase26-implementation-plan.md` (from this plan), `docs/phase26-manual-acceptance.md` skeleton, `docs/todo.md`, memory. Spec draft stays untracked unless the owner asks. Docs go straight to `dev`. | n/a | Plan doc on `dev` |
-| **S1** Max Price 30 → 50 | `desktop_preparation.py` (`range(30)`, message "within 30 strikes", docstring), `options_service.py` `_MAX_SCAN_INTERVALS`; update the tests asserting 30 (`test_desktop_preparation.py`, `test_fetch_patterns_script.py`, `test_minute_ohlc.py`, `test_reselect_strike.py`, `pattern-library.spec.ts`, `browseModel.test.ts`, `browse.spec.ts`), the comment and `MAX_PRICE_TIMEOUT_MS` check in `BrowseScreen.tsx`, docs (`live-history-providers.md`, `architecture-phone.md`, `spec-phase24.md`, `phase24-manual-acceptance.md`). `scripts/fetch-patterns-data.py` `MAX_PRICES` are rupee caps, not strike counts: leave. | backend suite | scan stops at the first hit; cold worst case measured and noted |
+| **S1** Max Price 30 → 50 (**merged, #865**) | `desktop_preparation.py` (`range(30)`, message "within 30 strikes", docstring), `options_service.py` `_MAX_SCAN_INTERVALS`; update the tests asserting 30 (`test_desktop_preparation.py`, `test_fetch_patterns_script.py`, `test_minute_ohlc.py`, `test_reselect_strike.py`, `pattern-library.spec.ts`, `browseModel.test.ts`, `browse.spec.ts`), the comment and `MAX_PRICE_TIMEOUT_MS` check in `BrowseScreen.tsx`, docs (`live-history-providers.md`, `architecture-phone.md`, `spec-phase24.md`, `phase24-manual-acceptance.md`). `scripts/fetch-patterns-data.py` `MAX_PRICES` are rupee caps, not strike counts: leave. | backend suite | scan stops at the first hit; cold worst case measured and noted |
 | **S2** Backend core (**in PR**) | tables, service, router, stats, sharing, save-to-patterns, desktop mirror, Rust + TS allowlists and parity tests, setup script, architecture-backend | new `test_deep_dive.py` (moto): CRUD, side validation, tag-values map, gap matrix, stats incl. few-days, sharing read-only, archive; `test_desktop_patterns.py`; cargo; `patternsApi.test.ts` | routes exposed on both transports |
 | **S3** Shared model + API client | `shared/deepdive/model.ts`, `api` type + website client in `services/api.ts`, desktop `patternsClient` methods | `windowsapp/src/deepDive.test.ts` | pure logic fully tested |
 | **S4** Desktop: Home + date marking | third tab, calendar, underlying preview, autosave | model tests + SSR render smoke | owner can mark days on desktop (rebuild needed) |
@@ -136,6 +136,13 @@ Weekend/holiday days (calendar + server validation); day without data (chart sho
 1. Whether the owner wants the spec draft committed (untracked now).
 2. The 3-min bar interval for traded markers when the owner's pattern chart used another interval (use the pattern's saved `interval_minutes`, else 3).
 3. S10 cost on many real-session snapshots; fall back to a stored entry/exit time on labels if the round-trip rebuild is too slow.
+
+## S1 as built (2026-11-16)
+
+- `desktop_preparation.MAX_PRICE_SCAN_STRIKES = 50` drives `find_max_price_strike` (the minute scan behind Patterns, Browse, phone and `prepare-session`); the error text is built from it ("within 50 strikes"). `options_service._MAX_SCAN_INTERVALS = 50` (the legacy second-level scan, which still falls back to ATM on a miss).
+- Tests: new `test_scan_reaches_the_fiftieth_strike_and_stops_there`; the call-count test is tied to the constant; message assertions updated in backend, `frontend/tests/phase22`, `mobile` unit and UI tests. Backend suite: 3497 passed (the 17 `test_auth.py` tests need DynamoDB Local).
+- `BrowseScreen.tsx` comment updated; `MAX_PRICE_TIMEOUT_MS` (120 s) kept: Browse scans minute candles, and the scan stops at the first qualifying strike, so only a miss pays for all 50. Check a cold-cache miss on the phone during acceptance.
+- Docs: `live-history-providers.md`, `architecture-phone.md`, `phase24-manual-acceptance.md`. `spec-phase24.md` describes the earlier state and is left as history.
 
 ## S2 as built (2026-11-16)
 

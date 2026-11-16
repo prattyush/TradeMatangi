@@ -94,7 +94,7 @@ describe('CE and PE picks', () => {
     const pane = (availability: PreparedPane['availability'], strike = '24600', reason: string | null = null) => ({ panes: [{ pane: { strike }, availability, reason, premium: 48.5 }] })
     expect(readMaxPrice(pane('available'))).toEqual({ strike: 24600, premium: 48.5 })
     expect(readMaxPrice(pane('waiting'))).toEqual({ strike: 24600, premium: 48.5 })
-    expect(() => readMaxPrice(pane('error', '', 'No observed premium at or below the cap within 30 strikes'))).toThrow('No observed premium')
+    expect(() => readMaxPrice(pane('error', '', 'No observed premium at or below the cap within 50 strikes'))).toThrow('No observed premium')
     expect(() => readMaxPrice(pane('unavailable', '24600', 'No data is available for this contract/date'))).toThrow('No data')
     expect(() => readMaxPrice(pane('available', ''))).toThrow()
     expect(() => readMaxPrice({ panes: [] })).toThrow('no strike')
