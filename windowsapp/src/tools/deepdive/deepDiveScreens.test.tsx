@@ -13,7 +13,7 @@ describe('DiveCalendar', () => {
   it('shows the month, the weekday headers and a B and S button per pickable day', () => {
     expect(html).toContain('October 2026')
     for (const day of ['Mon', 'Tue', 'Fri', 'Sun']) expect(html).toContain(day)
-    expect(html.match(/title="Buy setup on this day"/g)).toHaveLength(7) // weekdays 1-9 Oct minus weekends: 1,2,5,6,7,8,9
+    expect(html.match(/title="Buy setup \(long \/ bullish\) on this day"/g)).toHaveLength(7) // weekdays 1-9 Oct minus weekends: 1,2,5,6,7,8,9
     expect(html).toContain('aria-label="2026-10-06, Buy setup"')
     expect(html).toContain('aria-label="2026-10-07, Buy setup, Sell setup"')
   })

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createDeepDiveClient } from '../../shared/deepdive/client'
 import {
   activeTags, applyTagValues, blockFor, dayMarks, dayMarksByDate, defaultSideForTrade, findStats,
-  formatDay, formatPct, gaps, isComplete, nextGapIndex, orderSetups, positionLabel, removalImpact, restNotValid, sideForRight, sortTagStats,
+  formatDay, formatPct, gaps, isComplete, nextGapIndex, orderSetups, positionLabel, removalImpact, restNotValid, setupSideOfTrade, SIDE_MEANING, sortTagStats,
   stepIndex, successLine, tagLine, tagState, tagValueOf, thinNote, toggleTag, unmarkedDaysForTag, unmarkedTagIds, validateTagName,
 } from '../../shared/deepdive/model'
 import type { DeepDiveSetup, DeepDiveTag, StatsAllEntry, StatsBlock, TagStat } from '../../shared/deepdive/types'
@@ -39,12 +39,25 @@ describe('ordering and calendar marks', () => {
     expect(removalImpact(setup('2026-10-06', 'buy', {}, { notes: 'x' })).hasData).toBe(true)
   })
 
-  it('maps trade side and option right', () => {
-    expect(sideForRight('CE')).toBe('buy')
-    expect(sideForRight('PE')).toBe('sell')
-    expect(sideForRight('')).toBeNull()
-    expect(defaultSideForTrade('PE')).toBe('sell')
-    expect(defaultSideForTrade(undefined)).toBe('all')
+  it('puts a position on the side it profits from', () => {
+    // equity or index: long is Buy, short is Sell
+    expect(setupSideOfTrade({ action: 'BUY' })).toBe('buy')
+    expect(setupSideOfTrade({ action: 'SELL' })).toBe('sell')
+    expect(setupSideOfTrade({ right: null, action: 'buy' })).toBe('buy')
+    // CE: bought is Buy, sold (short) is Sell
+    expect(setupSideOfTrade({ right: 'CE', action: 'BUY' })).toBe('buy')
+    expect(setupSideOfTrade({ right: 'CE', action: 'SELL' })).toBe('sell')
+    // PE: bought is Sell (bearish), sold (short) is Buy (bullish)
+    expect(setupSideOfTrade({ right: 'PE', action: 'BUY' })).toBe('sell')
+    expect(setupSideOfTrade({ right: 'PE', action: 'SELL' })).toBe('buy')
+    expect(setupSideOfTrade({ right: 'pe', action: 'sell' })).toBe('buy')
+    // unknown stays unknown, and the label form then opens on All
+    expect(setupSideOfTrade({ right: 'CE' })).toBeNull()
+    expect(setupSideOfTrade({ action: 'HOLD' })).toBeNull()
+    expect(defaultSideForTrade({ right: 'PE', action: 'BUY' })).toBe('sell')
+    expect(defaultSideForTrade({ right: 'PE', action: 'SELL' })).toBe('buy')
+    expect(defaultSideForTrade({})).toBe('all')
+    expect(SIDE_MEANING).toMatch(/CE bought/)
   })
 })
 
@@ -265,5 +278,42 @@ describe('calendar', () => {
     expect(lastPickableDay('2026-10-12')).toBe('2026-10-09') // Monday -> Friday
     expect(lastPickableDay('2026-10-07')).toBe('2026-10-06')
     expect(todayIso(new Date(2026, 9, 5))).toBe('2026-10-05')
+  })
+})
+
+describe('stats (mirror of the server)', () => {
+  it('rounds one decimal with ties to even, like Python', async () => {
+    const { roundTenth } = await import('../../shared/deepdive/model')
+    expect([roundTenth(6.25), roundTenth(18.75), roundTenth(31.25), roundTenth(43.75), roundTenth(56.25)]).toEqual([6.2, 18.8, 31.2, 43.8, 56.2])
+    expect([roundTenth(66.666666), roundTenth(12.5), roundTenth(33.3333), roundTenth(100), roundTenth(0)]).toEqual([66.7, 12.5, 33.3, 100, 0])
+  })
+
+  const tags = [tag('q1', 'Second leg'), tag('q2', 'Double top'), tag('q3', 'Retired', 'archived')]
+
+  it('gives the numbers the server tests expect for the same days', async () => {
+    const { computeStats } = await import('../../shared/deepdive/model')
+    const days = [
+      setup('2026-10-06', 'buy', { q1: true, q2: true }, { outcome: 'success' }), setup('2026-10-07', 'buy', { q1: true }, { outcome: 'failed' }),
+      setup('2026-10-08', 'buy', { q1: false }), setup('2026-10-09', 'buy', { q1: true }, { outcome: 'success' }),
+    ]
+    const stats = computeStats(days, tags)
+    const [q1, q2] = stats.tags
+    expect([q1.valid, q1.not_valid, q1.marked, q1.pct, q1.few_days]).toEqual([3, 1, 4, 75, true])
+    expect([q2.marked, q2.pct]).toEqual([1, 100])
+    expect([stats.success, stats.failed, stats.with_outcome, stats.success_pct]).toEqual([2, 1, 3, 66.7])
+    expect(stats.tags).toHaveLength(2) // the archived tag is left out
+    expect([stats.days, stats.buy_days, stats.sell_days]).toEqual([4, 4, 0])
+  })
+
+  it('filters by side and has no percentage without marks', async () => {
+    const { computeStats, tagDots } = await import('../../shared/deepdive/model')
+    const days = [setup('2026-10-06', 'buy', { q1: true }), setup('2026-10-07', 'buy', { q1: true }), setup('2026-10-06', 'sell', { q1: false })]
+    expect(computeStats(days, tags, 'buy').tags[0].pct).toBe(100)
+    expect(computeStats(days, tags, 'sell').tags[0].pct).toBe(0)
+    expect(computeStats(days, tags).tags[0].pct).toBe(66.7)
+    const empty = computeStats([setup('2026-10-06', 'buy')], tags)
+    expect([empty.tags[0].pct, empty.success_pct]).toEqual([null, null])
+    expect(tagDots(days[0], tags)).toEqual([
+      { tag_id: 'q1', name: 'Second leg', state: 'valid' }, { tag_id: 'q2', name: 'Double top', state: 'unmarked' }])
   })
 })

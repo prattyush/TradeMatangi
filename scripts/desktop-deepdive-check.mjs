@@ -25,7 +25,7 @@ const [dayA, dayB, dayC] = days // newest first
 const weekend = (() => { const d = new Date(); while (![0, 6].includes(d.getDay())) d.setDate(d.getDate() - 1); return iso(d) })()
 
 // ── in-memory Deep Dive server ───────────────────────────────────────────────
-const store = { setups: [], tags: [], names: { categories: ['Breakout'], strategies: ['Opening range'] }, calls: [] }
+const store = { setups: [], tags: [], names: { categories: ['Breakout'], strategies: ['Opening range'] }, calls: [], saved: [] }
 const key = s => `${s.date}|${s.symbol}|${s.side}`
 const order = list => [...list].sort((a, b) => a.date.localeCompare(b.date) || (a.side === 'buy' ? -1 : 1))
 const active = () => store.tags.filter(t => t.status === 'active')
@@ -44,6 +44,7 @@ function deepDive(path, method, body, params) {
     Object.assign(s, fields); return s
   }
   if (path === 'setup' && method === 'DELETE') { const k = `${params.get('date')}|${params.get('symbol')}|${params.get('side')}`; const had = store.setups.some(s => key(s) === k); store.setups = store.setups.filter(s => key(s) !== k); return { status: had ? 'deleted' : 'not_found' } }
+  if (path === 'setup/save-to-patterns') { const s = store.setups.find(x => key(x) === `${body.date}|${body.symbol}|${body.side}`); store.saved.push(key(s)); return { chart_id: 'chart-1', merged: store.saved.length > 1, added: s.annotations.length } }
   if (path === 'setup/tag-values') { const s = store.setups.find(x => key(x) === `${body.date}|${body.symbol}|${body.side}`); for (const [id, v] of Object.entries(body.tag_values)) { if (v === null) delete s.tag_values[id]; else s.tag_values[id] = v } return s }
   if (path === 'tags' && method === 'POST') { const tag = { tag_id: 't' + (store.tags.length + 1), name: body.name, status: 'active', sort_order: store.tags.length, created_at: '', archived_at: null }; store.tags.push(tag); return tag }
   const m = /^tags\/(\w+)\/(archive|restore)$/.exec(path)
@@ -218,6 +219,37 @@ try {
   await page.getByRole('button', { name: 'Archive Double top' }).click()
   await page.getByText('Archived tags (1)').waitFor()
   await page.waitForFunction(() => /Needs marking: [0-9] day/.test(document.body.textContent))
+
+  // Step 3: results. One active tag (Second leg): valid on 1 of the 2 days it was marked on.
+  await page.getByRole('tab', { name: '3 · Results' }).click()
+  await page.getByText('How often each tag was valid').waitFor()
+  const freq = page.locator('.dd-freq li', { hasText: 'Second leg' })
+  assert.match(await freq.innerText(), /50%\s*\(n=2\)/)
+  assert.match(await freq.innerText(), /1 valid · 1 not valid/)
+  assert.match(await freq.innerText(), /Only 2 days marked/)
+  assert.equal(await page.locator('.dd-freq li', { hasText: 'Double top' }).count(), 0, 'archived tag is not counted')
+  await page.getByText('Success 1 of 1 (100%)').waitFor()
+  assert.equal(await page.locator('.dd-days-table tbody tr').count(), 4)
+  await page.getByRole('button', { name: /^Sell \(2\)/ }).click()   // the sell days never marked Second leg
+  assert.match(await page.locator('.dd-freq li', { hasText: 'Second leg' }).innerText(), /—\s*\(n=0\)/)
+  assert.equal(await page.locator('.dd-days-table tbody tr').count(), 2)
+  await page.getByRole('button', { name: /^Buy \(2\)/ }).click()
+  assert.match(await page.locator('.dd-freq li', { hasText: 'Second leg' }).innerText(), /50%\s*\(n=2\)/)
+  await page.getByRole('button', { name: /^All \(4\)/ }).click()
+  await page.screenshot({ path: artifacts + '/step3-results.png' })
+  // Save the one day that has a chart mark into the Pattern Library.
+  assert.equal(await page.getByRole('button', { name: 'Save to Patterns' }).count(), 1)
+  await page.getByRole('button', { name: 'Save to Patterns' }).click()
+  await page.getByText(/saved as a new pattern chart with 1 mark/).waitFor()
+  assert.deepEqual(store.saved, [`${dayB}|NIFTY|buy`])
+  await page.getByRole('button', { name: /Save 1 marked day to Pattern Library/ }).click()
+  await page.getByText(/0 new and 1 updated pattern chart, 1 marks added/).waitFor()
+  // A day's date opens it in the in-depth step.
+  await page.locator('.dd-days-table tbody tr').first().getByRole('button', { name: 'Open' }).click()
+  await page.getByText(/1 \/ 4 ·/).waitFor()
+  await page.getByRole('tab', { name: '3 · Results' }).click()
+  await page.locator('.dd-days-table tbody tr').nth(2).locator('.dd-day-link').click()
+  await page.getByText(/3 \/ 4 ·/).waitFor()
 
   // Back on the list: counts match, then everything survives a reopen.
   await page.getByRole('button', { name: '← All deep dives' }).click()

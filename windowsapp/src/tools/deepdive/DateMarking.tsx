@@ -67,7 +67,7 @@ export default function DateMarking({ api, dive, setDive, symbol, onSymbol, sett
       {readOnly && <p className="pl-muted" role="status">This deep dive was shared with you: you can look at it but not change it.</p>}
       {error && <p className="pl-error" role="alert">{error}</p>}
       <DiveCalendar month={month} onMonthChange={setMonth} today={today} marks={marks} selected={selected} onSelect={select} onToggle={toggle} readOnly={readOnly} busy={busy} />
-      <p className="pl-muted dd-legend"><b>B</b> marks a Buy setup, <b>S</b> a Sell setup; click the day number to see its chart.</p>
+      <p className="pl-muted dd-legend"><b>B</b> marks a Buy setup (long / bullish), <b>S</b> a Sell setup (short / bearish); click the day number to see its chart.</p>
       {pending && impact && <div className="dd-confirm" role="alertdialog" aria-label="Remove marked day">
         <p>Remove the {sideLabel(pending.side)} setup on {formatDay(pending.date)}? It has {impact.tagMarks} tag {impact.tagMarks === 1 ? 'mark' : 'marks'}, {impact.chartMarks} chart {impact.chartMarks === 1 ? 'mark' : 'marks'}{impact.hasOutcome ? ', an outcome' : ''}{impact.hasNotes ? ' and notes' : ''}. This cannot be undone.</p>
         <div className="pl-bar"><button className="pl-danger" onClick={() => void remove(pending)}>Remove</button><button onClick={() => setPending(null)}>Keep</button></div>
