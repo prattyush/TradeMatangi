@@ -82,4 +82,16 @@ Needs the desktop rebuilt from `dev` (a Rust change), the backend, and a deep di
 7. With the backend stopped or an older backend, Label Trades works as before with no panel and no error.
 8. Phone: the same panel in the one-trade-at-a-time form.
 
+## F. Percentages in live label popups (S9; real-trading screens)
+
+Needs a deep dive with several days, tags and outcomes. **Try replay or stepwise first, then paper, and real last.** On the Windows app this needs a rebuild; the website and webapp need a build from `dev`. This is on `dev` only and does not go to `preprod` until you have tried it in a real session.
+
+1. In a **replay** or **paper** session, buy something (an index, a CE or a PE). Open the entry label (**Label open trade** on the website, the **Expected** row on the desktop). Choose a category and a strategy that has a deep dive: **Your deep dive** appears under the selectors with All / Buy / Sell, the top tags with `70% (n=14)` and the success rate. A strategy without a deep dive shows nothing.
+2. Check the side it opens on, "this position is Buy-side / Sell-side": long equity or index = Buy, CE bought = Buy, PE bought = **Sell**; sell short: equity = Sell, CE sold = Sell, PE sold = **Buy**. Switch to the other side and All.
+3. **Save** the label: it saves exactly as before (same fields, same behavior), with or without the panel. Nothing about the popup is slower.
+4. The **exit** popup (Actual Pattern) has no panel.
+5. **Stepwise** (website): when round trips complete, each one shows the panel under its own Expected Pattern once a strategy is chosen, on the side of how that trade was opened.
+6. Stop the backend's Deep Dive tables or use an older backend (or turn the network off for a moment): the popup still opens, shows its category and strategy lists and saves, just without the panel.
+7. **Real session** (last): the same as step 1 and 3 on a real trade; the label saves and the order flow is not affected in any way. Report anything that feels slower or different while trading.
+
 ## Report back

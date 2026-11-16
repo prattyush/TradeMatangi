@@ -1368,15 +1368,17 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   // Derive open legs directly from live position state (always up-to-date).
   // Each open leg becomes an entry form in PendingLabelPanel.
   const openLegs = (() => {
-    const legs: { right: string | null; rtIndex: number; label: string }[] = []
+    const legs: { right: string | null; rtIndex: number; label: string; action: 'BUY' | 'SELL' }[] = []
+    // The side of the order that opened the leg (a long position was bought, a short one sold): the label popup reads the position's direction from it.
+    const opened = (side: string) => (side === 'SHORT' ? 'SELL' : 'BUY') as 'BUY' | 'SELL'
     if (sim.position.side !== 'FLAT' && sim.position.quantity > 0) {
-      legs.push({ right: null, rtIndex: sim.getOpenRtIndex(null), label: openLegLabels['EQ'] })
+      legs.push({ right: null, rtIndex: sim.getOpenRtIndex(null), label: openLegLabels['EQ'], action: opened(sim.position.side) })
     }
     if (sim.positionCE.side !== 'FLAT' && sim.positionCE.quantity > 0) {
-      legs.push({ right: 'CE', rtIndex: sim.getOpenRtIndex('CE'), label: openLegLabels['CE'] ?? `${sim.symbol} CE` })
+      legs.push({ right: 'CE', rtIndex: sim.getOpenRtIndex('CE'), label: openLegLabels['CE'] ?? `${sim.symbol} CE`, action: opened(sim.positionCE.side) })
     }
     if (sim.positionPE.side !== 'FLAT' && sim.positionPE.quantity > 0) {
-      legs.push({ right: 'PE', rtIndex: sim.getOpenRtIndex('PE'), label: openLegLabels['PE'] ?? `${sim.symbol} PE` })
+      legs.push({ right: 'PE', rtIndex: sim.getOpenRtIndex('PE'), label: openLegLabels['PE'] ?? `${sim.symbol} PE`, action: opened(sim.positionPE.side) })
     }
     return legs
   })()

@@ -19,11 +19,13 @@ import type { PendingExitRt } from '../hooks/useSimulation'
 import BehaviorManagerModal from '../../../shared/analysis/behavior/BehaviorManagerModal'
 import BehaviorPicker from '../../../shared/analysis/behavior/BehaviorPicker'
 import { useBehaviorData } from '../../../shared/analysis/behavior/useBehaviorData'
+import StatsPanel from '../../../shared/deepdive/ui/StatsPanel'
+import type { StatsAllEntry } from '../../../shared/deepdive/types'
 
 interface Props {
   sessionId: string
   pendingExitLabels: PendingExitRt[]
-  openLegs: { right: string | null; rtIndex: number; label: string }[]
+  openLegs: { right: string | null; rtIndex: number; label: string; action?: 'BUY' | 'SELL' }[]
   savedEntryRtKeys: string[]
   onSaveEntry: (
     rtIndex: number,
@@ -66,6 +68,10 @@ export default function PendingLabelPanel({
   const [entryTags, setEntryTags] = useState<string[]>([])
   const [exitTags, setExitTags] = useState<string[]>([])
   const [exitsExpanded, setExitsExpanded] = useState(false)
+  // Phase 26: the user's Deep Dive percentages for the Expected Pattern. Loaded on its own, never awaited by anything else:
+  // a failure or an older server just means no panel, and saving a label does not depend on it.
+  const [deepDive, setDeepDive] = useState<StatsAllEntry[]>([])
+  useEffect(() => { let alive = true; api.getDeepDiveStats().then(rows => { if (alive) setDeepDive(Array.isArray(rows) ? rows : []) }, () => undefined); return () => { alive = false } }, [])
   useEffect(() => { setExitsExpanded(false) }, [sessionId])
   const [savingKey, setSavingKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -76,6 +82,7 @@ export default function PendingLabelPanel({
     rtIndex: number
     right: string | null
     label: string
+    action?: 'BUY' | 'SELL'
     pnl?: number
     closedAt?: number
   } | null>(null)
@@ -211,7 +218,7 @@ export default function PendingLabelPanel({
             key={rtKey(sessionId, o.rtIndex, o.right)}
             onClick={() => setOpenPopup({
               mode: 'entry', rtIndex: o.rtIndex, right: o.right,
-              label: o.label,
+              label: o.label, action: o.action,
             })}
             disabled={savingKey === rtKey(sessionId, o.rtIndex, o.right)}
             style={{
@@ -237,6 +244,8 @@ export default function PendingLabelPanel({
           rtIndex={openPopup.rtIndex}
           right={openPopup.right}
           label={openPopup.label}
+          action={openPopup.action}
+          deepDive={deepDive}
           pnl={openPopup.pnl}
           closedAt={openPopup.closedAt}
           categories={categories}
@@ -259,6 +268,8 @@ function LabelPopup({
   rtIndex,
   right,
   label,
+  action,
+  deepDive,
   pnl,
   closedAt,
   categories,
@@ -275,6 +286,8 @@ function LabelPopup({
   rtIndex: number
   right: string | null
   label: string
+  action?: 'BUY' | 'SELL'
+  deepDive: StatsAllEntry[]
   pnl?: number
   closedAt?: number
   categories: string[]
@@ -341,6 +354,8 @@ function LabelPopup({
             </select>
           </div>
         </div>
+
+        {isEntry && cat && strat && <div style={{ marginBottom: 12 }}><StatsPanel entries={deepDive} category={cat} strategy={strat} trade={{ right, action }} /></div>}
 
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 10, color: '#484f58', marginBottom: 4 }}>
