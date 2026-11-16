@@ -66,3 +66,47 @@
 .fs-result-view { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .fs-chart { flex: 3; min-height: 340px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
 .fs-chart > * { flex: 1; min-height: 0; }
+
+/* Deep Dive (Phase 26) */
+.dd { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow: auto; }
+.dd h3, .dd h4 { margin: 0; }
+.dd-title { align-items: center; }
+.dd-start { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: #161b22; border: 1px solid #21262d; border-radius: 8px; }
+.dd-start p { margin: 0; }
+.dd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dd-table th, .dd-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #293142; }
+.dd-table th { color: #94a3b8; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.dd-warn { color: #fbbf24; font-weight: 600; }
+.dd-mark { display: flex; gap: 14px; flex: 1; min-height: 420px; }
+.dd-mark-left { flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow-y: auto; }
+.dd-mark-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.dd-chart { flex: 1; min-height: 360px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
+.dd-chart > * { flex: 1; min-height: 0; }
+.dd-empty { margin: auto; }
+.dd-legend { margin: 0; }
+.dd-cal { display: flex; flex-direction: column; gap: 6px; }
+.dd-cal-head { display: flex; align-items: center; gap: 8px; }
+.dd-cal-head strong { flex: 1; text-align: center; font-size: 14px; }
+.dd-cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.dd-cal-dow { text-align: center; font-size: 10px; color: #94a3b8; text-transform: uppercase; }
+.dd-cal-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0; border: 1px solid transparent; border-radius: 6px; min-height: 48px; }
+.dd-cal-cell[hidden] { display: none; }
+.dd-cal-cell.off { opacity: .35; }
+.dd-cal-cell.marked { background: #172033; border-color: #2c3b57; }
+.dd-cal-cell.selected { border-color: #60a5fa; }
+.dd-cal-day { background: none; border: none; color: #e5e7eb; font-size: 13px; padding: 0 6px; cursor: pointer; }
+.dd-cal-day:disabled { cursor: default; color: #94a3b8; }
+.dd-cal-sides { display: flex; gap: 3px; }
+.dd-side { padding: 0 5px; font-size: 11px; line-height: 17px; min-width: 20px; border-radius: 4px; }
+.dd-side.buy[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-side.sell[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-side-tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
+.dd-side-tag.buy { background: #14532d; color: #bbf7d0; }
+.dd-side-tag.sell { background: #7f1d1d; color: #fecaca; }
+.dd-days { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.dd-days li { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; font-size: 13px; }
+.dd-days li.active { background: #172033; }
+.dd-day-link { background: none; border: none; color: #93c5fd; cursor: pointer; padding: 0; text-align: left; flex: 1; }
+.dd-x { padding: 0 6px; line-height: 18px; }
+.dd-confirm { background: #2a1a0a; border: 1px solid #f0883e; border-radius: 6px; padding: 8px 10px; }
+.dd-confirm p { margin: 0 0 6px; font-size: 13px; }
