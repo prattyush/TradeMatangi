@@ -171,7 +171,7 @@ def test_a_day_without_underlying_data_is_skipped_and_asks_for_nothing_else():
 
 
 def test_a_side_with_no_strike_under_the_cap_leaves_the_day_partial_not_failed():
-    deps = FakeDeps(); deps.max_price_results[("PE", 30.0)] = ValueError("No observed premium at or below the cap within 30 strikes")
+    deps = FakeDeps(); deps.max_price_results[("PE", 30.0)] = ValueError("No observed premium at or below the cap within 50 strikes")
     result = script.run_day(plan_for("--mode", "max-price", "--max-price", "30"), "2026-11-12", deps)
     assert result.status == "partial" and result.ce == 24_300 and result.pe is None and "PE:" in result.note
     assert result.bars == {"underlying": 375, "CE": 300}
