@@ -141,5 +141,17 @@ No game uses these routes yet; this checks the data side with `curl`. Run it whe
 4. A date that is not cached (`date=2030-01-01`) answers 404 `{"reason":"not_cached"}`, and the backend log shows no Breeze, Kite or Kotak call for it; `interval_seconds=5` answers 422.
 5. Trading is unaffected: a live or paper chart keeps updating while you repeat step 3 a few times.
 
+## O. Tick Reader (G3b): Windows build and the website
+Needs the backend with the Games index built (section N) and a desktop or website build that includes this sprint. No Rust change, so an existing G3a desktop build only needs the new frontend.
+1. **Market tab:** Tick Reader has a **Play** button (the other nine say "Coming soon"). Instructions list five lines. **Progress (level 1)** starts: "Loading market data" then Round 1 of 15 with a chart (price from 0, no symbol, date or clock) and a 10 second bar.
+2. **Play a round with the keys:** ← long (CE), → short (PE), ↓ skip, or the three buttons. After the choice the next seconds replay faster, with an "entry" line and a marker; then a sentence says what happened (points after costs, whether a tradable move existed) and **the symbol, day and time are named**. Space (or waiting 3 seconds) goes on. Letting the 10 seconds run out counts as a skip and says so.
+3. **Finish a session:** the result shows Score, rounds, trades, hit rate, expectancy, skip precision, timeouts and mean decision time. **Progress** saves (the level can change after two good sessions; 70 or more is hard on purpose, see spec 5.1 C30); **Practice** at level 20 is much faster (2 seconds to decide).
+4. **Settings → Market game costs:** the numbers are placeholders; change the slippage and the cost per lot to your broker's, save, play again: the costs in the result sentences change.
+5. **Dashboard:** with **Market** or **All** selected, a "Tick Reader expectancy" trend appears after a few Progress sessions.
+6. **No repeats:** play two sessions; you should not see the same day and time twice (the symbol and day are named after each round).
+7. **Failures:** stop the backend and press Play: a message says the server could not be reached and nothing is recorded. On a backend without the index file, a message says the index has not been built.
+8. **Trading is unaffected:** with a paper or replay session running on the website, the trading chart keeps updating while a Tick Reader round plays. In the Windows app, Task Manager memory of the Games window stays well under 600 MB.
+9. Tell me whether the pace feels right at level 1, whether three requests per round slows the start of a round, and whether the chart is readable.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.
