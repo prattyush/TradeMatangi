@@ -56,7 +56,7 @@ def test_scan_stops_on_first_cap_match_and_preserves_replay_policy(right, direct
 def test_no_match_is_explicit_and_bounded_without_atm_fallback():
     with patch.object(prep, "load_history", return_value=history((71700,), ("09:15:00",))) as load:
         result = prep.prepare("replay", DATE, "09:15:00", [{**PANE, "selection_mode": "max_price", "max_price": 1}])
-    assert load.call_count == 31
+    assert load.call_count == 1 + prep.MAX_PRICE_SCAN_STRIKES  # the underlying plus every scanned strike
     assert result["panes"][0]["availability"] == "error"
     assert result["panes"][0]["premium"] is None
 
@@ -299,8 +299,27 @@ def test_extracted_scan_finds_the_same_strike_as_prepare():
 def test_extracted_scan_has_no_atm_fallback():
     reference = pd.Timestamp(f"{DATE} 09:15:00", tz="UTC")
     load = lambda symbol, date, *args: history((71700,), ("09:15:00",))
-    with pytest.raises(ValueError, match="No observed premium at or below the cap within 30 strikes"):
+    with pytest.raises(ValueError, match="No observed premium at or below the cap within 50 strikes"):
         prep.find_max_price_strike("BSESEN", DATE, DATE, "PE", 1, reference, load)
+
+
+def test_scan_reaches_the_fiftieth_strike_and_stops_there():
+    """Phase 26: the Max Price search window is 50 strikes from ATM (it was 30)."""
+    reference = pd.Timestamp(f"{DATE} 09:15:00", tz="UTC")
+
+    def loader(first_qualifying_step):
+        def load(symbol, date, strike=None, *args):
+            if strike is None:
+                return history((71700,), ("09:15:00",))
+            step = (strike - 71700) // prep.STRIKE_INTERVALS["BSESEN"]
+            return history((100 if step >= first_qualifying_step else 500,), ("09:15:00",))
+        return load
+
+    assert prep.MAX_PRICE_SCAN_STRIKES == 50
+    strike, _, _ = prep.find_max_price_strike("BSESEN", DATE, DATE, "CE", 100, reference, loader(49))
+    assert strike == 71700 + 49 * prep.STRIKE_INTERVALS["BSESEN"]
+    with pytest.raises(ValueError, match="within 50 strikes"):
+        prep.find_max_price_strike("BSESEN", DATE, DATE, "CE", 100, reference, loader(50))
 
 
 def test_minute_scan_reads_minute_candles_and_never_second_level():

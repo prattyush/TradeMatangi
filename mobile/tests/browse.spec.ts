@@ -201,7 +201,7 @@ test('Max price can go back to a manual strike', async ({ page }) => {
 })
 
 test('Max price says why no strike was found and offers a manual strike', async ({ page }) => {
-  const state = await openBrowse(page, s => { s.maxPriceFail = 'No observed premium at or below the cap within 30 strikes' })
+  const state = await openBrowse(page, s => { s.maxPriceFail = 'No observed premium at or below the cap within 50 strikes' })
   await page.getByRole('button', { name: 'CE', exact: true }).click()
   await openMax(page)
   await page.getByRole('dialog', { name: 'CE max price' }).getByLabel('Premium cap (₹)').fill('1')
@@ -211,7 +211,7 @@ test('Max price says why no strike was found and offers a manual strike', async 
   state.maxPriceFail = undefined
   await page.getByRole('button', { name: 'Try again' }).click()
   await expect(chart(page)).toBeVisible()
-  state.maxPriceFail = 'No observed premium at or below the cap within 30 strikes'
+  state.maxPriceFail = 'No observed premium at or below the cap within 50 strikes'
   await page.getByRole('button', { name: 'Previous day' }).click()
   await page.getByRole('button', { name: 'Manual strike' }).click()
   await expect(chart(page)).toBeVisible()

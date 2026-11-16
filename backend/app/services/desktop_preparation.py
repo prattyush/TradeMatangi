@@ -140,8 +140,11 @@ def price_at(result, date, reference):
     return price_before(result, date, reference)
 
 
+MAX_PRICE_SCAN_STRIKES = 50  # strikes searched outward from ATM (was 30; Phase 26)
+
+
 def find_max_price_strike(symbol, date, expiry, right, cap, reference, load):
-    """The first strike from ATM outwards (CE up, PE down, 30 steps) whose observed premium is at or below ``cap``.
+    """The first strike from ATM outwards (CE up, PE down, ``MAX_PRICE_SCAN_STRIKES`` steps) whose observed premium is at or below ``cap``.
 
     ``load(symbol, date[, strike, expiry, right])`` supplies the candles (minute for Browse and the read-only screens,
     seconds for replay), and the prices are the last observed ones before ``reference`` (no look-ahead). There is no ATM
@@ -152,7 +155,7 @@ def find_max_price_strike(symbol, date, expiry, right, cap, reference, load):
     if price is None:
         raise ValueError("No underlying price is available at this reference time")
     atm = get_atm_strike(symbol, price)
-    for step in range(30):
+    for step in range(MAX_PRICE_SCAN_STRIKES):
         strike = atm + step * STRIKE_INTERVALS[symbol] * (1 if right == "CE" else -1)
         if strike <= 0:
             break
@@ -163,7 +166,7 @@ def find_max_price_strike(symbol, date, expiry, right, cap, reference, load):
         premium = price_before(candidate, date, reference, require_observed=True)
         if premium is not None and premium <= cap:
             return strike, premium, candidate
-    raise ValueError("No observed premium at or below the cap within 30 strikes")
+    raise ValueError(f"No observed premium at or below the cap within {MAX_PRICE_SCAN_STRIKES} strikes")
 
 
 def find_max_price_strike_minute(symbol, date, expiry, right, cap, reference_time):
