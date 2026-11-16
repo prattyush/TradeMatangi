@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { levelRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { GameChart } from '../../../chart/GameChart'
@@ -73,6 +75,7 @@ export default function LevelRecallView({ level, params, seed, suspended, market
       const seen = createSeenWindows(browserStorage(), market.userId, 'level_recall', market.today)
       const source = createLevelSource({ rng: createRng(seed), availability, data: market.data, seen: seen.recent(), onUsed: id => seen.add(id) })
       const results: RoundResult[] = []
+      const rows: ReviewRow[] = []
       const ask = (i: number) => source.next({ levelCount: params.levelCount, distractors: params.distractors, mode: isSequenceRound(i, params.sequence) ? 'sequence' : 'levels' }, abort.signal)
       let pending = ask(0)
       for (let i = 0; i < total && !cancelled; i++) {
@@ -105,11 +108,11 @@ export default function LevelRecallView({ level, params, seed, suspended, market
           const s = scoreLevels(current, placedRef.current, params.tolMult)
           scored = { mode: 'levels', roundScore: s.roundScore, errors: s.errors }
         }
-        results.push(scored)
+        results.push(scored); rows.push(levelRow(rows.length + 1, current, scored))
         setResult(scored); setPhase('result')
         await clk.run(180_000, () => undefined, () => nextRef.current)
       }
-      if (!cancelled) latest.current.onFinish(summariseLevels(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summariseLevels(results, latest.current.level), review: rows })
     })()
     return () => { cancelled = true; abort.abort(); clk.cancel() }
   }, [market, params, seed, total])

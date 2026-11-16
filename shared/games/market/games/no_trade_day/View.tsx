@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { segmentRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { GameChart } from '../../../chart/GameChart'
@@ -89,6 +91,7 @@ export default function NoTradeDayView({ level, params, seed, suspended, market,
       const source = createSegmentSource({ rng: createRng(seed), availability, data: market.data, seen: seen.recent(), onUsed: id => seen.add(id), ctx: { lotSizeOf: symbol => availability.symbols[symbol]?.lot_size ?? undefined, cost: market.cost, slipMult: params.slipMult } })
       const fetchNext = () => source.next({ segMin: params.segMin, stopMult: params.stopMult, targetEr: params.targetEr, slipMult: params.slipMult }, abort.signal)
       const results: SegmentResult[] = []
+      const rows: ReviewRow[] = []
       let pending = fetchNext()
       for (let i = 0; i < total && !cancelled; i++) {
         const next = await pending
@@ -128,10 +131,10 @@ export default function NoTradeDayView({ level, params, seed, suspended, market,
         if (cancelled) return
         sim.advance(current.seconds)
         const scored = scoreSegment(current, committed, sim.finish())
-        results.push(scored); setResult(scored); setTick(t => t + 1); setPhase('result')
+        results.push(scored); rows.push(segmentRow(rows.length + 1, current, scored)); setResult(scored); setTick(t => t + 1); setPhase('result')
         await clk.run(300_000, () => undefined, () => nextRef.current)
       }
-      if (!cancelled) latest.current.onFinish(summariseNoTrade(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summariseNoTrade(results, latest.current.level), review: rows })
     })()
     return () => { cancelled = true; abort.abort(); clk.cancel() }
   }, [market, params, seed, total])

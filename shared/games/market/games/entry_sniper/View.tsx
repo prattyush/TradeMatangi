@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { sniperRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { GameChart } from '../../../chart/GameChart'
@@ -95,6 +97,7 @@ export default function EntrySniperView({ level, params, seed, suspended, market
       const plan = sniperPlan(params, { lotSizeOf: symbol => availability.symbols[symbol]?.lot_size ?? undefined, cost: market.cost, slipMult: params.slipMult })
       const source = createRoundSource<SniperRound>({ rng: createRng(seed), availability, fetcher: market.data, plan, seen: seen.recent(), onUsed: id => seen.add(id), maxCandidates: MAX_ATTEMPTS })
       const results: SniperResult[] = []
+      const rows: ReviewRow[] = []
       let pending = source.next(abort.signal)
       for (let i = 0; i < total && !cancelled; i++) {
         const next = await pending
@@ -128,11 +131,11 @@ export default function EntrySniperView({ level, params, seed, suspended, market
           await clk.run((runSec / params.replaySpeed) * 1000, ms => setTradeSec(Math.floor((ms / 1000) * params.replaySpeed)))
           if (cancelled) return
         }
-        results.push(scored)
+        results.push(scored); rows.push(sniperRow(rows.length + 1, current, scored))
         setResult(scored); setPhase('result')
         await clk.run(60_000, () => undefined, () => nextRef.current)
       }
-      if (!cancelled) latest.current.onFinish(summariseSniper(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summariseSniper(results, latest.current.level), review: rows })
     })()
     return () => { cancelled = true; abort.abort(); clk.cancel() }
   }, [market, params, seed, total])
