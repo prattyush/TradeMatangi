@@ -219,8 +219,50 @@ export const MAKE_TARGET_PARAMS: ParamTable = {
   rtSlow: a(60000, 55000, 45000, 38000, 30000),
 }
 
+// ---- Reasoning ---------------------------------------------------------------------------------------------------------
+export const PATTERN_MATRIX_PARAMS: ParamTable = {
+  // attributes that follow a rule (the rest stay fixed): shape, count, size, colour, rotation, shading
+  rules: a(1, 2, 3, 4, 4),
+  options: a(6, 6, 7, 8, 8),
+  limitMs: a(90000, 80000, 65000, 50000, 40000),
+  // share of wrong options that differ from the right one in exactly one attribute (low = several differences, easy to dismiss)
+  similarity: a(0.2, 0.4, 0.6, 0.8, 1.0, false),
+  // a dot-mask attribute where the third cell is the XOR or AND of the first two (from level 14)
+  overlay: steps([1, 0], [14, 1]),
+  gapMs: a(600, 600, 600, 600, 600),
+  // a fast but careful solve (the speed bonus is 15 % of the score); RT_slow is the time limit
+  rtFast: a(14000, 13000, 12000, 10000, 8000),
+  rtSlow: a(90000, 80000, 65000, 50000, 40000),
+}
+
+export const NUMBER_SERIES_PARAMS: ParamTable = {
+  // 0 arithmetic and geometric | 1 adds alternating and second-order | 2 adds powers, linear and Fibonacci-like | 3 adds interleaved series | 4 adds digit-sum and composite rules
+  tier: steps([1, 0], [5, 1], [9, 2], [13, 3], [17, 4]),
+  shown: a(8, 7, 6, 5, 5),
+  limitMs: a(60000, 50000, 40000, 32000, 25000),
+  // 0 pick the answer from 5 options | 1 type the answer (level 15+)
+  typed: steps([1, 0], [15, 1]),
+  gapMs: a(600, 600, 600, 600, 600),
+  rtFast: a(7000, 7000, 7000, 7000, 6000),
+  rtSlow: a(60000, 50000, 40000, 32000, 25000),
+}
+
+export const CODE_BREAKER_PARAMS: ParamTable = {
+  // Spec: L 3 to 5, S 4 to 8. Level 1 starts at 5 symbols (60 codes, not 24): with 24 a random guesser solved about one code in eight by luck (C19).
+  length: a(3, 4, 4, 5, 5),
+  symbols: a(5, 6, 6, 7, 8),
+  // from level 10 a symbol can appear more than once in the code
+  repeats: steps([1, 0], [10, 1]),
+  guesses: a(10, 10, 9, 8, 8),
+  // from level 16 one feedback value of each code is hidden ("?")
+  hidden: steps([1, 0], [16, 1]),
+  gapMs: a(800, 800, 800, 800, 800),
+  rtFast: a(25000, 30000, 40000, 50000, 60000),
+  rtSlow: a(300000, 300000, 300000, 300000, 300000),
+}
+
 export const BLOCK_SECONDS = { quick_match: 60, colour_clash: 60, green_light: 75, n_back_stream: 90, flanker_flock: 60, rule_switch: 75, flip_map: 75, number_sprint: 90, equation_drop: 90 } as const
-export const ROUND_COUNTS = { needle_finder: 20, track_the_dots: 8, card_sorter: 64, make_target: 8 } as const
+export const ROUND_COUNTS = { needle_finder: 20, track_the_dots: 8, card_sorter: 64, make_target: 8, pattern_matrix: 10, number_series: 12, code_breaker: 6 } as const
 /** Three strikes end a span game. */
 export const MAX_STRIKES = 3
 /** Hard ceiling on the span in the two span games (spec 17.5, correction C1). */

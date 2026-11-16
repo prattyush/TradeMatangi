@@ -262,7 +262,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | B1 | Done (2026-11-15), see "B1 as built" below |
 | B2 | Done (2026-11-15), see "B2 as built" below |
 | B3 | Done (2026-11-15), see "B3 as built" below |
-| B4–B6, G1, G3b, G4–G7 | Planned, order above |
+| B4 | Done (2026-11-15), see "B4 as built" below |
+| B5, B6, G1, G3b, G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -688,3 +689,21 @@ Flexibility and Math: **Rule Switch, Card Sorter, Flip Map, Number Sprint, Equat
 - **Tests:** desktop vitest 1114 (141 new: arithmetic, six engines and scorings, Make Target solver/generator/host, Equation Drop simulation, registration, simulated-player properties for five more games), `tsc` clean for desktop and website, website build passes (Games chunk 124 KB, 41 KB gzip, lazy; the worker 3 KB).
 - **Shared files touched:** none outside `shared/games/` and docs. No trading logic changed.
 - **Docs updated:** spec 17.4 and 17.11, `architecture-frontend.md`, `frontend-technical-constraints.md`, `phase25-manual-acceptance.md` (section J), this plan, `CLAUDE.md` row.
+
+## B4 as built (2026-11-15)
+
+Reasoning: **Pattern Matrix, Number Series, Code Breaker**. Branch `feat/brain-games-b4`, PR into `dev`. Dev was in sync with preprod at the start (the sync PR #848 had just merged).
+
+- **Framework additions:** `engine/puzzleHost.ts` (`buildPuzzleSet`: build a game's whole puzzle set in a module Web Worker, or on the calling thread when there is none or it fails; the per-game `new Worker(new URL(...))` stays in the game's own file because the bundler needs the literal path), one shared `reasoning/reasoning.worker.ts` with `reasoning/registry.ts` (the three generators) and `reasoning/host.ts` (`buildMatrices`, `buildSeries`, `buildCodes`). Make Target keeps its own worker from B3.
+- **Pattern Matrix:** `generator.ts` builds a 3x3 grid from rules, then `predictions()` (the rule solver) proves every attribute has exactly one predicted value for the ninth cell; `distractorsAreWrong` re-checks the finished puzzle. Distractors differ from the right figure in one attribute (more often at higher levels) or several; options 6 to 8; the dot-mask XOR/AND attribute from level 14. `FigureView` draws figures in SVG (no assets): count 0 to 3 means 1 to 4 shapes.
+- **Number Series:** nine rule families (arithmetic, geometric, alternating add/multiply, second-order, squares and cubes plus c, linear recurrence, Fibonacci-like, woven series, digit sum) in five tiers; the solver `fits()` reports every family that reproduces the shown terms and its next term, and a puzzle is kept only if they all agree with the intended one. Distractors are the plausible mistakes (the arithmetic step, the repeated ratio, the second-order guess, off-by-one). Typed answer from level 15.
+- **Code Breaker:** exact / misplaced feedback (each symbol counted once), a simple consistent-guess solver gives `par`, the hidden feedback value (level 16+) is skipped by the solver and by the consistency check, the View takes keys 1 to 8, Backspace, Enter, and shows par and the guess count.
+- **Bug found by the browser check:** the figure drawing indexed shape positions by `count - 1` while the attribute value is already 0 to 3 (count 0 crashed the view). A render test now draws every figure of every puzzle at four levels.
+- **Scoring decisions (also in spec 17.4):** corrections C19 (Code Breaker), C20 (Pattern Matrix uniqueness and attributes), C21 (Number Series solver strictness and early-level number cap).
+- **Simulated players (levels 1, 10, 20; 100 seeds):** perfect 100 on all three (Code Breaker's perfect player is the simple solver, hidden value included); random and fast-random about 0 (the Code Breaker level 1 problem in the spec's setup was a 24-code space, fixed as above).
+- **Generation time (inline, level 20):** Pattern Matrix about 6 ms for ten puzzles, Number Series a few ms for twelve, Code Breaker about 90 ms for six (the solver enumerates up to 32,768 codes), so none is near the 8 ms budget per task except Code Breaker, hence the Worker.
+- **Checked in a real browser (Playwright, production build of the real `GameShell`, bots reading the page):** Pattern Matrix level 14 (the grid draws, ten puzzles answered, per-rule stats, the Worker file loaded); Number Series level 16 typed answers (12 puzzles; a bot with a partial solver solved 8 and every one it solved matched the generator's answer); Code Breaker level 16 with the hidden value (a solver bot using the displayed feedback and "?" solved 5 of 6 within the limit, 100 % consistency, par shown). **Not run:** the website's own Games overlay (no DynamoDB Local here) and Windows.
+- **Not in B4:** Dashboard brain panels, Warm-up and Review replay (B6); calibration of the RT anchors and limits from the owner's play (provisional); the Windows build is yours to check (acceptance section K).
+- **Tests:** desktop vitest 1213 (99 new), `tsc` clean for desktop and website, website build passes (the Reasoning worker is a separate 11 KB chunk); new: matrix generator and solver, drawing, series solver and generator, code solver and consistency, the three engines and scorings, Reasoning host (inline, through the worker protocol, fallback), simulated players for the three.
+- **Shared files touched:** none outside `shared/games/` and docs. No trading logic changed.
+- **Docs updated:** spec 17.4 and 17.11, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section K), this plan, `CLAUDE.md` row.

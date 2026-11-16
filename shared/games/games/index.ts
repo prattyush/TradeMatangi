@@ -17,8 +17,11 @@ import flipMap from '../brain/games/flip_map'
 import numberSprint from '../brain/games/number_sprint'
 import equationDrop from '../brain/games/equation_drop'
 import makeTarget from '../brain/games/make_target'
+import patternMatrix from '../brain/games/pattern_matrix'
+import numberSeries from '../brain/games/number_series'
+import codeBreaker from '../brain/games/code_breaker'
 import { isPlayable, registerGame } from '../core/registry'
 
-for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget]) {
+for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget, patternMatrix, numberSeries, codeBreaker]) {
   if (!isPlayable(definition.id)) registerGame(definition)
 }
