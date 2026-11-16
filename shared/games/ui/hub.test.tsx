@@ -32,8 +32,8 @@ describe('Dashboard', () => {
     expect(html).toContain('90 ms')
     expect(html).toContain('improving')
   })
-  it('lists market games as coming soon and shows one table row per game in All', () => {
-    expect(html).toContain('coming soon')
+  it('shows one table row per game in All, and no game is marked coming soon now that all are playable', () => {
+    expect(html).not.toContain('coming soon')
     expect((html.match(/<tr /g) ?? []).length).toBe(31)
   })
   it('gives charts and meters a name for screen readers', () => {

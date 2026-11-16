@@ -270,7 +270,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | G4a | Done (2026-11-16), see "G4a as built" below (Risk Calculator and Hotkey Drill) |
 | G4b | Done (2026-11-16), see "G4b as built" below (Entry Sniper and Exit Discipline) |
 | G5 | Done (2026-11-16), see "G5 as built" below (Level Recall, Strike Picker, Regime Switch) |
-| G6–G7 | Planned, order above |
+| G6 | Done (2026-11-16), see "G6 as built" below (Spot the Trap, No-Trade Day); all ten market games playable |
+| G7 | Planned (market Review, Warm-up pools, Low-memory mode, memory and performance pass, final docs) |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -808,3 +809,16 @@ Three more market games, 8 of 10 playable: **Level Recall** (Memory), **Strike P
 - **Checked in a real browser (throwaway harness, the real backend and data cache):** Level Recall at level 10 (study, click-to-place on the ladder, Enter, the result table and ladder with true lines, two swing-sequence rounds with H and L); Strike Picker at level 12 (13 scenarios with the number keys, result table and explanation text); Regime Switch at level 20 (16 segments, 8 regime changes). The market tab lists eight playable games. **Not run:** the Windows window, the website overlay, sound, Reduce motion, a network failure mid-session.
 - **Tests:** desktop vitest 1573 (97 new: Black-Scholes 12, regime classifier 9, levels and swings 13, Strike Picker 24, Regime Switch 17, Level Recall 22); `tsc` clean for desktop and website.
 - **Docs updated:** spec 5.6 to 5.8 and 14, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section R), this plan, `CLAUDE.md` row.
+
+## G6 as built (2026-11-16)
+
+The last two market games: **Spot the Trap** (Attention) and **No-Trade Day** (Discipline). All ten market games are playable. Branch `feat/games-g6`, PR into `dev`. No Rust, backend or trading change.
+
+- **New code:** `market/engine/patterns.ts` (four detectors with strict and loose forms, `huntF1`, `findBreakouts`, `breakoutTruth`); `market/games/spot_the_trap/` (engine, View with a click-to-mark overlay, index, tests); `market/games/no_trade_day/` (engine with the segment simulation, rules, opportunity and the segment source, View, index, tests); `ChartView.timeAt` in `chart/chartModel.ts` (the inverse of `x`, for click positions); parameter tables and constants in `config/difficulty.market.ts`.
+- **Existing files changed (inside `shared/games/`):** `core/dashboard.ts` (four trend panels: fake-out accuracy, real-breakout hesitation, rule adherence, revenge trades), `ui/games.css`, `games/index.ts`, `ui/hub.test.tsx` (no game is "coming soon" any more).
+- **Spec corrections:** **C40** Spot the Trap, **C41** No-Trade Day (spec 5.9 and 5.10 "As built (G6)").
+- **Data used:** Spot the Trap one 1 second window per round, as Tick Reader; No-Trade Day two windows (900 s limit) per segment, the next segment fetched while the current one is played.
+- **Calibrated on real data** (300 real windows, scratchpad scripts, not committed): occurrences per 60 bars and the REAL share of breakouts are in C40.
+- **Checked in a real browser (throwaway harness, the real backend and data cache):** Spot the Trap at level 1 (the breakout screen, F, the reveal with the level and thresholds) and level 8 (a pattern hunt with three clicks, Enter, the reveal marks); No-Trade Day at level 1 (rules screen, Start, long, exit, short, a revenge entry flagged live, the status line and the stop line). **Not run:** levels above 8, the tilt event and the minimum-rules gate in a browser (unit tested), the Windows window, the website overlay, sound, a network failure mid-session.
+- **Open for tuning from play:** the 2 and 0.5 volUnit thresholds and 12 bar horizon of the breakout, the pattern thresholds, the size of 1 R and the speed of the replay in No-Trade Day.
+- **Docs updated:** spec 5.9 and 5.10, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section S), this plan, `CLAUDE.md` row.
