@@ -518,7 +518,12 @@ def cap_entry_quantity(
 # ── Minimum gap between entries ───────────────────────────────────────────────
 
 def _last_entry_fill_time(session_id: str) -> int | None:
-    """Timestamp of the latest fill that opened, added to or flipped a position."""
+    """Timestamp of the latest fill that opened, added to or flipped a position, or None when the gap does not apply.
+
+    The gap is about trading again too soon while a position is still on, so it **resets when the whole book is flat**:
+    once every contract (CE and PE, every strike and expiry) is closed, the next entry is allowed at once. With a CE and a
+    PE open, both must be closed before the timer resets; closing one of them does not.
+    """
     from app.services.trading import get_trades
     net: dict[tuple, int] = {}
     last: int | None = None
@@ -530,6 +535,8 @@ def _last_entry_fill_time(session_id: str) -> int | None:
         net[key] = after
         if abs(after) > abs(before) or (before != 0 and (before > 0) != (after > 0) and after != 0):
             last = trade.timestamp if last is None else max(last, trade.timestamp)
+        if not any(net.values()):
+            last = None  # everything is closed: the gap starts over with the next entry
     return last
 
 
