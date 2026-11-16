@@ -248,3 +248,84 @@ export const LEVEL_RECALL = {
   axisPad: 0.12,
   floorUnits: 0.0001,
 } as const
+
+/** Spot the Trap (spec 5.9, 15). Mode A (breakout verdict) is always on; mode B (pattern hunt) alternates in from level 6. */
+export const SPOT_THE_TRAP_PARAMS: ParamTable = {
+  rounds: a(10, 10, 12, 12, 14),
+  /** Seconds to call a breakout REAL or FAKE; a late call scores nothing. */
+  decisionSec: a(12, 9, 6, 4, 3),
+  /** 5 second bars on screen. */
+  bars: a(40, 60, 80, 100, 120),
+  /** Share of breakouts picked close to the REAL / FAKE boundary. */
+  ambiguity: a(0, 0.1, 0.25, 0.4, 0.5, false),
+  /** Seconds to find every occurrence in the hunt. */
+  huntSec: a(30, 26, 20, 15, 12),
+  /** How many of the four patterns the hunt asks for (2 from level 6, all four from level 16), and whether it is on at all. */
+  patternPool: steps([1, 2], [11, 3], [16, 4]),
+  modeB: steps([1, 0], [6, 1]),
+  /** Near-miss candles a hunt stretch must contain at least (up to 3). */
+  distractors: a(0, 1, 2, 3, 3),
+}
+
+export const SPOT_THE_TRAP = {
+  /** A breakout is REAL if the price goes `extMult` volUnits beyond the level before it comes back `retMult` inside, within `horizonBars` bars. */
+  extMult: 2,
+  retMult: 0.5,
+  horizonBars: 12,
+  /** The breakout is of the highest high (lowest low) of the previous bars. */
+  lookback: 24,
+  /** Bars in a hunt, and how many true occurrences it may hold. */
+  huntBars: 60,
+  maxOccurrences: 6,
+  /** A breakout whose furthest extension is within this share of the threshold counts as close to the boundary. */
+  boundaryMargin: 0.35,
+  /** The wait before a result can be dismissed is none: Space goes on. */
+  minBarsBeforeBreakout: 20,
+} as const
+
+/** No-Trade Day (spec 5.10, 15): a session is three segments of a day replayed faster than real time. */
+export const NO_TRADE_DAY_PARAMS: ParamTable = {
+  /** Minutes of market data in a segment, and the minutes it takes to play (so the replay speed is `segMin / playMin`). */
+  segMin: a(15, 18, 20, 22, 25),
+  playMin: a(5, 4.6, 4.2, 3.6, 3, false),
+  /** Rules the player must commit to before the segment starts (0 at level 1, 3 from level 15). */
+  minRules: steps([1, 0], [5, 1], [10, 2], [15, 3]),
+  /** The wanted efficiency ratio of the segment: lower means more chop and more bait. */
+  targetEr: a(0.3, 0.24, 0.18, 0.12, 0.08, false),
+  /** 1 while a rule break is flagged on screen as it happens (up to level 10). */
+  warnings: steps([1, 1], [11, 0]),
+  /** 1 from level 10: an early forced loss tests the cooldown. */
+  tilt: steps([1, 0], [10, 1]),
+  /** The risk of one trade (1 R) is this many volUnits scaled to a minute. */
+  stopMult: a(1.2, 1.1, 1, 0.9, 0.8, false),
+  slipMult: a(0, 0.4, 0.8, 1.2, 1.5, false),
+}
+
+export const NO_TRADE_DAY = {
+  segments: 3,
+  deltaProxy: 0.5,
+  /** Rules and the limits the player may set (spec 5.10 step 1). */
+  limits: {
+    maxTrades: { min: 1, max: 10, default: 4 },
+    maxLossR: { min: 1, max: 6, default: 3 },
+    stopAfterLosses: { min: 1, max: 5, default: 2 },
+    cooldownSec: { min: 10, max: 300, default: 60 },
+    maxLots: { min: 1, max: 3, default: 1 },
+  },
+  /** Lots the player can trade (1 to this), and the cooldown that defines a revenge trade when no cooldown rule is chosen. */
+  lotsMax: 3,
+  revengeSec: 60,
+  /** Trades the opportunity is computed for when no maximum-trades rule is chosen. */
+  defaultOpportunityTrades: 5,
+  /** The forced loss of a tilt event comes this far into the segment. */
+  tiltAt: 0.25,
+  violationPenalty: 0.25,
+  revengePenalty: 0.25,
+  /** Stand-aside credit: a quiet segment with at most one trade scores at least this performance. */
+  standAsidePerf: 0.6,
+  /** Opportunity below this is a quiet segment. */
+  quietBelowR: 0.5,
+  /** The swing threshold for the opportunity legs, in R. */
+  legThresholdR: 1,
+  minCoverage: 0.8,
+} as const

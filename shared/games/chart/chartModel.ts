@@ -40,6 +40,8 @@ export interface ChartView {
   bodyWidth: number
   /** Seconds one candle spans (the median spacing of the candles). */
   step: number
+  /** The inverse of `x`: the time at a pixel column (for clicks on the chart). */
+  timeAt: (px: number) => number
 }
 
 export function limitPoints<T>(items: T[] | undefined): T[] | undefined {
@@ -87,7 +89,8 @@ export function computeView(data: ChartData, size: Size, padding: Padding = DEFA
   const y = (price: number) => plot.top + (1 - (price - y0) / (y1 - y0)) * plot.height
   const count = data.candles?.length ?? 0
   const bodyWidth = count ? Math.max(1, Math.min(14, (plot.width / Math.max(1, (x1 - x0) / step)) * 0.7)) : 0
-  return { x, y, xRange: [x0, x1], yRange: [y0, y1], plot, bodyWidth, step }
+  const timeAt = (px: number) => x0 + ((px - plot.left) / plot.width) * (x1 - x0)
+  return { x, y, xRange: [x0, x1], yRange: [y0, y1], plot, bodyWidth, step, timeAt }
 }
 
 /** Round tick values for the price axis (about `count` of them). */

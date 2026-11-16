@@ -180,5 +180,14 @@ Needs the backend with the Games index built (section N). Eight market games are
 5. **Failures:** stop the backend and press Play on Level Recall or Regime Switch: a message says the server could not be reached and nothing is recorded. Strike Picker still plays offline.
 6. Tell me whether the level counts and study times feel right in Level Recall, whether the strike answers make sense to you as a trader (the model is Black-Scholes with a simple spread), and whether regimes change often enough in Regime Switch.
 
+## S. Spot the Trap and No-Trade Day (G6): Windows build and the website
+Needs the backend with the Games index built (section N). All ten market games are playable now. No Rust or backend change.
+1. **Spot the Trap, breakout:** Play. The chart stops at a bar that closed beyond the yellow level (the highest high or lowest low of the last 24 bars). Press R (real) or F (fake) before the bar runs out. The reveal adds the next minute and two dashed lines ("real if it gets here first", "fake if it falls back here"), and says what happened in points. A late call scores nothing.
+2. **Spot the Trap, hunt (level 6 and up, every second round):** a 60 bar chart and a named pattern with its rule. Click each bar that is an occurrence (click again to remove, Backspace undoes, Enter finishes). The reveal marks your clicks "you", the true ones "yes" and almost-qualifying bars "near"; the score is how many you found against how many of your clicks were right.
+3. **No-Trade Day:** Play. Choose rules (a checkbox and a limit each); from level 5 you must choose at least 1, from 10 at least 2, from 15 at least 3. Start. The segment plays faster than real time as 5 second candles. L or S enters long or short, E exits, 1 to 3 sets the lots. Every trade has a stop of 1 R (the dashed line). Break a rule on purpose: the game lets you, shows a warning (up to level 10) and counts it. Enter again soon after a loss with as many lots: a revenge trade.
+4. **No-Trade Day result:** the segment's net R against the best in hindsight with your trade limit, rule breaks, revenge trades, each trade, and the scores. In a quiet segment, stand aside (no trades or one) and the performance part is credited. Three segments make a session. From level 10 a forced loss of 1 R appears early in each segment.
+5. **Dashboard:** trend lines for fake-out accuracy, real-breakout hesitation, rule adherence and revenge trades appear after a few Progress sessions.
+6. Tell me whether the real and fake calls feel fair (are the answers what you would say as a trader), whether the pattern hunt finds what you would call those patterns, whether 1 R and the speed of the replay in No-Trade Day feel right, and whether the rules screen is clear.
+
 ## Report back
-Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.
+Note any step that fails, the symbol and day, and the interval. 
