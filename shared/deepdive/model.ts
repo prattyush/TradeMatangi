@@ -10,6 +10,7 @@ export const FEW_DAYS = 5
 
 export const sideLabel = (side: Side) => (side === 'buy' ? 'Buy' : 'Sell')
 /** A Buy setup on the underlying is traded as a CE, a Sell setup as a PE. */
+export const strikeLabel = (mode: string) => (mode === 'max_price' ? 'Max Price' : mode === 'otm' ? 'OTM' : mode)
 export const optionRight = (side: Side): 'CE' | 'PE' => (side === 'buy' ? 'CE' : 'PE')
 export const sideForRight = (right: string | null | undefined): Side | null => (right === 'CE' ? 'buy' : right === 'PE' ? 'sell' : null)
 
@@ -117,6 +118,11 @@ export function toDiveSetup(setup: DeepDiveSetup, tags: readonly DeepDiveTag[]):
 export function withSetups(dive: Dive, setups: readonly DiveSetup[]): Dive {
   const ordered = orderSetups(setups)
   return { ...dive, setups: ordered, incomplete_days: ordered.filter(s => !s.complete).length, unmarked_total: ordered.reduce((sum, s) => sum + s.missing.length, 0) }
+}
+
+/** The dive with a new tag list (a tag added, archived or restored): every day's gaps are worked out again. */
+export function withTags(dive: Dive, tags: readonly DeepDiveTag[]): Dive {
+  return withSetups({ ...dive, tags: [...tags] }, dive.setups.map(setup => toDiveSetup(setup, tags)))
 }
 
 // ── Walking the days ─────────────────────────────────────────────────────────
