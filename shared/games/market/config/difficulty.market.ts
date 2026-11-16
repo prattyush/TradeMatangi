@@ -153,3 +153,98 @@ export const EXIT_DISCIPLINE = {
   contextSec: 60,
   minCoverage: 0.8,
 } as const
+
+/** Strike Picker (spec 5.8, 15). `dteSet` indexes `DTE_SETS` (the spec's mix: 5 and 2 days, then 5/2/1, 2/1/0, 1/0, and only expiry day). */
+export const DTE_SETS: ReadonlyArray<readonly number[]> = [[5, 2], [5, 2, 1], [2, 1, 0], [1, 0], [0]]
+export const STRIKE_PICKER_PARAMS: ParamTable = {
+  scenarios: a(8, 10, 12, 14, 16),
+  /** Seconds to choose a strike; a late pick scores nothing. */
+  decisionSec: a(40, 30, 25, 20, 15),
+  dteSet: steps([1, 0], [5, 1], [10, 2], [15, 3], [20, 4]),
+  /** Market minutes the scenario covers. */
+  minutes: a(30, 20, 12, 8, 5),
+  /** Share of scenarios where the implied volatility changes. */
+  ivShiftShare: a(0, 0.2, 0.4, 0.5, 0.6, false),
+  /** Share of scenarios where the expected move does not come ("negative scenarios"). */
+  failShare: a(0, 0.05, 0.12, 0.2, 0.25, false),
+  /** How many of the four objectives are in play. */
+  objectives: steps([1, 1], [6, 2], [11, 3], [16, 4]),
+}
+
+export const STRIKE_PICKER = {
+  /** Capital of the "profit on capital" objective, in rupees. */
+  capital: 10_000,
+  /** The option's implied volatility by regime. */
+  iv: { low: 0.11, normal: 0.14, high: 0.2 },
+  /** Fraction of the trading day left when the scenario starts (so a 0 DTE option still has some life). */
+  dayLeft: 0.4,
+  /** Trading minutes in a session: elapsed time is `minutes / 375` of a day. */
+  sessionMinutes: 375,
+  /** Round-trip spread in points: `base + premiumShare x premium + otmStep x OTM steps`. */
+  spread: { base: 0.3, premiumShare: 0.012, otmStep: 0.5 },
+  /** The flat round-trip cost of the fourth objective, in rupees per lot. */
+  costPerLotRs: 60,
+  /** Strikes offered on each side of the money (ITM3 to OTM3). */
+  strikesEachSide: 3,
+} as const
+
+/** Regime Switch (spec 5.7, 15). */
+export const REGIME_SWITCH_PARAMS: ParamTable = {
+  /** Seconds of price shown, and of replay after the choice. */
+  segSec: a(120, 90, 70, 50, 40),
+  holdSec: a(60, 45, 35, 25, 20),
+  segments: a(8, 10, 12, 14, 16),
+  /** The regime changes about this often, in segments (4 at level 1, 2 at level 20). */
+  changeEvery: a(4, 3.5, 3, 2.5, 2, false),
+  /** Seconds to choose a playbook; a late choice scores nothing. */
+  decisionSec: a(12, 10, 8, 6, 5),
+  /** 1 while the previous segment's regime is shown as a hint (levels 1 to 8). */
+  hint: steps([1, 1], [9, 0]),
+  slipMult: a(0, 0.4, 0.8, 1.2, 1.5, false),
+  replaySpeed: a(6, 6, 6, 6, 6, false),
+}
+
+export const REGIME_SWITCH = {
+  deltaProxy: 0.5,
+  /** Seconds of the end of the segment that decide FOLLOW and FADE. */
+  directionSec: 30,
+  /** Taken off the score when the player repeats a playbook that stopped being the best after the regime changed. */
+  perseverationPenalty: 0.25,
+  /** Weights of the regime to change to (spikes are rare in real data). */
+  nextWeights: { trend_up: 0.3, trend_down: 0.3, range: 0.3, spike: 0.1 },
+  /** Playbook credit by rank: best, second, worst. */
+  rankScores: [1, 0.5, 0],
+} as const
+
+/** Level Recall (spec 5.6, 15). */
+export const LEVEL_RECALL_PARAMS: ParamTable = {
+  rounds: a(6, 6, 7, 7, 8),
+  /** How many levels the player must place. */
+  levelCount: a(3, 4, 5, 6, 8),
+  /** Seconds the levels are on screen, and the time to place them all. */
+  studySec: a(20, 15, 10, 8, 5),
+  recallSec: a(60, 50, 40, 30, 25),
+  /** The error that scores nothing, in day volUnits (1 at level 1, 0.35 at level 20). */
+  tolMult: a(1, 0.8, 0.6, 0.45, 0.35, false),
+  /** Levels shown during the study that are never asked for. */
+  distractors: a(0, 1, 2, 3, 4),
+  /** 1 from level 10: every third round is the swing-sequence sub-mode. */
+  sequence: steps([1, 0], [10, 1]),
+}
+
+export const LEVEL_RECALL = {
+  /** Two levels shown together are at least this many day volUnits apart, so each has its own place on the ladder. */
+  minSeparation: 0.15,
+  /** ... and at least this share of the ladder's height apart, so two labels never sit on top of each other. */
+  minAxisShare: 0.045,
+  /** The swing threshold of the sequence sub-mode, in day volUnits, and the swings shown. */
+  swingThreshold: 0.8,
+  swings: 6,
+  /** Round times: no earlier than 10:15 and no later than 14:25 (the opening range is over, and the session is not about to end). */
+  openSec: 33_300,
+  /** The prior session must be this close (calendar days) to count as "the day before". */
+  maxPriorGapDays: 4,
+  /** The ladder shows the day's range plus this share of it above and below. */
+  axisPad: 0.12,
+  floorUnits: 0.0001,
+} as const

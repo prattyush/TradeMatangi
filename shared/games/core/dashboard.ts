@@ -110,6 +110,9 @@ export const TREND_PANELS: readonly TrendPanel[] = [
   { id: 'risk_time', title: 'Risk answer time', gameId: 'risk_calculator', key: 'median_ms', unit: 'ms', better: 'lower', note: 'Median time to answer a risk question.' },
   { id: 'sniper_efficiency', title: 'Entry efficiency', gameId: 'entry_sniper', key: 'mean_efficiency', unit: '%', better: 'higher', note: 'How close your entries came to the best one in the window.' },
   { id: 'exit_capture', title: 'Exit capture ratio', gameId: 'exit_discipline', key: 'capture_ratio', unit: '%', better: 'higher', note: 'The share of the best available result that you kept.' },
+  { id: 'level_error', title: 'Level recall error', gameId: 'level_recall', key: 'mean_error_units', unit: 'units', better: 'lower', note: 'Average distance of your placed levels from the true ones, in how much the market moves in five minutes.' },
+  { id: 'strike_optimal', title: 'Best strike picked', gameId: 'strike_picker', key: 'optimal_rate', unit: '%', better: 'higher', note: 'How often your strike was the best one for the objective.' },
+  { id: 'regime_persev', title: 'Regime perseveration', gameId: 'regime_switch', key: 'persev_rate', unit: '%', better: 'lower', note: 'How often you kept the old playbook after the market changed and it stopped being the best.' },
   { id: 'persev', title: 'Perseveration rate', gameId: 'card_sorter', key: 'persev_error_pct', unit: '%', better: 'lower', note: 'Errors that keep using the rule that just stopped working.' },
 ]
 
