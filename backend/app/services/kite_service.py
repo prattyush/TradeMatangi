@@ -30,6 +30,7 @@ from typing import Any
 from app.services import performance_diagnostics as diagnostics
 from app.services.kite_reactor import call as _reactor_call
 from app.services.kite_requests import request as _kite_request, is_auth_error
+from app.services.ohlc_accumulator import OHLCAccumulator as _OHLCAccumulator
 from app.services.volume_delta import VolumeDelta
 from app.config import KITE_STREAM_MODE
 
@@ -421,59 +422,6 @@ def fetch_kite_1min_options(symbol: str, date: str, strike: int | float, expiry:
 def _stream_mode(ticker):
     """Quote mode carries the day's traded volume; ``KITE_STREAM_MODE=ltp`` goes back to price only."""
     return ticker.MODE_LTP if KITE_STREAM_MODE == "ltp" else ticker.MODE_QUOTE
-
-
-@dataclass
-class _OHLCAccumulator:
-    open: float = 0.0
-    high: float = 0.0
-    low: float = 0.0
-    close: float = 0.0
-    current_second: int = 0
-    # Volume traded inside the current second. ``volume_seen`` stays False for an instrument that never reports volume
-    # (an index), so its candles carry no ``volume`` key at all rather than a misleading 0.
-    volume: int = 0
-    volume_seen: bool = False
-
-    def candle(self) -> dict:
-        """The candle of the current second as the stream publishes it."""
-        candle = {
-            "type": "tick",
-            "time": self.current_second,
-            "open": round(self.open, 2),
-            "high": round(self.high, 2),
-            "low": round(self.low, 2),
-            "close": round(self.close, 2),
-        }
-        if self.volume_seen:
-            candle["volume"] = self.volume
-        return candle
-
-    def update(self, price: float, ts_second: int, volume: int | None = None) -> dict | None:
-        """
-        Feed a price (and the volume traded since the previous update, when the feed has one). Returns a completed
-        candle dict when a new second begins, otherwise returns None. Completed candle covers the previous second.
-        """
-        if self.current_second == 0:
-            self.current_second = ts_second
-            self.open = self.high = self.low = self.close = price
-            self.volume, self.volume_seen = volume or 0, volume is not None
-            return None
-
-        if ts_second == self.current_second:
-            self.high = max(self.high, price)
-            self.low = min(self.low, price)
-            self.close = price
-            if volume is not None:
-                self.volume += volume
-                self.volume_seen = True
-            return None
-
-        completed = self.candle()
-        self.current_second = ts_second
-        self.open = self.high = self.low = self.close = price
-        self.volume, self.volume_seen = volume or 0, volume is not None
-        return completed
 
 
 # ---------------------------------------------------------------------------
