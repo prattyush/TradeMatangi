@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDeepDiveClient } from '../../shared/deepdive/client'
 import {
-  activeTags, applyTagValues, blockFor, cycleDay, dayMarks, dayMarksByDate, defaultSideForTrade, diffDayMarks, findStats,
-  formatDay, formatPct, gaps, isComplete, nextGapIndex, orderSetups, positionLabel, restNotValid, sideForRight, sortTagStats,
+  activeTags, applyTagValues, blockFor, dayMarks, dayMarksByDate, defaultSideForTrade, findStats,
+  formatDay, formatPct, gaps, isComplete, nextGapIndex, orderSetups, positionLabel, removalImpact, restNotValid, sideForRight, sortTagStats,
   stepIndex, successLine, tagLine, tagState, tagValueOf, thinNote, toggleTag, unmarkedDaysForTag, unmarkedTagIds, validateTagName,
 } from '../../shared/deepdive/model'
 import type { DeepDiveSetup, DeepDiveTag, StatsAllEntry, StatsBlock, TagStat } from '../../shared/deepdive/types'
@@ -32,16 +32,11 @@ describe('ordering and calendar marks', () => {
     expect([...dayMarksByDate(list).keys()]).toEqual(['2026-10-06', '2026-10-07'])
   })
 
-  it('cycles one click through none, Buy, Sell, both and back', () => {
-    let marks = { buy: false, sell: false }
-    const seen = []
-    for (let click = 0; click < 4; click += 1) { marks = cycleDay(marks); seen.push({ ...marks }) }
-    expect(seen).toEqual([{ buy: true, sell: false }, { buy: false, sell: true }, { buy: true, sell: true }, { buy: false, sell: false }])
-  })
-
-  it('turns a change of marks into the saves it needs', () => {
-    expect(diffDayMarks({ buy: true, sell: false }, { buy: false, sell: true })).toEqual({ add: ['sell'], remove: ['buy'] })
-    expect(diffDayMarks({ buy: true, sell: true }, { buy: true, sell: true })).toEqual({ add: [], remove: [] })
+  it('says what un-marking a side would throw away', () => {
+    expect(removalImpact(setup('2026-10-06', 'buy')).hasData).toBe(false)
+    expect(removalImpact(setup('2026-10-06', 'buy', { t1: true, t2: false }, { outcome: 'failed', notes: '  ' }))).toEqual(
+      { tagMarks: 2, chartMarks: 0, hasOutcome: true, hasNotes: false, hasData: true })
+    expect(removalImpact(setup('2026-10-06', 'buy', {}, { notes: 'x' })).hasData).toBe(true)
   })
 
   it('maps trade side and option right', () => {
@@ -235,5 +230,40 @@ describe('deep dive client', () => {
     await desktop.restoreTag(ref, 'abc1')
     expect(seen).toHaveLength(12)
     for (const [path, method] of seen) expect(validPatternsPath(path, method), `${method} ${path}`).toBe(true)
+  })
+})
+
+describe('calendar', () => {
+  it('builds Monday-first weeks that cover the month exactly', async () => {
+    const { monthGrid } = await import('../../shared/deepdive/calendar')
+    const october = monthGrid({ year: 2026, month: 10 }) // 1 Oct 2026 is a Thursday
+    expect(october[0].map(c => c.day)).toEqual([28, 29, 30, 1, 2, 3, 4])
+    expect(october[0].map(c => c.inMonth)).toEqual([false, false, false, true, true, true, true])
+    expect(october.every(week => week.length === 7)).toBe(true)
+    expect(october.flat().filter(c => c.inMonth)).toHaveLength(31)
+    expect(october.at(-1)!.at(-1)!.date).toBe('2026-11-01')
+    const february = monthGrid({ year: 2026, month: 2 }) // starts on a Sunday, 28 days
+    expect(february).toHaveLength(5)
+    expect(february[0].map(c => c.day)).toEqual([26, 27, 28, 29, 30, 31, 1])
+  })
+
+  it('shifts months across years and labels them', async () => {
+    const { shiftMonth, monthLabel, monthOf } = await import('../../shared/deepdive/calendar')
+    expect(shiftMonth({ year: 2026, month: 1 }, -1)).toEqual({ year: 2025, month: 12 })
+    expect(shiftMonth({ year: 2026, month: 12 }, 1)).toEqual({ year: 2027, month: 1 })
+    expect(shiftMonth({ year: 2026, month: 3 }, -14)).toEqual({ year: 2025, month: 1 })
+    expect(monthLabel({ year: 2026, month: 10 })).toBe('October 2026')
+    expect(monthOf('2026-03-11')).toEqual({ year: 2026, month: 3 })
+  })
+
+  it('allows weekdays before today only, and opens on the last weekday', async () => {
+    const { pickableDay, lastPickableDay, isWeekend, todayIso } = await import('../../shared/deepdive/calendar')
+    expect(pickableDay('2026-10-06', '2026-10-08')).toBe(true)
+    expect(pickableDay('2026-10-08', '2026-10-08')).toBe(false) // today is not complete
+    expect(pickableDay('2026-10-10', '2026-10-20')).toBe(false) // Saturday
+    expect(isWeekend('2026-10-11')).toBe(true)
+    expect(lastPickableDay('2026-10-12')).toBe('2026-10-09') // Monday -> Friday
+    expect(lastPickableDay('2026-10-07')).toBe('2026-10-06')
+    expect(todayIso(new Date(2026, 9, 5))).toBe('2026-10-05')
   })
 })

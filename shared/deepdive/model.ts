@@ -1,6 +1,6 @@
 /** Pure Deep Dive logic shared by every host: day marks, tag gaps, navigation and the percentage wording. */
 import type {
-  DeepDiveSetup, DeepDiveTag, SetupRef, Side, StatsAllEntry, StatsBlock, TagState, TagStat, TagValue,
+  DeepDiveSetup, DeepDiveTag, Dive, DiveSetup, SetupRef, Side, StatsAllEntry, StatsBlock, TagState, TagStat, TagValue,
 } from './types'
 
 export const SIDES: Side[] = ['buy', 'sell']
@@ -40,20 +40,13 @@ export function dayMarksByDate(setups: readonly DayKey[]): Map<string, DayMarks>
   return marks
 }
 
-/** One click on a calendar day: none, Buy, Sell, Buy and Sell, then none again. */
-export function cycleDay(current: DayMarks): DayMarks {
-  if (!current.buy && !current.sell) return { buy: true, sell: false }
-  if (current.buy && !current.sell) return { buy: false, sell: true }
-  if (!current.buy && current.sell) return { buy: true, sell: true }
-  return { buy: false, sell: false }
-}
-
-/** The saves a change of a day's marks needs. */
-export function diffDayMarks(before: DayMarks, after: DayMarks): { add: Side[]; remove: Side[] } {
-  return {
-    add: SIDES.filter(side => after[side] && !before[side]),
-    remove: SIDES.filter(side => before[side] && !after[side]),
-  }
+/** What un-marking a side would throw away: shown in a confirmation before the day is removed. */
+export function removalImpact(setup: Pick<DeepDiveSetup, 'tag_values' | 'annotations' | 'outcome' | 'notes'>) {
+  const tagMarks = Object.keys(setup.tag_values).length
+  const chartMarks = setup.annotations.length
+  const hasOutcome = setup.outcome !== null
+  const hasNotes = setup.notes.trim().length > 0
+  return { tagMarks, chartMarks, hasOutcome, hasNotes, hasData: tagMarks > 0 || chartMarks > 0 || hasOutcome || hasNotes }
 }
 
 // ── Tags: states and gaps ────────────────────────────────────────────────────
@@ -112,6 +105,18 @@ export function validateTagName(name: string, tags: readonly DeepDiveTag[], excl
   const folded = cleaned.toLowerCase()
   if (activeTags(tags).some(tag => tag.tag_id !== excludeId && tag.name.toLowerCase() === folded)) return 'An active tag with this name already exists'
   return null
+}
+
+/** A setup as `GET /dive` returns it, computed locally after a save so the screen need not reload the dive. */
+export function toDiveSetup(setup: DeepDiveSetup, tags: readonly DeepDiveTag[]): DiveSetup {
+  const missing = unmarkedTagIds(setup, tags)
+  return { ...setup, missing, complete: missing.length === 0 }
+}
+
+/** The dive with a new list of setups: ordered, with the gap counters recomputed. */
+export function withSetups(dive: Dive, setups: readonly DiveSetup[]): Dive {
+  const ordered = orderSetups(setups)
+  return { ...dive, setups: ordered, incomplete_days: ordered.filter(s => !s.complete).length, unmarked_total: ordered.reduce((sum, s) => sum + s.missing.length, 0) }
 }
 
 // ── Walking the days ─────────────────────────────────────────────────────────
