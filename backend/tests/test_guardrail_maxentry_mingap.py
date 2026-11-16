@@ -134,10 +134,33 @@ class TestLastEntryFillTime:
         with patch(TRADES_PATH, return_value=[]):
             assert gsvc._last_entry_fill_time(SESSION) is None
 
-    def test_latest_opening_fill_wins_over_a_later_exit(self):
-        trades = [_trade(TradeSide.BUY, 10, 1000), _trade(TradeSide.BUY, 5, 1300), _trade(TradeSide.SELL, 15, 1600)]
+    def test_latest_opening_fill_wins_over_a_later_partial_exit(self):
+        trades = [_trade(TradeSide.BUY, 10, 1000), _trade(TradeSide.BUY, 5, 1300), _trade(TradeSide.SELL, 10, 1600)]
         with patch(TRADES_PATH, return_value=trades):
             assert gsvc._last_entry_fill_time(SESSION) == 1300
+
+    def test_closing_the_whole_position_resets_the_gap(self):
+        trades = [_trade(TradeSide.BUY, 10, 1000), _trade(TradeSide.BUY, 5, 1300), _trade(TradeSide.SELL, 15, 1600)]
+        with patch(TRADES_PATH, return_value=trades):
+            assert gsvc._last_entry_fill_time(SESSION) is None
+
+    def test_ce_and_pe_both_open_need_both_closed(self):
+        ce, pe = ("CE", 24000, "e"), ("PE", 24000, "e")
+        trades = [_trade(TradeSide.BUY, 75, 1000, *ce), _trade(TradeSide.BUY, 75, 1100, *pe), _trade(TradeSide.SELL, 75, 1200, *ce)]
+        with patch(TRADES_PATH, return_value=trades):
+            assert gsvc._last_entry_fill_time(SESSION) == 1100  # the PE is still open: the timer runs from its entry
+        with patch(TRADES_PATH, return_value=trades + [_trade(TradeSide.SELL, 75, 1300, *pe)]):
+            assert gsvc._last_entry_fill_time(SESSION) is None  # both closed
+
+    def test_a_new_entry_after_a_full_exit_starts_a_fresh_gap(self):
+        trades = [_trade(TradeSide.BUY, 10, 1000), _trade(TradeSide.SELL, 10, 1100), _trade(TradeSide.BUY, 10, 1105)]
+        with patch(TRADES_PATH, return_value=trades):
+            assert gsvc._last_entry_fill_time(SESSION) == 1105
+
+    def test_other_strikes_and_expiries_count_as_open_positions(self):
+        trades = [_trade(TradeSide.BUY, 75, 1000, "CE", 24000, "e"), _trade(TradeSide.BUY, 75, 1050, "CE", 24100, "e"), _trade(TradeSide.SELL, 75, 1100, "CE", 24000, "e")]
+        with patch(TRADES_PATH, return_value=trades):
+            assert gsvc._last_entry_fill_time(SESSION) == 1050
 
     def test_partial_exit_is_not_an_entry(self):
         trades = [_trade(TradeSide.BUY, 10, 1000), _trade(TradeSide.SELL, 4, 1500)]
@@ -169,6 +192,20 @@ class TestCheckMinGap:
         sess = MockSession(current_time=1000 + 300)
         with patch(TRADES_PATH, return_value=[_trade(TradeSide.BUY, 10, 1000)]), patch(POS_PATH, return_value=_pos("LONG", 10, 100.0)):
             assert gsvc.check_min_gap(sess, "BUY", 5) == (False, "")
+
+    def test_entry_right_after_exiting_everything_is_allowed(self):
+        trades = [_trade(TradeSide.BUY, 10, 1000), _trade(TradeSide.SELL, 10, 1030)]
+        sess = MockSession(current_time=1040)  # 40 seconds after the first entry, 10 after the full exit
+        with patch(TRADES_PATH, return_value=trades), patch(POS_PATH, return_value=_pos()):
+            assert gsvc.check_min_gap(sess, "BUY", 5) == (False, "")
+
+    def test_entry_is_still_refused_while_the_other_side_is_open(self):
+        ce, pe = ("CE", 24000, "e"), ("PE", 24000, "e")
+        trades = [_trade(TradeSide.BUY, 75, 1000, *ce), _trade(TradeSide.BUY, 75, 1010, *pe), _trade(TradeSide.SELL, 75, 1020, *ce)]
+        sess = MockSession(current_time=1040)
+        with patch(TRADES_PATH, return_value=trades), patch(POS_PATH, return_value=_pos()):
+            blocked, reason = gsvc.check_min_gap(sess, "BUY", 75, right="CE", strike=24000, expiry="e")
+        assert blocked is True and reason.startswith("MINGAP:")
 
     def test_exit_is_never_refused(self):
         sess = MockSession(current_time=1010)
