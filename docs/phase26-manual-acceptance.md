@@ -69,4 +69,17 @@ Needs the website (or webapp) built from `dev` and the backend running. Do it on
 10. Webapp (installed or browser): the same page and the same Deep dive.
 11. A second account in your Pattern share list opens your deep dive read-only.
 
+## E. Percentages in Label Trades (S8)
+
+Needs the desktop rebuilt from `dev` (a Rust change), the backend, and a deep dive with several days, tags and outcomes (sections A to C). Try it on the website, the Windows app and, if you use it, the phone.
+
+1. Analysis > a session day > **Label Trades**. Choose an **Expected Pattern** category and strategy that has a deep dive: a panel **Your deep dive** appears under the strategy selectors. A strategy without a deep dive shows nothing.
+2. The panel shows All / Buy / Sell with the day counts, each tag as `70% (n=14)` (most frequent first, "Only n days marked" under 5 days) and "Success x of y (z%)". Check one number against the Results step of the deep dive for the same side.
+3. It opens on the side the position profits from. Try a long equity or index trade (Buy), a **bought CE** (Buy), a **bought PE** (Sell), a **sold CE** (Sell) and a **sold PE** (Buy). The panel says "this position is Buy-side" or "Sell-side". Tap the other side and All: the numbers change at once.
+4. Go to the next trade: the panel follows that trade's own direction.
+5. Change the expected strategy or clear it: the panel changes or disappears. The labels save exactly as before and the panel never delays saving.
+6. A deep dive shared with you shows "shared with you"; your own deep dive of the same strategy wins.
+7. With the backend stopped or an older backend, Label Trades works as before with no panel and no error.
+8. Phone: the same panel in the one-trade-at-a-time form.
+
 ## Report back

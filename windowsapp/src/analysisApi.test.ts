@@ -11,6 +11,10 @@ describe('desktop analysis transport', () => {
     // What If: saved scenarios (the exact path, plus a read-only date-range list).
     for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath('whatif', method)).toBe(true)
     expect(validAnalysisPath('whatif/range?start=2026-11-01', 'GET')).toBe(true)
+    // Phase 26: the Deep Dive percentages for the label forms are one read-only route.
+    expect(validAnalysisPath('deep-dive/stats/all', 'GET')).toBe(true)
+    for (const method of ['POST', 'DELETE']) expect(validAnalysisPath('deep-dive/stats/all', method)).toBe(false)
+    for (const path of ['deep-dive/stats', 'deep-dive/dives', 'deep-dive/setup', 'deep-dive/tags', 'deep-dive/stats/all/x']) expect(validAnalysisPath(path, 'GET')).toBe(false)
     expect(validAnalysisPath('whatif/range', 'POST')).toBe(false)
     expect(validAnalysisPath('whatif', 'PUT')).toBe(false)
     for (const path of ['whatif/extra', 'whatif/', 'whatif/../labels', 'what-if']) expect(validAnalysisPath(path, 'GET')).toBe(false)

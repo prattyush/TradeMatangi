@@ -1,0 +1,16 @@
+/* The Deep Dive percentages inside a label form. Uses the label form's colour variables when they exist. */
+.dd-stats { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--tl-border, #30363d); border-radius: 6px; background: var(--tl-panel, rgba(255, 255, 255, .03)); font-size: 12px; color: var(--tl-text, #e6edf3); }
+.dd-stats-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin-bottom: 4px; }
+.dd-stats-note { color: var(--tl-muted, #8b949e); font-size: 11px; margin: 0; }
+.dd-stats-sides { display: flex; gap: 4px; margin-bottom: 4px; }
+.dd-stats-sides button { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--tl-border, #30363d); background: transparent; color: inherit; cursor: pointer; }
+.dd-stats-sides button[aria-pressed="true"] { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+.dd-stats-sides button.buy[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-stats-sides button.sell[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-stats ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.dd-stats li { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+.dd-stats-name { flex: 1 1 120px; min-width: 0; overflow-wrap: anywhere; }
+.dd-stats-pct { font-weight: 600; }
+.dd-stats-n { font-weight: 400; color: var(--tl-muted, #8b949e); }
+.dd-stats-thin { color: #fbbf24; font-size: 11px; }
+.dd-stats-success { margin: 4px 0 0; }
