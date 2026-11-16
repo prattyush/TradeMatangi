@@ -133,5 +133,13 @@ Same setup as section H. Play at least one session of two or three games first s
 6. **Website:** with a paper or replay session running, repeat 1 to 4 once in the overlay and check the trading chart keeps updating.
 7. Tell me anything confusing in the Dashboard wording, and whether eight to ten minutes is the warm-up length you want (the games run at normal length; a shorter routine needs a per-game short mode).
 
+## N. Games market data (G1): backend only
+No game uses these routes yet; this checks the data side with `curl`. Run it where the backend serves your real data cache.
+1. `python scripts/build-games-index.py` prints the folder it scanned, how many files it read, and for NIFTY and BSESEN the number of days (about 236 and 149 on the owner's cache) and contracts, then writes `data/games-index.json`. Run it again: it reads 0 files and finishes faster.
+2. `curl -H "X-User-Id: <you>" http://localhost:8700/api/desktop/v1/games/availability` lists `NIFTY` and `BSESEN` with `lot_size` 65 and 20, `strike_step`, `dates` and `options`. Before step 1 it answers `"index_missing": true` and no symbols.
+3. `curl -H "X-User-Id: <you>" "http://localhost:8700/api/desktop/v1/games/window?symbol=NIFTY&date=2026-11-09&start_sec=34200&duration_sec=300"` returns 300 values in `t` (from 34200 = 09:30 IST) and prices as whole numbers of paise (NIFTY near 2,500,000). Add `&interval_seconds=60&start_sec=0&duration_sec=86400` for the whole day in minutes (about 375 candles). `&expiry=...&strike=...&right=CE` (taken from `availability`) gives the option.
+4. A date that is not cached (`date=2030-01-01`) answers 404 `{"reason":"not_cached"}`, and the backend log shows no Breeze, Kite or Kotak call for it; `interval_seconds=5` answers 422.
+5. Trading is unaffected: a live or paper chart keeps updating while you repeat step 3 a few times.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.

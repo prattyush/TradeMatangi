@@ -60,6 +60,10 @@ Official references:
 
 Kite/Kotak minute downloads require resolvable active instrument tokens. Expired options may be unavailable unless cached or supplied by enabled Breeze fallback. Kotak documents a 30-day maximum range for minute requests; the one-day requests here stay within that bound.
 
+## Games data (cache-only, Phase 25 G1)
+
+The Games routes `GET /api/desktop/v1/games/availability` and `/window` are the one consumer that must **never** cause a provider call: they read the second-level parquet files that Breeze (or an earlier session) already wrote to `OHLCDATA_DIR`, and a miss is a 404. They do not go through `load_history`, the admin provider policy, `minute_history` or any provider module, and the minute files of this document (`-kite1m`, `-kotak1m`, `minute/<provider>/...`) are not listed as Games days. `scripts/build-games-index.py` only lists the directory; run it by hand after the cache is refreshed. Details and payload sizes: `architecture-backend.md`, "Games market data (Phase 25, G1)".
+
 ## Verification
 
 Final implementation validation: **60 new tests passed**; full backend suite **1,537 passed / 2 known baseline failures** (stale options-expiry assertion and missing `group_id` fixture). Website and desktop TypeScript checks passed.
