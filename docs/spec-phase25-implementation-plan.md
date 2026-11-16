@@ -265,7 +265,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | B4 | Done (2026-11-15), see "B4 as built" below |
 | B5 | Done (2026-11-16), see "B5 as built" below |
 | B6 | Done (2026-11-16), see "B6 as built" below |
-| G1, G3b, G4–G7 | Planned, order above |
+| G1 | Done (2026-11-16), see "G1 as built" below |
+| G3b, G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -742,3 +743,16 @@ Integration: **Dashboard, Warm-up, Review, Settings, accessibility pass, docs**.
 - **Tests:** desktop vitest 1326 (43 new: dashboard model, warm-up plan, session log and pruning, progress warm-up PUTs, render tests of the hub screens, palette, reduce motion); `tsc` clean for desktop and website.
 - **Shared files touched:** none outside `shared/games/` and docs. No trading logic changed.
 - **Docs updated:** spec 12 (how to add a game, with a `TrialGameDefinition` example), 17.8 and 17.11, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section M), this plan, `CLAUDE.md` row.
+
+## G1 as built (2026-11-16)
+
+Backend market data for the market games. Branch `feat/games-g1`, PR into `dev`. Nothing in the desktop or website changes; no game uses these routes yet (G3b is the first consumer).
+
+- **Files:** `backend/app/services/games_index.py` (file-name parsing, day and option rules, incremental index build, atomic write), `backend/app/services/games_data_service.py` (index cache, `availability`, `get_window`, `encode_json`), `backend/app/routers/desktop_games.py` (`GET /availability`, `GET /window`), `scripts/build-games-index.py`, `backend/app/config.py` (`GAMES_INDEX_PATH`, `GAMES_MAX_WINDOW_SECONDS`), `backend/tests/test_games_data.py` (54 tests).
+- **Spec corrections:** **C26** `/availability` groups options by date, expiry and right (4 times smaller) and adds `index_missing`; **C27** the day and contract rules (no `native_interval_seconds` metadata exists in the cache, so observed counts and price changes decide); **C28** `/window` serves 1 s and 60 s only, `t` is seconds of the IST day, observed rows only without a flag, `count: 0` for an empty window. Details in spec 8.2 "As built (G1)".
+- **Measured on the real cache (`/mnt/d/data/dbfolder/ohlcdata`):** index build 161 s from nothing, 24 s again (listing the folder), 595 KB; NIFTY 236 days with 3,122 contracts, BSESEN 149 days with 3,047 (BSESEN 2026-10-06 is left out: 898 observed rows). Payloads: `/availability` 64.6 KB raw / 7.4 KB gzip; `/window` 300 s 11.5 KB / 3.1 KB, 900 s 34.3 KB / 9.3 KB, a whole day of 60 s candles 13.8 KB / 4.4 KB. Cost per request about 20 to 190 ms (one file read, then the small in-process cache).
+- **Decisions:** the two routes are plain `def` so file reads run in the thread pool, not on the event loop that serves live trading; a parquet file is read with `pd.read_parquet`, then `observed_frame` (and `infer_observed` for files without the column) from `desktop_preparation`; gzip lives in the route (`Accept-Encoding`), so no global middleware; the token bucket from G2 is reused (4/s for windows, 1/s for availability). The index is a hand-run script (no cron exists), and the endpoint reports `index_missing` rather than scanning.
+- **Cache-only proof:** the tests replace `fetch_historical`, the Breeze fetchers, `fetch_options_historical`, `load_history`, `_fetch` and `_load_breeze_dataframe` with functions that fail the test, then request missing days, options and a provider-only minute file (404 `not_cached`); a source scan rejects imports and calls of those names.
+- **Carry-forward to G3b:** the desktop's `reqwest` has no `gzip` feature, so the desktop gets plain JSON (34 KB for the longest window); add the feature in the Rust change G3b needs anyway. The recent days in the cache have few option contracts (NIFTY 2026-11-09 lists one strike): G3b's window picker must read `availability` and handle a day without options. Run `python scripts/build-games-index.py` on every machine that serves the Games (the index file is not in git) and after each data refresh.
+- **Shared files touched:** `backend/app/config.py` (two constants) and `backend/app/routers/desktop_games.py`; no existing route, loader or trading module changed. No trading logic changed.
+- **Docs updated:** spec 8.2 and 14, `architecture-backend.md`, `backend-technical-constraints.md`, `live-history-providers.md`, `phase25-manual-acceptance.md` (section N), this plan, `CLAUDE.md` row.
