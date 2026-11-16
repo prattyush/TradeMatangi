@@ -58,3 +58,25 @@ def test_identity_is_the_bearer_user_not_a_header(client):
     assert r.status_code == 200, r.text
     assert r.json() == {'strategies': ['Breakout']}
     svc.list_strategy_names.assert_called_once_with('alice')
+
+
+def test_deep_dive_routes_are_mirrored_for_the_desktop():
+    from app.routers import deep_dive
+    mirrored = desktop_routes()
+    for r in deep_dive.router.routes:
+        for m in r.methods:
+            assert (m, f'{BASE}/deep-dive{r.path.removeprefix("/api/deep-dive")}') in mirrored
+
+
+def test_deep_dive_requires_the_bearer_and_ignores_the_website_header():
+    with TestClient(app) as anonymous:
+        assert anonymous.get(f'{BASE}/deep-dive/dives', headers={'X-User-Id': 'alice'}).status_code == 401
+
+
+def test_deep_dive_uses_the_bearer_identity(client):
+    with patch('app.routers.deep_dive.svc') as svc:
+        svc.list_dives.return_value = []
+        r = client.get(f'{BASE}/deep-dive/dives', headers={'X-User-Id': 'mallory'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'dives': []}
+    svc.list_dives.assert_called_once_with('alice')
