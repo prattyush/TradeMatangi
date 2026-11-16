@@ -49,20 +49,20 @@ class SetupIn(SetupRef):
     notes: Optional[str] = None
 
 
-class AnswersIn(SetupRef):
-    answers: dict[str, Optional[bool]] = Field(max_length=100)
+class TagValuesIn(SetupRef):
+    tag_values: dict[str, Optional[bool]] = Field(max_length=100)  # true valid, false not valid, null unmarked
 
 
-class QuestionIn(DiveRef):
-    text: str
+class TagIn(DiveRef):
+    name: str
 
 
-class QuestionRef(DiveRef):
+class TagRef(DiveRef):
     pass
 
 
-class QuestionUpdateIn(DiveRef):
-    text: str
+class TagUpdateIn(DiveRef):
+    name: str
 
 
 def _bad_request(exc: Exception) -> HTTPException:
@@ -121,9 +121,9 @@ async def delete_setup(category: str = Query(...), strategy: str = Query(...), s
     return {"status": "deleted" if deleted else "not_found"}
 
 
-@router.put("/setup/answers")
-async def put_answers(req: AnswersIn, user_id: str = Depends(get_request_user_id)):
-    return await _run(svc.set_answers, user_id, req.category, req.strategy, req.symbol, req.date, req.side, req.answers)
+@router.put("/setup/tag-values")
+async def put_tag_values(req: TagValuesIn, user_id: str = Depends(get_request_user_id)):
+    return await _run(svc.set_tag_values, user_id, req.category, req.strategy, req.symbol, req.date, req.side, req.tag_values)
 
 
 @router.post("/setup/save-to-patterns")
@@ -131,23 +131,23 @@ async def save_to_patterns(req: SetupRef, user_id: str = Depends(get_request_use
     return await _run(svc.save_to_patterns, user_id, req.category, req.strategy, req.symbol, req.date, req.side)
 
 
-# ── Questions ────────────────────────────────────────────────────────────────
+# ── Tags ────────────────────────────────────────────────────────────────
 
-@router.post("/questions")
-async def add_question(req: QuestionIn, user_id: str = Depends(get_request_user_id)):
-    return await _run(svc.add_question, user_id, req.category, req.strategy, req.text)
-
-
-@router.post("/questions/{question_id}/update")
-async def update_question(question_id: str, req: QuestionUpdateIn, user_id: str = Depends(get_request_user_id)):
-    return await _run(svc.update_question, user_id, req.category, req.strategy, question_id, req.text)
+@router.post("/tags")
+async def add_tag(req: TagIn, user_id: str = Depends(get_request_user_id)):
+    return await _run(svc.add_tag, user_id, req.category, req.strategy, req.name)
 
 
-@router.post("/questions/{question_id}/archive")
-async def archive_question(question_id: str, req: QuestionRef, user_id: str = Depends(get_request_user_id)):
-    return await _run(svc.archive_question, user_id, req.category, req.strategy, question_id)
+@router.post("/tags/{tag_id}/update")
+async def update_tag(tag_id: str, req: TagUpdateIn, user_id: str = Depends(get_request_user_id)):
+    return await _run(svc.update_tag, user_id, req.category, req.strategy, tag_id, req.name)
 
 
-@router.post("/questions/{question_id}/restore")
-async def restore_question(question_id: str, req: QuestionRef, user_id: str = Depends(get_request_user_id)):
-    return await _run(svc.restore_question, user_id, req.category, req.strategy, question_id)
+@router.post("/tags/{tag_id}/archive")
+async def archive_tag(tag_id: str, req: TagRef, user_id: str = Depends(get_request_user_id)):
+    return await _run(svc.archive_tag, user_id, req.category, req.strategy, tag_id)
+
+
+@router.post("/tags/{tag_id}/restore")
+async def restore_tag(tag_id: str, req: TagRef, user_id: str = Depends(get_request_user_id)):
+    return await _run(svc.restore_tag, user_id, req.category, req.strategy, tag_id)

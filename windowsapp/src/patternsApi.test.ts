@@ -11,8 +11,8 @@ const OK: [string, string][] = [
   ['GET', 'data/symbols'], ['GET', 'data/price-at?symbol=NIFTY'], ['GET', 'data/options/find-strike-by-price?symbol=NIFTY'],
   ['GET', 'deep-dive/dives'], ['GET', 'deep-dive/dive?category=A&strategy=B'], ['GET', 'deep-dive/stats?category=A'],
   ['GET', 'deep-dive/stats/all'], ['PUT', 'deep-dive/setup'], ['DELETE', 'deep-dive/setup?date=2026-10-01'],
-  ['PUT', 'deep-dive/setup/answers'], ['POST', 'deep-dive/setup/save-to-patterns'], ['POST', 'deep-dive/questions'],
-  ['POST', 'deep-dive/questions/abc123/update'], ['POST', 'deep-dive/questions/abc123/archive'], ['POST', 'deep-dive/questions/abc123/restore'],
+  ['PUT', 'deep-dive/setup/tag-values'], ['POST', 'deep-dive/setup/save-to-patterns'], ['POST', 'deep-dive/tags'],
+  ['POST', 'deep-dive/tags/abc123/update'], ['POST', 'deep-dive/tags/abc123/archive'], ['POST', 'deep-dive/tags/abc123/restore'],
 ]
 const BAD: [string, string][] = [
   ['DELETE', 'pattern/strategies'], ['PUT', 'pattern/chart'], ['POST', 'pattern/chart/abc'], ['GET', 'pattern/chart/'],
@@ -20,9 +20,9 @@ const BAD: [string, string][] = [
   ['GET', 'chart-structures/ohlc/NIFTY/2026-10-01/x'], ['GET', 'chart-structures/ohlc/NIFTY/not-a-date'],
   ['GET', 'data/historical'], ['POST', 'data/symbols'], ['GET', 'orders'], ['GET', 'trading/orders'],
   ['GET', 'pattern/chart/a\\b'], ['PATCH', 'pattern/chart/abc'], ['GET', ''],
-  ['POST', 'deep-dive/dives'], ['DELETE', 'deep-dive/dive'], ['PUT', 'deep-dive/questions'], ['GET', 'deep-dive/setup'],
-  ['POST', 'deep-dive/setup'], ['GET', 'deep-dive/stats/all/x'], ['POST', 'deep-dive/questions/a/b/update'],
-  ['POST', 'deep-dive/questions/abc/delete'], ['POST', 'deep-dive/questions//update'], ['GET', 'deep-dive/questions'],
+  ['POST', 'deep-dive/dives'], ['DELETE', 'deep-dive/dive'], ['PUT', 'deep-dive/tags'], ['GET', 'deep-dive/setup'],
+  ['POST', 'deep-dive/setup'], ['GET', 'deep-dive/stats/all/x'], ['POST', 'deep-dive/tags/a/b/update'],
+  ['POST', 'deep-dive/tags/abc/delete'], ['POST', 'deep-dive/tags//update'], ['GET', 'deep-dive/tags'],
 ]
 
 describe('patterns allowlist (same cases as the Rust test)', () => {

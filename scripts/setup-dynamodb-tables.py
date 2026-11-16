@@ -425,11 +425,11 @@ TABLES = [
         "TableName": "BehaviorQuestions",
         "KeySchema": [
             {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "question_id", "KeyType": "RANGE"},
+            {"AttributeName": "tag_id", "KeyType": "RANGE"},
         ],
         "AttributeDefinitions": [
             {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "question_id", "AttributeType": "S"},
+            {"AttributeName": "tag_id", "AttributeType": "S"},
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
@@ -471,14 +471,14 @@ TABLES = [
         "BillingMode": "PAY_PER_REQUEST",
     },
     {
-        "TableName": "DeepDiveQuestions",
+        "TableName": "DeepDiveTags",
         "KeySchema": [
             {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "question_key", "KeyType": "RANGE"},
+            {"AttributeName": "tag_key", "KeyType": "RANGE"},
         ],
         "AttributeDefinitions": [
             {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "question_key", "AttributeType": "S"},
+            {"AttributeName": "tag_key", "AttributeType": "S"},
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },

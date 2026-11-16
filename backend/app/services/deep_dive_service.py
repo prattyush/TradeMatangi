@@ -2,18 +2,19 @@
 Deep Dive service — Patterns Strategy Deep Dive (Phase 26).
 
 A deep dive studies one strategy (category + strategy): the user marks the days the setup
-occurred (Buy, Sell or both), then answers yes/no questions per day and flags the day a
-success or a failure. Answers give frequency percentages ("breakouts have a second leg 70%
-of the time").
+occurred (Buy, Sell or both), then marks per day which of the user's TAGS are valid or not
+valid ("second leg", "reversed by double top") and flags the day a success or a failure.
+The marks give frequency percentages ("breakouts have a second leg 70% of the time").
 
 Tables (lazy ``ensure_*``, also in scripts/setup-dynamodb-tables.py)
   DeepDiveSetups    PK user_id, SK "<category>::<strategy>#<date>#<symbol>#<side>"
-                    one item per marked day and side; ``answers`` is a map question_id -> bool
-                    (an absent key is UNANSWERED), ``annotations`` is the marks as JSON
-  DeepDiveQuestions PK user_id, SK "<category>::<strategy>#<question_id>"
-                    never deleted, only archived / restored (answers survive)
+                    one item per marked day and side; ``tag_values`` is a map tag_id -> bool
+                    (True valid, False not valid, an absent key is UNMARKED), ``annotations``
+                    is the chart marks as JSON
+  DeepDiveTags      PK user_id, SK "<category>::<strategy>#<tag_id>"
+                    never deleted, only archived / restored (the marks survive)
 
-A dive has no table of its own: it exists while it has setups or questions. Reads may name
+A dive has no table of its own: it exists while it has setups or tags. Reads may name
 an ``owner_id`` that shared patterns with the caller (read-only); writes are always the caller's.
 """
 from __future__ import annotations
@@ -27,19 +28,19 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 SETUPS_TABLE = "DeepDiveSetups"
-QUESTIONS_TABLE = "DeepDiveQuestions"
+TAGS_TABLE = "DeepDiveTags"
 SIDES = ("buy", "sell")
 OUTCOMES = ("success", "failed")
 STRIKE_MODES = ("max_price", "otm", "manual")
 MAX_NAME_LENGTH = 60
-MAX_TEXT_LENGTH = 140
-MAX_ACTIVE_QUESTIONS = 40
+MAX_TAG_LENGTH = 140
+MAX_ACTIVE_TAGS = 40
 MAX_ANNOTATIONS = 200
 MAX_NOTES_LENGTH = 2000
-FEW_DAYS = 5  # fewer answered days than this and a percentage is flagged as thin
+FEW_DAYS = 5  # fewer marked days than this and a percentage is flagged as thin
 
 _SETUPS_ENSURED = False
-_QUESTIONS_ENSURED = False
+_TAGS_ENSURED = False
 
 
 # ── Tables ───────────────────────────────────────────────────────────────────
@@ -53,7 +54,7 @@ def _create_if_missing(name: str) -> None:
     from app.services.db import get_dynamodb_client
     if name in set(_resource().meta.client.list_tables()["TableNames"]):
         return
-    sort_key = "setup_key" if name == SETUPS_TABLE else "question_key"
+    sort_key = "setup_key" if name == SETUPS_TABLE else "tag_key"
     client = get_dynamodb_client()
     client.create_table(
         TableName=name, BillingMode="PAY_PER_REQUEST",
@@ -76,15 +77,15 @@ def ensure_setups_table() -> None:
         logger.exception("Failed to ensure %s table", SETUPS_TABLE)
 
 
-def ensure_questions_table() -> None:
-    global _QUESTIONS_ENSURED
-    if _QUESTIONS_ENSURED:
+def ensure_tags_table() -> None:
+    global _TAGS_ENSURED
+    if _TAGS_ENSURED:
         return
     try:
-        _create_if_missing(QUESTIONS_TABLE)
-        _QUESTIONS_ENSURED = True
+        _create_if_missing(TAGS_TABLE)
+        _TAGS_ENSURED = True
     except Exception:
-        logger.exception("Failed to ensure %s table", QUESTIONS_TABLE)
+        logger.exception("Failed to ensure %s table", TAGS_TABLE)
 
 
 def _setups():
@@ -92,9 +93,9 @@ def _setups():
     return _resource().Table(SETUPS_TABLE)
 
 
-def _questions():
-    ensure_questions_table()
-    return _resource().Table(QUESTIONS_TABLE)
+def _tags():
+    ensure_tags_table()
+    return _resource().Table(TAGS_TABLE)
 
 
 def _now() -> str:
@@ -166,12 +167,12 @@ def _int_or_none(value) -> Optional[int]:
     return None if value is None else int(value)
 
 
-def _clean_text(text: str) -> str:
-    cleaned = " ".join((text or "").split())
+def _clean_tag_name(name: str) -> str:
+    cleaned = " ".join((name or "").split())
     if not cleaned:
-        raise ValueError("Question text must not be empty")
-    if len(cleaned) > MAX_TEXT_LENGTH:
-        raise ValueError(f"Question text must be at most {MAX_TEXT_LENGTH} characters")
+        raise ValueError("Tag name must not be empty")
+    if len(cleaned) > MAX_TAG_LENGTH:
+        raise ValueError(f"Tag name must be at most {MAX_TAG_LENGTH} characters")
     return cleaned
 
 
@@ -195,12 +196,12 @@ def _resolve_owner(user_id: str, owner_id: Optional[str]) -> str:
     return owner_id
 
 
-# ── Questions ────────────────────────────────────────────────────────────────
+# ── Tags ────────────────────────────────────────────────────────────────
 
-def _serialize_question(row: dict) -> dict:
+def _serialize_tag(row: dict) -> dict:
     return {
-        "question_id": row["question_id"],
-        "text": row["text"],
+        "tag_id": row["tag_id"],
+        "name": row["name"],
         "status": row.get("status", "active"),
         "sort_order": int(row.get("sort_order", 0)),
         "created_at": row.get("created_at", ""),
@@ -208,79 +209,78 @@ def _serialize_question(row: dict) -> dict:
     }
 
 
-def _question_rows(owner_id: str, key: str) -> list[dict]:
-    rows = _query_prefix(_questions(), "question_key", owner_id, f"{key}#")
-    return sorted((_serialize_question(r) for r in rows), key=lambda r: (r["sort_order"], r["created_at"]))
+def _tag_rows(owner_id: str, key: str) -> list[dict]:
+    rows = _query_prefix(_tags(), "tag_key", owner_id, f"{key}#")
+    return sorted((_serialize_tag(r) for r in rows), key=lambda r: (r["sort_order"], r["created_at"]))
 
 
-def list_questions(user_id: str, category: str, strategy: str, owner_id: Optional[str] = None,
-                   include_archived: bool = True) -> list[dict]:
-    rows = _question_rows(_resolve_owner(user_id, owner_id), dive_key(category, strategy))
+def list_tags(user_id: str, category: str, strategy: str, owner_id: Optional[str] = None,
+              include_archived: bool = True) -> list[dict]:
+    rows = _tag_rows(_resolve_owner(user_id, owner_id), dive_key(category, strategy))
     return rows if include_archived else [r for r in rows if r["status"] == "active"]
 
 
-def _get_question(user_id: str, key: str, question_id: str) -> dict:
-    row = _questions().get_item(Key={"user_id": user_id, "question_key": f"{key}#{question_id}"},
-                                ConsistentRead=True).get("Item")
+def _get_tag(user_id: str, key: str, tag_id: str) -> dict:
+    row = _tags().get_item(Key={"user_id": user_id, "tag_key": f"{key}#{tag_id}"}, ConsistentRead=True).get("Item")
     if not row:
-        raise LookupError("Question not found")
-    return _serialize_question(row)
+        raise LookupError("Tag not found")
+    return _serialize_tag(row)
 
 
-def _duplicate_active(rows: list[dict], text: str, exclude_id: Optional[str] = None) -> bool:
-    folded = text.casefold()
-    return any(r["status"] == "active" and r["question_id"] != exclude_id and r["text"].casefold() == folded
+def _duplicate_active(rows: list[dict], name: str, exclude_id: Optional[str] = None) -> bool:
+    folded = name.casefold()
+    return any(r["status"] == "active" and r["tag_id"] != exclude_id and r["name"].casefold() == folded
                for r in rows)
 
 
-def add_question(user_id: str, category: str, strategy: str, text: str) -> dict:
+def add_tag(user_id: str, category: str, strategy: str, name: str) -> dict:
     key = dive_key(category, strategy)
-    cleaned = _clean_text(text)
-    rows = _question_rows(user_id, key)
-    if len([r for r in rows if r["status"] == "active"]) >= MAX_ACTIVE_QUESTIONS:
-        raise ValueError(f"At most {MAX_ACTIVE_QUESTIONS} active questions are allowed; archive one first")
+    cleaned = _clean_tag_name(name)
+    rows = _tag_rows(user_id, key)
+    if len([r for r in rows if r["status"] == "active"]) >= MAX_ACTIVE_TAGS:
+        raise ValueError(f"At most {MAX_ACTIVE_TAGS} active tags are allowed; archive one first")
     if _duplicate_active(rows, cleaned):
-        raise ValueError("An active question with this text already exists")
-    question_id = uuid.uuid4().hex
+        raise ValueError("An active tag with this name already exists")
+    tag_id = uuid.uuid4().hex
     item = {
         "user_id": user_id,
-        "question_key": f"{key}#{question_id}",
-        "question_id": question_id,
+        "tag_key": f"{key}#{tag_id}",
+        "tag_id": tag_id,
         "category": category.strip(),
         "strategy": strategy.strip(),
-        "text": cleaned,
+        "name": cleaned,
         "status": "active",
         "sort_order": max([r["sort_order"] for r in rows], default=-1) + 1,
         "created_at": _now(),
     }
-    _questions().put_item(Item=item)
+    _tags().put_item(Item=item)
     _register_names(user_id, item["category"], item["strategy"])
-    return _serialize_question(item)
+    return _serialize_tag(item)
 
 
-def update_question(user_id: str, category: str, strategy: str, question_id: str, text: str) -> dict:
+def update_tag(user_id: str, category: str, strategy: str, tag_id: str, name: str) -> dict:
     key = dive_key(category, strategy)
-    current = _get_question(user_id, key, question_id)
-    cleaned = _clean_text(text)
-    if current["status"] == "active" and _duplicate_active(_question_rows(user_id, key), cleaned, question_id):
-        raise ValueError("An active question with this text already exists")
-    _questions().update_item(
-        Key={"user_id": user_id, "question_key": f"{key}#{question_id}"},
+    current = _get_tag(user_id, key, tag_id)
+    cleaned = _clean_tag_name(name)
+    if current["status"] == "active" and _duplicate_active(_tag_rows(user_id, key), cleaned, tag_id):
+        raise ValueError("An active tag with this name already exists")
+    _tags().update_item(
+        Key={"user_id": user_id, "tag_key": f"{key}#{tag_id}"},
         UpdateExpression="SET #t = :t",
-        ExpressionAttributeNames={"#t": "text"},
+        ExpressionAttributeNames={"#t": "name"},
         ExpressionAttributeValues={":t": cleaned},
     )
-    return {**current, "text": cleaned}
+    return {**current, "name": cleaned}
 
 
-def archive_question(user_id: str, category: str, strategy: str, question_id: str) -> dict:
+def archive_tag(user_id: str, category: str, strategy: str, tag_id: str) -> dict:
     key = dive_key(category, strategy)
-    current = _get_question(user_id, key, question_id)
+    current = _get_tag(user_id, key, tag_id)
     if current["status"] == "archived":
         return current
     archived_at = _now()
-    _questions().update_item(
-        Key={"user_id": user_id, "question_key": f"{key}#{question_id}"},
+    _tags().update_item(
+        Key={"user_id": user_id, "tag_key": f"{key}#{tag_id}"},
         UpdateExpression="SET #s = :s, archived_at = :a",
         ExpressionAttributeNames={"#s": "status"},
         ExpressionAttributeValues={":s": "archived", ":a": archived_at},
@@ -288,18 +288,18 @@ def archive_question(user_id: str, category: str, strategy: str, question_id: st
     return {**current, "status": "archived", "archived_at": archived_at}
 
 
-def restore_question(user_id: str, category: str, strategy: str, question_id: str) -> dict:
+def restore_tag(user_id: str, category: str, strategy: str, tag_id: str) -> dict:
     key = dive_key(category, strategy)
-    current = _get_question(user_id, key, question_id)
+    current = _get_tag(user_id, key, tag_id)
     if current["status"] == "active":
         return current
-    rows = _question_rows(user_id, key)
-    if len([r for r in rows if r["status"] == "active"]) >= MAX_ACTIVE_QUESTIONS:
-        raise ValueError(f"At most {MAX_ACTIVE_QUESTIONS} active questions are allowed; archive one first")
-    if _duplicate_active(rows, current["text"], question_id):
-        raise ValueError("An active question with this text already exists")
-    _questions().update_item(
-        Key={"user_id": user_id, "question_key": f"{key}#{question_id}"},
+    rows = _tag_rows(user_id, key)
+    if len([r for r in rows if r["status"] == "active"]) >= MAX_ACTIVE_TAGS:
+        raise ValueError(f"At most {MAX_ACTIVE_TAGS} active tags are allowed; archive one first")
+    if _duplicate_active(rows, current["name"], tag_id):
+        raise ValueError("An active tag with this name already exists")
+    _tags().update_item(
+        Key={"user_id": user_id, "tag_key": f"{key}#{tag_id}"},
         UpdateExpression="SET #s = :s REMOVE archived_at",
         ExpressionAttributeNames={"#s": "status"},
         ExpressionAttributeValues={":s": "active"},
@@ -323,7 +323,7 @@ def _serialize_setup(row: dict) -> dict:
         "interval_minutes": int(row.get("interval_minutes", 3)),
         "annotations": json.loads(raw) if isinstance(raw, str) else (raw or []),
         "outcome": row.get("outcome") or None,
-        "answers": {qid: bool(value) for qid, value in (row.get("answers") or {}).items()},
+        "tag_values": {qid: bool(value) for qid, value in (row.get("tag_values") or {}).items()},
         "notes": row.get("notes", ""),
         "created_at": row.get("created_at", ""),
         "updated_at": row.get("updated_at", ""),
@@ -400,7 +400,7 @@ def upsert_setup(user_id: str, category: str, strategy: str, symbol: str, date: 
         names[f"#a{index}"] = attribute
         values[f":v{index}"] = value
         set_parts.append(f"#a{index} = :v{index}")
-    names.update({"#upd": "updated_at", "#cre": "created_at", "#ans": "answers"})
+    names.update({"#upd": "updated_at", "#cre": "created_at", "#ans": "tag_values"})
     set_parts += ["#upd = :now", "#cre = if_not_exists(#cre, :now)", "#ans = if_not_exists(#ans, :empty)"]
     if "interval_minutes" not in sets:  # a new day starts at 3 minutes; an existing one keeps its interval
         names["#int"] = "interval_minutes"
@@ -421,41 +421,41 @@ def upsert_setup(user_id: str, category: str, strategy: str, symbol: str, date: 
 
 
 def delete_setup(user_id: str, category: str, strategy: str, symbol: str, date: str, side: str) -> bool:
-    """Un-mark one side of one day (its answers and marks go with it). False when it was not marked."""
+    """Un-mark one side of one day (its tag marks and chart marks go with it). False when it was not marked."""
     key = dive_key(category, strategy)
     result = _setups().delete_item(
         Key={"user_id": user_id, "setup_key": _setup_key(key, date, symbol, _side(side))}, ReturnValues="ALL_OLD")
     return bool(result.get("Attributes"))
 
 
-def set_answers(user_id: str, category: str, strategy: str, symbol: str, date: str, side: str,
-                answers: dict[str, Optional[bool]]) -> dict:
-    """Set (True / False) or clear (None) answers for one marked day. Idempotent.
+def set_tag_values(user_id: str, category: str, strategy: str, symbol: str, date: str, side: str,
+                   tag_values: dict[str, Optional[bool]]) -> dict:
+    """Mark tags on one marked day: True valid, False not valid, None back to unmarked. Idempotent.
 
-    Only active questions can be newly answered; an archived question's answer can still be cleared or kept.
+    Only active tags can be newly marked; an archived tag's mark can still be cleared or kept.
     """
     key = dive_key(category, strategy)
     side = _side(side)
     row = _get_setup_row(user_id, key, date, symbol, side)
-    by_id = {q["question_id"]: q for q in _question_rows(user_id, key)}
-    existing = row.get("answers") or {}
-    for question_id, answer in answers.items():
-        if question_id not in by_id:
-            raise ValueError("Unknown deep dive question")
-        if answer is not None and question_id not in existing and by_id[question_id]["status"] != "active":
-            raise ValueError("Archived questions cannot be newly answered")
-    if not answers:
+    by_id = {q["tag_id"]: q for q in _tag_rows(user_id, key)}
+    existing = row.get("tag_values") or {}
+    for tag_id, mark in tag_values.items():
+        if tag_id not in by_id:
+            raise ValueError("Unknown deep dive tag")
+        if mark is not None and tag_id not in existing and by_id[tag_id]["status"] != "active":
+            raise ValueError("Archived tags cannot be newly marked")
+    if not tag_values:
         return _serialize_setup(row)
-    names = {"#upd": "updated_at", "#ans": "answers"}
+    names = {"#upd": "updated_at", "#ans": "tag_values"}
     values = {":now": _now()}
     set_parts, remove_parts = ["#upd = :now"], []
-    for index, (question_id, answer) in enumerate(answers.items()):
-        names[f"#q{index}"] = question_id
-        if answer is None:
-            remove_parts.append(f"#ans.#q{index}")
+    for index, (tag_id, mark) in enumerate(tag_values.items()):
+        names[f"#t{index}"] = tag_id
+        if mark is None:
+            remove_parts.append(f"#ans.#t{index}")
         else:
-            values[f":v{index}"] = bool(answer)
-            set_parts.append(f"#ans.#q{index} = :v{index}")
+            values[f":v{index}"] = bool(mark)
+            set_parts.append(f"#ans.#t{index} = :v{index}")
     expression = "SET " + ", ".join(set_parts) + (" REMOVE " + ", ".join(remove_parts) if remove_parts else "")
     updated = _setups().update_item(
         Key={"user_id": user_id, "setup_key": row["setup_key"]},
@@ -472,37 +472,37 @@ def _setup_rows(owner_id: str, key: str) -> list[dict]:
 
 # ── Gaps and stats (pure) ────────────────────────────────────────────────────
 
-def missing_answers(setup: dict, questions: list[dict]) -> list[str]:
-    """Active question ids this day has not answered, in question order."""
-    return [q["question_id"] for q in questions if q["status"] == "active" and q["question_id"] not in setup["answers"]]
+def unmarked_tags(setup: dict, tags: list[dict]) -> list[str]:
+    """Active tag ids this day has not marked (neither valid nor not valid), in tag order."""
+    return [t["tag_id"] for t in tags if t["status"] == "active" and t["tag_id"] not in setup["tag_values"]]
 
 
-def annotate_gaps(setups: list[dict], questions: list[dict]) -> list[dict]:
+def annotate_gaps(setups: list[dict], tags: list[dict]) -> list[dict]:
     result = []
     for setup in setups:
-        missing = missing_answers(setup, questions)
+        missing = unmarked_tags(setup, tags)
         result.append({**setup, "missing": missing, "complete": not missing})
     return result
 
 
-def compute_stats(setups: list[dict], questions: list[dict], side: Optional[str] = None) -> dict:
+def compute_stats(setups: list[dict], tags: list[dict], side: Optional[str] = None) -> dict:
     """Frequency percentages for one dive, optionally one side.
 
-    A question's percentage is yes / days where THAT question was answered (``answered`` is shown as n).
-    Success rate is over days with an outcome. Anything under FEW_DAYS is flagged ``few_days``.
+    A tag's percentage is valid / days where THAT tag was marked (``marked`` is shown as n; unmarked days do not
+    count). Success rate is over days with an outcome. Anything under FEW_DAYS is flagged ``few_days``.
     """
     days = [s for s in setups if side is None or s["side"] == side]
     rows = []
-    for question in questions:
-        if question["status"] != "active":
+    for tag in tags:
+        if tag["status"] != "active":
             continue
-        answers = [s["answers"][question["question_id"]] for s in days if question["question_id"] in s["answers"]]
-        yes = sum(1 for a in answers if a)
+        marks = [s["tag_values"][tag["tag_id"]] for s in days if tag["tag_id"] in s["tag_values"]]
+        valid = sum(1 for m in marks if m)
         rows.append({
-            "question_id": question["question_id"], "text": question["text"],
-            "yes": yes, "no": len(answers) - yes, "answered": len(answers),
-            "pct": round(100 * yes / len(answers), 1) if answers else None,
-            "few_days": len(answers) < FEW_DAYS,
+            "tag_id": tag["tag_id"], "name": tag["name"],
+            "valid": valid, "not_valid": len(marks) - valid, "marked": len(marks),
+            "pct": round(100 * valid / len(marks), 1) if marks else None,
+            "few_days": len(marks) < FEW_DAYS,
         })
     with_outcome = [s for s in days if s["outcome"]]
     success = sum(1 for s in with_outcome if s["outcome"] == "success")
@@ -510,7 +510,7 @@ def compute_stats(setups: list[dict], questions: list[dict], side: Optional[str]
         "days": len(days),
         "buy_days": sum(1 for s in days if s["side"] == "buy"),
         "sell_days": sum(1 for s in days if s["side"] == "sell"),
-        "questions": rows,
+        "tags": rows,
         "success": success, "failed": len(with_outcome) - success, "with_outcome": len(with_outcome),
         "success_pct": round(100 * success / len(with_outcome), 1) if with_outcome else None,
         "outcome_few_days": len(with_outcome) < FEW_DAYS,
@@ -522,30 +522,30 @@ def compute_stats(setups: list[dict], questions: list[dict], side: Optional[str]
 def get_dive(user_id: str, category: str, strategy: str, owner_id: Optional[str] = None) -> dict:
     owner = _resolve_owner(user_id, owner_id)
     key = dive_key(category, strategy)
-    questions = _question_rows(owner, key)
-    setups = annotate_gaps(_setup_rows(owner, key), questions)
+    tags = _tag_rows(owner, key)
+    setups = annotate_gaps(_setup_rows(owner, key), tags)
     return {
         "owner_id": owner, "can_edit": owner == user_id,
         "category": category.strip(), "strategy": strategy.strip(),
-        "setups": setups, "questions": questions,
+        "setups": setups, "tags": tags,
         "incomplete_days": sum(1 for s in setups if not s["complete"]),
-        "unanswered_total": sum(len(s["missing"]) for s in setups),
+        "unmarked_total": sum(len(s["missing"]) for s in setups),
     }
 
 
 def _owner_dives(owner_id: str) -> dict[str, dict]:
-    """Every dive of one owner keyed by ``category::strategy``: its setups and questions."""
+    """Every dive of one owner keyed by ``category::strategy``: its setups and tags."""
     dives: dict[str, dict] = {}
     for row in _query_prefix(_setups(), "setup_key", owner_id):
         setup = _serialize_setup(row)
-        entry = dives.setdefault(f"{setup['category']}::{setup['strategy']}", {"setups": [], "questions": []})
+        entry = dives.setdefault(f"{setup['category']}::{setup['strategy']}", {"setups": [], "tags": []})
         entry["setups"].append(setup)
-    for row in _query_prefix(_questions(), "question_key", owner_id):
-        entry = dives.setdefault(f"{row['category']}::{row['strategy']}", {"setups": [], "questions": []})
-        entry["questions"].append(_serialize_question(row))
+    for row in _query_prefix(_tags(), "tag_key", owner_id):
+        entry = dives.setdefault(f"{row['category']}::{row['strategy']}", {"setups": [], "tags": []})
+        entry["tags"].append(_serialize_tag(row))
     for entry in dives.values():
         entry["setups"] = _order(entry["setups"])
-        entry["questions"].sort(key=lambda q: (q["sort_order"], q["created_at"]))
+        entry["tags"].sort(key=lambda t: (t["sort_order"], t["created_at"]))
     return dives
 
 
@@ -559,13 +559,13 @@ def list_dives(user_id: str) -> list[dict]:
     for owner in _accessible_owners(user_id):
         for key, entry in _owner_dives(owner).items():
             category, strategy = key.split("::", 1)
-            setups = annotate_gaps(entry["setups"], entry["questions"])
+            setups = annotate_gaps(entry["setups"], entry["tags"])
             result.append({
                 "owner_id": owner, "can_edit": owner == user_id, "category": category, "strategy": strategy,
                 "days": len(setups),
                 "buy_days": sum(1 for s in setups if s["side"] == "buy"),
                 "sell_days": sum(1 for s in setups if s["side"] == "sell"),
-                "questions": sum(1 for q in entry["questions"] if q["status"] == "active"),
+                "tags": sum(1 for t in entry["tags"] if t["status"] == "active"),
                 "incomplete_days": sum(1 for s in setups if not s["complete"]),
             })
     return sorted(result, key=lambda d: (not d["can_edit"], d["category"].casefold(), d["strategy"].casefold()))
@@ -579,7 +579,7 @@ def stats(user_id: str, category: str, strategy: str, side: Optional[str] = None
     key = dive_key(category, strategy)
     return {"owner_id": owner, "can_edit": owner == user_id, "category": category.strip(),
             "strategy": strategy.strip(), "side": side,
-            **compute_stats(_setup_rows(owner, key), _question_rows(owner, key), side)}
+            **compute_stats(_setup_rows(owner, key), _tag_rows(owner, key), side)}
 
 
 def stats_all(user_id: str) -> list[dict]:
@@ -596,9 +596,9 @@ def stats_all(user_id: str) -> list[dict]:
             category, strategy = key.split("::", 1)
             chosen[key] = {
                 "owner_id": owner, "shared": owner != user_id, "category": category, "strategy": strategy,
-                "all": compute_stats(entry["setups"], entry["questions"]),
-                "buy": compute_stats(entry["setups"], entry["questions"], "buy"),
-                "sell": compute_stats(entry["setups"], entry["questions"], "sell"),
+                "all": compute_stats(entry["setups"], entry["tags"]),
+                "buy": compute_stats(entry["setups"], entry["tags"], "buy"),
+                "sell": compute_stats(entry["setups"], entry["tags"], "sell"),
             }
     return sorted(chosen.values(), key=lambda d: (d["category"].casefold(), d["strategy"].casefold()))
 
