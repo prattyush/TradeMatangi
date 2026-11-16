@@ -60,6 +60,16 @@ Official references:
 
 Kite/Kotak minute downloads require resolvable active instrument tokens. Expired options may be unavailable unless cached or supplied by enabled Breeze fallback. Kotak documents a 30-day maximum range for minute requests; the one-day requests here stay within that bound.
 
+## Pre-fetching Patterns data (`scripts/fetch-patterns-data.py`)
+
+A script that warms the minute cache for the Patterns screens over a range of days, so Patterns opens instantly instead of fetching on first use. For each trading day it calls the same functions the Patterns routes call (`minute_ohlc.candle_records`, `desktop_preparation.find_max_price_strike_minute`, `price_at`, `get_expiry_date`), so the files it fills are exactly the ones the screen asks for: the underlying and the CE and PE contracts of the day, each with the context days before it (`--context-days`, default 2, the "historical days" setting).
+
+- **Strike pick, from data at 09:30:** `--mode max-price --max-price 30|50|75|100` (CE and PE; `--max-price-pe` for a different PE cap; NIFTY and BSESEN only) takes the first strike from ATM outwards whose premium at 09:30 is at or below the cap; `--mode otm --otm-offset N` takes ATM from the 09:30 price and CE = ATM + N steps, PE = ATM - N steps. **The Patterns screen takes ATM at 09:15 in OTM mode**; the script defaults to 09:30 as requested, `--atm-time 09:15` matches the screen. `--pick-time` changes the Max Price time.
+- **Range:** `--start` and `--end`, or `--months N` back from `--end` (default 3; end defaults to yesterday). Holidays and weekends are skipped.
+- **Source and cost:** minute data only, in the order of `minute_history.load` (a complete second-level cache, the minute cache, Kite, Breeze 1-minute; expired options are Breeze only, one request per contract-day, and a Max Price pick tries strikes outwards from ATM, each a cached file for later). No second-level download is made. Files of finished days are final, so the script can be stopped (Ctrl-C) and run again: everything fetched is reused.
+- **Run it with the backend stopped** (Breeze allows one session per login). It refuses to start while something listens on port 8700 unless `--allow-running` is given. An expired Breeze session stops the run with a message; eight failing days in a row (`--max-failures`, default 8) also stop it. `--dry-run` lists the days without requesting anything; `--report file.json` writes every day's result.
+- Tests: `backend/tests/test_fetch_patterns_script.py` (19, with fake providers).
+
 ## Games data (cache-only, Phase 25 G1)
 
 The Games routes `GET /api/desktop/v1/games/availability` and `/window` are the one consumer that must **never** cause a provider call: they read the second-level parquet files that Breeze (or an earlier session) already wrote to `OHLCDATA_DIR`, and a miss is a 404. They do not go through `load_history`, the admin provider policy, `minute_history` or any provider module, and the minute files of this document (`-kite1m`, `-kotak1m`, `minute/<provider>/...`) are not listed as Games days. `scripts/build-games-index.py` only lists the directory; run it by hand after the cache is refreshed. Details and payload sizes: `architecture-backend.md`, "Games market data (Phase 25, G1)".
