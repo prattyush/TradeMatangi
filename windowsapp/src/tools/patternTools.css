@@ -110,3 +110,44 @@
 .dd-x { padding: 0 6px; line-height: 18px; }
 .dd-confirm { background: #2a1a0a; border: 1px solid #f0883e; border-radius: 6px; padding: 8px 10px; }
 .dd-confirm p { margin: 0 0 6px; font-size: 13px; }
+
+/* Deep Dive: in-depth step */
+.dd-depth { display: flex; flex-direction: column; gap: 8px; }
+.dd-depth-head { align-items: center; }
+.dd-save { margin-left: auto; font-size: 12px; color: #94a3b8; display: inline-flex; gap: 8px; align-items: center; }
+.dd-save.saved { color: #34d399; }
+.dd-strip { display: flex; flex-wrap: wrap; gap: 4px; }
+.dd-chip { padding: 2px 8px; font-size: 12px; border-radius: 12px; border: 1px solid #30363d; background: #0d1117; }
+.dd-chip.complete { border-color: #166534; color: #bbf7d0; }
+.dd-chip.incomplete { border-color: #b45309; color: #fde68a; }
+.dd-chip[aria-selected="true"] { background: #1e3a8a; border-color: #60a5fa; color: #fff; }
+.dd-chip b { margin-left: 2px; }
+.dd-chip.buy b { color: #4ade80; } .dd-chip.sell b { color: #f87171; }
+.dd-gapsbox { background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 6px 10px; }
+.dd-gapsbox summary { cursor: pointer; font-size: 13px; color: #fbbf24; }
+.dd-gaps h4 { display: none; }
+.dd-gaps ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.dd-gaps li { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.dd-gaps li button { background: none; border: none; color: #93c5fd; cursor: pointer; padding: 0; }
+.dd-day { display: flex; gap: 12px; min-height: 520px; }
+.dd-day-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.dd-day-side { flex: 0 0 340px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.dd-charts { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.dd-chartbox { flex: 1; min-height: 300px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
+.dd-chartbox > * { flex: 1; min-height: 0; }
+.dd-outcome h4, .dd-tags h4 { margin: 0 0 4px; font-size: 13px; color: #cbd5e1; }
+.dd-success[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-failed[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-tags { display: flex; flex-direction: column; gap: 8px; }
+.dd-banner { margin: 0; padding: 4px 8px; background: #2a1a0a; border: 1px solid #b45309; border-radius: 6px; color: #fde68a; font-size: 13px; }
+.dd-taglist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dd-taglist li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; border-radius: 6px; background: #0d1117; border: 1px solid #21262d; }
+.dd-taglist li.unmarked { border-color: #b45309; }
+.dd-tagname { font-size: 13px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dd-tagbtns { display: flex; gap: 4px; }
+.dd-tagbtns .valid[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-tagbtns .not-valid[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-archived summary { cursor: pointer; font-size: 12px; color: #94a3b8; }
+.dd-archived li { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 2px 0; }
+.dd-empty-state { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.dd-foot { margin: 0; }
