@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { questionRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { RISK_CALCULATOR } from '../../config/difficulty.market'
@@ -45,6 +47,7 @@ export default function RiskCalculatorView({ level, params, seed, suspended, mar
       const rng = createRng(seed)
       const types = planTypes(rng, total, params.typePool)
       const results: QuestionResult[] = []
+      const rows: ReviewRow[] = []
       for (let i = 0; i < total && !cancelled; i++) {
         const q = makeQuestion(rng, types[i], { ugliness: params.ugliness, lotsMax: params.lotsMax, maxSteps: params.maxSteps, typePool: params.typePool }, { lotSize })
         typed.current = ''; submitted.current = false; advance.current = false
@@ -55,11 +58,11 @@ export default function RiskCalculatorView({ level, params, seed, suspended, mar
         if (cancelled) return
         const entered = submitted.current ? parseEntry(typed.current) : null
         const judged = judge(q, entered, submitted.current ? spent : limitMs, params.timeSec)
-        results.push(judged)
+        results.push(judged); rows.push(questionRow(rows.length + 1, q, judged))
         setResult(judged); setPhase('feedback')
         await clock.run(RISK_CALCULATOR.feedbackMs, () => undefined, () => advance.current)
       }
-      if (!cancelled) latest.current.onFinish(summariseRiskCalculator(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summariseRiskCalculator(results, latest.current.level), review: rows })
     })()
     return () => { cancelled = true; clock.cancel() }
   }, [market, params, seed, total])

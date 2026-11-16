@@ -271,7 +271,7 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | G4b | Done (2026-11-16), see "G4b as built" below (Entry Sniper and Exit Discipline) |
 | G5 | Done (2026-11-16), see "G5 as built" below (Level Recall, Strike Picker, Regime Switch) |
 | G6 | Done (2026-11-16), see "G6 as built" below (Spot the Trap, No-Trade Day); all ten market games playable |
-| G7 | Planned (market Review, Warm-up pools, Low-memory mode, memory and performance pass, final docs) |
+| G7 | Done (2026-11-16), see "G7 as built" below; Phase 25 code is complete, the owner's acceptance (sections G to T) is pending |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -822,3 +822,15 @@ The last two market games: **Spot the Trap** (Attention) and **No-Trade Day** (D
 - **Checked in a real browser (throwaway harness, the real backend and data cache):** Spot the Trap at level 1 (the breakout screen, F, the reveal with the level and thresholds) and level 8 (a pattern hunt with three clicks, Enter, the reveal marks); No-Trade Day at level 1 (rules screen, Start, long, exit, short, a revenge entry flagged live, the status line and the stop line). **Not run:** levels above 8, the tilt event and the minimum-rules gate in a browser (unit tested), the Windows window, the website overlay, sound, a network failure mid-session.
 - **Open for tuning from play:** the 2 and 0.5 volUnit thresholds and 12 bar horizon of the breakout, the pattern thresholds, the size of 1 R and the speed of the replay in No-Trade Day.
 - **Docs updated:** spec 5.9 and 5.10, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section S), this plan, `CLAUDE.md` row.
+
+## G7 as built (2026-11-16)
+
+Integration and close. Branch `feat/games-g7`, PR into `dev`. No Rust, backend or trading change.
+
+- **Audit (nothing to build):** Warm-up already offers market games in the `market` and `both` pools once any market game is playable (`core/warmup.ts`, its tests cover it); Low memory mode already halves the window cache (300 MB to 150 MB, `GamesApp`); market settings (cost model, hotkeys) shipped in G3b and G4a.
+- **Market Review (C42):** `market/review.ts` builds a `ReviewRow` per round for all ten market games and each View passes `review: rows` to `onFinish`; Review lists market sessions with the market, day and time of each round and says they are not replayed (the owner chose "round log, no replay"). `ReviewTab` gained an `initialOpenId` prop for tests. A source scan test checks that every market View hands over its rows.
+- **Memory and network budget (spec 3.5), measured:** a 900 second window of one second bars is 34 KB as JSON and **9.3 KB gzipped**, a 300 second one 3.2 KB, a whole day of 60 second bars 4.6 KB (real NIFTY day, real backend). Per round: Tick Reader and the other 1 s games about 3 to 10 KB (one to three candidates), Level Recall about 9 KB, **No-Trade Day 19 KB per candidate (two requests for 1800 s) and up to about 37 KB for a 25 minute segment with two candidates**, which is just above the "typically 30 KB" in the spec (the segment is four to five times the length of the other rounds; the next segment is fetched during play). The longest 1 s window is 900 seconds, so a round holds at most about 2,000 one second rows (No-Trade Day) or 1,500 candles on screen; with one prefetched round that is far below the 150,000 candle budget. Windows are held only by the round in play and the one prefetched; the rest is the capped IndexedDB cache. **Not measured:** browser heap at level 20 over a long session (needs the Windows build: acceptance step T5).
+- **Spec corrections:** **C42** market Review (spec 7.3 "As built for market sessions (G7)").
+- **Tests:** `market/review.test.ts` (7); desktop vitest run below in the PR.
+- **Docs updated:** spec 7.3 and C31, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section T), this plan, `CLAUDE.md` row.
+- **Phase 25 is not marked Complete:** the owner's Windows and browser acceptance (sections G to T of `docs/phase25-manual-acceptance.md`) is outstanding, and tuning of the market games from real play. Open: live volume (Fyers and Kotak probes, gap-fill ticks, desktop live stream, Swing live bar, frontend handoff).

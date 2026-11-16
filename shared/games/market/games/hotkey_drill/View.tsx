@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { promptRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { HOTKEY_DRILL } from '../../config/difficulty.market'
@@ -91,7 +92,7 @@ export default function HotkeyDrillView({ level, params, seed, suspended, market
       }
       if (!cancelled) {
         const results: PromptResult[] = drill.results()
-        latest.current.onFinish(summariseHotkeyDrill(results, params.rtSlow, latest.current.level))
+        latest.current.onFinish({ ...summariseHotkeyDrill(results, params.rtSlow, latest.current.level), review: results.slice(0, 250).map((r, i) => promptRow(i + 1, r)) })
       }
     })()
     return () => { cancelled = true; clock.cancel(); press.current = null }

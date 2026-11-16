@@ -189,5 +189,15 @@ Needs the backend with the Games index built (section N). All ten market games a
 5. **Dashboard:** trend lines for fake-out accuracy, real-breakout hesitation, rule adherence and revenge trades appear after a few Progress sessions.
 6. Tell me whether the real and fake calls feel fair (are the answers what you would say as a trader), whether the pattern hunt finds what you would call those patterns, whether 1 R and the speed of the replay in No-Trade Day feel right, and whether the rules screen is clear.
 
+## T. Review of market sessions, budget and the whole feature (G7): Windows build and the website
+1. **Review:** play any market game (Progress), open Review: the session is listed with its score. Open it: one row per round with the market, day and clock time first, what you did, the right answer or the best result, and the time. There is no "Play these puzzles again" button for market sessions, only a note. A brain session still has it.
+2. **Result screen:** the market game's result screen now also offers the round table ("Trial review").
+3. **Warm-up:** with the Warm-up pool set to Both or Market, the plan includes market games and each step starts the right game; with Brain only it does not.
+4. **Low memory mode:** turn it on in Settings, play a market game: nothing changes you can see; the cache holds up to 150 MB instead of 300 MB.
+5. **Memory:** with the Games window open for a long session (several market games at level 15 to 20, No-Trade Day included), look at the window's memory in Task Manager (the WebView2 process of the Games window). Tell me the peak. The budget is 600 MB.
+6. **Network:** watch the backend log during a No-Trade Day session: a segment fetches two to four windows of about 9 KB each, and the next segment is fetched while you play.
+7. **Whole feature:** every game plays at level 1 and at a high level on the Windows build and in Chrome on the website; the Dashboard, Warm-up, Review and Settings tabs work with both pools; Practice sessions leave your level alone.
+8. Tell me what you want changed from play: which games feel too easy or too hard, thresholds that feel unfair, anything confusing.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. 

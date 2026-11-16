@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { exitRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { GameChart } from '../../../chart/GameChart'
@@ -95,6 +97,7 @@ export default function ExitDisciplineView({ level, params, seed, suspended, mar
       const plan = exitPlan(params, { lotSizeOf: symbol => availability.symbols[symbol]?.lot_size ?? undefined, cost: market.cost, slipMult: params.slipMult })
       const source = createRoundSource<ExitRound>({ rng: createRng(seed), availability, fetcher: market.data, plan, seen: seen.recent(), onUsed: id => seen.add(id) })
       const results: ExitResult[] = []
+      const rows: ReviewRow[] = []
       let pending = source.next(abort.signal)
       for (let i = 0; i < total && !cancelled; i++) {
         const next = await pending
@@ -148,11 +151,11 @@ export default function ExitDisciplineView({ level, params, seed, suspended, mar
         if (cancelled) return
         const final: TradeOutcome = outcome ?? trade.expire(current.startSec + current.horizonSec - 1) ?? { kind: 'horizon', exitSec: current.startSec + current.horizonSec, exitPrice: 0, r: 0, mfeR: 0, maeR: 0 }
         const scored = scoreExit(current, accepted, final, trade.overrides)
-        results.push(scored)
+        results.push(scored); rows.push(exitRow(rows.length + 1, current, scored))
         setRun({ shown: current.horizonSec, stopPrice: stopOf(), targetPrice: trade.targetPrice, outcome: final, startedAt: 0 }); setResult(scored); setPhase('result')
         await clk.run(120_000, () => undefined, () => nextRef.current)
       }
-      if (!cancelled) latest.current.onFinish(summariseExit(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summariseExit(results, latest.current.level), review: rows })
     })()
     return () => { cancelled = true; abort.abort(); clk.cancel() }
   }, [market, params, seed, total])

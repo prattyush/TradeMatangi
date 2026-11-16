@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { pickRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { STRIKE_PICKER } from '../../config/difficulty.market'
@@ -44,6 +46,7 @@ export default function StrikePickerView({ level, params, seed, suspended, marke
       if (cancelled) return
       const rng = createRng(seed)
       const results: PickResult[] = []
+      const rows: ReviewRow[] = []
       for (let i = 0; i < total && !cancelled; i++) {
         const next = makeScenario(rng, { dteSet: params.dteSet, minutes: params.minutes, ivShiftShare: params.ivShiftShare, failShare: params.failShare, objectives: params.objectives }, specs)
         const chain = priceChain(next)
@@ -53,11 +56,11 @@ export default function StrikePickerView({ level, params, seed, suspended, marke
         await clk.run(limit, ms => { if (bar.current) bar.current.style.transform = `scaleX(${Math.max(0, 1 - ms / limit)})` }, () => pickRef.current !== undefined)
         if (cancelled) return
         const scored = scorePick(chain, pickRef.current ?? null)
-        results.push(scored)
+        results.push(scored); rows.push(pickRow(rows.length + 1, next, scored))
         setResult(scored); setPhase('result')
         await clk.run(120_000, () => undefined, () => nextRef.current)
       }
-      if (!cancelled) latest.current.onFinish(summarisePicks(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summarisePicks(results, latest.current.level), review: rows })
     })()
     return () => { cancelled = true; clk.cancel() }
   }, [market, params, seed, total])

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { tickRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { GameChart } from '../../../chart/GameChart'
@@ -82,6 +84,7 @@ export default function TickReaderView({ level, params, seed, suspended, market,
       const plan = tickReaderPlan(params, { lotSizeOf: symbol => availability.symbols[symbol]?.lot_size ?? undefined, cost: market.cost, slipMult: params.slipMult })
       const source = createRoundSource<TickRound>({ rng: createRng(seed), availability, fetcher: market.data, plan, seen: seen.recent(), onUsed: id => seen.add(id) })
       const results: RoundResult[] = []
+      const rows: ReviewRow[] = []
       let pending = source.next(abort.signal)
       for (let i = 0; i < total && !cancelled; i++) {
         const next = await pending
@@ -113,11 +116,11 @@ export default function TickReaderView({ level, params, seed, suspended, market,
         if (cancelled) return
 
         const scored = scoreRound(current, chosen, Math.round(spent))
-        results.push(scored)
+        results.push(scored); rows.push(tickRow(rows.length + 1, current, scored))
         setResult(scored); setPhase('flash')
         await run(TICK_READER.flashMs, () => undefined, () => skipFlashRef.current)
       }
-      if (!cancelled) latest.current.onFinish(summariseTickReader(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summariseTickReader(results, latest.current.level), review: rows })
     })()
 
     return () => { cancelled = true; abort.abort(); clock.cancel() }

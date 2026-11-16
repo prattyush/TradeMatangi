@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { regimeRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { REGIME_LABEL, type Regime } from '../../engine/regime'
@@ -59,6 +61,7 @@ export default function RegimeSwitchView({ level, params, seed, suspended, marke
       const plan = regimePlan(params, { lotSizeOf: symbol => availability.symbols[symbol]?.lot_size ?? undefined, cost: market.cost, slipMult: params.slipMult })
       const source = createRoundSource<Segment>({ rng: createRng(seed), availability, fetcher: market.data, plan, seen: seen.recent(), onUsed: id => seen.add(id) })
       const results: SegmentResult[] = []
+      const rows: ReviewRow[] = []
       let before = null as Previous | null
       let pending = source.next(abort.signal)
       for (let i = 0; i < total && !cancelled; i++) {
@@ -82,13 +85,13 @@ export default function RegimeSwitchView({ level, params, seed, suspended, marke
         await clk.run((current.round.holdSec * 1000) / params.replaySpeed, ms => setElapsed((ms / 1000) * params.replaySpeed))
         if (cancelled) return
         const scored = scoreSegment(current, chosen, before)
-        results.push(scored)
+        results.push(scored); rows.push(regimeRow(rows.length + 1, current, scored))
         if (chosen !== 'timeout') before = { regime: current.regime.regime, playbook: chosen }
         else before = { regime: current.regime.regime, playbook: before?.playbook ?? 'aside' }
         setResult(scored); setPhase('result')
         await clk.run(120_000, () => undefined, () => nextRef.current)
       }
-      if (!cancelled) latest.current.onFinish(summariseRegime(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summariseRegime(results, latest.current.level), review: rows })
     })()
     return () => { cancelled = true; abort.abort(); clk.cancel() }
   }, [market, params, seed, total])

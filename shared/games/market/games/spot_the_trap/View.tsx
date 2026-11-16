@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReviewRow } from '../../../core/trial'
+import { breakoutRow, huntRow } from '../../review'
 import { createRng } from '../../../core/rng'
 import type { GameViewProps } from '../../../core/types'
 import { GameChart } from '../../../chart/GameChart'
@@ -83,6 +85,7 @@ export default function SpotTheTrapView({ level, params, seed, suspended, market
       const sourceA = createRoundSource<BreakoutRound>({ rng, availability, fetcher, plan: breakoutPlan(params), seen: seenA.recent(), onUsed: id => seenA.add(id) })
       const sourceB = createRoundSource<HuntRound>({ rng, availability, fetcher, plan: huntPlan(params), seen: seenA.recent(), onUsed: id => seenA.add(id) })
       const results: SpotResult[] = []
+      const rows: ReviewRow[] = []
       const ask = (i: number) => (modeOf(i, params.modeB) === 'breakout' ? sourceA.next(abort.signal) : sourceB.next(abort.signal))
       let pending = ask(0)
       for (let i = 0; i < total && !cancelled; i++) {
@@ -105,7 +108,7 @@ export default function SpotTheTrapView({ level, params, seed, suspended, market
           await clk.run(limit, ms => { if (bar.current) bar.current.style.transform = `scaleX(${Math.max(0, 1 - ms / limit)})` }, () => verdictRef.current !== null)
           if (cancelled) return
           const scored = scoreBreakout(round, verdictRef.current ?? 'timeout')
-          results.push(scored); setResult(scored)
+          results.push(scored); rows.push(breakoutRow(rows.length + 1, round, scored)); setResult(scored)
         } else {
           const round = next.round as HuntRound
           setHunt(round); setBreakout(null); setPhase('play')
@@ -113,12 +116,12 @@ export default function SpotTheTrapView({ level, params, seed, suspended, market
           await clk.run(limit, ms => { if (bar.current) bar.current.style.transform = `scaleX(${Math.max(0, 1 - ms / limit)})` }, () => submitRef.current)
           if (cancelled) return
           const scored = scoreHunt(round, clicksRef.current, !submitRef.current)
-          results.push(scored); setResult(scored)
+          results.push(scored); rows.push(huntRow(rows.length + 1, round, scored)); setResult(scored)
         }
         setPhase('result')
         await clk.run(180_000, () => undefined, () => nextRef.current)
       }
-      if (!cancelled) latest.current.onFinish(summariseSpot(results, latest.current.level))
+      if (!cancelled) latest.current.onFinish({ ...summariseSpot(results, latest.current.level), review: rows })
     })()
     return () => { cancelled = true; abort.abort(); clk.cancel() }
   }, [market, params, seed, total])
