@@ -2,6 +2,7 @@
 import { CATEGORIES, catalogueEntry, type Category, type GameId } from './ids'
 import { applyLevelRule, clampLevel, DEFAULT_LEVEL_RULES, INITIAL_LEVEL_STATE, type LevelRules } from './difficulty'
 import { nextEma, ratedScore } from './scoring'
+import { warmupCount, WARMUP_STEPS } from './dashboard'
 import type { SessionMode, SessionSummary } from './types'
 
 export interface Versioned { revision: number; last_mutation_id?: string; updated_at?: string }
@@ -39,6 +40,8 @@ export interface SessionResult {
   summary: SessionSummary
   /** ISO time the session ended. */
   playedAt: string
+  /** Set when the session finished one step of the Daily Warm-up: the day record then counts it in `warmupDone`. */
+  warmup?: { step: number }
 }
 
 interface PutEntry { revision: number; item: Record<string, unknown> }
@@ -90,6 +93,14 @@ export function dayCategoryScores(games: TotalsRecord['games']): Partial<Record<
   return out
 }
 
+/** The day record of a warm-up step finished in Practice mode: the other fields stay as they are, only `warmupDone` grows. */
+function warmupDayItem(day: TotalsRecord | undefined): TotalsItem {
+  const item = itemOf(day)
+  delete item.days
+  item.warmupDone = Math.min(WARMUP_STEPS, warmupCount(day) + 1)
+  return item
+}
+
 /**
  * Build the PUT body for one session on top of the latest server state (spec 8.4). Pure: call it again with a fresh
  * state after a 409 to "re-apply the session on top". A Practice session only bumps the practice counter.
@@ -99,7 +110,12 @@ export function buildSessionPut(state: ProgressState, result: SessionResult, rul
   const lastPlayed = result.playedAt.slice(0, 19)
   if (result.mode === 'practice') {
     const item = { ...itemOf(prev), practice: (prev?.practice ?? 0) + 1, lastPlayed }
-    return { mutation_id: result.id, game: { id: result.gameId, revision: prev?.revision ?? 0, item } }
+    const practiceBody: PutBody = { mutation_id: result.id, game: { id: result.gameId, revision: prev?.revision ?? 0, item } }
+    if (result.warmup) {
+      const day = state.days[result.date]
+      practiceBody.day = { date: result.date, revision: day?.revision ?? 0, item: warmupDayItem(day) }
+    }
+    return practiceBody
   }
   const score = result.summary.score
   const levelState = applyLevelRule({
@@ -128,6 +144,7 @@ export function buildSessionPut(state: ProgressState, result: SessionResult, rul
   if (result.summary.expectancyR !== undefined) dayItem.expectancyR = result.summary.expectancyR
   if (result.summary.discipline !== undefined) dayItem.discipline = result.summary.discipline
   delete dayItem.days
+  if (result.warmup) dayItem.warmupDone = Math.min(WARMUP_STEPS, warmupCount(day) + 1)
   body.day = { date: result.date, revision: day?.revision ?? 0, item: dayItem }
 
   const monthKey = result.date.slice(0, 7)

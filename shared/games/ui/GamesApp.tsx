@@ -1,19 +1,24 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
-import { ALL_GAME_IDS, CATEGORY_LABEL, CATEGORIES, gamesIn, type GameId, type Pool } from '../core/ids'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { CATEGORY_LABEL, CATEGORIES, gamesIn, type GameId, type Pool } from '../core/ids'
 import type { GamesRequest } from '../core/client'
-import { categoryRatings } from '../core/scoring'
 import { getGame, isPlayable } from '../core/registry'
 import { levelBand } from '../core/difficulty'
-import { normalizeSettings, type GamesSettings } from '../core/settings'
+import type { LocalSession } from '../core/dashboard'
 import { newId, localDate } from '../core/uid'
 import type { SessionResult } from '../core/progress'
+import { applyPalette } from '../brain/ui/palette'
 import { GameShell, type ShellDone } from './GameShell'
 import { useProgress } from './useProgress'
+import { useSessionLog } from './useSessionLog'
+import { Dashboard } from './Dashboard'
+import { Warmup, type RenderGameOptions } from './Warmup'
+import { ReviewTab } from './ReviewTab'
+import { SettingsPanel } from './SettingsPanel'
 import '../games'
 import './games.css'
 
 export type SessionKind = 'none' | 'sim' | 'paper' | 'real'
-type Tab = 'brain' | 'market' | 'dashboard' | 'warmup' | 'settings'
+type Tab = 'brain' | 'market' | 'dashboard' | 'warmup' | 'review' | 'settings'
 
 export interface GamesAppProps {
   /** Transport to `/api/desktop/v1/games/*` (Rust command on the desktop, `fetch` on the website). */
@@ -24,32 +29,50 @@ export interface GamesAppProps {
   onClose?: () => void
 }
 
-const TAB_LABEL: Record<Tab, string> = { brain: 'Brain', market: 'Market', dashboard: 'Dashboard', warmup: 'Warm-up', settings: 'Settings' }
+const TAB_LABEL: Record<Tab, string> = { brain: 'Brain', market: 'Market', dashboard: 'Dashboard', warmup: 'Warm-up', review: 'Review', settings: 'Settings' }
 
 export default function GamesApp({ request, sessionKind = 'none', onClose }: GamesAppProps) {
   const progress = useProgress(request)
+  const sessionLog = useSessionLog()
   const [tab, setTab] = useState<Tab>('brain')
   const [playing, setPlaying] = useState<GameId | null>(null)
   const sessionNo = useRef(1)
   const settings = progress.settings
   const userId = progress.state.user_id ?? 'unknown'
+  const today = localDate()
 
-  const ratings = useMemo(() => categoryRatings(ALL_GAME_IDS.map(id => ({ id, emaScore: progress.state.games[id]?.emaScore }))), [progress.state.games])
+  useEffect(() => { applyPalette(settings.palette) }, [settings.palette])
 
-  const onDone = useCallback((id: GameId) => (done: ShellDone) => {
-    const result: SessionResult = { id: newId(), gameId: id, mode: done.mode, level: done.level, date: localDate(), minutes: done.minutes, summary: done.summary, playedAt: new Date().toISOString() }
+  const finished = useCallback((id: GameId, done: ShellDone, extra: { warmupStep?: number; replay?: boolean }) => {
     sessionNo.current += 1
+    if (extra.replay) return
+    const playedAt = new Date().toISOString()
+    const result: SessionResult = { id: newId(), gameId: id, mode: done.mode, level: done.level, date: localDate(), minutes: done.minutes, summary: done.summary, playedAt }
+    if (extra.warmupStep) result.warmup = { step: extra.warmupStep }
     void progress.record(result)
-  }, [progress])
+    const local: LocalSession = { id: result.id, gameId: id, date: result.date, level: done.level, mode: done.mode, seed: done.seed, score: done.summary.score, stats: done.summary.stats, playedAt, review: done.summary.review }
+    void sessionLog.add(local)
+  }, [progress, sessionLog])
 
-  const definition = playing ? getGame(playing) : undefined
+  /** One game inside the shared shell; the hub, Warm-up and Review all play through here so recording and settings stay in one place. */
+  const renderGame = (id: GameId, options: RenderGameOptions & { replay?: { seed: number; level: number } }): ReactNode => {
+    const definition = getGame(id)
+    if (!definition) return <p role="alert">This game is not available.</p>
+    return (
+      <GameShell key={`${id}-${options.replay?.seed ?? 'new'}`} definition={definition} level={progress.state.games[id]?.level ?? 1} userId={userId} sessionNo={sessionNo.current}
+        reduceMotion={settings.reduceMotion} sound={settings.sound} replay={options.replay} stepLabel={options.stepLabel} onSkip={options.onSkip}
+        onDone={done => { finished(id, done, { warmupStep: options.warmupStep, replay: options.replay !== undefined }); options.onFinished?.() }}
+        onExit={options.onExit} />
+    )
+  }
+
   return (
-    <div className="games-root" style={{ fontSize: `${settings.zoom}%` }} data-reduce-motion={settings.reduceMotion || undefined}>
+    <div className="games-root" style={{ fontSize: `${settings.zoom}%` }} data-reduce-motion={settings.reduceMotion || undefined} data-palette={settings.palette}>
       <header className="games-head">
         <h2>Games</h2>
         <nav aria-label="Games sections" className="games-tabs">
           {(Object.keys(TAB_LABEL) as Tab[]).map(key => (
-            <button key={key} className={key === tab ? 'is-active' : ''} onClick={() => { setPlaying(null); setTab(key) }}>{TAB_LABEL[key]}</button>
+            <button key={key} className={key === tab ? 'is-active' : ''} aria-current={key === tab ? 'page' : undefined} onClick={() => { setPlaying(null); setTab(key) }}>{TAB_LABEL[key]}</button>
           ))}
         </nav>
         {onClose && <button onClick={onClose} aria-label="Close Games">Close</button>}
@@ -61,17 +84,17 @@ export default function GamesApp({ request, sessionKind = 'none', onClose }: Gam
       {progress.pending > 0 && <p className="games-banner" role="status">{progress.pending} session(s) waiting to be saved.</p>}
       {progress.notice && <p className="games-banner" role="alert">{progress.notice} <button onClick={progress.dismissNotice}>Dismiss</button></p>}
 
-      {playing && definition ? (
-        <GameShell key={playing} definition={definition} level={progress.state.games[playing]?.level ?? 1} userId={userId} sessionNo={sessionNo.current}
-          onDone={onDone(playing)} onExit={() => setPlaying(null)} />
-      ) : (
-        <main>
-          {(tab === 'brain' || tab === 'market') && <GameList pool={tab} levels={progress.state.games} onPlay={setPlaying} />}
-          {tab === 'dashboard' && <Dashboard ratings={ratings} played={ALL_GAME_IDS.filter(id => (progress.state.games[id]?.sessions ?? 0) > 0).length} />}
-          {tab === 'warmup' && <section><h3>Daily Warm-up</h3><p>A short daily routine that picks games from your weakest categories. It arrives once the games it draws on are in. Pool setting: <strong>{settings.warmupPool}</strong>.</p></section>}
-          {tab === 'settings' && <SettingsPanel settings={settings} disabled={progress.status !== 'ready'} onSave={progress.saveSettings} />}
-        </main>
-      )}
+      <main>
+        {playing ? renderGame(playing, { onExit: () => setPlaying(null) }) : (
+          <>
+            {(tab === 'brain' || tab === 'market') && <GameList pool={tab} levels={progress.state.games} onPlay={setPlaying} />}
+            {tab === 'dashboard' && <Dashboard state={progress.state} sessions={sessionLog.sessions} today={today} />}
+            {tab === 'warmup' && <Warmup state={progress.state} settings={settings} userId={userId} today={today} renderGame={renderGame} />}
+            {tab === 'review' && <ReviewTab sessions={sessionLog.sessions} renderReplay={(session, onExit) => renderGame(session.gameId, { onExit, replay: { seed: session.seed, level: session.level } })} />}
+            {tab === 'settings' && <SettingsPanel settings={settings} disabled={progress.status !== 'ready'} onSave={progress.saveSettings} />}
+          </>
+        )}
+      </main>
       <footer className="games-foot">Practice tools: ratings show your progress on these tasks, nothing more.</footer>
     </div>
   )
@@ -99,41 +122,5 @@ function GameList({ pool, levels, onPlay }: { pool: Pool; levels: Partial<Record
         </section>
       ))}
     </div>
-  )
-}
-
-function Dashboard({ ratings, played }: { ratings: ReturnType<typeof categoryRatings>; played: number }) {
-  return (
-    <section>
-      <h3>Dashboard</h3>
-      {played === 0 && <p>Play a game in Progress mode and your category ratings appear here.</p>}
-      <ul className="games-ratings">
-        {CATEGORIES.map(category => (
-          <li key={category}><span>{CATEGORY_LABEL[category]}</span><meter min={0} max={100} value={ratings[category] ?? 0} /><span>{ratings[category] === undefined ? '–' : ratings[category]}</span></li>
-        ))}
-      </ul>
-    </section>
-  )
-}
-
-function SettingsPanel({ settings, disabled, onSave }: { settings: GamesSettings; disabled: boolean; onSave: (next: GamesSettings) => Promise<void> }) {
-  const [draft, setDraft] = useState<GamesSettings>(settings)
-  const [message, setMessage] = useState('')
-  const set = <K extends keyof GamesSettings>(key: K, value: GamesSettings[K]) => setDraft(current => normalizeSettings({ ...current, [key]: value }))
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings)
-  return (
-    <section>
-      <h3>Settings</h3>
-      <label><input type="checkbox" checked={draft.sound} onChange={event => set('sound', event.target.checked)} /> Sound (off by default)</label>
-      <label><input type="checkbox" checked={draft.reduceMotion} onChange={event => set('reduceMotion', event.target.checked)} /> Reduce motion</label>
-      <label><input type="checkbox" checked={draft.lowMemory} onChange={event => set('lowMemory', event.target.checked)} /> Low memory mode</label>
-      <label>Size <input type="range" min={80} max={150} step={5} value={draft.zoom} onChange={event => set('zoom', Number(event.target.value))} /> {draft.zoom}%</label>
-      <label>Warm-up games <select value={draft.warmupPool} onChange={event => set('warmupPool', event.target.value as GamesSettings['warmupPool'])}><option value="both">Brain and market</option><option value="market">Market only</option><option value="brain">Brain only</option></select></label>
-      <div className="games-row">
-        <button disabled={disabled || !dirty} onClick={() => { setMessage('Saving…'); onSave(draft).then(() => setMessage('Saved.'), error => setMessage(`Could not save: ${String(error instanceof Error ? error.message : error)}`)) }}>Save settings</button>
-        <span role="status">{message}</span>
-      </div>
-      <p className="games-meta">Games are practice tools. They do not claim to improve intelligence, health or trading results.</p>
-    </section>
   )
 }

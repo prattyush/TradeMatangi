@@ -14,6 +14,7 @@ const equationDrop: TrialGameDefinition<EdTrial, EdResponse> = {
     'Equations fall faster and more of them fall together as you go.',
   ],
   paramTable: EQUATION_DROP_PARAMS,
+  reducedMotionParams: params => ({ ...params, fallStartMs: Math.round(params.fallStartMs * 1.4), fallEndMs: Math.round(params.fallEndMs * 1.4) }),
   session: { kind: 'timed', seconds: BLOCK_SECONDS.equation_drop },
   createEngine: createEquationDropEngine,
   summarise: summariseEquationDrop,

@@ -619,13 +619,39 @@ Track B adds simulated-player, generator-uniqueness, timing and word-asset tests
 
 ---
 
-## 12. How to add a game (to be completed in Sprint 7)
+## 12. How to add a game
 
-1. Create `windowsapp/src/games/games/<id>/` with `index.ts` (the `GameDefinition`), `round.ts`, `score.ts`, `View.tsx`.
-2. Add the id to `GameId` and one line to `registry.ts`.
-3. Add its anchors to `config/difficulty.json`.
-4. Add tests (round determinism, scoring, summarise).
-5. No backend change is needed unless the game needs a new data series; if it does, extend `/window` parameters, not new endpoints.
+Both pools share one registry, one shell and one result screen. The folder and the two edits below are all a game needs; no backend change is required (the `GameProfiles` validation accepts the 31 ids of `core/ids.ts`, and `stats` is any small map of numbers).
+
+**A brain (trial) game**, using Quick Match as the model:
+
+1. Add the id to `BRAIN_GAME_IDS` and a catalogue line (`b('quick_match', 'Quick Match', 'speed', 'blurb')`) in `shared/games/core/ids.ts`. Both are already there for the 31 planned games.
+2. Create `shared/games/brain/games/<id>/` with `engine.ts` (pure and seeded: no DOM, no `Date.now`, no `setTimeout`), `View.tsx`, `index.ts` and `<id>.test.ts`.
+3. Put the parameter table in `shared/games/brain/config/difficulty.brain.ts`: anchors at levels 1, 5, 10, 15 and 20 (`a(...)`) or steps (`steps([from, value], ...)`), plus `rtFast` / `rtSlow` when the score uses speed.
+4. Register it with one import and one entry in `shared/games/games/index.ts`.
+
+```ts
+// brain/games/<id>/index.ts
+const myGame: TrialGameDefinition<MyTrial, MyResponse> = {
+  id: 'quick_match', kind: 'trial', category: 'speed', title: 'Quick Match',
+  blurb: 'Same or different? Decide as fast as you can.',
+  instructions: ['...', '...'],                              // 6 lines at most (the registry throws otherwise)
+  paramTable: QUICK_MATCH_PARAMS,                            // difficulty.brain.ts
+  session: { kind: 'timed', seconds: BLOCK_SECONDS.quick_match },   // or { kind: 'rounds', count: level => 10 }
+  createEngine: (params, rng) => createQuickMatchEngine(params, rng),   // next(), timing(), evaluate(), gapAfter?()
+  summarise: (log, level) => summariseQuickMatch(log, level),           // -> { score 0..100, stats, review }
+  View,                                                       // useTrialBlock({ createEngine, seconds, suspended, onFinish })
+  // reducedMotionParams: params => ({ ...params, speed: params.speed * 0.7 }),   // only when difficulty is movement
+}
+export default myGame
+```
+
+5. Tests (copy `quickMatch.test.ts`): the engine is deterministic for a seed, scoring stays in 0 to 100, the simulated players (`engine/simPlayers.ts`: perfect at least 95, random at most 25 averaged over seeds, always and never pressing at most 5), and, if the View has non-trivial rendering, a `renderToStaticMarkup` test. `registration.test.ts` lists the playable ids: add the new one.
+6. If the game's stats should show in the Dashboard trend panels, add a line to `TREND_PANELS` in `core/dashboard.ts`; if it belongs in the Warm-up's short slot, add it to `WARMUP_QUICK` in `core/warmup.ts`.
+7. Anything heavy (a solver, a generator, a word list) runs in a Web Worker through `engine/puzzleHost.ts` (`buildPuzzleSet`), which falls back to the calling thread; a new worker host needs `worker: { format: "es" }` in the Vite configs (already set) if it uses `import()`. Assets are imported in exactly one loader file.
+8. Text assets must survive a Windows checkout: pin them to LF in `.gitattributes` and split on `/\r?\n/`.
+
+**A market game** (`GameDefinition`, `kind: 'market'`, Track G) follows steps 1, 2 (with `round.ts`, `score.ts` instead of the engine), 4, 5; it adds `roundsPerSession(level)` and reads its rounds through `windows.ts`.
 
 ---
 
@@ -1046,6 +1072,14 @@ shared/games/brain/
 - **Review** (§7.3): brain sessions keep the seed and a compact **trial log** locally (≤ 250 trials × small tuples, last 20 sessions). Review shows per-trial stimulus, response and RT and can replay deterministic games (Track the Dots, matrices). Nothing is sent to the server.
 - **Settings** (§7.4) gain: palette (colour-vision-safe default), reduce motion, sound, zoom, `warmupPool`, and the "practice tool, not a medical product" note.
 
+- **As built (B6):**
+  - **Dashboard** (`ui/Dashboard.tsx`, model in `core/dashboard.ts`): All / Brain / Market filter on the games table; category ratings always average every game of the category in both pools (as above); level badge, sessions, best, rating and a score sparkline per game (plain SVG, `role="img"` with a text label); warm-up streak (days with 4 or more steps; the streak stays alive today when yesterday was kept). The server keeps only the **last 20 scores** per game (its validation), so the sparkline shows 20, not the 30 of §7.1 (C23).
+  - **Brain trend panels** (Colour interference, Flanker interference, Switch cost, Adaptation cost, Peak span for both span games, N reached, Perseveration) read the `stats` of the **Progress sessions kept on this device**, last 30 per game: the server keeps only the latest `stats` of a game, and the spec says reaction times are compared per device only (§17.3 rule 6). A panel with no sessions says "no data yet"; the panel text says which direction is better and whether the series is improving, steady or getting worse (`trendDirection`: first third against last third).
+  - **Warm-up** (`core/warmup.ts`, `ui/Warmup.tsx`): the five steps of §17.8, drawn with a seeded stream from `userId|date|warmup`. A category never played counts as the weakest; "not played in the last 2 days" uses the game's `lastPlayed` day; step 3 prefers the other pool; with no playable market game `both` and `market` use brain games and the tab says so. **The games run at their normal length (C24):** no View has a "short version" switch, so the Number Sprint step is the usual 90 s block (not 45 s) and the closing step draws from the quick games (`WARMUP_QUICK`: Quick Match, Colour Clash, Green Light, Flanker Flock, Rule Switch, Flip Map, Needle Finder); a routine takes about 8 to 10 minutes. The plan is built once a day per pool setting and kept in `localStorage`, so playing a step (which changes the ratings) never reshuffles it; done and skipped steps are kept there too. A finished step is a normal session (Progress or Practice, the player's choice) tagged `warmup: { step }` in the outbox; the same atomic PUT adds one to `warmupDone` on the day record (a count, capped at 5; a boolean from an older client counts as 5; the backend already accepted both). A step finished twice counts once.
+  - **Review** (`ui/ReviewTab.tsx`, `data/sessionLog.ts`): IndexedDB store `sessions` (database version 2, memory fallback) keeps each finished session's seed, level, score and stats, and the trial rows of the newest 20 (each cut to 250 rows); at most 30 sessions per game. "Play these puzzles again" starts the game from the stored seed and level in Practice mode and **records nothing**. Games that adapt to the player's answers (span games) start identically but can diverge (C25). Nothing is sent to the server.
+  - **Settings:** Colours (colour-blind safe Okabe-Ito default, or a higher-contrast set of the same six hues; `applyPalette` changes only the paint, names and patterns stay), Reduce motion (no animations; Track the Dots speed x 0.7 and Equation Drop fall time x 1.4 through `reducedMotionParams`, scoring unchanged and the instructions say so), Size (80 to 150%), Sound (short WebAudio tones on the countdown and the result, off by default), Low memory, Warm-up games, and the practice-tool note. Stored in the profile's free-form `settings` (no backend change).
+  - **Accessibility pass:** a visible focus ring, `aria-current` on the section buttons, `aria-pressed` on the filter, captions and `scope` on tables, `aria-labelledby` on the rating meters, labelled form controls, `prefers-reduced-motion` honoured even when the setting is off. Screen-reader support inside the timed games is not claimed.
+
 ### 17.9 Backend and data-model changes (small)
 
 No new routes. Changes to the G2 work:
@@ -1079,7 +1113,7 @@ Track B starts when G2 (persistence, `/state`, `games` flag) and G3 (foundation:
 | B3 | Flexibility: **Rule Switch, Card Sorter, Flip Map**. Math: **Number Sprint, Equation Drop, Make Target** (with solver) | Six games playable; solver and generator tests pass Done 2026-11-15 (B3) |
 | B4 | Reasoning: **Pattern Matrix, Number Series, Code Breaker** (generators with uniqueness checks) | Three games playable; uniqueness tests pass at every level Done 2026-11-15 (B4) |
 | B5 | Word: word-list assets and licences, **Anagram Dash, Letter Grid, Word Ladder**; lazy loading and memory checks | Three games playable; asset loading verified; word lists absent from the main bundle Done 2026-11-16 (B5) |
-| B6 | Hub tabs, dashboard filters and brain trend panels, Warm-up pools, Review for trial logs, settings, accessibility and performance pass, docs (`CLAUDE.md` row, architecture docs, §12 "How to add a game" with a `TrialGameDefinition` example), manual acceptance | Acceptance checklist passes on the Windows build and in Chrome |
+| B6 | Hub tabs, dashboard filters and brain trend panels, Warm-up pools, Review for trial logs, settings, accessibility and performance pass, docs (`CLAUDE.md` row, architecture docs, §12 "How to add a game" with a `TrialGameDefinition` example), manual acceptance | Acceptance checklist passes on the Windows build and in Chrome Done 2026-11-16 (B6 built; acceptance is the owner's) |
 
 Rules for every Track B sprint: one feature branch off `dev`, one PR into `dev`; tests green (`cd windowsapp && npm run build && npm test`, `cd frontend && node node_modules/typescript/bin/tsc --noEmit`, backend tests for touched areas, Playwright smoke where added); the PR lists shared files touched (expected: `frontend/src/App.tsx` for the single nav hook already added in G3, nothing else existing) and confirms no trading logic changed.
 

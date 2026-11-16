@@ -16,3 +16,15 @@ export const PALETTE: readonly PaletteColour[] = [
 
 export const NEUTRAL_GREY = '#D0D7DE'
 export const colourAt = (index: number): PaletteColour => PALETTE[((index % PALETTE.length) + PALETTE.length) % PALETTE.length]
+
+/** The `contrast` palette: the same six hues in lighter values that stand out more on the dark background. */
+const CONTRAST_HEX = ['#FFB000', '#4DA6FF', '#00D69B', '#FF6A2B', '#FFF04D', '#FF9AD5'] as const
+const SAFE_HEX = PALETTE.map(colour => colour.hex)
+export type PaletteChoice = 'safe' | 'contrast'
+
+/** Switch the live palette. Names and patterns never change, so engines and scoring are untouched; only the paint changes. */
+export const paletteHex = (name: PaletteChoice): readonly string[] => (name === 'contrast' ? CONTRAST_HEX : SAFE_HEX)
+export function applyPalette(name: PaletteChoice): void {
+  const hexes = paletteHex(name)
+  PALETTE.forEach((colour, i) => { (colour as { hex: string }).hex = hexes[i] })
+}

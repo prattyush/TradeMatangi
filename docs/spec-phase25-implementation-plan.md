@@ -264,7 +264,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | B3 | Done (2026-11-15), see "B3 as built" below |
 | B4 | Done (2026-11-15), see "B4 as built" below |
 | B5 | Done (2026-11-16), see "B5 as built" below |
-| B6, G1, G3b, G4–G7 | Planned, order above |
+| B6 | Done (2026-11-16), see "B6 as built" below |
+| G1, G3b, G4–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -726,3 +727,18 @@ Word: **Anagram Dash, Letter Grid, Word Ladder**. Branch `feat/brain-games-b5`, 
 - **Tests:** desktop vitest 1283 (70 new), `tsc` clean for desktop and website, website build passes (Games chunk 181 KB, 58 KB gzipped; the words worker 5 KB; the word lists are their own lazy chunks, 733 KB and 256 KB raw); new: asset integrity (hashes in `NOTICE`, sorted, unique, a-z, exclusions, size budgets, front coding round trip), trie, lazy loader and the import-site scan, the three generators, engines and scorings, the words host (inline, worker protocol with an async generator, error path) and simulated players for the three.
 - **Shared files touched:** none outside `shared/games/`, the two Vite configs (`worker.format`) and docs. No trading logic changed.
 - **Docs updated:** spec 17.4 and 17.11, `NOTICE`, `architecture-frontend.md`, `frontend-technical-constraints.md`, `phase25-manual-acceptance.md` (section L), this plan, `CLAUDE.md` row.
+
+## B6 as built (2026-11-16)
+
+Integration: **Dashboard, Warm-up, Review, Settings, accessibility pass, docs**. Branch `feat/brain-games-b6`, PR into `dev`. Dev was in sync with preprod at the start. No game logic changed except the two `reducedMotionParams` hooks.
+
+- **New core (pure, tested):** `core/dates.ts`, `core/dashboard.ts` (rows and filter, warm-up streak, trend panels and series, `LocalSession`), `core/warmup.ts` (`buildWarmup`), `SessionResult.warmup` and the day-record step count in `core/progress.ts`, `palette` in `core/settings.ts`.
+- **New data:** `data/sessionLog.ts` and IndexedDB version 2 (`sessions` store; the outbox store is untouched, existing databases upgrade in place).
+- **New UI:** `Dashboard.tsx`, `Warmup.tsx`, `ReviewTab.tsx`, `SettingsPanel.tsx`, `Sparkline.tsx`, `sound.ts`, `useSessionLog.ts`; `GamesApp.tsx` renders every game through one `renderGame` so the hub, Warm-up and Review record and apply settings the same way; `GameShell` gains `reduceMotion`, `sound`, `replay`, `stepLabel`, `onSkip` and returns the `seed` in `ShellDone`.
+- **Spec corrections:** **C23** the server keeps 20 scores per game, not 30. **C24** no short versions: warm-up games run at normal length (Number Sprint 90 s, a quick-games list for the closing step). **C25** Review replays from the seed in Practice mode and records nothing; adaptive games can diverge. Details in spec 17.8 "As built (B6)".
+- **Backend:** none. The day record's `warmupDone` already accepted a count; profile `settings` is a free-form object.
+- **Checked in a real browser (Playwright, production build of the real `GamesApp` on a throwaway harness with an in-memory server):** the Warm-up plan (brain fallback notice, five steps), a Quick Match step played to the end (one `PUT` with the game, the day totals and `warmupDone: 1`, the step marked done and kept after a reload), Review (the session listed, its trials, "Play these puzzles again" opens the replay screen), Settings (Higher contrast saved into the profile and `data-palette` applied), Dashboard. **Not run:** the website overlay (no DynamoDB Local here), Windows, sound, the Reduce motion slowdown in play, a full five-step warm-up, a streak across days (covered by unit tests).
+- **Not in B6:** market games in the Warm-up and the market trend panels (they join with Track G; `TREND_PANELS` and `WARMUP_QUICK` are the extension points); a per-game "short version"; calibration from the owner's play.
+- **Tests:** desktop vitest 1326 (43 new: dashboard model, warm-up plan, session log and pruning, progress warm-up PUTs, render tests of the hub screens, palette, reduce motion); `tsc` clean for desktop and website.
+- **Shared files touched:** none outside `shared/games/` and docs. No trading logic changed.
+- **Docs updated:** spec 12 (how to add a game, with a `TrialGameDefinition` example), 17.8 and 17.11, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section M), this plan, `CLAUDE.md` row.

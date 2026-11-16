@@ -93,3 +93,31 @@ describe('helpers', () => {
     expect(dayCategoryScores(undefined)).toEqual({})
   })
 })
+
+describe('warm-up steps', () => {
+  it('a Practice warm-up session also writes the day record with one more step done', () => {
+    const state: ProgressState = { ...EMPTY_STATE, days: { '2026-11-15': { revision: 3, games: { quick_match: { n: 2, avg: 70, best: 80 } }, minutes: 3, warmupDone: 2 } } }
+    const body = buildSessionPut(state, session({ mode: 'practice', warmup: { step: 3 } }))
+    expect(body.game!.item).toMatchObject({ practice: 1 })
+    expect(body.day).toMatchObject({ date: '2026-11-15', revision: 3 })
+    expect(body.day!.item).toMatchObject({ warmupDone: 3, minutes: 3, games: { quick_match: { n: 2 } } })
+    expect(body.day!.item).not.toHaveProperty('revision')
+    expect(body.month).toBeUndefined()
+  })
+  it('a Progress warm-up session adds the step on top of the usual day totals', () => {
+    const body = buildSessionPut(EMPTY_STATE, session({ warmup: { step: 1 } }))
+    expect(body.day!.item).toMatchObject({ warmupDone: 1, games: { quick_match: { n: 1 } } })
+    expect(body.month!.item).not.toHaveProperty('warmupDone')
+  })
+  it('the count stops at 5 and a boolean from an older client counts as 5', () => {
+    const full: ProgressState = { ...EMPTY_STATE, days: { '2026-11-15': { revision: 1, warmupDone: 5 } } }
+    expect(buildSessionPut(full, session({ mode: 'practice', warmup: { step: 2 } })).day!.item.warmupDone).toBe(5)
+    const legacy: ProgressState = { ...EMPTY_STATE, days: { '2026-11-15': { revision: 1, warmupDone: true } } }
+    expect(buildSessionPut(legacy, session({ warmup: { step: 2 } })).day!.item.warmupDone).toBe(5)
+  })
+  it('a session that is not a warm-up step leaves warmupDone alone and sends no day for Practice', () => {
+    expect(buildSessionPut(EMPTY_STATE, session({ mode: 'practice' })).day).toBeUndefined()
+    const state: ProgressState = { ...EMPTY_STATE, days: { '2026-11-15': { revision: 1, warmupDone: 3 } } }
+    expect(buildSessionPut(state, session()).day!.item.warmupDone).toBe(3)
+  })
+})
