@@ -300,6 +300,12 @@ What it means for Track C:
 - The probe ran at a time of day when the WSL clock read 08:20 to 08:30 (UTC, the markets were open); timestamps in the JSON are the host's, not IST.
 - Not yet known: Fyers (does `MODE_LTP` strip `vol_traded_today`?) and Kotak SFeed volume, and whether Kite `volume_traded` resets for a contract that is re-subscribed mid-day (assume it does not, and keep the negative-difference guard).
 
+**Track C, step 1: shared guard and Kite (2026-11-16, branch `feat/live-volume-kite`, PR into `dev`; the owner decided volume changes go on `dev` only, no `preprod`).**
+- `backend/app/services/volume_delta.py` (`VolumeDelta`, `clean_total`): baseline on the first usable total, reset on a lower total, ignore unusable values; per-trade quantities are never summed. Details in `docs/backend-technical-constraints.md`, "Live volume".
+- Kite: QUOTE mode for every subscription (`KITE_STREAM_MODE`, default `quote`, `ltp` as the switch back), `_OHLCAccumulator` gains `volume` / `volume_seen` and `candle()`, per-token guards cleared on (re)connect and dropped with the token. Indices get no `volume` key. Hub and session code are unchanged (the hub spreads the tick dict).
+- Tests: `backend/tests/test_live_volume_kite.py` (27): the guard (baseline, reset, bad values, strings), the accumulator (sum within a second, no key without volume, zero is not missing), the adapter on real-shaped packets (cumulative to per-second, index no key, `last_traded_quantity` ignored, backwards total, late tick keeps its volume, reconnect baseline, unregister, flush), the stream mode and both subscription sites.
+- Next steps, in order: Breeze (`ttq`), then Fyers and Kotak once probed, gap-fill ticks, the desktop live stream, the Swing live bar, the frontend handoff rule (`mergeKLineTick`, `aggregateLiveCandles`), `bar_volume` on `bar_paused`.
+
 **Track C.** Nothing built yet; the Kite and Breeze probe findings above unblock it (Fyers and Kotak are still to be probed). Add a dated note and the test counts here after each PR, and record the probe findings under Track A when the user has run it. Also refresh the Phase 24 row in `CLAUDE.md`, `docs/frontend-technical-constraints.md` (Volume), `docs/backend-technical-constraints.md` and `docs/phase24-manual-acceptance.md` section F as each track lands.
 
 ### PATTERNS AND STRUCTURES ON MINUTE DATA, AND MAX PRICE IN PATTERNS (requirement 2026-11-14)
