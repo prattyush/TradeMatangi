@@ -49,9 +49,9 @@ export default function GamesApp({ request, sessionKind = 'none', onClose }: Gam
 
   // One market-data object per launch (one availability fetch, one throttle, one cache); the cap follows the low-memory setting.
   const marketData = useMemo(() => createMarketData({ request, cache: createWindowCache(settings.lowMemory ? LOW_MEMORY_CACHE_BYTES : DEFAULT_CACHE_BYTES) }), [request, settings.lowMemory])
-  const costKey = `${settings.slippagePtsPerSide}|${settings.roundTripCostPerLotRs}|${settings.defaultLots}`
+  const costKey = `${settings.slippagePtsPerSide}|${settings.roundTripCostPerLotRs}|${settings.defaultLots}|${settings.keyBuyCe}${settings.keyBuyPe}${settings.keyExitAll}${settings.keyStopCost}`
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const market = useMemo<MarketHost>(() => ({ data: marketData, cost: normalizeCost(settings), userId, today }), [marketData, costKey, userId, today])
+  const market = useMemo<MarketHost>(() => ({ data: marketData, cost: normalizeCost(settings), keys: { buyCe: settings.keyBuyCe, buyPe: settings.keyBuyPe, exitAll: settings.keyExitAll, stopCost: settings.keyStopCost }, userId, today }), [marketData, costKey, userId, today])
 
   const finished = useCallback((id: GameId, done: ShellDone, extra: { warmupStep?: number; replay?: boolean }) => {
     sessionNo.current += 1

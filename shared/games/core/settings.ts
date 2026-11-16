@@ -1,4 +1,5 @@
 import { DEFAULT_COST, normalizeCost } from '../market/engine/costModel'
+import { DEFAULT_KEYS, normalizeKeys } from '../market/engine/hotkeys'
 
 /** Games settings, saved in the profile record (spec 7.4, 17.8). Unknown or out-of-range values fall back to defaults. */
 export type WarmupPool = 'both' | 'market' | 'brain'
@@ -18,9 +19,15 @@ export interface GamesSettings {
   slippagePtsPerSide: number
   roundTripCostPerLotRs: number
   defaultLots: number
+  /** Hotkey Drill keys: four different letters (spec 5.5). */
+  keyBuyCe: string
+  keyBuyPe: string
+  keyExitAll: string
+  keyStopCost: string
 }
 
-export const DEFAULT_SETTINGS: GamesSettings = { sound: false, reduceMotion: false, zoom: 100, warmupPool: 'both', palette: 'safe', lowMemory: false, ...DEFAULT_COST }
+export const DEFAULT_SETTINGS: GamesSettings = { sound: false, reduceMotion: false, zoom: 100, warmupPool: 'both', palette: 'safe', lowMemory: false, ...DEFAULT_COST,
+  keyBuyCe: DEFAULT_KEYS.buyCe, keyBuyPe: DEFAULT_KEYS.buyPe, keyExitAll: DEFAULT_KEYS.exitAll, keyStopCost: DEFAULT_KEYS.stopCost }
 
 export function normalizeSettings(raw: unknown): GamesSettings {
   const input = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
@@ -34,6 +41,7 @@ export function normalizeSettings(raw: unknown): GamesSettings {
     palette: input.palette === 'contrast' ? 'contrast' : 'safe',
     lowMemory: input.lowMemory === true,
     ...normalizeCost(input),
+    ...((keys) => ({ keyBuyCe: keys.buyCe, keyBuyPe: keys.buyPe, keyExitAll: keys.exitAll, keyStopCost: keys.stopCost }))(normalizeKeys({ buyCe: input.keyBuyCe, buyPe: input.keyBuyPe, exitAll: input.keyExitAll, stopCost: input.keyStopCost })),
   }
 }
 

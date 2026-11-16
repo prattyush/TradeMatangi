@@ -330,6 +330,11 @@ Each game below defines: the skill, the round, the data it uses, controls, scori
 
 **Stats:** accuracy by question type, median answer time, most-missed type (drives the Daily Warm-up).
 
+**As built (G4a).** `shared/games/market/games/risk_calculator/`. Differences and decisions:
+- **C32 (the eight question types as generated).** 1 rupee risk; 2 reward to risk (R); 3 breakeven = entry + round-trip cost per lot / lot size (the cost is shown in the question, not taken from Settings, so a question is the same for everyone); 4 whole lots for a budget; 5 percent of capital at risk; 6 option move = delta x move (with gamma from the third step); 7 new average entry (with the breakeven added at three steps); 8 two- or three-step sizing (lots that fit, then the total round-trip cost, or the risk actually taken). Answers are checked to the displayed rounding (two places; whole rupees), a "close" answer (within 2 to 5 % depending on the type, none for lots) earns half. Commas in an answer are thousands separators (1,605 is 1605), the dot is the decimal mark.
+- **Lot size** is the NIFTY lot from `/availability` (fetched once; 65 if the server cannot be reached, so the game also plays offline). The type pool unlocks with the level (2 types at level 1, all 8 from level 15), steps 1 to 3, numbers get tick-sized decimals with `ugliness`.
+- Stats: `questions`, `correct`, `median_ms`, `acc_q1` to `acc_q8` (percent, only types asked), `most_missed` (0 when none).
+
 ### 5.5 Hotkey Drill (Speed)
 
 **Skill:** clean, fast execution without fat-fingering.
@@ -347,6 +352,12 @@ Each game below defines: the skill, the round, the data it uses, controls, scori
 **Difficulty levers:** prompt complexity (single → chains), prompt delay jitter, distractor prompts that must be **ignored** (e.g., "do nothing" cues at high levels), lots variation, shorter display time.
 
 **Stats:** median/p90 reaction time, error types, longest clean streak.
+
+**As built (G4a).** `shared/games/market/games/hotkey_drill/` (engine is pure; the View reads the frame clock and `event.timeStamp`).
+- **C33 (the panel).** Digits 1 to 5 or the arrows set the lots, a letter stages an action (buy CE, buy PE, exit all, stop to cost), Enter confirms; the prompt is done when the confirmed action (and the lots, for a buy) match. Errors: `wrong_key` (a key not on the panel), `nothing_staged`, `wrong_action`, `wrong_side`, `wrong_lots`, `ignored_cue`, `missed` (the prompt expired). A wrong confirm keeps the staged panel so the player can correct it. Keys pressed in the pause between prompts are not counted. Chains (up to three steps) need each step confirmed in turn; "stop at N points" prompts are not used (they would need number entry).
+- **Key map in Settings** (`keyBuyCe`, `keyBuyPe`, `keyExitAll`, `keyStopCost`): four different letters, repaired to the defaults (c, p, x, s) when invalid or repeated. The desktop has no trading hotkey store, so there is no "import my hotkeys". The buttons on the panel work with the mouse too.
+- **Scoring** as in the text above: the reaction time of a chain is divided by its length; `RT_fast` is 600 ms and `RT_slow` comes from the level (2500 to 1500); a correct ignore counts as correct without a reaction time; an ignore cue is a 2 second window; a prompt left for more than the level's seconds (8 to 4) is a miss. A session is three 60 second blocks with a 3 second rest. Stats (14 keys): `prompts`, `correct`, `errors`, `error_rate`, `median_rt_ms`, `p90_rt_ms`, `longest_streak` and `err_*` per error type.
+- The panel is a few numbers in memory: no order, broker or session call exists in this code (the import-boundary test covers it).
 
 ### 5.6 Level Recall (Memory)
 

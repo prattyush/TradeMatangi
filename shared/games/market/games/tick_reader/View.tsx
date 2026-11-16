@@ -6,13 +6,13 @@ import type { Candle, ChartData } from '../../../chart/chartModel'
 import { TICK_READER } from '../../config/difficulty.market'
 import { browserStorage, createSeenWindows } from '../../data/seenWindows'
 import { createRoundSource } from '../../engine/roundSource'
+import { createFrameClock } from '../../ui/frameClock'
 import { aggregate, sliceBars, type Bars } from '../../engine/series'
 import { scoreRound, summariseTickReader, tickReaderPlan, type RoundResult, type TickAnswer, type TickRound } from './engine'
 import { clock, describeResult } from './format'
 
 
 type Phase = 'loading' | 'decide' | 'hold' | 'flash'
-const MAX_FRAME_MS = 100
 const CHART_BAR_SEC = 5
 
 const toCandles = (bars: Bars, decisionSec: number): Candle[] => bars.t.map((t, i) => ({ t: t - decisionSec, o: bars.o[i], h: bars.h[i], l: bars.l[i], c: bars.c[i] }))
@@ -63,21 +63,9 @@ export default function TickReaderView({ level, params, seed, suspended, market,
   useEffect(() => {
     if (!market) { latest.current.onAbort('Market data is not available in this window.'); return }
     let cancelled = false
-    let frame = 0
     const abort = new AbortController()
-    /** Run a clock for `ms`, paused while a dialog is open or the page is hidden. Resolves early when `stop` says so. */
-    const run = (ms: number, onFrame: (elapsedMs: number) => void, stop?: () => boolean): Promise<void> => new Promise(resolve => {
-      let elapsedMs = 0, last: number | null = null
-      const step = (now: number) => {
-        if (cancelled) { resolve(); return }
-        if (last !== null && !suspendedRef.current && !document.hidden) elapsedMs += Math.min(MAX_FRAME_MS, now - last)
-        last = now
-        onFrame(elapsedMs)
-        if (elapsedMs >= ms || stop?.()) { resolve(); return }
-        frame = requestAnimationFrame(step)
-      }
-      frame = requestAnimationFrame(step)
-    })
+    const clock = createFrameClock({ suspended: () => suspendedRef.current })
+    const run = clock.run
 
     ;(async () => {
       let availability
@@ -132,7 +120,7 @@ export default function TickReaderView({ level, params, seed, suspended, market,
       if (!cancelled) latest.current.onFinish(summariseTickReader(results, latest.current.level))
     })()
 
-    return () => { cancelled = true; abort.abort(); cancelAnimationFrame(frame) }
+    return () => { cancelled = true; abort.abort(); clock.cancel() }
   }, [market, params, seed, total])
 
   const press = (choice: TickAnswer) => { if (phase === 'decide' && answerRef.current === null) answerRef.current = choice }

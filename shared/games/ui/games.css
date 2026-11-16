@@ -75,3 +75,13 @@
 .games-market-flash { background: var(--g-panel); border: 1px solid var(--g-line); border-radius: 6px; padding: 6px 10px; max-width: 720px; }
 .games-market-flash p { margin: 3px 0; }
 .games-hint { color: var(--g-dim); font-size: .85em; margin: 0; }
+.games-risk-question { font-size: 1.25em; line-height: 1.4; min-height: 3em; padding: 8px 0; max-width: 720px; }
+.games-risk-answer { max-width: 320px; }
+.games-risk-answer input { width: 100%; font-size: 1.3em; margin-top: 4px; }
+.games-hotkey-prompt { font-size: 1.8em; font-weight: 600; min-height: 2.2em; padding: 10px 12px; border: 1px solid var(--g-line); border-radius: 8px; background: var(--g-panel); max-width: 720px; display: flex; align-items: center; }
+.games-hotkey-prompt.is-ignore { border-color: var(--g-warn); border-style: dashed; color: var(--g-warn); }
+.games-hotkey-panel { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; max-width: 720px; }
+.games-hotkey-panel button[data-staged="true"] { border-color: var(--g-accent); color: var(--g-accent); }
+.games-hotkey-panel kbd { border: 1px solid var(--g-line); border-radius: 4px; padding: 0 5px; margin-left: 4px; color: var(--g-dim); }
+.games-hotkey-lots { display: inline-flex; gap: 6px; align-items: center; }
+.games-hotkey-message { min-height: 1.4em; color: #f85149; margin: 0; }
