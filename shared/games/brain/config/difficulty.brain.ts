@@ -261,8 +261,48 @@ export const CODE_BREAKER_PARAMS: ParamTable = {
   rtSlow: a(300000, 300000, 300000, 300000, 300000),
 }
 
-export const BLOCK_SECONDS = { quick_match: 60, colour_clash: 60, green_light: 75, n_back_stream: 90, flanker_flock: 60, rule_switch: 75, flip_map: 75, number_sprint: 90, equation_drop: 90 } as const
-export const ROUND_COUNTS = { needle_finder: 20, track_the_dots: 8, card_sorter: 64, make_target: 8, pattern_matrix: 10, number_series: 12, code_breaker: 6 } as const
+// ---- Word --------------------------------------------------------------------------------------------------------------
+export const ANAGRAM_DASH_PARAMS: ParamTable = {
+  length: a(4, 5, 6, 7, 9),
+  // word frequency: 1 = common (SCOWL level <= 35), 2 = up to level 50, 3 = up to level 60
+  tier: a(1, 1, 2, 2, 3),
+  // soft time per word: the speed bonus runs out here and the word is dropped (scores 0) at twice this
+  softMs: a(30000, 25000, 20000, 17000, 15000),
+  hints: a(3, 3, 2, 2, 1),
+  // an expert's time per word, which sets the target value of the block
+  expertMs: a(8000, 10000, 12000, 14000, 16000),
+  // share of words drawn from the awkward end (few vowels, repeated letters)
+  hard: a(0, 0.2, 0.4, 0.6, 0.8, false),
+  gapMs: a(300, 300, 300, 300, 300),
+  rtFast: a(4000, 5000, 6000, 7000, 9000),
+  rtSlow: a(30000, 25000, 20000, 17000, 15000),
+}
+
+export const LETTER_GRID_PARAMS: ParamTable = {
+  n: a(4, 4, 4, 5, 5),
+  minLen: a(3, 3, 3, 4, 4),
+  // the grid must hold at least this many common words (and a word of 6 letters or more)
+  minWords: a(25, 30, 35, 45, 55),
+  // share of the common-word value that earns the full score (spec correction C3)
+  targetShare: a(0.25, 0.3, 0.38, 0.46, 0.55, false),
+  gapMs: a(500, 500, 500, 500, 500),
+  rtFast: a(100000, 100000, 100000, 100000, 100000),
+  rtSlow: a(120000, 120000, 120000, 120000, 120000),
+}
+
+export const WORD_LADDER_PARAMS: ParamTable = {
+  length: a(3, 3, 4, 4, 5),
+  // the shortest path over the common words, in steps
+  par: a(3, 4, 5, 6, 8),
+  limitMs: a(120000, 105000, 90000, 75000, 60000),
+  hints: a(3, 3, 2, 1, 0),
+  gapMs: a(700, 700, 700, 700, 700),
+  rtFast: a(30000, 35000, 40000, 40000, 35000),
+  rtSlow: a(120000, 105000, 90000, 75000, 60000),
+}
+
+export const BLOCK_SECONDS = { quick_match: 60, colour_clash: 60, green_light: 75, n_back_stream: 90, flanker_flock: 60, rule_switch: 75, flip_map: 75, number_sprint: 90, equation_drop: 90, anagram_dash: 90, letter_grid: 120 } as const
+export const ROUND_COUNTS = { needle_finder: 20, track_the_dots: 8, card_sorter: 64, make_target: 8, pattern_matrix: 10, number_series: 12, code_breaker: 6, word_ladder: 5 } as const
 /** Three strikes end a span game. */
 export const MAX_STRIKES = 3
 /** Hard ceiling on the span in the two span games (spec 17.5, correction C1). */

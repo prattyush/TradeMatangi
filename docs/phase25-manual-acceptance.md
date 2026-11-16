@@ -113,5 +113,15 @@ Same setup as section H. Three more games are playable: **Pattern Matrix, Number
 5. Each result screen shows its stats and a Trial review; Progress saves, Practice never changes your level; Esc asks to quit and records nothing; focus loss discards the code or puzzle in progress and away over 10 s cancels the session.
 6. Tell me which levels feel too easy or too hard (time limits, options, par); they are provisional until you have played them.
 
+## L. Brain games, Word (B5): Windows build and the website
+Same setup as section H. Three more games are playable: **Anagram Dash, Letter Grid, Word Ladder**. The Brain tab now has twenty-one Play buttons, none "Coming soon" (the word games need their word lists, loaded on demand).
+1. A short "Loading the word list" screen shows before each word game (the first time a few hundred KB are fetched). **Website:** with a paper or replay session running, check the trading chart keeps updating during it. **Windows build:** check the Games window loads the word list at all (if it never does, tell me: the game then builds its puzzles on the calling thread and still starts).
+2. **Anagram Dash:** scrambled tiles; type a word that uses all the letters and press Enter. Any real word that fits is accepted (try a word with several anagrams, such as "stop", "pots", "tops"). A wrong word is rejected with a message and you can keep trying. Shuffle re-arranges the tiles, Hint shows the first letter (a few per block), Tab skips. Check that none of the words offered is offensive.
+3. **Letter Grid:** a 4 by 4 grid (5 by 5 from level 15). Click letters in order, drag across them, or type the word, then Enter. A word the grid does not hold, a repeat, or a too-short word is rejected with a message. A typed word lights its path. "Finish now" ends the game; otherwise it ends at 2 minutes. The score compares your value with a share of the common words in the grid; rare words (dashed) still count.
+4. **Word Ladder:** change one letter at a time to reach the goal; par is shown. Enter takes a step, Backspace on an empty box undoes, Reset starts again, Hint shows the next word of a shortest route (20% off that puzzle; none at the top levels). Check the messages for a word one letter off, a word not in the list and a repeated word.
+5. Each result screen shows its stats and a Trial review; Progress saves, Practice never changes your level; Esc asks to quit and records nothing; focus loss discards the puzzle in progress and away over 10 s cancels the session.
+6. **Licence and content check:** open `shared/games/brain/assets/words/NOTICE` and confirm you are happy with the credits and the exclusion method; tell me about any word that should be excluded (add it to `scripts/build-word-lists.py` and rebuild).
+7. Tell me which levels feel too easy or too hard (targets, time limits, par); they are provisional until you have played them.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.

@@ -20,8 +20,11 @@ import makeTarget from '../brain/games/make_target'
 import patternMatrix from '../brain/games/pattern_matrix'
 import numberSeries from '../brain/games/number_series'
 import codeBreaker from '../brain/games/code_breaker'
+import anagramDash from '../brain/games/anagram_dash'
+import letterGrid from '../brain/games/letter_grid'
+import wordLadder from '../brain/games/word_ladder'
 import { isPlayable, registerGame } from '../core/registry'
 
-for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget, patternMatrix, numberSeries, codeBreaker]) {
+for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget, patternMatrix, numberSeries, codeBreaker, anagramDash, letterGrid, wordLadder]) {
   if (!isPlayable(definition.id)) registerGame(definition)
 }

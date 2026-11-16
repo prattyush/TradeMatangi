@@ -78,3 +78,15 @@
 .brain-feedbacktext { min-width: 190px; font-size: .95em; color: var(--g-dim, #8b949e); }
 .brain-history { max-height: 240px; overflow: auto; margin-top: 6px; }
 .brain-symbol-face { width: 44px; height: 44px; border-radius: 50%; border: 2px solid #D0D7DE; color: #010409; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
+.brain-lettertile { width: 54px; height: 62px; display: inline-flex; align-items: center; justify-content: center; font-size: 2em; font-weight: 800; background: #161b22; border: 2px solid #8b949e; border-radius: 8px; }
+.brain-lettertile[data-used="true"] { opacity: .3; }
+.brain-lettergrid { display: grid; gap: 6px; touch-action: none; user-select: none; }
+.brain-cell { width: 62px; height: 62px; display: flex; align-items: center; justify-content: center; font-size: 1.7em; font-weight: 800; background: #161b22; color: inherit; border: 2px solid var(--g-line, #30363d); border-radius: 8px; padding: 0; cursor: pointer; }
+.brain-cell[data-chain="true"] { background: #0072B2; border-color: #fff; }
+.brain-cell[data-path="true"] { background: #E69F00; color: #010409; border-color: #fff; }
+.brain-found { display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow: auto; margin-top: 8px; font-size: .9em; }
+.brain-found span { border: 1px solid var(--g-line, #30363d); border-radius: 6px; padding: 1px 6px; }
+.brain-found span[data-common="false"] { opacity: .75; border-style: dashed; }
+.brain-ladder { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 1.8em; font-weight: 800; letter-spacing: .15em; }
+.brain-ladder .brain-ladder-goal { color: #E69F00; }
+.brain-ladder .brain-ladder-step { font-size: .8em; opacity: .85; }
