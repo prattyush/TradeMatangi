@@ -34,9 +34,9 @@ describe('withTags', () => {
 })
 
 describe('in-depth helpers', () => {
-  it('gives option charts to indices only', () => {
-    expect(optionEligible('NIFTY')).toBe(true)
-    expect(optionEligible('RELIANCE')).toBe(false)
+  it('gives every Pattern symbol an option chart, and nothing else', () => {
+    for (const symbol of ['NIFTY', 'BSESEN', 'RELIND', 'TATMOT', 'TATPOW']) expect(optionEligible(symbol), symbol).toBe(true)
+    expect(optionEligible('NOSUCH')).toBe(false)
   })
   it('knows when strikes still have to be picked', () => {
     expect(needsStrikes({ strike_ce: null, strike_pe: null })).toBe(true)

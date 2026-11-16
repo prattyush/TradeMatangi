@@ -1,7 +1,7 @@
 import { otmStrikes, patternStrikeRule, roundToStrike, PATTERN_ATM_TIME, PATTERN_MAX_PRICE_TIME } from '../../frontend/src/patternStrikes'
 
-/** Strike spacing per symbol (the website page's table; indices only matter for Max Price and OTM picks). */
-export const STRIKE_INTERVALS: Record<string, number> = { NIFTY: 50, BSESEN: 100 }
+/** Strike spacing per Pattern symbol (the website Pattern Library page's table, which matches the backend's). */
+export const STRIKE_INTERVALS: Record<string, number> = { NIFTY: 50, BSESEN: 100, RELIND: 5, TATMOT: 5, TATPOW: 5 }
 
 /** What a strike pick needs from a host: the website API and the desktop patterns client both have these three. */
 export interface StrikeLookup {

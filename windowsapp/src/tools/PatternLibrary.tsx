@@ -4,6 +4,7 @@ import DesktopAnalysisChart from '../AnalysisChart'
 import { usePatternsRuntime } from './usePatternsRuntime'
 import DeepDive from '../../../shared/deepdive/ui/DeepDive'
 import { useDesktopDeepDiveHost } from './deepdive/desktopHost'
+import { PATTERN_SYMBOLS } from '../../../shared/deepdive/symbols'
 import { IntervalBridge } from './IntervalBridge'
 import type { PatternAnnotation, PatternChartMeta } from '../../../shared/analysis/api'
 import { cleanTopPatterns } from '../../../shared/analysis/patternMarkers'
@@ -193,7 +194,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
       {view === 'create' && <>
         <div className="pl-bar">
           <label>Symbol <input list="pl-symbols" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} size={10} /></label>
-          <datalist id="pl-symbols"><option value="NIFTY" /><option value="BSESEN" /></datalist>
+          <datalist id="pl-symbols">{PATTERN_SYMBOLS.map(item => <option key={item.symbol} value={item.symbol}>{item.name}</option>)}</datalist>
           <label>Date <input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
           <label>Instrument <select value={instrumentType} onChange={e => setInstrumentType(e.target.value as 'equity' | 'options')}><option value="equity">Underlying only</option><option value="options">Underlying + CE/PE</option></select></label>
           {instrumentType === 'options' && <label title={settings.mode === 'threshold' ? 'Max Price from Settings' : 'OTM offset in strikes'}>

@@ -142,6 +142,7 @@ try {
   await page.getByText('No deep dives yet').waitFor()
   assert.equal(await page.getByRole('button', { name: 'Start deep dive' }).isDisabled(), true)
   const selects = page.locator('.dd-start select')
+  assert.deepEqual(await page.locator('.dd-start select[aria-label="Symbol"] option').evaluateAll(options => options.map(o => o.value)), ['NIFTY', 'BSESEN', 'RELIND', 'TATMOT', 'TATPOW'], 'the symbol list is the Pattern Library symbols')
   await selects.nth(0).selectOption('Breakout')
   await selects.nth(1).selectOption('Opening range')
   await page.getByRole('button', { name: 'Start deep dive' }).click()
@@ -154,6 +155,21 @@ try {
     throw new Error(`${date} is not on the calendar`)
   }
   for (const d of [dayA, dayB, dayC]) await ensureVisible(d)
+  // Every day of the month sits under its own weekday header (a hidden neighbouring-month cell must not shift the grid).
+  const misplaced = () => page.evaluate(() => {
+    const heads = [...document.querySelectorAll('.dd-cal-dow')].map(e => { const r = e.getBoundingClientRect(); return r.left + r.width / 2 })
+    return [...document.querySelectorAll('.dd-cal-cell:not([hidden]) .dd-cal-day')].flatMap(button => {
+      const date = (button.getAttribute('aria-label') ?? '').slice(0, 10)
+      const r = button.getBoundingClientRect(), x = r.left + r.width / 2
+      const column = heads.reduce((best, h, i) => (Math.abs(h - x) < Math.abs(heads[best] - x) ? i : best), 0)
+      const wanted = (new Date(date + 'T00:00:00Z').getUTCDay() + 6) % 7 // Monday first
+      return column === wanted ? [] : [`${date} is under column ${column}, wanted ${wanted}`]
+    })
+  })
+  assert.deepEqual(await misplaced(), [])
+  await page.getByRole('button', { name: 'Previous month' }).click()
+  assert.deepEqual(await misplaced(), [], 'the previous month too')
+  await page.getByRole('button', { name: 'Next month' }).click()
   if (await cell(weekend).isVisible()) assert.equal(await cell(weekend).locator('.dd-side').count(), 0, 'weekend has no B/S')
   await cell(dayC).getByRole('button', { name: 'B', exact: true }).click()
   await cell(dayB).getByRole('button', { name: 'B', exact: true }).click()
@@ -174,6 +190,17 @@ try {
   await page.getByText(/1 \/ 4 ·/).waitFor()
   assert.match(await page.locator('.dd-depth-head strong').innerText(), new RegExp(`BUY`))
   await page.locator('.dd-chartbox canvas').first().waitFor()
+  // The day area runs to the bottom of the window and the two stacked charts share it, half each (no empty half-page).
+  const layout = () => page.evaluate(() => {
+    const rect = el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height, left: r.left } }
+    return { inner: innerHeight, day: rect(document.querySelector('.dd-day')), charts: [...document.querySelectorAll('.dd-chartbox')].map(rect) }
+  })
+  const fill = await layout()
+  assert.ok(fill.day.bottom > fill.inner - 40 && fill.day.bottom <= fill.inner, 'the day area runs to the bottom of the window')
+  assert.equal(fill.charts.length, 2)
+  assert.ok(fill.charts[1].top > fill.charts[0].top && fill.charts[1].left === fill.charts[0].left, 'the charts are stacked')
+  assert.ok(Math.abs(fill.charts[0].height - fill.charts[1].height) < 4, 'half each')
+  assert.ok(fill.charts[0].height + fill.charts[1].height > fill.day.height * 0.75, 'together they use the area')
   await page.getByText('No tags yet').waitFor()
   assert.equal(await page.locator('.dd-chip').count(), 4)
 
