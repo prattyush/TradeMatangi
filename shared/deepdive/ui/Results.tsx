@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
-import { readableError } from '../../../../shared/analysis/behavior/types'
-import { computeStats, formatDay, formatPct, nLabel, SIDE_MEANING, sideLabel, sortTagStats, successLine, tagDots, thinNote } from '../../../../shared/deepdive/model'
-import type { DeepDiveApi, Dive, DiveSetup, Side } from '../../../../shared/deepdive/types'
+import { readableError } from '../../analysis/behavior/types'
+import { computeStats, formatDay, formatPct, nLabel, SIDE_MEANING, sideLabel, sortTagStats, successLine, tagDots, thinNote } from '../model'
+import type { Dive, DiveSetup, Side } from '../types'
+import { useDeepDiveHost } from './host'
 
 interface Props {
-  api: DeepDiveApi
   dive: Dive
   onOpenDay: (day: DiveSetup) => void
 }
@@ -18,7 +18,8 @@ const dayId = (day: DiveSetup) => `${day.date}|${day.symbol}|${day.side}`
  * step; copy a day's chart marks into the Pattern Library. Percentages are worked out from the days on screen, with the same
  * arithmetic as the server's, so they always include the latest change.
  */
-export default function Results({ api, dive, onOpenDay }: Props) {
+export default function Results({ dive, onOpenDay }: Props) {
+  const { api } = useDeepDiveHost()
   const [side, setSide] = useState<SideFilter>('all')
   const [order, setOrder] = useState<'tags' | 'frequent'>('tags')
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)

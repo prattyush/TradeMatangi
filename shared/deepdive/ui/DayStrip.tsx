@@ -1,5 +1,5 @@
-import { formatDay, setupId } from '../../../../shared/deepdive/model'
-import type { DiveSetup } from '../../../../shared/deepdive/types'
+import { formatDay, setupId } from '../model'
+import type { DiveSetup } from '../types'
 
 interface Props { setups: DiveSetup[]; index: number; onSelect: (index: number) => void }
 

@@ -1,8 +1,8 @@
 /** Pure helpers of the in-depth step: which charts a day needs, which mark tools it offers, what must be saved again. */
-import type { SetupFields, DeepDiveSetup, Side } from '../../../../shared/deepdive/types'
-import { optionRight } from '../../../../shared/deepdive/model'
-import { PATTERN_INDEX_SYMBOLS, patternStrikeRule, type PatternStrikeSettings } from '../../../../frontend/src/patternStrikes'
-import { TOOL_OPTIONS, type ToolOption } from '../patternLibraryModel'
+import type { SetupFields, DeepDiveSetup, Side } from '../types'
+import { optionRight } from '../model'
+import { PATTERN_INDEX_SYMBOLS, patternStrikeRule, type PatternStrikeSettings } from '../../../frontend/src/patternStrikes'
+import { TOOL_OPTIONS, type ToolOption } from '../marking'
 
 /** Only indices have option chains here (the Patterns rule): other symbols get the underlying chart alone. */
 export const optionEligible = (symbol: string) => PATTERN_INDEX_SYMBOLS.includes(symbol)

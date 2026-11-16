@@ -1,6 +1,6 @@
-import { lastPickableDay, monthGrid, monthLabel, monthOf, pickableDay, shiftMonth, type MonthRef } from '../../../../shared/deepdive/calendar'
-import type { DayMarks } from '../../../../shared/deepdive/model'
-import type { Side } from '../../../../shared/deepdive/types'
+import { lastPickableDay, monthGrid, monthLabel, monthOf, pickableDay, shiftMonth, type MonthRef } from '../calendar'
+import type { DayMarks } from '../model'
+import type { Side } from '../types'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 

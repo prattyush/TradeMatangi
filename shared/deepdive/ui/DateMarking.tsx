@@ -1,26 +1,24 @@
 import { useMemo, useState } from 'react'
-import { readableError } from '../../../../shared/analysis/behavior/types'
-import { lastPickableDay, monthOf, todayIso, type MonthRef } from '../../../../shared/deepdive/calendar'
-import { dayMarksByDate, formatDay, removalImpact, sideLabel, toDiveSetup, withSetups } from '../../../../shared/deepdive/model'
-import type { DeepDiveApi, Dive, DiveSetup, Side } from '../../../../shared/deepdive/types'
-import DesktopAnalysisChart from '../../AnalysisChart'
-import type { PatternSettings } from '../usePatternsRuntime'
+import { readableError } from '../../analysis/behavior/types'
+import { lastPickableDay, monthOf, todayIso, type MonthRef } from '../calendar'
+import { dayMarksByDate, formatDay, removalImpact, sideLabel, toDiveSetup, withSetups } from '../model'
+import type { Dive, DiveSetup, Side } from '../types'
 import DiveCalendar from './DiveCalendar'
+import { useDeepDiveHost } from './host'
 
 interface Props {
-  api: DeepDiveApi
   dive: Dive
   setDive: (update: (dive: Dive) => Dive) => void
   symbol: string
   onSymbol: (symbol: string) => void
-  settings: PatternSettings
 }
 
 /**
  * Step 1 of a deep dive: mark on a calendar the days the strategy occurred, as a Buy setup, a Sell setup or both. The chart
  * beside the calendar shows the selected day so each mark can be checked against the price action. Every click saves.
  */
-export default function DateMarking({ api, dive, setDive, symbol, onSymbol, settings }: Props) {
+export default function DateMarking({ dive, setDive, symbol, onSymbol }: Props) {
+  const { api, settings, Chart } = useDeepDiveHost()
   const today = todayIso()
   const latest = dive.setups.filter(s => s.symbol === symbol).slice(-1)[0]?.date ?? null
   const [month, setMonth] = useState<MonthRef>(() => monthOf(latest ?? lastPickableDay(today)))
@@ -86,7 +84,7 @@ export default function DateMarking({ api, dive, setDive, symbol, onSymbol, sett
     <div className="dd-mark-right">
       {selected ? <>
         <p className="pl-muted">{symbol} · {formatDay(selected)}{sides(selected) ? ` · marked ${sides(selected)}` : ' · not marked'}</p>
-        <div className="dd-chart"><DesktopAnalysisChart key={`${symbol}-${selected}`} symbol={symbol} date={selected} title={`${symbol} · ${formatDay(selected)}`} historicalDays={settings.historicalDays} /></div>
+        <div className="dd-chart"><Chart key={`${symbol}-${selected}`} symbol={symbol} date={selected} title={`${symbol} · ${formatDay(selected)}`} historicalDays={settings.historicalDays} /></div>
       </> : <p className="pl-muted dd-empty">Select a day to see its chart.</p>}
     </div>
   </div>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { activeTags, restNotValid, tagState, toggleTag, tagValueOf, unmarkedDaysForTag, unmarkedTagIds, validateTagName } from '../../../../shared/deepdive/model'
-import type { DeepDiveTag, DiveSetup, TagValue } from '../../../../shared/deepdive/types'
+import { activeTags, restNotValid, tagState, toggleTag, tagValueOf, unmarkedDaysForTag, unmarkedTagIds, validateTagName } from '../model'
+import type { DeepDiveTag, DiveSetup, TagValue } from '../types'
 
 interface Props {
   tags: DeepDiveTag[]

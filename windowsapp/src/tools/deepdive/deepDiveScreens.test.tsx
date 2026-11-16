@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import DiveCalendar from './DiveCalendar'
+import DiveCalendar from '../../../../shared/deepdive/ui/DiveCalendar'
 import type { DayMarks } from '../../../../shared/deepdive/model'
 
 const noop = () => undefined
@@ -37,9 +37,9 @@ describe('DiveCalendar', () => {
 describe('DiveHome (initial render)', () => {
   it('offers the start form and says the list is loading', async () => {
     vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
-    const { default: DiveHome } = await import('./DiveHome')
-    const client = { deepDive: {}, listCategories: vi.fn(), listStrategies: vi.fn(), addCategory: vi.fn(), addStrategy: vi.fn() } as never
-    const html = renderToStaticMarkup(<DiveHome client={client} loading={false} error={null} onOpen={noop} />)
+    const { default: DiveHome } = await import('../../../../shared/deepdive/ui/DiveHome')
+    const { WithHost } = await import('./testHost')
+    const html = renderToStaticMarkup(<WithHost><DiveHome loading={false} error={null} onOpen={noop} /></WithHost>)
     expect(html).toContain('Start a deep dive')
     expect(html).toContain('Start deep dive')
     expect(html).toContain('Loading…')
