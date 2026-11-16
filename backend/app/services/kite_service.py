@@ -30,6 +30,8 @@ from typing import Any
 from app.services import performance_diagnostics as diagnostics
 from app.services.kite_reactor import call as _reactor_call
 from app.services.kite_requests import request as _kite_request, is_auth_error
+from app.services.volume_delta import VolumeDelta
+from app.config import KITE_STREAM_MODE
 
 logger = logging.getLogger(__name__)
 _client_lock = threading.RLock()
@@ -416,6 +418,11 @@ def fetch_kite_1min_options(symbol: str, date: str, strike: int | float, expiry:
 # 1-second OHLC accumulator
 # ---------------------------------------------------------------------------
 
+def _stream_mode(ticker):
+    """Quote mode carries the day's traded volume; ``KITE_STREAM_MODE=ltp`` goes back to price only."""
+    return ticker.MODE_LTP if KITE_STREAM_MODE == "ltp" else ticker.MODE_QUOTE
+
+
 @dataclass
 class _OHLCAccumulator:
     open: float = 0.0
@@ -423,24 +430,14 @@ class _OHLCAccumulator:
     low: float = 0.0
     close: float = 0.0
     current_second: int = 0
+    # Volume traded inside the current second. ``volume_seen`` stays False for an instrument that never reports volume
+    # (an index), so its candles carry no ``volume`` key at all rather than a misleading 0.
+    volume: int = 0
+    volume_seen: bool = False
 
-    def update(self, price: float, ts_second: int) -> dict | None:
-        """
-        Feed a price. Returns a completed candle dict when a new second begins,
-        otherwise returns None. Completed candle covers the previous second.
-        """
-        if self.current_second == 0:
-            self.current_second = ts_second
-            self.open = self.high = self.low = self.close = price
-            return None
-
-        if ts_second == self.current_second:
-            self.high = max(self.high, price)
-            self.low = min(self.low, price)
-            self.close = price
-            return None
-
-        completed = {
+    def candle(self) -> dict:
+        """The candle of the current second as the stream publishes it."""
+        candle = {
             "type": "tick",
             "time": self.current_second,
             "open": round(self.open, 2),
@@ -448,8 +445,34 @@ class _OHLCAccumulator:
             "low": round(self.low, 2),
             "close": round(self.close, 2),
         }
+        if self.volume_seen:
+            candle["volume"] = self.volume
+        return candle
+
+    def update(self, price: float, ts_second: int, volume: int | None = None) -> dict | None:
+        """
+        Feed a price (and the volume traded since the previous update, when the feed has one). Returns a completed
+        candle dict when a new second begins, otherwise returns None. Completed candle covers the previous second.
+        """
+        if self.current_second == 0:
+            self.current_second = ts_second
+            self.open = self.high = self.low = self.close = price
+            self.volume, self.volume_seen = volume or 0, volume is not None
+            return None
+
+        if ts_second == self.current_second:
+            self.high = max(self.high, price)
+            self.low = min(self.low, price)
+            self.close = price
+            if volume is not None:
+                self.volume += volume
+                self.volume_seen = True
+            return None
+
+        completed = self.candle()
         self.current_second = ts_second
         self.open = self.high = self.low = self.close = price
+        self.volume, self.volume_seen = volume or 0, volume is not None
         return completed
 
 
@@ -478,6 +501,8 @@ class KiteBroadcaster:
         self._session_tokens: dict[str, set[int]] = defaultdict(set)
         # per-token OHLC accumulator
         self._accumulators: dict[int, _OHLCAccumulator] = defaultdict(_OHLCAccumulator)
+        # per-token guard that turns the cumulative day volume into a per-second volume (see volume_delta.py)
+        self._volume_guards: dict[int, VolumeDelta] = {}
         self._finalized_seconds: dict[int, int] = {}
         self._ticker = None
         self._connected = False
@@ -541,6 +566,7 @@ class KiteBroadcaster:
                     if not sessions:
                         self._token_sessions.pop(token, None)
                         self._accumulators.pop(token, None)
+                        self._volume_guards.pop(token, None)
                         self._finalized_seconds.pop(token, None)
                         self._subscribed_at.pop(token, None)
                         self._first_ticks.discard(token)
@@ -704,7 +730,7 @@ class KiteBroadcaster:
                     raise KiteConnectionError("Kite ticker was replaced")
             if active:
                 ticker.subscribe(active)
-                ticker.set_mode(ticker.MODE_LTP, active)
+                ticker.set_mode(_stream_mode(ticker), active)
                 with self._lock:
                     for token in active:
                         self._subscribed_at.setdefault(token, _time.monotonic())
@@ -793,14 +819,16 @@ class KiteBroadcaster:
         if all_tokens and ws:
             try:
                 ws.subscribe(all_tokens)
-                ws.set_mode(ws.MODE_LTP, all_tokens)
+                ws.set_mode(_stream_mode(ws), all_tokens)
                 with self._lock:
                     self._connected = True
+                    # A new connection: the first total of every token is a baseline again (the gap's volume is not guessed).
+                    self._volume_guards.clear()
                     self._subscribed_at = {token: _time.monotonic() for token in all_tokens}
                     self._first_ticks.clear()
                     self._quiet_warned.clear()
                 self._ready.set()
-                logger.info("KiteBroadcaster: subscribed %d tokens in LTP mode", len(all_tokens))
+                logger.info("KiteBroadcaster: subscribed %d tokens in %s mode", len(all_tokens), "ltp" if KITE_STREAM_MODE == "ltp" else "quote")
             except Exception as exc:
                 self._startup_error = f"Kite subscription failed: {exc}"
                 self._ready.set()
@@ -852,9 +880,7 @@ class KiteBroadcaster:
         with self._lock:
             for token, acc in self._accumulators.items():
                 if acc.current_second and acc.current_second < current_second:
-                    candle = {"type": "tick", "time": acc.current_second,
-                              "open": round(acc.open, 2), "high": round(acc.high, 2),
-                              "low": round(acc.low, 2), "close": round(acc.close, 2)}
+                    candle = acc.candle()
                     acc.current_second = 0
                     self._finalized_seconds[token] = candle["time"]
                     completed.append((token, candle, dict(self._token_sessions.get(token, {}))))
@@ -943,7 +969,11 @@ class KiteBroadcaster:
                     continue
                 if acc.current_second and ts_second < acc.current_second:
                     continue
-                candle = acc.update(price, ts_second)
+                # Only quote-mode packets of stocks and options carry the cumulative day volume (the index has none).
+                volume = None
+                if tick.get("volume_traded") is not None:
+                    volume = self._volume_guards.setdefault(token, VolumeDelta()).delta(tick["volume_traded"])
+                candle = acc.update(price, ts_second, volume)
                 if candle:
                     self._finalized_seconds[token] = candle["time"]
                 sessions = dict(self._token_sessions.get(token, {}))
