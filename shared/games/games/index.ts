@@ -24,8 +24,10 @@ import anagramDash from '../brain/games/anagram_dash'
 import letterGrid from '../brain/games/letter_grid'
 import wordLadder from '../brain/games/word_ladder'
 import tickReader from '../market/games/tick_reader'
+import riskCalculator from '../market/games/risk_calculator'
+import hotkeyDrill from '../market/games/hotkey_drill'
 import { isPlayable, registerGame } from '../core/registry'
 
-for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget, patternMatrix, numberSeries, codeBreaker, anagramDash, letterGrid, wordLadder, tickReader]) {
+for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget, patternMatrix, numberSeries, codeBreaker, anagramDash, letterGrid, wordLadder, tickReader, riskCalculator, hotkeyDrill]) {
   if (!isPlayable(definition.id)) registerGame(definition)
 }

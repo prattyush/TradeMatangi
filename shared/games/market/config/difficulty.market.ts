@@ -42,3 +42,55 @@ export const TICK_READER = {
   /** The result of a round stays on screen this long unless the player moves on. */
   flashMs: 2800,
 } as const
+
+const steps = (...entries: Array<[from: number, v: number]>) => ({ steps: entries.map(([from, v]) => ({ from, v })) })
+
+/** Risk Calculator (spec 5.4, 15). `typePool` is how many of the eight question types are unlocked at a level. */
+export const RISK_CALCULATOR_PARAMS: ParamTable = {
+  questions: a(12, 14, 16, 18, 20),
+  /** Seconds per question (T_q). */
+  timeSec: a(25, 20, 15, 11, 8),
+  /** Most steps a question may need: 1 at level 1, 3 from level 15. */
+  maxSteps: a(1, 2, 2, 3, 3),
+  /** How awkward the numbers are, 0 (round) to 1 (tick-sized decimals). */
+  ugliness: a(0, 0.25, 0.5, 0.75, 1, false),
+  lotsMax: a(2, 3, 4, 5, 6),
+  typePool: steps([1, 2], [3, 3], [5, 4], [7, 5], [9, 6], [12, 7], [15, 8]),
+}
+
+/** Hotkey Drill (spec 5.5, 15): a session is three 60 second blocks. */
+export const HOTKEY_DRILL_PARAMS: ParamTable = {
+  /** Longest chain of steps in one prompt. */
+  maxChain: a(1, 1, 2, 3, 3),
+  /** Share of prompts that are "ignore this" cues. */
+  ignoreShare: a(0, 0, 0.1, 0.15, 0.2, false),
+  /** RT_slow in ms; RT_fast is fixed. */
+  rtSlow: a(2500, 2200, 1900, 1700, 1500),
+  lotsMax: a(2, 3, 4, 5, 5),
+  /** Seconds a prompt stays before it counts as missed. */
+  promptSec: a(8, 7, 6, 5, 4),
+  /** Pause between a correct prompt and the next one: lower and upper bound in ms. */
+  gapMinMs: a(500, 400, 300, 250, 200),
+  gapMaxMs: a(900, 800, 700, 600, 500),
+}
+
+export const HOTKEY_DRILL = {
+  blocks: 3,
+  blockSec: 60,
+  restSec: 3,
+  rtFastMs: 600,
+  /** How long an "ignore" cue stays; no key during it is the right answer. */
+  ignoreCueMs: 2000,
+  /** An error rate above this caps the score. */
+  errorCapRate: 0.15,
+  errorCapScore: 60,
+} as const
+
+export const RISK_CALCULATOR = {
+  /** How long the working line stays up after each answer unless the player presses Enter. */
+  feedbackMs: 2200,
+  /** A "close" answer earns this share of a correct one. */
+  closeCredit: 0.5,
+  /** A correct answer scores 0.7 + 0.3 x speed. */
+  baseCredit: 0.7,
+} as const

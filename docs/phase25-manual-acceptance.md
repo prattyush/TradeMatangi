@@ -153,5 +153,14 @@ Needs the backend with the Games index built (section N) and a desktop or websit
 8. **Trading is unaffected:** with a paper or replay session running on the website, the trading chart keeps updating while a Tick Reader round plays. In the Windows app, Task Manager memory of the Games window stays well under 600 MB.
 9. Tell me whether the pace feels right at level 1, whether three requests per round slows the start of a round, and whether the chart is readable.
 
+## P. Risk Calculator and Hotkey Drill (G4a): Windows build and the website
+No backend or Rust change; a frontend rebuild only. Both are in the Market tab (three games are playable now).
+1. **Risk Calculator:** Play, Progress (level 1). Each question is a line of arithmetic (for example "Stop 10 points, 2 lots of 65. Rupee risk?"). Type the number, press Enter: it says Correct, Close (half credit) or Not quite and shows the working. Enter again goes on. The bar is the time for the question; letting it run out is a miss. Rounding to two decimals is accepted; 1,605 means 1605. Check at least one question of each type at higher levels (Practice at level 15 or more unlocks all eight, with up to three steps).
+2. **Hotkey Drill:** Play. A prompt such as "BUY CE 2 lots" appears: press **2**, **C**, **Enter** (or click). Wrong lots, wrong side or an unknown key shows a red message and counts as an error; the prompt stays until you fix it. **Exit all** is X, **Stop to cost** is S. At level 10 and up there are two- or three-step chains and "IGNORE: do nothing" cues: pressing a key during one is an error. Three one-minute blocks with a short rest between.
+3. **Settings → Hotkey Drill keys:** change Buy CE to another letter, save, play: the panel shows your letters and the old one is now a wrong key. Two equal letters are repaired when you save.
+4. **Result:** Risk Calculator shows the score and accuracy by question type; Hotkey Drill shows the median reaction time and error counts. Progress mode saves; the Dashboard trend lines for these two appear after a few Progress sessions.
+5. **Warm-up** can now include them (with the pool set to Brain and market): check the step opens and finishes.
+6. Tell me whether the time limits and the number ugliness feel right, whether three one-minute blocks is too long, and whether any key on your keyboard layout does not work.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.

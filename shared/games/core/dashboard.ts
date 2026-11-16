@@ -105,6 +105,9 @@ export const TREND_PANELS: readonly TrendPanel[] = [
   { id: 'span_seq', title: 'Peak span, Sequence Echo', gameId: 'sequence_echo', key: 'peak_span', unit: 'items', better: 'higher', note: 'The longest sequence you repeated.' },
   { id: 'nback', title: 'N reached', gameId: 'n_back_stream', key: 'n_reached', unit: 'back', better: 'higher', note: 'The n the block ended on.' },
   { id: 'tick_expectancy', title: 'Tick Reader expectancy', gameId: 'tick_reader', key: 'expectancy_pts', unit: 'pts', better: 'higher', note: 'Average net option points per trade after costs.' },
+  { id: 'hotkey_rt', title: 'Hotkey reaction time', gameId: 'hotkey_drill', key: 'median_rt_ms', unit: 'ms', better: 'lower', note: 'Median time to complete a prompt, per step.' },
+  { id: 'hotkey_errors', title: 'Fat-finger rate', gameId: 'hotkey_drill', key: 'error_rate', unit: '%', better: 'lower', note: 'Wrong keys, wrong lots and missed prompts as a share of all answers.' },
+  { id: 'risk_time', title: 'Risk answer time', gameId: 'risk_calculator', key: 'median_ms', unit: 'ms', better: 'lower', note: 'Median time to answer a risk question.' },
   { id: 'persev', title: 'Perseveration rate', gameId: 'card_sorter', key: 'persev_error_pct', unit: '%', better: 'lower', note: 'Errors that keep using the rule that just stopped working.' },
 ]
 

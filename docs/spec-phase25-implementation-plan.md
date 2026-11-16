@@ -267,7 +267,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | B6 | Done (2026-11-16), see "B6 as built" below |
 | G1 | Done (2026-11-16), see "G1 as built" below |
 | G3b | Done (2026-11-16), see "G3b as built" below |
-| G4–G7 | Planned, order above |
+| G4a | Done (2026-11-16), see "G4a as built" below (Risk Calculator and Hotkey Drill) |
+| G4b, G5–G7 | Planned, order above (G4b = Entry Sniper and Exit Discipline) |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -769,3 +770,14 @@ Market foundation and the first market game, Tick Reader. Branch `feat/games-g3b
 - **Checked in a real browser (Playwright, a throwaway harness mounting the real `GamesApp`, the real backend and the real data cache, progress stubbed in memory):** the Market tab, instructions, a Practice session at level 20 (25 rounds, decisions by keys, the result line with symbol, day and time), a full Progress session at level 1 (15 rounds, score 45 for a bot pressing keys at random, one `PUT` with the game, day and month records and the eight stats), the only requests being `GET availability` and `GET window` (about 3 per round: the round source keeps the best of up to three candidates) plus the state calls. **Not run:** the Windows window, the website overlay, Low memory mode, a real-trading session next to it, sound, a network failure in the middle of a session.
 - **Open for the owner's play:** the `k`, `noEdgeShare`, `targetEr` and `slipMult` anchors and the level-up bar (see C30); whether three candidate windows per round (about 3 requests a round, each about 3 to 5 KB) is acceptable or one is enough.
 - **Docs updated:** spec 5.1 and 9 and 14, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section O), this plan, `CLAUDE.md` row.
+
+## G4a as built (2026-11-16)
+
+Two market-pool games that need no market data: **Risk Calculator** (Math) and **Hotkey Drill** (Speed). G4 is split: G4a here, G4b (Entry Sniper, Exit Discipline, which share a trade simulation) next. Branch `feat/games-g4a`, PR into `dev`. No Rust, backend or trading change.
+
+- **New code:** `shared/games/market/ui/frameClock.ts` (a cancellable animation-frame clock that pauses with a dialog or a hidden page; Tick Reader moved onto it), `market/engine/hotkeys.ts` (key map), `market/games/risk_calculator/` and `market/games/hotkey_drill/` (engine, View, index, tests), parameter tables and constants in `config/difficulty.market.ts`.
+- **Existing files changed (inside `shared/games/`):** `core/settings.ts` (four Hotkey Drill keys), `market/host.ts` (`keys`), `ui/GamesApp.tsx`, `ui/SettingsPanel.tsx` ("Hotkey Drill keys"), `ui/games.css`, `games/index.ts`.
+- **Spec corrections:** **C32** the Risk Calculator question types and answer checking; **C33** the Hotkey Drill panel, key map and error types. Details in spec 5.4 and 5.5 "As built (G4a)".
+- **Warm-up:** both games are now offered (`hotkey_drill` is the physical step and `risk_calculator` the math step when the pool allows market games). Hotkey Drill takes 3 to 4 minutes and Risk Calculator 3 to 5, so a full warm-up is longer than the 8 to 10 minutes of the brain-only routine.
+- **Checked in a real browser (throwaway harness, in-memory server):** the Market tab lists three playable games; a Risk Calculator practice session (prompts, a wrong answer's working line, the Enter flow); a Hotkey Drill session driven by a bot that reads each prompt and types it (level 10, three blocks), with deliberate wrong keys counted as errors. **Not run:** the Windows window, the website overlay, sound, a real keyboard's key repeat and layouts.
+- **Docs updated:** spec 5.4 and 5.5, this plan, `phase25-manual-acceptance.md` (section P), `architecture-frontend.md`, `CLAUDE.md` row.

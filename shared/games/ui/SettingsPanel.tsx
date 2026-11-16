@@ -40,6 +40,13 @@ export function SettingsPanel({ settings, disabled, onSave }: { settings: GamesS
         <label>Lots <input type="number" min={1} max={100} step={1} value={draft.defaultLots} onChange={event => set('defaultLots', Number(event.target.value))} style={{ width: 56 }} /></label>
       </fieldset>
       <fieldset>
+        <legend>Hotkey Drill keys</legend>
+        <p className="games-meta">Four different letters. Digits 1 to 5 and the arrow keys set the lots, Enter confirms. These are the game's own keys, not your trading keys.</p>
+        {([['keyBuyCe', 'Buy CE'], ['keyBuyPe', 'Buy PE'], ['keyExitAll', 'Exit all'], ['keyStopCost', 'Stop to cost']] as const).map(([key, label]) => (
+          <label key={key}>{label} <input type="text" maxLength={1} value={draft[key]} onChange={event => set(key, event.target.value.slice(-1))} style={{ width: 40 }} aria-label={`${label} key`} /></label>
+        ))}
+      </fieldset>
+      <fieldset>
         <legend>Daily Warm-up</legend>
         <label>Warm-up games <select value={draft.warmupPool} onChange={event => set('warmupPool', event.target.value as GamesSettings['warmupPool'])}><option value="both">Brain and market</option><option value="market">Market only</option><option value="brain">Brain only</option></select></label>
         <p className="games-meta">A market choice falls back to brain games when no market game can be played.</p>
