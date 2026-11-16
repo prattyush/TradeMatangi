@@ -15,6 +15,7 @@ import {
 } from 'lightweight-charts'
 import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, TopPatterns } from '../services/api'
 import { buildMarkers, patternIdentity, cleanTopPatterns, MARKER_COLORS } from '../services/patternMarkers'
+import WebsiteDeepDive from '../components/deepdive/WebsiteDeepDive'
 import { loadHistoricalDays, loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../components/SettingsModal'
 import {
   PATTERN_ATM_TIME, PATTERN_MAX_PRICE_TIME, otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
@@ -690,7 +691,7 @@ function galleryGridStyle(columns: number): CSSProperties {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function PatternLibrary() {
-  const [mode, setMode] = useState<'create' | 'view'>('create')
+  const [mode, setMode] = useState<'create' | 'view' | 'deepdive'>('create')
 
   // Form
   const [symbol, setSymbol] = useState('NIFTY')
@@ -1347,11 +1348,11 @@ export default function PatternLibrary() {
       <div style={HEADER}>
         <span style={{ fontSize: 14, fontWeight: 700, marginRight: 4 }}>Pattern Library</span>
 
-        {(['create', 'view'] as const).map(m => (
+        {(['create', 'view', 'deepdive'] as const).map(m => (
           <button key={m}
             style={{ ...btn(mode === m ? '#1f6feb' : '#21262d'), border: '1px solid #30363d' }}
             onClick={() => setMode(m)}>
-            {m === 'create' ? '✏ Create' : '👁 View'}
+            {m === 'create' ? '✏ Create' : m === 'view' ? '👁 View' : '🔍 Deep dive'}
           </button>
         ))}
 
@@ -1525,7 +1526,11 @@ export default function PatternLibrary() {
       )}
 
       {/* Body */}
-      {mode === 'create' ? (
+      {mode === 'deepdive' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
+          <WebsiteDeepDive />
+        </div>
+      ) : mode === 'create' ? (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {renderCharts(false)}

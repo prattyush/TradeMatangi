@@ -53,4 +53,20 @@ Needs the desktop rebuilt from `dev`. Use the deep dive from section B, with tag
 9. A day whose pattern chart already uses other CE or PE strikes is refused with a message that names the strike; nothing is overwritten.
 10. A shared deep dive (second account): the results are shown, no save buttons.
 
+## D. Website and webapp: Deep dive (S7)
+
+Needs the website (or webapp) built from `dev` and the backend running. Do it once with Settings > Display > **Analysis & Patterns chart** = Lightweight and once with KLine.
+
+1. Open the **Pattern Library** page. There are three buttons: **Create**, **View**, **🔍 Deep dive**. Create and View behave as before.
+2. **Deep dive**: the same screens as the Windows app: list of deep dives, start form, then the steps **1 · Mark days**, **2 · In-depth**, **3 · Results**.
+3. Mark days (B and S per day) on the calendar; the chart on the right shows the selected day. In Lightweight it is the Patterns page's style chart; in KLine the Analysis chart with its drawing tools.
+4. In-depth: the underlying chart on top and one option chart under it: a **CE** chart for a Buy day, a **PE** chart for a Sell day. The strikes are the ones the Patterns page picks for that day (check the OTM or Max Price rule in Settings).
+5. Mark tools: choose **▲ Entry UL**, click a candle: a marker appears and the title counts "1 marks"; in Lightweight the marker shows the strategy name on the candle. Click the same candle again: it is removed. Do the same on the option chart.
+6. Change the candle interval on a chart (the select in its header); go to the next day and back: the day's interval is restored. In Lightweight both charts follow the interval.
+7. Tags, Valid / Not valid, "Mark the rest not valid", Next unmarked day, "Needs marking", outcome, notes, Retry on a failed save: as section B on the desktop.
+8. Results: the percentages, the All / Buy / Sell filter and its hint line, Save to Patterns; the saved chart then shows under **View** with the same marks.
+9. Switch the Analysis & Patterns chart setting and reload: the Deep dive uses the other chart, with the same data.
+10. Webapp (installed or browser): the same page and the same Deep dive.
+11. A second account in your Pattern share list opens your deep dive read-only.
+
 ## Report back
