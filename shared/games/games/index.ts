@@ -28,8 +28,11 @@ import riskCalculator from '../market/games/risk_calculator'
 import hotkeyDrill from '../market/games/hotkey_drill'
 import entrySniper from '../market/games/entry_sniper'
 import exitDiscipline from '../market/games/exit_discipline'
+import strikePicker from '../market/games/strike_picker'
+import regimeSwitch from '../market/games/regime_switch'
+import levelRecall from '../market/games/level_recall'
 import { isPlayable, registerGame } from '../core/registry'
 
-for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget, patternMatrix, numberSeries, codeBreaker, anagramDash, letterGrid, wordLadder, tickReader, riskCalculator, hotkeyDrill, entrySniper, exitDiscipline]) {
+for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget, patternMatrix, numberSeries, codeBreaker, anagramDash, letterGrid, wordLadder, tickReader, riskCalculator, hotkeyDrill, entrySniper, exitDiscipline, strikePicker, regimeSwitch, levelRecall]) {
   if (!isPlayable(definition.id)) registerGame(definition)
 }

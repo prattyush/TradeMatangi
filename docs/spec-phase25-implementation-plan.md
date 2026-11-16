@@ -269,7 +269,8 @@ One **runtime** interaction: on the website the Games overlay shares a browser r
 | G3b | Done (2026-11-16), see "G3b as built" below |
 | G4a | Done (2026-11-16), see "G4a as built" below (Risk Calculator and Hotkey Drill) |
 | G4b | Done (2026-11-16), see "G4b as built" below (Entry Sniper and Exit Discipline) |
-| G5–G7 | Planned, order above |
+| G5 | Done (2026-11-16), see "G5 as built" below (Level Recall, Strike Picker, Regime Switch) |
+| G6–G7 | Planned, order above |
 
 ### Decisions (defaults applied by B0; owner may overrule)
 - **D1** Split G3 into G3a (shell, framework, transports, nav) and G3b (chart, cache, market engine, Tick Reader); G2 + G3a are the prerequisite of B1. G3b needs G1.
@@ -795,3 +796,15 @@ The two data-driven trade games, **Entry Sniper** (Attention) and **Exit Discipl
 - **Checked in a real browser (throwaway harness, the real backend and data cache, progress stubbed):** Entry Sniper practice at level 15 (14 rounds, enter and pass with the keys, result lines with the best entry and the trap message, one session result); Exit Discipline at level 8 (blank plan fields, a bad plan refused with a sentence, the plan accepted, trail to cost and exit with the keys, regret panel text, six rounds to a result). **Not run:** the Windows window, the website overlay, sound, Reduce motion in play.
 - **Tests:** desktop vitest 1476 (47 new: trade simulation 14, Entry Sniper 13, Exit Discipline 20); `tsc` clean for desktop and website.
 - **Docs updated:** spec 5.2, 5.3 and 14, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section Q), this plan, `CLAUDE.md` row.
+
+## G5 as built (2026-11-16)
+
+Three more market games, 8 of 10 playable: **Level Recall** (Memory), **Strike Picker** (Reasoning) and **Regime Switch** (Flexibility). Branch `feat/games-g5`, PR into `dev`. No Rust, backend or trading change.
+
+- **New code:** `market/engine/optionPricing.ts` (Black-Scholes), `regime.ts` (regime labels, last direction), `levels.ts` (levels, day volUnit, swing zig-zag); `market/games/strike_picker/`, `regime_switch/` and `level_recall/` (engine, View, index, tests; Level Recall also has `Ladder.tsx`); parameter tables and constants in `config/difficulty.market.ts`.
+- **Existing files changed (inside `shared/games/`):** `core/dashboard.ts` (three trend panels), `ui/games.css`, `games/index.ts`.
+- **Spec corrections:** **C37** Level Recall, **C38** Regime Switch, **C39** Strike Picker (details and the real-data numbers in spec 5.6, 5.7 and 5.8 "As built (G5)").
+- **Data used:** Regime Switch reuses Tick Reader's window and round; Level Recall fetches two whole-day 60 second windows per round (about 14 KB each, then cached); Strike Picker reads only `/availability`. A day is only used by Level Recall when the previous listed day is at most four days earlier.
+- **Checked in a real browser (throwaway harness, the real backend and data cache):** Level Recall at level 10 (study, click-to-place on the ladder, Enter, the result table and ladder with true lines, two swing-sequence rounds with H and L); Strike Picker at level 12 (13 scenarios with the number keys, result table and explanation text); Regime Switch at level 20 (16 segments, 8 regime changes). The market tab lists eight playable games. **Not run:** the Windows window, the website overlay, sound, Reduce motion, a network failure mid-session.
+- **Tests:** desktop vitest 1573 (97 new: Black-Scholes 12, regime classifier 9, levels and swings 13, Strike Picker 24, Regime Switch 17, Level Recall 22); `tsc` clean for desktop and website.
+- **Docs updated:** spec 5.6 to 5.8 and 14, `architecture-frontend.md`, `phase25-manual-acceptance.md` (section R), this plan, `CLAUDE.md` row.

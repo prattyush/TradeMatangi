@@ -171,5 +171,14 @@ Needs the backend with the Games index built (section N). Both are in the Market
 5. **Failures:** stop the backend and press Play: a message says the server could not be reached and nothing is recorded.
 6. Tell me whether the window length, the stop sizes and the replay speeds feel right, whether three trap rounds in ten is what you want, and how the Exit Discipline plan limits feel.
 
+## R. Level Recall, Strike Picker and Regime Switch (G5): Windows build and the website
+Needs the backend with the Games index built (section N). Eight market games are playable now. No Rust or backend change.
+1. **Level Recall:** Play. A chart of yesterday and today so far shows labelled levels: yellow lines are the ones you will place, grey ones are shown but never asked (from level 2). Enter (or the button) when you are ready, or wait for the bar. The chart goes and a blank price ladder appears with a dashed "now" line: a prompt names a level; click where it is, for each prompt; Backspace undoes the last; Enter submits. The result shows each level's error in points and in "units" (how much the market moves in five minutes) and the ladder with the true levels in blue. The market and day are named. At **level 10 and up** every third round is a **swing sequence**: six numbered swing points, then five "higher or lower" questions (H and L).
+2. **Strike Picker:** Play. A card gives a call or put, the index level, days to expiry, volatility, an expected move in minutes and an objective. Pick one of seven strikes (ITM3 to OTM3) with the arrows, the keys 1 to 7 or the mouse. The table then shows every strike's premium before and after, delta, gamma, theta per day, the spread, rupees per lot and return, with the best strike and yours marked, and a sentence on what drove the result. Later levels include moves that do not come and volatility changes.
+3. **Regime Switch:** Play. A stretch of price from an unnamed market and a line saying whether the last 30 seconds went up or down. Press F (follow), D (fade) or S (stand aside). The hold replays and the result names the regime (trend up or down, range, spike), the three playbooks' results after costs, and which was best. Repeating the old playbook after a regime change costs a quarter. Levels 1 to 8 show the previous regime.
+4. **Dashboard:** trend lines for level error, best strike picked and regime perseveration appear after a few Progress sessions.
+5. **Failures:** stop the backend and press Play on Level Recall or Regime Switch: a message says the server could not be reached and nothing is recorded. Strike Picker still plays offline.
+6. Tell me whether the level counts and study times feel right in Level Recall, whether the strike answers make sense to you as a trader (the model is Black-Scholes with a simple spread), and whether regimes change often enough in Regime Switch.
+
 ## Report back
 Note any step that fails, the symbol and day, and the interval. Track G (games) starts after this.
