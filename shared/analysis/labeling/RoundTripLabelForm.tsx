@@ -2,6 +2,8 @@ import type { CSSProperties } from 'react'
 import PatternNameSelect from '../PatternNameSelect'
 import type { BehaviorQuestion, TradeLabel } from '../api'
 import BehaviorChecklist from '../behavior/BehaviorChecklist'
+import StatsPanel from '../../deepdive/ui/StatsPanel'
+import type { StatsAllEntry } from '../../deepdive/types'
 
 interface Props {
   idPrefix: string
@@ -16,6 +18,8 @@ interface Props {
   onCreateName: (kind: 'category' | 'strategy', name: string) => Promise<string>
   /** Behavior questions and this trade's yes-marks; absent when behavior labeling is unavailable. */
   behavior?: { questions: BehaviorQuestion[]; marked: ReadonlySet<string>; disabled: boolean; onToggle: (questionId: string, showed: boolean) => void }
+  /** The user's Deep Dive percentages and the position being labelled; the panel shows under the Expected Pattern once its strategy has a deep dive. */
+  deepDive?: { entries: readonly StatsAllEntry[]; trade: { right?: string | null; action?: string | null } }
 }
 
 const selectStyle: CSSProperties = {
@@ -24,7 +28,7 @@ const selectStyle: CSSProperties = {
 }
 
 /** Category / strategy / tag fields of one round trip; shared by the one-at-a-time panel and the all-together list. */
-export default function RoundTripLabelForm({ idPrefix, label, disabled, categories, strategies, entryTags, exitTags, onChange, onCreateName, behavior }: Props) {
+export default function RoundTripLabelForm({ idPrefix, label, disabled, categories, strategies, entryTags, exitTags, onChange, onCreateName, behavior, deepDive }: Props) {
   const patternRow = (kind: 'expected' | 'actual') => (
     <div className="tl-field-row">
       <PatternNameSelect noun="category" placeholder="— Category —" disabled={disabled} value={label[`${kind}_category`]}
@@ -35,7 +39,9 @@ export default function RoundTripLabelForm({ idPrefix, label, disabled, categori
   )
   return (
     <div className="tl-form">
-      <div className="tl-field"><span className="tl-label">Expected Pattern</span>{patternRow('expected')}</div>
+      <div className="tl-field"><span className="tl-label">Expected Pattern</span>{patternRow('expected')}
+        {deepDive && label.expected_category && label.expected_strategy && <StatsPanel entries={deepDive.entries} category={label.expected_category} strategy={label.expected_strategy} trade={deepDive.trade} />}
+      </div>
       <div className="tl-field"><span className="tl-label">Actual Pattern</span>{patternRow('actual')}</div>
       <div className="tl-field">
         <label htmlFor={`et-in-${idPrefix}`}>Entry Tag</label>

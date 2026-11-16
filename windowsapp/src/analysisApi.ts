@@ -10,7 +10,7 @@ export function validAnalysisPath(path: string, method: string): boolean {
   if (!route || route.startsWith('/') || route.includes('%') || route.includes('#') || route.includes('\\') || route.split('/').some(p => p === '.' || p === '..')) return false
   if (method === 'POST') return route === 'labels' || route === 'performance/real-fees' || route === 'pattern/strategies' || route === 'pattern/categories' || route === 'behavior/questions' || route === 'behavior/marks' || route === 'video-links' || route === 'whatif' || /^behavior\/questions\/[A-Za-z0-9_-]+\/(update|archive|restore)$/.test(route)
   if (method === 'DELETE') return route === 'snapshots' || route === 'performance/real-fees' || route === 'video-links' || route === 'whatif'
-  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/swing|\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options))|behavior\/(questions|marks|marks\/by-question|stats|habit-ledger)|whatif(?:\/range)?|video-links(?:\/mine)?)$/.test(route)
+  return method === 'GET' && /^(sessions(?:\/[A-Za-z0-9_-]+)?|round-trips|labels|entry-tags|exit-tags|snapshots(?:\/[A-Za-z0-9_-]+\/candle)?|performance(?:\/swing|\/real-fees|\/cycles(?:\/[A-Za-z0-9_-]+)?)?|data\/(historical|pre-session|options-historical|expiry)|pattern\/(strategies|categories|chart\/by-date|ohlc\/(equity|options))|behavior\/(questions|marks|marks\/by-question|stats|habit-ledger)|whatif(?:\/range)?|video-links(?:\/mine)?|deep-dive\/stats\/all)$/.test(route)
 }
 function awaitNative<T>(promise:Promise<T>,signal?:AbortSignal):Promise<T> {
   if(!signal)return promise
@@ -102,6 +102,7 @@ export function createAnalysisApi(request: AnalysisRequest) {
     getSnapshotCandle: (sessionId, eventId, instrument, signal) => scopedRequest(`snapshots/${encodeURIComponent(eventId)}/candle?${params({session_id:sessionId,instrument})}`, 'GET', undefined, signal),
     getSnapshots: id => call('getSnapshots','snapshots',{session_id:id}),
     deleteSnapshots: async id => { await call('deleteSnapshots','snapshots',{session_id:id},'DELETE') },
+    getDeepDiveStats: async () => (await scopedRequest<{dives: Result<'getDeepDiveStats'> }>('deep-dive/stats/all','GET')).dives,
     patternListStrategies: () => call('patternListStrategies','pattern/strategies'),
     patternListCategories: () => call('patternListCategories','pattern/categories'),
     patternAddStrategy: name => call('patternAddStrategy','pattern/strategies',{},'POST',{name}),

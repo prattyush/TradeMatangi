@@ -131,3 +131,22 @@ def test_desktop_history_worker_keeps_context_and_website_executor():
     name, value, default_name = asyncio.run(exercise())
     assert name.startswith('desktop-history') and value == 'captured'
     assert not default_name.startswith('desktop-history')
+
+
+def test_deep_dive_stats_is_the_only_deep_dive_route_on_the_analysis_transport(client):
+    """Phase 26: label forms read the percentages here; the Deep Dive itself lives on the patterns transport."""
+    routes = {(m, r.path) for r in desktop_analysis.router.routes for m in r.methods if 'deep-dive' in r.path}
+    assert routes == {('GET', '/api/desktop/v1/analysis/deep-dive/stats/all')}
+    with patch('app.routers.deep_dive.svc') as svc:
+        svc.stats_all.return_value = [{'category': 'Breakout', 'strategy': 'ORB'}]
+        response = client.get('/api/desktop/v1/analysis/deep-dive/stats/all', headers={'X-User-Id': 'mallory'})
+    assert response.status_code == 200, response.text
+    assert response.json() == {'dives': [{'category': 'Breakout', 'strategy': 'ORB'}]}
+    svc.stats_all.assert_called_once_with('alice')
+    for method, path in (('POST', 'stats/all'), ('GET', 'dives'), ('PUT', 'setup'), ('POST', 'tags')):
+        assert client.request(method, f'/api/desktop/v1/analysis/deep-dive/{path}').status_code in (404, 405)
+
+
+def test_deep_dive_stats_requires_the_bearer():
+    with TestClient(app) as anonymous:
+        assert anonymous.get('/api/desktop/v1/analysis/deep-dive/stats/all', headers={'X-User-Id': 'alice'}).status_code == 401

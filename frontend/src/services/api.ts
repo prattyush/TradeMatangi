@@ -10,6 +10,7 @@ import { measureRequest } from './performanceDiagnostics'
 import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
 import { createDeepDiveClient } from '../../../shared/deepdive/client'
+import type { StatsAllEntry } from '../../../shared/deepdive/types'
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); this.name = 'ApiError' }
@@ -1746,6 +1747,9 @@ const api = {
     if (!res.ok) throw new Error(`Save labels failed: ${res.status}`)
     return res.json()
   },
+
+  /** Phase 26: Deep Dive percentages of every strategy with marked days, for the label forms. */
+  getDeepDiveStats(): Promise<StatsAllEntry[]> { return deepDiveApi.getStatsAll() },
 
   // ── Behavior questions & marks (Phase 23) ──────────────────────────────────
 

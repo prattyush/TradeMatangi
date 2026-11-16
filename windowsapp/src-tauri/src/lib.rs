@@ -1122,7 +1122,8 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
-        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" => true,
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" |
+        "deep-dive/stats/all" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -2679,6 +2680,15 @@ mod tests {
         }
         for path in ["snapshots/event-id", "snapshots/../candle", "snapshots/event-id/candle/extra", "snapshots/%2e%2e/candle"] {
             assert!(!valid_analysis_path(path, "GET"));
+        }
+    }
+
+    #[test]
+    fn deep_dive_stats_is_one_read_only_analysis_route() {
+        assert!(valid_analysis_path("deep-dive/stats/all", "GET"));
+        for method in ["POST", "DELETE", "PUT"] { assert!(!valid_analysis_path("deep-dive/stats/all", method), "{method}"); }
+        for path in ["deep-dive/stats", "deep-dive/dives", "deep-dive/dive", "deep-dive/setup", "deep-dive/tags", "deep-dive/stats/all/x", "deep-dive/../labels"] {
+            assert!(!valid_analysis_path(path, "GET"), "{path}");
         }
     }
 

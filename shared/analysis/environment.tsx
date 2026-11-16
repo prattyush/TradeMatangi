@@ -5,6 +5,7 @@ import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesD
 import type { HabitLedger } from './habits/types'
 import type { VideoLinksSource } from './videoLinks'
 import type { WhatIfSource } from './whatif/scenarios'
+import type { StatsAllEntry } from '../deepdive/types'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -13,6 +14,8 @@ export type AnalysisApi = Pick<typeof websiteApi,
   'getExpiry' | 'getSnapshots' | 'deleteSnapshots' | 'patternListStrategies' |
   'patternListCategories' | 'patternAddStrategy' | 'patternAddCategory' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'> & {
   getSnapshotCandle?: (sessionId: string, eventId: string, instrument: 'underlying' | 'CE' | 'PE', signal?: AbortSignal) => Promise<{candle: OHLCCandle | null}>
+  /** Phase 26: the Deep Dive percentages of every strategy that has marked days, for the label forms. Absent (an older server or host) => no panel. */
+  getDeepDiveStats?: () => Promise<StatsAllEntry[]>
 }
 export interface AnalysisEnvironment {
   swingRequest?: import('../SwingPortfolioPanel').SwingRequest

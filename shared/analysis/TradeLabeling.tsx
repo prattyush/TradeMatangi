@@ -1,6 +1,7 @@
 import { useAnalysisApi, useAnalysisEnvironment } from './environment'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalysisTrade, BehaviorQuestion, TradeLabel } from './api'
+import type { StatsAllEntry } from '../deepdive/types'
 import BehaviorManagerModal from './behavior/BehaviorManagerModal'
 import { questionIdsByTrip } from './behavior/model'
 import { readableError } from './behavior/types'
@@ -69,6 +70,8 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
   const marksRef = useRef(marks)
   const [behaviorError, setBehaviorError] = useState('')
   const [manageOpen, setManageOpen] = useState(false)
+  // Deep Dive percentages for the Expected Pattern (Phase 26). Optional and never blocking: no data or an older server just shows no panel.
+  const [deepDive, setDeepDive] = useState<StatsAllEntry[]>([])
   const [markState, setMarkState] = useState<SaverState>(IDLE)
   const saveMarksRef = useRef<(edits: MarkEdit[]) => Promise<unknown>>(async () => undefined)
   const markSaver = useMemo(() => new MarkSaver(edits => saveMarksRef.current(edits), setMarkState), [])
@@ -94,6 +97,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
     let cancelled = false
     setLoading(true); setLoadError('')
     const load = async () => {
+      void api.getDeepDiveStats?.().then(rows => { if (!cancelled) setDeepDive(Array.isArray(rows) ? rows : []) }, () => { if (!cancelled) setDeepDive([]) })
       const [tripPages, labelPages, strats, cats, etags, xtags] = await Promise.all([
         Promise.all(sessionIds.map(id => api.getRoundTrips(id))),
         Promise.all(sessionIds.map(id => api.getLabels(id))),
@@ -218,7 +222,8 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
     <RoundTripLabelForm idPrefix={tripKey(rt)} label={blankFor(rt)} disabled={readOnly || (view === 'all' && saving)}
       categories={displayedCategories} strategies={displayedStrategies} entryTags={entryTags} exitTags={exitTags}
       onChange={patch => editLabel(rt, patch)} onCreateName={addName}
-      behavior={behaviorError ? undefined : { questions, marked: marks.get(tripKey(rt)) ?? NO_MARKS, disabled: readOnly, onToggle: (id, showed) => toggleMark(rt, id, showed) }} />
+      behavior={behaviorError ? undefined : { questions, marked: marks.get(tripKey(rt)) ?? NO_MARKS, disabled: readOnly, onToggle: (id, showed) => toggleMark(rt, id, showed) }}
+      deepDive={deepDive.length ? { entries: deepDive, trade: { right: rt.right, action: rt.entry_trades[0]?.side } } : undefined} />
   )
 
   const modeSwitch = (
