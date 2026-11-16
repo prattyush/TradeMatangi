@@ -22,7 +22,7 @@ const encode = (words: string[], tiers?: number[]) => {
 }
 const valid = decodeFrontCoded(text('valid.fc.txt'))
 const common = decodeTiered(text('common.fc.txt'))
-const excluded = text('exclude.txt').split('\n').filter(Boolean)
+const excluded = text('exclude.txt').split(/\r?\n/).filter(Boolean)
 const sorted = (list: string[]) => list.every((word, i) => i === 0 || list[i - 1] < word)
 
 describe('word-list assets (spec 17.6)', () => {
@@ -131,5 +131,17 @@ describe('lazy loader', () => {
     }
     walk(root)
     expect(offenders).toEqual([])
+  })
+})
+
+describe('line endings', () => {
+  it('a file checked out with CRLF line endings decodes to the same lists', () => {
+    const crlf = (name: string) => text(name).replace(/\n/g, '\r\n')
+    expect(decodeFrontCoded(crlf('valid.fc.txt'))).toEqual(valid)
+    expect(decodeTiered(crlf('common.fc.txt'))).toEqual(common)
+  })
+  it('.gitattributes pins the assets to LF so their SHA-256 in NOTICE holds on every checkout', () => {
+    const attributes = readFileSync(join(here, '../../../../.gitattributes'), 'utf8')
+    expect(attributes).toMatch(/shared\/games\/brain\/assets\/words\/\* text eol=lf/)
   })
 })

@@ -10,7 +10,8 @@ const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz'
 export function decodeFrontCoded(text: string): string[] {
   const words: string[] = []
   let previous = ''
-  for (const line of text.split('\n')) {
+  // `\r?\n`: a checkout that turned the line endings into CRLF must not corrupt the last character of every line.
+  for (const line of text.split(/\r?\n/)) {
     if (!line) continue
     const word = previous.slice(0, ALPHABET.indexOf(line[0])) + line.slice(1)
     words.push(word)
@@ -25,7 +26,7 @@ export function decodeTiered(text: string): TieredWord[] {
   // The tier digit is the last character of a line and not part of the word, so it never joins the shared prefix.
   const words: TieredWord[] = []
   let previous = ''
-  for (const line of text.split('\n')) {
+  for (const line of text.split(/\r?\n/)) {
     if (!line) continue
     const body = line.slice(1, -1), tier = Number(line[line.length - 1])
     const word = previous.slice(0, ALPHABET.indexOf(line[0])) + body
