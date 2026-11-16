@@ -11,6 +11,8 @@ import TradingChartHost from './components/TradingChartHost'
 import { useTradingDisplaySettings } from './hooks/useTradingDisplaySettings'
 import { useCandleAlert, type CandleAlertClock } from '../../shared/useCandleAlert'
 import { headerAlertColor, maxSizeAlertActive, type SizedPosition } from '../../shared/maxSizeAlert'
+import { effectiveDisplayMode } from '../../shared/pnlMilestone'
+import { useRiskSwitch } from '../../shared/useRiskSwitch'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import KotakTOTPModal from './components/KotakTOTPModal'
 import SwingChart from './components/SwingChart'
@@ -551,9 +553,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
 
   // ── Per-user chart/alert preferences: target P&L lines, candle sound, MAX SIZE alert ──
   const tradingDisplay = useTradingDisplaySettings()
-  const pnlDisplay = tradingDisplay.pnl
-  const pnlPctMode = pnlDisplay.mode === 'percent'
-  const milestonesMode = pnlDisplay.mode === 'milestones'
+  const configuredPnlDisplay = tradingDisplay.pnl
   const candleAlertClock = useMemo<CandleAlertClock>(() => {
     if (!sim.sessionId || (sim.sessionState !== 'running' && sim.sessionState !== 'paused')) return { kind: 'off' }
     if (sim.sessionType === 'sim') return { kind: 'market', time: sim.latestEquityTick?.time }
@@ -570,7 +570,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
     return [sized(sim.positionCE, true), sized(sim.positionPE, true)]
   }, [sim.sessionInstrumentType, sim.sessionType, sim.position, sim.positionCE, sim.positionPE, sim.contractPositions, openOptionContracts])
   const maxSizeAlert = sim.sessionState === 'running' && maxSizeAlertActive(tradingDisplay.maxSize, maxSizePositions, sim.sessionCapital, sim.sessionInstrumentType)
-  const headerAlert = headerAlertColor({ redAlert: guardRailAlertActive, banActive: guardrailPopup?.type === 'BAN', maxSizeAlert })
+  const baseHeaderAlert = headerAlertColor({ redAlert: guardRailAlertActive, banActive: guardrailPopup?.type === 'BAN', maxSizeAlert })
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(2)
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
   useEffect(() => {
@@ -1860,6 +1860,19 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
   // Total day P&L includes realized P&L from previous sessions for same user+symbol+date+type
   const totalDayPnl = netDayPnl + sim.prevDayPnl
+
+  // Risk switch (Milestones only): once the day loss is half way to Max loss the whole screen shows P&L % and the header turns red.
+  const riskSwitch = useRiskSwitch({
+    enabled: configuredPnlDisplay.mode === 'milestones' && sim.sessionState !== 'idle',
+    dayPnl: totalDayPnl, capital: sim.sessionCapital, maxLossPct: configuredPnlDisplay.maxLossPct,
+  })
+  const pnlDisplay = useMemo(
+    () => (riskSwitch ? { ...configuredPnlDisplay, mode: effectiveDisplayMode(configuredPnlDisplay.mode, true) } : configuredPnlDisplay),
+    [configuredPnlDisplay, riskSwitch],
+  )
+  const pnlPctMode = pnlDisplay.mode === 'percent'
+  const milestonesMode = pnlDisplay.mode === 'milestones'
+  const headerAlert = riskSwitch ? 'red' : baseHeaderAlert
 
   // ── Trades filtered per pane for markers ─────────────────────────────────────
   const paneTradingData = useMemo(() => new Map(panes.map(pane => [pane.id, {
