@@ -663,7 +663,7 @@ export default myGame
 
 5. Tests (copy `quickMatch.test.ts`): the engine is deterministic for a seed, scoring stays in 0 to 100, the simulated players (`engine/simPlayers.ts`: perfect at least 95, random at most 25 averaged over seeds, always and never pressing at most 5), and, if the View has non-trivial rendering, a `renderToStaticMarkup` test. `registration.test.ts` lists the playable ids: add the new one.
 6. If the game's stats should show in the Dashboard trend panels, add a line to `TREND_PANELS` in `core/dashboard.ts`; if it belongs in the Warm-up's short slot, add it to `WARMUP_QUICK` in `core/warmup.ts`.
-7. Anything heavy (a solver, a generator, a word list) runs in a Web Worker through `engine/puzzleHost.ts` (`buildPuzzleSet`), which falls back to the calling thread; a new worker host needs `worker: { format: "es" }` in the Vite configs (already set) if it uses `import()`. Assets are imported in exactly one loader file.
+7. Anything heavy (a solver, a generator, a word list) runs in a Web Worker through `engine/puzzleHost.ts` (`buildPuzzleSet`), which falls back to the calling thread; a new worker host needs `worker: { format: "es" }` in the Vite configs (set in `frontend/`, `windowsapp/` and `webapp/`; the webapp build failed without it, found on the EC2 dev server) if it uses `import()`. Assets are imported in exactly one loader file.
 8. Text assets must survive a Windows checkout: pin them to LF in `.gitattributes` and split on `/\r?\n/`.
 
 **A market game** (`GameDefinition`, `kind: 'market'`, Track G) follows steps 1, 2 (with `round.ts`, `score.ts` instead of the engine), 4, 5; it adds `roundsPerSession(level)` and reads its rounds through `windows.ts`.
