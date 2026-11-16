@@ -151,3 +151,27 @@
 .dd-archived li { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 2px 0; }
 .dd-empty-state { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .dd-foot { margin: 0; }
+
+/* Deep Dive: results */
+.dd-results { display: flex; flex-direction: column; gap: 10px; }
+.dd-results h4 { margin: 6px 0 0; font-size: 13px; color: #cbd5e1; }
+.dd-filter[aria-pressed="true"] { background: #2563eb; border-color: #60a5fa; }
+.dd-filter.buy[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-filter.sell[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-summary { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; padding: 8px 12px; background: #161b22; border: 1px solid #21262d; border-radius: 8px; }
+.dd-thin { font-size: 11px; color: #fbbf24; }
+.dd-freq { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dd-freq li { display: grid; grid-template-columns: minmax(140px, 260px) minmax(120px, 1fr) 110px 150px auto; gap: 10px; align-items: center; font-size: 13px; }
+.dd-freq-name { overflow-wrap: anywhere; }
+.dd-bar { display: block; height: 10px; background: #21262d; border-radius: 5px; overflow: hidden; }
+.dd-bar > span { display: block; height: 100%; background: #2563eb; }
+.dd-bar > span.thin { background: repeating-linear-gradient(45deg, #2563eb, #2563eb 6px, #1e40af 6px, #1e40af 12px); }
+.dd-freq-pct { font-weight: 600; }
+.dd-dots { display: inline-flex; gap: 3px; }
+.dd-dot { width: 10px; height: 10px; border-radius: 50%; background: #3b4659; display: inline-block; }
+.dd-dot.valid { background: #22c55e; }
+.dd-dot.not_valid { background: #ef4444; }
+.dd-ok { color: #4ade80; } .dd-bad { color: #f87171; }
+.dd-notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #94a3b8; }
+.dd-days-table td { vertical-align: middle; }
+.dd-meaning { margin: 0; }

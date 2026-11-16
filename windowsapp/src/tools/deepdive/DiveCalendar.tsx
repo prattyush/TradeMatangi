@@ -41,7 +41,7 @@ export default function DiveCalendar({ month, onMonthChange, today, marks, selec
             aria-label={`${cell.date}${day.buy ? ', Buy setup' : ''}${day.sell ? ', Sell setup' : ''}`}>{cell.day}</button>
           {pickable && <span className="dd-cal-sides">
             {(['buy', 'sell'] as const).map(side => <button key={side} className={`dd-side ${side}`} aria-pressed={day[side]}
-              disabled={readOnly || busy === `${cell.date}|${side}`} title={`${side === 'buy' ? 'Buy' : 'Sell'} setup on this day`}
+              disabled={readOnly || busy === `${cell.date}|${side}`} title={side === 'buy' ? 'Buy setup (long / bullish) on this day' : 'Sell setup (short / bearish) on this day'}
               onClick={() => onToggle(cell.date, side)}>{side === 'buy' ? 'B' : 'S'}</button>)}
           </span>}
         </div>

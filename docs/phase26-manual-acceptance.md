@@ -38,4 +38,19 @@ Needs the desktop rebuilt from `dev`. Use the deep dive from section A with at l
 12. A symbol that has no options (a stock): the day shows only the underlying chart and the mark tools for it.
 13. Optional, with a second account that is in your Pattern share list: the shared deep dive opens read-only (no B/S, no tag buttons, no outcome).
 
+## C. Desktop: results (S6)
+
+Needs the desktop rebuilt from `dev`. Use the deep dive from section B, with tags marked on most days, an outcome on some days and chart marks on at least one day.
+
+1. Open the deep dive, tab **3 · Results**. Under the All / Buy / Sell buttons a line explains the sides: **Buy = long / bullish** (long equity or index, CE bought, PE sold) and **Sell = short / bearish** (short equity, PE bought, CE sold). Hovering the buttons says the same.
+2. The summary shows the number of days with the buy and sell counts and "Success x of y (z%)". With fewer than 5 days having an outcome it says "Only n days marked".
+3. Each active tag has a bar, "70% (n=14)", "10 valid · 4 not valid". Check one by hand: valid days divided by the days where that tag was marked (Valid or Not valid; unmarked days do not count). Fewer than 5 marked days shows "Only n days marked" and a striped bar. The archived tag is not listed.
+4. **Sell** shows only the sell days' numbers and rows; **Buy** the buy days'; **All** both. A tag never marked on the chosen days shows "—" with n=0.
+5. "Order: Most frequent first" re-sorts the tags, unmarked ones last.
+6. Each day row shows its outcome, one dot per active tag (green valid, red not valid, grey unmarked; hover for the name), the number of chart marks and the notes. The date or **Open** opens that day in the in-depth step.
+7. A day with chart marks has **Save to Patterns**: "saved as a new pattern chart with n marks". Find it in Saved charts (same symbol, day and marks, with the dive's category and strategy). Press it again after adding a mark in the in-depth step: "added 1 mark to the existing pattern chart" and the chart does not duplicate the old marks.
+8. **Save n marked days to Pattern Library** does the same for every day shown; the message counts new and updated charts.
+9. A day whose pattern chart already uses other CE or PE strikes is refused with a message that names the strike; nothing is overwritten.
+10. A shared deep dive (second account): the results are shown, no save buttons.
+
 ## Report back

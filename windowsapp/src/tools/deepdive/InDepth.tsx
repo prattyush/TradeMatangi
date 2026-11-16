@@ -19,6 +19,8 @@ interface Props {
   setDive: (update: (dive: Dive) => Dive) => void
   settings: PatternSettings
   onGoMark: () => void
+  /** A day to open on (from the results table); otherwise the first day. */
+  focus?: DiveSetup | null
 }
 
 const sameDay = (a: DiveSetup, b: DiveSetup) => a.date === b.date && a.symbol === b.symbol && a.side === b.side
@@ -28,8 +30,8 @@ const sameDay = (a: DiveSetup, b: DiveSetup) => a.date === b.date && a.symbol ==
  * is flagged on its chip, in a banner and in the "Needs marking" list (a tag added on the 20th is open on the 11th). Every
  * change shows on screen at once and is saved in the background, in order.
  */
-export default function InDepth({ client, api, dive, setDive, settings, onGoMark }: Props) {
-  const [index, setIndex] = useState(0)
+export default function InDepth({ client, api, dive, setDive, settings, onGoMark, focus }: Props) {
+  const [index, setIndex] = useState(() => Math.max(0, dive.setups.findIndex(s => focus && sameDay(s, focus))))
   const [save, setSave] = useState<SaveState>({ status: 'idle' })
   const [failure, setFailure] = useState<string | null>(null)
   const queue = useMemo(() => new SaveQueue(setSave, readableError), [])
