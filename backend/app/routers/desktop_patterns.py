@@ -1,4 +1,4 @@
-"""Desktop-authenticated adapters to the Patterns, Chart Structures and Fine Structures routers.
+"""Desktop-authenticated adapters to the Patterns, Chart Structures, Fine Structures and Deep Dive routers.
 
 The website routers stay untouched. Each route is re-registered under
 ``/api/desktop/v1/patterns/<family>/...`` with the website's ``X-User-Id`` identity swapped
@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Header
 from fastapi.routing import APIRoute
 
 from app.dependencies import get_desktop_user_id
-from app.routers import chart_structures, data, fine_structures, pattern_logger
+from app.routers import chart_structures, data, deep_dive, fine_structures, pattern_logger
 from app.services.history_workers import desktop_history_scope, run_history
 
 router = APIRouter(prefix="/api/desktop/v1/patterns", tags=["desktop-patterns"])
@@ -61,6 +61,7 @@ for source, legacy_prefix, family in (
     (pattern_logger.router, "/api/pattern", "/pattern"),
     (chart_structures.router, "/api/chart-structures", "/chart-structures"),
     (fine_structures.router, "/api/fine-structures", "/fine-structures"),
+    (deep_dive.router, "/api/deep-dive", "/deep-dive"),
 ):
     for route in source.routes:
         if isinstance(route, APIRoute) and route.path.startswith(legacy_prefix):

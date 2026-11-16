@@ -425,11 +425,11 @@ TABLES = [
         "TableName": "BehaviorQuestions",
         "KeySchema": [
             {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "question_id", "KeyType": "RANGE"},
+            {"AttributeName": "tag_id", "KeyType": "RANGE"},
         ],
         "AttributeDefinitions": [
             {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "question_id", "AttributeType": "S"},
+            {"AttributeName": "tag_id", "AttributeType": "S"},
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
@@ -454,6 +454,31 @@ TABLES = [
                 ],
                 "Projection": {"ProjectionType": "ALL"},
             }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    # ── Phase 26 Patterns Strategy Deep Dive ─────────────────────────────────
+    {
+        "TableName": "DeepDiveSetups",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "setup_key", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "setup_key", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
+        "TableName": "DeepDiveTags",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "tag_key", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "tag_key", "AttributeType": "S"},
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },

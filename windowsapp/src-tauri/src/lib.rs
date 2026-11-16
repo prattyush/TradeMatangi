@@ -1156,7 +1156,7 @@ async fn desktop_analysis_request(
     response.json().await.map_err(|e| e.to_string())
 }
 
-/// Allowlist for the Patterns, Chart Structures and Fine Structures routes (`/api/desktop/v1/patterns/...`).
+/// Allowlist for the Patterns, Chart Structures, Fine Structures and Deep Dive routes (`/api/desktop/v1/patterns/...`).
 /// Mirrored by `validPatternsPath` in `src/patternsApi.ts`; keep the two in step.
 fn valid_patterns_path(path: &str, method: &str) -> bool {
     let route = path.split('?').next().unwrap_or("");
@@ -1183,6 +1183,12 @@ fn valid_patterns_path(path: &str, method: &str) -> bool {
         ("GET", ["fine-structures", "ohlc" | "ohlc-options", s, d]) => symbol(s) && date(d),
         ("POST", ["fine-structures", "definition" | "flow" | "search"]) => true,
         ("PUT" | "DELETE", ["fine-structures", "definition" | "flow", v]) => id(v),
+        ("GET", ["deep-dive", "dives" | "dive" | "stats"]) => true,
+        ("GET", ["deep-dive", "stats", "all"]) => true,
+        ("PUT", ["deep-dive", "setup"]) | ("DELETE", ["deep-dive", "setup"]) => true,
+        ("PUT", ["deep-dive", "setup", "tag-values"]) => true,
+        ("POST", ["deep-dive", "tags"]) | ("POST", ["deep-dive", "setup", "save-to-patterns"]) => true,
+        ("POST", ["deep-dive", "tags", v, "update" | "archive" | "restore"]) => id(v),
         ("GET", ["data", "symbols" | "price-at" | "expiry"]) => true,
         ("GET", ["data", "options", "find-strike-by-price"]) => true,
         _ => false,
@@ -2636,6 +2642,10 @@ mod tests {
             ("GET", "fine-structures/flows"), ("POST", "fine-structures/search"), ("DELETE", "fine-structures/definition/d1"),
             ("GET", "fine-structures/ohlc-options/NIFTY/2026-10-01?right=CE"),
             ("GET", "data/symbols"), ("GET", "data/price-at?symbol=NIFTY"), ("GET", "data/options/find-strike-by-price?symbol=NIFTY"),
+            ("GET", "deep-dive/dives"), ("GET", "deep-dive/dive?category=A&strategy=B"), ("GET", "deep-dive/stats?category=A"),
+            ("GET", "deep-dive/stats/all"), ("PUT", "deep-dive/setup"), ("DELETE", "deep-dive/setup?date=2026-10-01"),
+            ("PUT", "deep-dive/setup/tag-values"), ("POST", "deep-dive/setup/save-to-patterns"), ("POST", "deep-dive/tags"),
+            ("POST", "deep-dive/tags/abc123/update"), ("POST", "deep-dive/tags/abc123/archive"), ("POST", "deep-dive/tags/abc123/restore"),
         ];
         for (method, path) in ok { assert!(super::valid_patterns_path(path, method), "{method} {path}"); }
         let bad = [
@@ -2644,6 +2654,9 @@ mod tests {
             ("GET", "chart-structures/ohlc/NIFTY/2026-10-01/x"), ("GET", "chart-structures/ohlc/NIFTY/not-a-date"),
             ("GET", "data/historical"), ("POST", "data/symbols"), ("GET", "orders"), ("GET", "trading/orders"),
             ("GET", "pattern/chart/a\\b"), ("PATCH", "pattern/chart/abc"), ("GET", ""),
+            ("POST", "deep-dive/dives"), ("DELETE", "deep-dive/dive"), ("PUT", "deep-dive/tags"), ("GET", "deep-dive/setup"),
+            ("POST", "deep-dive/setup"), ("GET", "deep-dive/stats/all/x"), ("POST", "deep-dive/tags/a/b/update"),
+            ("POST", "deep-dive/tags/abc/delete"), ("POST", "deep-dive/tags//update"), ("GET", "deep-dive/tags"),
         ];
         for (method, path) in bad { assert!(!super::valid_patterns_path(path, method), "{method} {path}"); }
     }
