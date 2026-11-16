@@ -13,7 +13,7 @@ Phase 25 code is complete; these remain.
    - Level Recall study times, Strike Picker answers, Regime Switch change rate.
 3. **Replay of market sessions by window id** (optional): Review keeps a round log (C42) but no replay. Needs every round source to accept a fixed list of window ids.
 4. **Memory check on the Windows build** at level 15 to 20 over a long session (acceptance T5; budget 600 MB).
-5. **Real-session tries on `dev`**: the P&L Milestones risk switch (#860) and the GuardRails minimum-gap reset (#858). Neither goes to `preprod` without the owner's real-session try.
+5. **Real-session tries on `dev`**: the P&L Milestones risk switch (#860), the GuardRails minimum-gap reset (#858) and the Deep Dive percentages in the live label popups (Phase 26 S9, `docs/phase26-manual-acceptance.md` section F). None goes to `preprod` without the owner's real-session try.
 
 ## Live volume (Track C, dev only)
 Probe results are in `docs/spec-phase24.md`; Kite and Breeze are merged (#855, #856).

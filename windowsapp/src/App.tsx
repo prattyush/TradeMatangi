@@ -4,6 +4,8 @@ import { useRiskSwitch } from '../../shared/useRiskSwitch'
 import BehaviorManagerModal from '../../shared/analysis/behavior/BehaviorManagerModal'
 import BehaviorPicker from '../../shared/analysis/behavior/BehaviorPicker'
 import { useBehaviorData } from '../../shared/analysis/behavior/useBehaviorData'
+import StatsPanel from '../../shared/deepdive/ui/StatsPanel'
+import type { StatsAllEntry } from '../../shared/deepdive/types'
 import { readableError, type BehaviorApi } from '../../shared/analysis/behavior/types'
 import { allIndicators, drawingTools, indicatorLabel } from '../../shared/charts/catalogue'
 import { useCandleAlert, type CandleAlertClock } from '../../shared/useCandleAlert'
@@ -89,7 +91,7 @@ interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_
 interface DesktopRoundTrip { index: number; right: string | null; strike?: number | null; expiry?: string | null; entry_trades: Array<Record<string, unknown>>; exit_trades: Array<Record<string, unknown>>; pnl: number }
 interface DesktopTradeLabel { round_trip_index: number; expected_category: string; expected_strategy: string; actual_category: string; actual_strategy: string; entry_tag: string; exit_tag: string }
 interface DesktopTradeLabelState { completed: DesktopRoundTrip[]; open: DesktopRoundTrip[]; labels: DesktopTradeLabel[] }
-interface DesktopLabelMetadata { categories: string[]; strategies: string[]; entry_tags: string[]; exit_tags: string[] }
+interface DesktopLabelMetadata { categories: string[]; strategies: string[]; entry_tags: string[]; exit_tags: string[]; /** Phase 26: the user's Deep Dive percentages, shown beside the Expected Pattern; absent on an older server. */ deep_dive?: StatsAllEntry[] }
 type DesktopLabelMetadataStatus = 'idle' | 'loading' | 'ready' | 'error'
 const emptyLabelMetadata: DesktopLabelMetadata = { categories: [], strategies: [], entry_tags: [], exit_tags: [] }
 interface DesktopTradingCandidate { status: 'none' | 'active' | 'checkpoint' | 'existing' | 'stopped' | 'remote'; active?: DesktopTradingSnapshot | null; stopped?: DesktopTradingSnapshot | null; checkpoint?: { current_time: number; current_bar_index: number; desktop_mode?: string } | null; existing_session_id?: string | null }
@@ -353,6 +355,7 @@ function DesktopLabelPopup({ mode, roundTrip, existing, metadata, metadataStatus
         {metadataStatus === 'ready' && !metadata.categories.length && !metadata.strategies.length && <div className="label-metadata-status">No saved Pattern Library categories or strategies are available for this account yet.</div>}
         <label>Category<select value={category} onChange={event => setCategory(event.target.value)}><option value="">Category</option>{metadata.categories.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
         <label>Strategy<select value={strategy} onChange={event => setStrategy(event.target.value)}><option value="">Strategy</option>{metadata.strategies.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+        {isEntry && category && strategy && <StatsPanel entries={metadata.deep_dive ?? []} category={category} strategy={strategy} trade={{ right: roundTrip.right, action: String(roundTrip.entry_trades[0]?.side ?? '') }} />}
         <label>{isEntry ? 'Entry tag' : 'Exit tag'}<input list={`desktop-label-tags-${mode}-${roundTrip.index}`} value={tag} onChange={event => setTag(event.target.value)} placeholder="AS_PER_PATTERN" /></label>
         <datalist id={`desktop-label-tags-${mode}-${roundTrip.index}`}>{(isEntry ? metadata.entry_tags : metadata.exit_tags).map(value => <option key={value} value={value} />)}</datalist>
         {behavior.status === 'ready' && <BehaviorPicker kind={mode} questions={behavior.questions} initial={behavior.markedFor(roundTrip.index)} onAnswersChange={setBehaviors} onManage={() => setManaging(true)} />}
