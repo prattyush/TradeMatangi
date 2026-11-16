@@ -28,7 +28,7 @@ export function createCodeBreakerEngine(params: Record<string, number>, rng: Rng
         guessLimit: Math.round(params.guesses), gapMs: params.gapMs, windowMs: CODE_WINDOW_MS,
       }
     },
-    timing: (trial): TrialTiming => ({ displayMs: null, windowMs: trial.windowMs, gapMs: trial.gapMs }),
+    timing: (trial): TrialTiming => ({ displayMs: null, windowMs: trial.windowMs, gapMs: trial.gapMs, tolerateStalls: true }),
     evaluate(_trial, response): TrialOutcome {
       judged += 1
       if (response === 'timeout') return { correct: false, tag: 'timeout' }

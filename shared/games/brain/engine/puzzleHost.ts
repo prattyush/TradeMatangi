@@ -5,16 +5,18 @@
  */
 import { createInlineHost, createWorkerHost, type GeneratorRegistry, type WorkerLike } from './generatorHost'
 
-export async function buildPuzzleSet<R>(makeWorker: () => unknown, registry: GeneratorRegistry, name: string, args: unknown): Promise<R> {
+export async function buildPuzzleSet<R>(makeWorker: () => unknown, registry: GeneratorRegistry, name: string, args: unknown, afterInline?: () => void): Promise<R> {
   let worker: unknown = null
   try { if (typeof Worker !== 'undefined') worker = makeWorker() } catch { /* no module workers here: build on this thread */ }
-  if (!worker) return createInlineHost(registry).run<R>(name, args)
+  // `afterInline` frees what a generator that ran on this thread left behind (the word lists).
+  const inline = async () => { try { return await createInlineHost(registry).run<R>(name, args) } finally { afterInline?.() } }
+  if (!worker) return inline()
   const host = createWorkerHost(worker as WorkerLike)
   try {
     return await host.run<R>(name, args)
   } catch {
     // A worker that fails (blocked by the page's policy, a build without the file): fall back to the calling thread.
-    return await createInlineHost(registry).run<R>(name, args)
+    return await inline()
   } finally {
     host.dispose()
   }

@@ -45,3 +45,16 @@ describe('Reasoning puzzle host', () => {
     } finally { delete g.Worker }
   })
 })
+
+describe('long puzzles tolerate a stalled frame', () => {
+  it('the puzzle games tell the block not to throw a puzzle away for one long frame (that rule is for stimuli timed in milliseconds)', async () => {
+    const make = await import('../make_target/engine'), pm = await import('../pattern_matrix/engine'), ns = await import('../number_series/engine'), cb = await import('../code_breaker/engine')
+    const { createRng } = await import('../../../core/rng')
+    const p = (table: Parameters<typeof paramsAt>[0], level: number) => paramsAt(table, level)
+    const engines = [
+      make.createMakeTargetEngine(p((await import('../../config/difficulty.brain')).MAKE_TARGET_PARAMS, 3), createRng(1)),
+      pm.createPatternMatrixEngine(p(PATTERN_MATRIX_PARAMS, 3), createRng(1)), ns.createNumberSeriesEngine(p(NUMBER_SERIES_PARAMS, 3), createRng(1)), cb.createCodeBreakerEngine(p(CODE_BREAKER_PARAMS, 3), createRng(1)),
+    ]
+    for (const engine of engines) expect(engine.timing(engine.next() as never).tolerateStalls).toBe(true)
+  })
+})

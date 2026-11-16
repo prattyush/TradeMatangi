@@ -20,6 +20,11 @@ export interface TrialTiming {
    * during the window and judged together when it ends.
    */
   fixedCadence?: boolean
+  /**
+   * A long puzzle (tens of seconds to minutes) whose answer time is not a reaction time: a stalled frame must not throw the whole
+   * puzzle away and start another (the 100 ms bad-frame rule of spec 17.3 is for stimuli timed in milliseconds).
+   */
+  tolerateStalls?: boolean
 }
 
 /** One step of a staged round (memory games, Track the Dots): shown for `ms`, or until the player submits when `ms` is null. */

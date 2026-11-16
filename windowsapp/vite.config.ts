@@ -18,6 +18,8 @@ export default defineConfig({
     },
   },
   plugins: [react()],
+  // The Games workers (puzzle generators) load their word lists with import(): that needs the ES module format, not the default IIFE.
+  worker: { format: "es" },
   // Tests sit beside the code, including the shared Games code that the desktop, website and webapp all use.
   test: { include: ['src/**/*.test.{ts,tsx}', '../shared/games/**/*.test.{ts,tsx}'] },
   clearScreen: false,

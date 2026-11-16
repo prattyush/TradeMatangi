@@ -137,7 +137,7 @@ export function useTrialBlock<Trial, R, I = R>(options: TrialBlockOptions<Trial,
 
     const resolve = (response: TrialResponse<R>, rt: number, now: number) => {
       if (phase !== 'stim' || timing === null) return
-      const check = checkTrialTiming(timing.displayMs, hiddenAfter, frameMsFrom(deltas), longestFrame)
+      const check = timing.tolerateStalls ? { ok: true } : checkTrialTiming(timing.displayMs, hiddenAfter, frameMsFrom(deltas), longestFrame)
       let entry: TrialLogEntry<Trial, R> | null = null
       let gapMs = AFTER_DISCARD_MS
       if (check.ok) {

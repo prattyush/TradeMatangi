@@ -82,7 +82,11 @@ export function installWorkerRuntime(registry: GeneratorRegistry, scope: WorkerS
     try {
       const fn = registry[name] as ((args: unknown) => unknown) | undefined
       if (!fn) throw new Error(`Unknown generator ${name}`)
-      scope.postMessage({ id, result: fn(args) })
+      // A generator may be asynchronous (the word games load their lists first).
+      Promise.resolve(fn(args)).then(
+        result => scope.postMessage({ id, result }),
+        error => scope.postMessage({ id, error: error instanceof Error ? error.message : String(error) }),
+      )
     } catch (error) {
       scope.postMessage({ id, error: error instanceof Error ? error.message : String(error) })
     }

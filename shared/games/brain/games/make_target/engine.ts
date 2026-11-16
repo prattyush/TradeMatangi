@@ -24,7 +24,7 @@ export function createMakeTargetEngine(params: Record<string, number>, rng: Rng,
       if (judged >= total) return null
       return { puzzle: set[judged % set.length], limitMs: params.limitMs, tolerance: Math.round(params.tolerance), gapMs: params.gapMs }
     },
-    timing: (trial): TrialTiming => ({ displayMs: null, windowMs: trial.limitMs, gapMs: trial.gapMs }),
+    timing: (trial): TrialTiming => ({ displayMs: null, windowMs: trial.limitMs, gapMs: trial.gapMs, tolerateStalls: true }),
     evaluate(trial, response): TrialOutcome {
       judged += 1
       if (response === 'timeout') return { correct: false, tag: 'timeout' }
