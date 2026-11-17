@@ -76,6 +76,8 @@ async def _run(fn, *args, **kwargs):
         return await asyncio.to_thread(fn, *args, **kwargs)
     except (ValueError, LookupError) as exc:
         raise _bad_request(exc) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc.args[0]) if exc.args else str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -107,6 +109,40 @@ async def get_timings(category: Optional[str] = Query(None), strategy: Optional[
                       owner_id: Optional[str] = Query(None), user_id: str = Depends(get_request_user_id)):
     """The entry and exit time of every marked day, read from its chart marks (all deep dives unless one is named)."""
     return {"days": await _run(svc.list_timings, user_id, category, strategy, side, owner_id)}
+
+
+# ── Strategy Practice ────────────────────────────────────────────────────────
+
+class PracticePickIn(DiveRef):
+    symbol: Optional[str] = None
+    grades: Optional[list[Literal["ideal", "average", "poor", "ungraded", "failed", "open"]]] = None
+
+
+@router.get("/practice/strategies")
+async def practice_strategies(user_id: str = Depends(get_request_user_id)):
+    """The strategies of the user's own deep dives that have Entry-marked days to practise."""
+    from app.services import strategy_practice_service as practice
+    return {"strategies": await _run(practice.list_strategies, user_id)}
+
+
+@router.post("/practice/pick")
+async def practice_pick(req: PracticePickIn, user_id: str = Depends(get_request_user_id)):
+    """Choose a day and a replay start (a few minutes before the first Entry). Never the side or the marks."""
+    from app.services import strategy_practice_service as practice
+    return await _run(practice.pick, user_id, req.category, req.strategy, req.symbol, req.grades)
+
+
+@router.get("/practice/runs")
+async def practice_runs(user_id: str = Depends(get_request_user_id)):
+    from app.services import strategy_practice_service as practice
+    return {"runs": await _run(practice.list_runs, user_id)}
+
+
+@router.get("/practice/evaluate")
+async def practice_evaluate(session_id: str = Query(...), user_id: str = Depends(get_request_user_id)):
+    """The review of an ended practice run (409 while the session still runs)."""
+    from app.services import strategy_practice_service as practice
+    return await _run(practice.evaluate, user_id, session_id)
 
 
 @router.get("/stats/all")
