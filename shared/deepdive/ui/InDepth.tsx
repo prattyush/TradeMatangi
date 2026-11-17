@@ -7,6 +7,7 @@ import type { DeepDiveTag, Dive, DiveSetup, SetupFields, TagValue } from '../typ
 import DayStrip from './DayStrip'
 import DayWorkspace from './DayWorkspace'
 import GapsPanel from './GapsPanel'
+import HeaderPortal from './HeaderPortal'
 import { useDeepDiveHost } from './host'
 import { fullFields } from './inDepthModel'
 import { SaveQueue, type SaveState } from './saveQueue'
@@ -75,16 +76,16 @@ export default function InDepth({ dive, setDive, onGoMark, focus }: Props) {
   })
 
   return <div className="dd-depth">
-    <div className="pl-bar dd-depth-head">
-      <button onClick={() => go(position - 1)} disabled={position === 0} aria-label="Previous day">‹ Prev</button>
-      <strong aria-live="polite">{positionLabel(position, setups)}</strong>
-      <button onClick={() => go(position + 1)} disabled={position === setups.length - 1} aria-label="Next day">Next ›</button>
+    <HeaderPortal>
+      <button onClick={() => go(position - 1)} disabled={position === 0} aria-label="Previous day" title="Previous day">‹</button>
+      <strong aria-live="polite">{positionLabel(position, setups, new Date().getFullYear())}</strong>
+      <button onClick={() => go(position + 1)} disabled={position === setups.length - 1} aria-label="Next day" title="Next day">›</button>
       {unmarkedNext >= 0 && unmarkedNext !== position && <button onClick={() => go(unmarkedNext)} title="Jump to the next day with tags not marked yet">Next unmarked day</button>}
       <span className={`dd-save ${save.status}`} role="status">
         {save.status === 'saving' ? 'Saving…' : save.status === 'saved' ? 'Saved' : save.status === 'error' ? '' : ''}
         {save.status === 'error' && <><span className="pl-error">Not saved: {save.message}</span> <button onClick={retry}>Retry</button></>}
       </span>
-    </div>
+    </HeaderPortal>
     {!canEdit && <p className="pl-muted" role="status">This deep dive was shared with you: you can look at it but not change it.</p>}
     {failure && <p className="pl-error" role="alert">{failure}</p>}
     <DayStrip setups={setups} index={position} onSelect={go} />

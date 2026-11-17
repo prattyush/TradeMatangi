@@ -13,6 +13,7 @@ Sections are added as sprints land. Report back with what failed, with the strat
 | G | Fixes after the first tries (symbols, calendar, layout) | |
 | H | From your trades | labelled trades in several sessions |
 | I | Hardening (S11) | |
+| J | Review changes: side-by-side traded charts, Maximize per chart, Deep Dive header in one row | |
 
 ## A. Desktop: Deep dive tab, marking days (S4)
 
@@ -118,7 +119,7 @@ Needs the desktop rebuilt from `dev` and trades you have labelled (expected and 
 
 1. Pattern Library > **From your trades** (website: **🧾 From your trades**). The left list has every strategy you have labelled a trade with, each with "n trades · n expected · n actual · last <day>". A strategy you only ever used as the *actual* one is there too. The filter narrows by category or name.
 2. Choose a strategy: a table of the trades behind it, newest first: day, instrument (with strike for options), position (**Buy** or **Sell** badge and bought or sold), time range, P&L, whether it was the **expected** or the **actual** strategy (or both), and the session type. Check the Buy / Sell badge against the rule: long equity or index, CE bought and **PE sold** = Buy; short equity, CE sold and **PE bought** = Sell.
-3. The first trade is drawn below the table: the **underlying chart on top and, for an option trade, the CE or PE contract chart under it** with that trade's strike, both centred on the entry. A gold **⚑ BUY** marks the entry bar and a gold **⚑ SELL** the exit bar (a short trade shows SELL first and BUY at its exit). The gold marks look different from the green, red, blue marks of a marked pattern. A legend says "gold = your actual orders".
+3. The first trade is drawn below the table: the **underlying chart and, for an option trade, the CE or PE contract chart side by side** with that trade's strike, both centred on the entry. A gold **⚑ BUY** marks the entry bar and a gold **⚑ SELL** the exit bar (a short trade shows SELL first and BUY at its exit). The gold marks look different from the green, red, blue marks of a marked pattern. A legend says "gold = your actual orders".
 4. Click other trades: the charts follow. The charts and table fill the window height; nothing is hidden below the fold on a normal window.
 5. **Save as pattern chart**: a message says it saved a new pattern chart with 2 marks. Find it under **View** (Saved charts): the same symbol and day, with the entry and exit as ordinary marks of that strategy on the traded leg. Do it for another trade of the same day: "Added 2 marks to the day's pattern chart" and the old marks are not duplicated.
 6. **Save and edit**: the saved chart opens in **Annotate** (Create on the website) with its marks; move or add a mark and save as usual.

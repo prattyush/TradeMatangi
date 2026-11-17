@@ -42,6 +42,11 @@ export interface DeepDiveHost {
   resolveStrikes(symbol: string, date: string, offset: number, settings: DiveSettings): Promise<OptionStrikes>
   settings: DiveSettings
   Chart: ComponentType<DiveChartProps>
+  /**
+   * An element in the host's own header row. When given, the Deep Dive puts its back button, title, steps and day walk there
+   * (a portal) instead of in rows of its own, so the charts get that height.
+   */
+  headerSlot?: HTMLElement | null
 }
 
 const Context = createContext<DeepDiveHost | null>(null)

@@ -17,7 +17,9 @@
 .td-legend { color: #d29922; font-size: 12px; }
 .td-actions { margin-left: auto; display: flex; gap: 6px; }
 .td-viewer p { margin: 0; }
-.td-charts { display: flex; flex-direction: column; gap: 8px; flex: 1 1 0; min-height: 0; }
-.td-chartbox { flex: 1 1 0; min-width: 0; min-height: 260px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
-.td-chartbox > * { flex: 1; min-height: 0; }
-@media (max-width: 1000px) { .td { flex-direction: column; } .td-strategies { flex: none; } .td-chartbox { flex: none; height: 320px; } }
+/* The underlying and the contract chart sit side by side, each the full height of the viewer (a trade on the underlying alone takes the
+   whole width). Under 1000px wide they stack. */
+.td-charts { display: flex; flex-direction: row; gap: 8px; flex: 1 1 0; min-height: 0; }
+.td-chartbox { flex: 1 1 0; min-width: 0; min-height: 400px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
+.td-chartbox > :not(.dd-frame-bar) { flex: 1; min-height: 0; }
+@media (max-width: 1000px) { .td { flex-direction: column; } .td-strategies { flex: none; } .td-charts { flex-direction: column; flex: none; } .td-chartbox { flex: none; height: 340px; } }

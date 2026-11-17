@@ -1,5 +1,6 @@
 .pl { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; }
-.pl-head { display: flex; align-items: center; gap: 16px; }
+.pl-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.pl-head-slot { display: contents; }
 .pl-head h2 { margin: 0; font-size: 18px; }
 .pl-tabs { display: flex; gap: 6px; }
 .pl-tabs button[aria-selected="true"] { background: #2563eb; border-color: #60a5fa; }

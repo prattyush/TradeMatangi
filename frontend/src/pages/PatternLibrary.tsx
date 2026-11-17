@@ -693,6 +693,8 @@ function galleryGridStyle(columns: number): CSSProperties {
 
 export default function PatternLibrary() {
   const [mode, setMode] = useState<'create' | 'view' | 'deepdive' | 'traded'>('create')
+  // The Deep Dive puts its own header controls in this page's header row (a portal into the slot below), so the charts get the height.
+  const [deepDiveSlot, setDeepDiveSlot] = useState<HTMLElement | null>(null)
 
   // Form
   const [symbol, setSymbol] = useState('NIFTY')
@@ -1359,6 +1361,7 @@ export default function PatternLibrary() {
             {m === 'create' ? '✏ Create' : m === 'view' ? '👁 View' : m === 'deepdive' ? '🔍 Deep dive' : '🧾 From your trades'}
           </button>
         ))}
+        {mode === 'deepdive' && <span ref={setDeepDiveSlot} className="dd-web" style={{ display: 'contents' }} />}
 
         {mode === 'create' && (
           <>
@@ -1532,7 +1535,7 @@ export default function PatternLibrary() {
       {/* Body */}
       {mode === 'deepdive' ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
-          <WebsiteDeepDive />
+          <WebsiteDeepDive headerSlot={deepDiveSlot} />
         </div>
       ) : mode === 'traded' ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>

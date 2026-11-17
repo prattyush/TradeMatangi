@@ -131,6 +131,9 @@ describe('walking the days', () => {
     const list = [setup('2026-10-06', 'buy'), setup('2026-03-11', 'sell')]
     expect(positionLabel(1, list)).toBe('2 / 2 · 11 Mar 2026 · SELL')
     expect(positionLabel(0, [])).toBe('No days marked')
+    expect(positionLabel(1, list, 2026)).toBe('2 / 2 · 11 Mar · SELL') // the year of this year is left out of the header
+    expect(positionLabel(0, list, 2026)).toBe('1 / 2 · 6 Oct · BUY')
+    expect(positionLabel(1, list, 2025)).toBe('2 / 2 · 11 Mar 2026 · SELL') // another year stays
     expect(formatDay('2026-12-01')).toBe('1 Dec 2026')
     expect(formatDay('garbage')).toBe('garbage')
   })

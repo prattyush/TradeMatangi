@@ -27,7 +27,9 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
  */
 export default function PatternLibrary({ baseUrl, token, onUnauthorized, active }: Props) {
   const { client, environment, settings } = usePatternsRuntime(baseUrl, token, onUnauthorized, active)
-  const deepDiveHost = useDesktopDeepDiveHost(client, settings)
+  // The Deep Dive puts its own header controls in this row (a portal into the slot below), so the charts get the height.
+  const [deepDiveSlot, setDeepDiveSlot] = useState<HTMLElement | null>(null)
+  const deepDiveHost = useDesktopDeepDiveHost(client, settings, deepDiveSlot)
 
   const [view, setView] = useState<'create' | 'view' | 'deepdive' | 'traded'>('create')
   const [symbol, setSymbol] = useState('NIFTY')
@@ -200,6 +202,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
           <button role="tab" aria-selected={view === 'deepdive'} onClick={() => setView('deepdive')}>Deep dive</button>
           <button role="tab" aria-selected={view === 'traded'} onClick={() => setView('traded')}>From your trades</button>
         </div>
+        {view === 'deepdive' && <span ref={setDeepDiveSlot} className="pl-head-slot" />}
       </header>
       {view === 'create' && <>
         <div className="pl-bar">

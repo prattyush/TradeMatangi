@@ -1,7 +1,12 @@
 /* Deep Dive (Phase 26) */
 .dd { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow: auto; }
 .dd h3, .dd h4 { margin: 0; }
-.dd-title { align-items: center; }
+/* The Deep Dive's header controls. In the host's header row (a portal) the group dissolves into that row; otherwise it is a row of its own. */
+.dd-head-group { align-items: center; }
+.dd-head-group.in-header { display: contents; }
+.dd-head-title { font-size: 14px; font-weight: 700; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-head-group button { padding: 3px 9px; }
+.dd-head-group .dd-save { margin-left: auto; }
 .dd-start { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: #161b22; border: 1px solid #21262d; border-radius: 8px; }
 .dd-start p { margin: 0; }
 .dd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -45,7 +50,6 @@
 
 /* Deep Dive: in-depth step */
 .dd-depth { display: flex; flex-direction: column; gap: 8px; }
-.dd-depth-head { align-items: center; }
 .dd-save { margin-left: auto; font-size: 12px; color: #94a3b8; display: inline-flex; gap: 8px; align-items: center; }
 .dd-save.saved { color: #34d399; }
 .dd-strip { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -70,7 +74,11 @@
 .dd-charts { display: flex; flex-direction: column; gap: 8px; flex: 1 1 0; min-height: 0; }
 .dd-chartbox { flex: 1 1 0; min-width: 0; min-height: 260px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
 @media (max-width: 1000px) { .dd-day { flex-direction: column; } .dd-charts { flex: none; } .dd-chartbox { flex: none; height: 340px; } }
-.dd-chartbox > * { flex: 1; min-height: 0; }
+.dd-chartbox > :not(.dd-frame-bar) { flex: 1; min-height: 0; }
+/* The thin bar above a chart with its name and Maximize / Restore; a chart hidden by the other's maximize keeps its place in memory. */
+.dd-frame-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 6px; background: #161b22; border-bottom: 1px solid #21262d; font-size: 11px; color: #8b949e; }
+.dd-frame-bar button { padding: 0 8px; line-height: 18px; font-size: 11px; }
+.dd-chartbox[hidden], .td-chartbox[hidden] { display: none; }
 .dd-outcome h4, .dd-tags h4 { margin: 0 0 4px; font-size: 13px; color: #cbd5e1; }
 .dd-success[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
 .dd-failed[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
