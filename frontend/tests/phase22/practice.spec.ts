@@ -56,6 +56,7 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await expect.poll(() => page.evaluate(() => (window as any).practiceStarts.length)).toBe(1);
     const started = await page.evaluate(() => (window as any).practiceStarts[0]);
     expect(started.speed).toBe(0.5);
+    expect(started.mode).toBe("replay"); // the default mode
     expect(started.plan.start_time).toBe("09:33:00");
     expect(started.plan.practice).toEqual({ category: "Breakout", strategy: "Opening range", start_offset_min: 12 });
     expect("side" in started.plan || "annotations" in started.plan).toBe(false); // the answer is never part of the plan
@@ -68,6 +69,8 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await expect(rows.nth(2)).toContainText("No-setup day: you stayed out, the right call");
     await expect(page.locator(".pr-summary")).toHaveText("2 reviewed · entered early 0, late 1, on time 0 · kept 50% on average · no-setup days: stayed out 1 of 1");
     await expect(rows.nth(0)).toContainText("In progress");
+    await expect(rows.nth(0)).toContainText("09:40 · Stepwise"); // each run says which mode it was
+    await expect(rows.nth(1)).toContainText("09:33 · Replay");
     await expect(rows.nth(0).getByRole("button", { name: "Review" })).toBeDisabled();
     await expect(rows.nth(1)).toContainText("6 min late · kept 50%");
     await rows.nth(1).getByRole("button", { name: "Review" }).click();
@@ -108,6 +111,34 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await expect(page.locator(".td-chartbox").nth(1)).toBeVisible();
     await page.getByRole("button", { name: "← Back" }).click();
     await expect(page.locator(".pr-history")).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test(`Practice on the website (${renderer}): Replay or Stepwise per run, remembered`, async ({ page }) => {
+    const errors = watch(page);
+    await open(page);
+    await page.getByRole("button", { name: /Practice/ }).click();
+    await page.locator(".pr-strategies li button").click();
+    const mode = page.getByRole("radiogroup", { name: "Practice mode" });
+    await expect(mode.getByRole("radio", { name: "Replay" })).toBeChecked(); // Replay is the default
+    await expect(page.getByLabel("Replay speed")).toBeVisible();
+    await expect(page.getByText("The replay starts a few minutes before the first recorded entry")).toBeVisible();
+    // Stepwise: no speed (you press Next Bar), and the wording says so.
+    await mode.getByRole("radio", { name: "Stepwise" }).check();
+    await expect(page.getByLabel("Replay speed")).toHaveCount(0);
+    await expect(page.getByText("press Next Bar to advance one bar at a time")).toBeVisible();
+    await page.getByRole("button", { name: "Start practice" }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).practiceStarts.length)).toBe(1);
+    const started = await page.evaluate(() => (window as any).practiceStarts[0]);
+    expect(started.mode).toBe("stepwise");
+    expect(started.plan.practice).toEqual({ category: "Breakout", strategy: "Opening range", start_offset_min: 12 });
+    // The choice is remembered the next time the screen opens; switching back to Replay brings the speed back.
+    await open(page);
+    await page.getByRole("button", { name: /Practice/ }).click();
+    await page.locator(".pr-strategies li button").click();
+    await expect(page.getByRole("radiogroup", { name: "Practice mode" }).getByRole("radio", { name: "Stepwise" })).toBeChecked();
+    await page.getByRole("radiogroup", { name: "Practice mode" }).getByRole("radio", { name: "Replay" }).check();
+    await expect(page.getByLabel("Replay speed")).toBeVisible();
     expect(errors).toEqual([]);
   });
 

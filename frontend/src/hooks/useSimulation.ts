@@ -114,7 +114,7 @@ export interface InstrumentConfig {
   override?: boolean
   group_id?: string
   session_alias?: string
-  /** Strategy Practice (replay only): the strategy being practised on this symbol and date. */
+  /** Strategy Practice (replay or stepwise): the strategy being practised on this symbol and date. */
   practice?: { category: string; strategy: string; start_offset_min: number }
 }
 

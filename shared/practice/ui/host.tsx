@@ -1,6 +1,6 @@
 import { createContext, useContext, type ComponentType, type ReactNode } from 'react'
 import type { DiveChartProps } from '../../deepdive/ui/host'
-import type { PracticeApi, PracticePlan } from '../types'
+import type { PracticeApi, PracticeMode, PracticePlan } from '../types'
 
 /** What the Strategy Practice screens need from where they run (the website or the Windows app). */
 export interface PracticeHost {
@@ -10,11 +10,13 @@ export interface PracticeHost {
   historicalDays: number
   /** Why a practice run cannot start right now (for example a session is running), or null. */
   blockedReason: string | null
+  /** The modes this host can start (a host without a Stepwise start lists only `replay`; the Start screen shows the switch when there are two). */
+  modes: readonly PracticeMode[]
   /** The host's own replay speed: the website counts seconds per tick (lower is faster), the desktop a multiplier. */
   defaultSpeed: number
   renderSpeed(value: number, onChange: (value: number) => void): ReactNode
-  /** Starts the replay on the chosen day (leaves the library for the trading screen). Rejects with a sentence the user can read. */
-  startPractice(plan: PracticePlan, speed: number): Promise<void>
+  /** Starts the replay or the Stepwise run on the chosen day (leaves the library for the trading screen; `speed` is for a replay only). Rejects with a sentence the user can read. */
+  startPractice(plan: PracticePlan, options: { mode: PracticeMode; speed: number }): Promise<void>
   /** A session whose review should open now (after Stop on the trading screen), or null. */
   reviewSessionId?: string | null
   onReviewOpened?(): void

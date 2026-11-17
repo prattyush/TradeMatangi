@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { friendlyError } from '../../deepdive/ui/errors'
-import { daysOnOffer, gradeLabel, isDayProblem, negativeDays, pickFilter } from '../model'
-import { GRADES, type Grade, type PracticeDayRef, type PracticePlan, type PracticeStrategy } from '../types'
+import { daysOnOffer, gradeLabel, isDayProblem, modeLabel, negativeDays, pickFilter } from '../model'
+import { GRADES, type Grade, type PracticeDayRef, type PracticeMode, type PracticePlan, type PracticeStrategy } from '../types'
 import { usePracticeHost } from './host'
 
 /** Choose a strategy (and optionally a symbol and grades), a speed, and start: the system picks the day and the start minute. */
+/** The mode last used, kept per browser (an optional convenience: without storage the first mode the host offers). */
+const MODE_KEY = 'practice-mode'
+const readMode = (modes: readonly PracticeMode[]): PracticeMode => {
+  try { const saved = localStorage.getItem(MODE_KEY); if (saved && (modes as readonly string[]).includes(saved)) return saved as PracticeMode } catch { /* no storage */ }
+  return modes[0] ?? 'replay'
+}
+
 export default function PracticeStart() {
   const host = usePracticeHost()
+  const [mode, setModeState] = useState<PracticeMode>(() => readMode(host.modes))
+  const setMode = (next: PracticeMode) => { setModeState(next); try { localStorage.setItem(MODE_KEY, next) } catch { /* no storage */ } }
   const [strategies, setStrategies] = useState<PracticeStrategy[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [chosen, setChosen] = useState<string | null>(null)
@@ -38,7 +47,7 @@ export default function PracticeStart() {
     try {
       plan = await host.api.pick(strategy, pickFilter(symbol, grades, negatives && absent > 0, skipped))
       if (plan.repeated) setNote('You have practised every matching day, so this one repeats.')
-      await host.startPractice(plan, speed)
+      await host.startPractice(plan, { mode, speed })
     } catch (e) {
       const message = friendlyError(e)
       if (plan && isDayProblem(message)) {
@@ -81,8 +90,11 @@ export default function PracticeStart() {
           <input type="checkbox" checked={negatives} onChange={e => setNegatives(e.target.checked)} aria-label="Include no-setup days" /> Include no-setup days
           <span className="pl-muted"> ({absent} {absent === 1 ? 'day' : 'days'}; about 1 run in 4 is one, and the right call there is not to trade)</span>
         </label>}
-        <div className="pr-field">Replay speed {host.renderSpeed(speed, setSpeed)}</div>
-        <p className="pl-muted">The replay starts a few minutes before the first recorded entry (a different minute each time). Nothing tells you whether the setup is Buy or Sell, or where you marked it; you see that in the review after you stop.</p>
+        {host.modes.length > 1 && <div className="pr-field" role="radiogroup" aria-label="Practice mode">Mode
+          {host.modes.map(option => <label key={option}><input type="radio" name="practice-mode" checked={mode === option} onChange={() => setMode(option)} /> {modeLabel(option)}</label>)}
+        </div>}
+        {mode === 'replay' && <div className="pr-field">Replay speed {host.renderSpeed(speed, setSpeed)}</div>}
+        <p className="pl-muted">{mode === 'stepwise' ? 'The run starts at a bar a few minutes before the first recorded entry; press Next Bar to advance one bar at a time.' : 'The replay starts a few minutes before the first recorded entry (a different minute each time).'} Nothing tells you whether the setup is Buy or Sell, or where you marked it; you see that in the review after you stop.</p>
         <div className="pl-bar">
           <button className="pl-primary" disabled={cannot} aria-busy={starting} aria-describedby="pr-start-hint" onClick={() => void start()}>{starting ? 'Starting…' : 'Start practice'}</button>
           <span className="pl-muted" id="pr-start-hint">{offer === 0 ? 'No day matches these choices.' : `About ${offer} ${offer === 1 ? 'day' : 'days'} on offer`}</span>
