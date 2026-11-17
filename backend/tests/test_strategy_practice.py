@@ -455,3 +455,127 @@ def test_the_routes_return_the_review_and_map_a_running_session_to_409(database)
         assert {r["session_id"] for r in client.get("/api/deep-dive/practice/runs").json()["runs"]} == {ended, running}
     finally:
         app.dependency_overrides.pop(get_request_user_id, None)
+
+
+# ── Negative tests: days the strategy was absent ─────────────────────────────
+
+def two_marked_days(first="2026-10-05", last="2026-10-14"):
+    """Marked days at both ends: the days between them (Tue 6 to Tue 13, minus the weekend) were reviewed and not marked."""
+    mark_day(day=first)
+    mark_day(day=last, marks=[mark("entry", at(10, 0))])
+
+
+ABSENT = ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13"]
+
+
+def test_the_days_between_the_oldest_and_newest_marked_day_are_the_absent_days(database):
+    two_marked_days()
+    assert practice.negative_days(USER, CAT, STRAT) == {"NIFTY": ABSENT}  # not the weekend, not the marked ends
+    mark_day(day="2026-10-08")  # a marked day in between is no longer absent
+    assert practice.negative_days(USER, CAT, STRAT)["NIFTY"] == [d for d in ABSENT if d != "2026-10-08"]
+    mark_day(day="2026-10-09", marks=[mark("exit", at(10, 0))])  # marked without an Entry: still marked, so not absent
+    assert "2026-10-09" not in practice.negative_days(USER, CAT, STRAT)["NIFTY"]
+
+
+def test_absent_days_are_judged_per_symbol_and_never_from_one_marked_day(database):
+    mark_day(day="2026-10-05", symbol="NIFTY")
+    assert practice.negative_days(USER, CAT, STRAT) == {}  # a single marked day has no range
+    mark_day(day="2026-10-14", symbol="NIFTY")
+    mark_day(day="2026-10-08", symbol="BSESEN")  # BSESEN was only reviewed on one day: nothing is known about the days around it
+    assert set(practice.negative_days(USER, CAT, STRAT)) == {"NIFTY"}
+    assert practice.negative_days("mallory", CAT, STRAT) == {}
+
+
+def test_absent_days_are_offered_only_when_asked_for_and_about_one_pick_in_four(database):
+    two_marked_days()
+    assert {practice.pick(USER, CAT, STRAT, rng=random.Random(i))["date"] for i in range(80)} <= {"2026-10-05", "2026-10-14"}  # marked days only
+    picks = [practice.pick(USER, CAT, STRAT, rng=random.Random(i), include_negatives=True) for i in range(400)]
+    absent = [p for p in picks if p["date"] in ABSENT]
+    assert 0.15 < len(absent) / len(picks) < 0.35  # about one in four
+    assert {p["date"] for p in picks} - set(ABSENT) <= {"2026-10-05", "2026-10-14"}
+    # an absent day looks like any other pick: same keys, a start at the time of a recorded entry, no strikes, never "negative"
+    one = absent[0]
+    assert set(one) == set(picks[0]) and "negative" not in json.dumps(one).lower()
+    assert one["strike_ce"] is None and one["strike_pe"] is None and one["instrument_type"] == "options"
+    assert "09:15:00" <= one["start_time"] < "10:00:00"
+    # and it can start a run: the server recognises it again
+    marker = practice.build_marker(USER, one["practice"], one["symbol"], one["date"], one["start_time"])
+    assert marker["negative"] is True and marker["recorded"] == []
+
+
+def test_a_day_that_is_neither_marked_nor_absent_cannot_start_a_run(database):
+    two_marked_days()
+    for bad in ("2026-10-10", "2026-10-04", "2026-10-20"):  # a Saturday, before the oldest, after the newest
+        with pytest.raises(ValueError, match="no Entry mark"):
+            practice.build_marker(USER, PRACTICE, "NIFTY", bad, "09:30:00")
+    with pytest.raises(ValueError, match="market hours"):
+        practice.build_marker(USER, PRACTICE, "NIFTY", "2026-10-07", "08:00:00")
+    with pytest.raises(ValueError, match="market hours"):
+        practice.build_marker(USER, PRACTICE, "NIFTY", "2026-10-07", "15:30:00")
+    assert practice.build_marker(USER, PRACTICE, "NIFTY", "2026-10-07", "10:05:00")["negative"] is True
+
+
+def store_negative_run(picked, state="ended", created=5):
+    marker = practice.build_marker(USER, picked["practice"], picked["symbol"], picked["date"], picked["start_time"])
+    session = sim_svc.create_session(picked["symbol"], picked["date"], picked["start_time"], 1.0, user_id=USER, practice=marker)
+    session.created_at = created
+    _stored(session)
+    sim_svc_table().update_item(Key={"session_id": session.session_id}, UpdateExpression="SET #s = :s",
+                                ExpressionAttributeNames={"#s": "state"}, ExpressionAttributeValues={":s": state})
+    sim_svc._sessions.pop(session.session_id, None)
+    return session.session_id
+
+
+def test_an_absent_day_is_not_repeated_until_all_were_used(database):
+    two_marked_days()
+    seen = []
+    for i in range(60):  # ask for negatives until every absent day has been practised
+        picked = practice.pick(USER, CAT, STRAT, include_negatives=True, rng=random.Random(i))
+        if picked["date"] in ABSENT:
+            assert picked["date"] not in seen  # never an absent day twice while others were left
+            seen.append(picked["date"])
+            store_negative_run(picked)
+        if len(seen) == len(ABSENT):
+            break
+    assert sorted(seen) == sorted(ABSENT)
+
+
+def test_the_review_of_an_absent_day_rewards_staying_out(database):
+    two_marked_days()
+    picked = next(p for p in (practice.pick(USER, CAT, STRAT, include_negatives=True, rng=random.Random(i)) for i in range(200)) if p["date"] in ABSENT)
+    sid = store_negative_run(picked)
+    with patch("app.services.trade_label_service.compute_round_trips_for_session", return_value=[]):
+        quiet = practice.evaluate(USER, sid, FakeBars({}))
+    assert quiet["negative"] is True and quiet["setups"] == [] and quiet["other_trades"] == []
+    assert quiet["summary"] == {"traded": False, "negative": True, "correct": True, "points": None}
+    trips = [trip(0, "BUY", "CE", 24500, (10, 0), 50.0, (10, 20), 45.0), trip(1, "BUY", None, None, (10, 30), 100.0, (10, 40), 103.0)]
+    with patch("app.services.trade_label_service.compute_round_trips_for_session", return_value=trips):
+        busy = practice.evaluate(USER, sid, FakeBars({}))
+    assert busy["summary"] == {"traded": True, "negative": True, "correct": False, "points": -2.0}  # -5 on the CE, +3 on the underlying
+    assert [t["index"] for t in busy["other_trades"]] == [0, 1]
+    assert practice.list_runs(USER)[0]["result"]["negative"] is True and practice.list_runs(USER)[0]["result"]["correct"] is False
+
+
+def test_strategies_report_the_absent_days_and_a_normal_review_says_it_is_not_negative(database):
+    two_marked_days()
+    assert practice.list_strategies(USER)[0]["negative_days"] == [{"symbol": "NIFTY", "days": 6}]
+    result, _ = review(FakeBars({(None, None): {(9, 45): (100, 101), (10, 30): (118, 120)}}), [], day="2026-10-05")
+    assert result["negative"] is False
+
+
+def test_the_pick_route_takes_include_negatives(database):
+    from fastapi.testclient import TestClient
+    from app.dependencies import get_request_user_id
+    from app.main import app
+
+    two_marked_days()
+    app.dependency_overrides[get_request_user_id] = lambda: USER
+    try:
+        client = TestClient(app)
+        body = {"category": CAT, "strategy": STRAT, "include_negatives": True}
+        dates = {client.post("/api/deep-dive/practice/pick", json=body).json()["date"] for _ in range(60)}
+        assert dates & set(ABSENT) and dates - set(ABSENT)
+        plain = {client.post("/api/deep-dive/practice/pick", json={"category": CAT, "strategy": STRAT}).json()["date"] for _ in range(30)}
+        assert not plain & set(ABSENT)
+    finally:
+        app.dependency_overrides.pop(get_request_user_id, None)

@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 GRADES = ("ideal", "average", "poor", "ungraded", "failed", "open")  # what a marked day can be filtered on
 START_OFFSET_MIN, START_OFFSET_MAX = 5, 25  # minutes before the first recorded Entry the replay starts (whole minutes)
 REPLAY_OPENS_SECONDS = 9 * 3600 + 15 * 60  # 09:15:00, the earliest a practice replay may start
+REPLAY_CLOSES_SECONDS = 15 * 3600  # a replay starts before 15:00:00
+NEGATIVE_SHARE = 0.25  # about one pick in four is a day the strategy was absent, when the user asks for them
 
 
 def _seconds_of_day(clock: str) -> int:
@@ -40,6 +42,33 @@ def first_entry_seconds(setups: list[dict]) -> Optional[int]:
     return min(times) if times else None
 
 
+def negative_days_of(setups: list[dict]) -> dict[str, list[str]]:
+    """Days the strategy was **absent**, per symbol, from the user's Deep Dive setups of one strategy.
+
+    A symbol's reviewed range runs from its oldest marked day to its newest; a trading day inside it that carries no setup of
+    that strategy and symbol is taken as reviewed and not marked, so the setup was not there. Days outside the range were
+    never necessarily looked at, so they are not offered. A day marked without an Entry is a marked day, not an absent one.
+    """
+    from datetime import date as calendar_date, timedelta
+    from app.utils import is_trading_day
+
+    marked: dict[str, set[str]] = {}
+    for setup in setups:
+        marked.setdefault(setup["symbol"], set()).add(setup["date"])
+    result: dict[str, list[str]] = {}
+    for symbol, dates in marked.items():
+        first, last = calendar_date.fromisoformat(min(dates)), calendar_date.fromisoformat(max(dates))
+        days = [d.isoformat() for d in (first + timedelta(days=n) for n in range(1, (last - first).days)) if is_trading_day(d) and d.isoformat() not in dates]
+        if days:
+            result[symbol] = days
+    return result
+
+
+def negative_days(user_id: str, category: str, strategy: str) -> dict[str, list[str]]:
+    from app.services import deep_dive_service as dd
+    return negative_days_of(dd._setup_rows(user_id, dd.dive_key(category, strategy)))
+
+
 def build_marker(user_id: str, practice: dict, symbol: str, date: str, start_time: str) -> dict:
     """The marker stored on a practice session; ``ValueError`` (shown to the user) when the day cannot be practised.
 
@@ -48,13 +77,19 @@ def build_marker(user_id: str, practice: dict, symbol: str, date: str, start_tim
     """
     category, strategy = practice["category"].strip(), practice["strategy"].strip()
     setups = recorded_day(user_id, category, strategy, symbol, date)
-    if not setups:
-        raise ValueError("That day has no Entry mark in your deep dive, so it cannot be practised")
-    entry_at = first_entry_seconds(setups)
     try:
         start_at = _seconds_of_day(start_time)
     except ValueError:
         raise ValueError("The start time is not a time of day")
+    if not setups:
+        if date not in negative_days(user_id, category, strategy).get(symbol, []):
+            raise ValueError("That day has no Entry mark in your deep dive, so it cannot be practised")
+        if not REPLAY_OPENS_SECONDS <= start_at < REPLAY_CLOSES_SECONDS:
+            raise ValueError("The replay must start during market hours")
+        # A day the strategy was absent: a negative test. Nothing was recorded, and the best trade is none.
+        return {"category": category, "strategy": strategy, "symbol": symbol, "date": date, "start_time": start_time,
+                "start_offset_min": int(practice.get("start_offset_min") or 0), "negative": True, "recorded": []}
+    entry_at = first_entry_seconds(setups)
     if start_at >= entry_at:
         raise ValueError("The replay must start before the first recorded entry")
     return {
@@ -109,8 +144,10 @@ def list_strategies(user_id: str) -> list[dict]:
             symbols[symbol] = symbols.get(symbol, 0) + 1
             for grade in {grade_of(s) for s in setups}:
                 grades[grade] += 1
+        absent = negative_days_of(entry["setups"])
         result.append({"category": category, "strategy": strategy, "days": len(days), "grades": grades,
-                       "symbols": [{"symbol": sym, "days": n} for sym, n in sorted(symbols.items())]})
+                       "symbols": [{"symbol": sym, "days": n} for sym, n in sorted(symbols.items())],
+                       "negative_days": [{"symbol": sym, "days": len(found)} for sym, found in sorted(absent.items())]})
     return sorted(result, key=lambda r: (r["category"].casefold(), r["strategy"].casefold()))
 
 
@@ -119,12 +156,16 @@ def _practised(user_id: str, category: str, strategy: str) -> set[tuple[str, str
 
 
 def pick(user_id: str, category: str, strategy: str, symbol: Optional[str] = None, grades: Optional[list[str]] = None,
-         rng: Optional[random.Random] = None) -> dict:
+         rng: Optional[random.Random] = None, include_negatives: bool = False) -> dict:
     """Choose a day and a replay start for a practice run.
 
     Only the user's own Entry-marked days that match the filters, and whose first Entry is after 09:15 (so there is a start
     before it). A day already practised is not repeated until every candidate was. The replay starts a random whole number of
     minutes (5 to 25) before the first Entry, never before 09:15. Nothing is stored. The answer carries no side and no marks.
+
+    With ``include_negatives`` about one pick in four is a day the strategy was **absent** (see ``negative_days_of``), also not
+    repeated until all were used. It starts at the time of a random recorded entry of the strategy, so a negative day cannot be
+    told from the plan; the server recognises it again at the session start.
     """
     from app.services import options_service
 
@@ -140,12 +181,29 @@ def pick(user_id: str, category: str, strategy: str, symbol: Optional[str] = Non
         if entry_at is None or entry_at <= REPLAY_OPENS_SECONDS:
             continue  # nothing to start before
         candidates[(date, sym)] = (setups, entry_at)
-    if not candidates:
+    from app.services import deep_dive_service as dd
+
+    used = _practised(user_id, category, strategy)
+    absent = {}
+    if include_negatives:
+        absent = {(day, sym): None for sym, days in negative_days(user_id, category, strategy).items() if not symbol or sym == symbol
+                  for day in days if (day, sym) not in used}
+    if not candidates and not absent:
         raise ValueError("No day of this strategy with an Entry mark matches your choice")
-    fresh = [k for k in candidates if k not in _practised(user_id, category, strategy)]
-    pool = sorted(fresh or candidates)
-    date, sym = rng.choice(pool)
-    setups, entry_at = candidates[(date, sym)]
+    fresh = [k for k in candidates if k not in used]
+    negative = bool(absent) and (not candidates or rng.random() < NEGATIVE_SHARE)
+    if negative:
+        date, sym = rng.choice(sorted(absent))
+        marked = dd._setup_rows(user_id, dd.dive_key(category, strategy))
+        entries = [e for e in (first_entry_seconds(g) for g in _entry_days(user_id, category, strategy).values()) if e]
+        entry_at = rng.choice(entries) if entries else 10 * 3600  # when a recorded entry came, so the start looks like any other
+        mine = [m for m in marked if m["symbol"] == sym] or marked
+        # Nothing was recorded on this day: no strikes (they are picked at the start), the interval of the strategy's own days.
+        setups = [{"interval_minutes": mine[0]["interval_minutes"], "strike_ce": None, "strike_pe": None}]
+    else:
+        pool = sorted(fresh or candidates)
+        date, sym = rng.choice(pool)
+        setups, entry_at = candidates[(date, sym)]
     start_at = max(REPLAY_OPENS_SECONDS, entry_at - rng.randint(START_OFFSET_MIN, START_OFFSET_MAX) * 60)
     offset = (entry_at - start_at) // 60  # whole minutes: entry marks sit on a candle start
     strike_ce = next((s["strike_ce"] for s in setups if s["strike_ce"]), None)
@@ -157,7 +215,7 @@ def pick(user_id: str, category: str, strategy: str, symbol: Optional[str] = Non
         "strike_ce": strike_ce, "strike_pe": strike_pe,
         "expiry": options_service.get_expiry_date(sym, date) if optionable else None,
         "practice": {"category": category, "strategy": strategy, "start_offset_min": offset},
-        "days_available": len(candidates), "repeated": not fresh,
+        "days_available": len(candidates) + len(absent), "repeated": not negative and not fresh,
     }
 
 
@@ -314,6 +372,8 @@ def evaluate(user_id: str, session_id: str, loader: Optional[BarsLoader] = None)
         trips = [t for t in (_user_trip(trip) for trip in labels.compute_round_trips_for_session(session_id)) if t]
     except Exception:
         logger.warning("practice review: round trips unavailable for %s", session_id, exc_info=True)
+    if marker.get("negative"):
+        return _negative_review(session_id, marker, trips)
     optionable = symbol in options_service.STRIKE_INTERVALS
     cache: dict = {}
     setups = []
@@ -344,9 +404,20 @@ def evaluate(user_id: str, session_id: str, loader: Optional[BarsLoader] = None)
         "start_time": marker["start_time"], "start_offset_min": marker["start_offset_min"], "setups": setups,
         "other_trades": [t for t in trips if t["index"] not in matched],
     }
+    result["negative"] = False
     result["summary"] = _summary(setups)
     _remember(session_id, result["summary"])
     return result
+
+
+def _negative_review(session_id: str, marker: dict, trips: list[dict]) -> dict:
+    """A day the strategy was absent: staying out is the right call, and every trade is one that should not have been taken."""
+    closed = [t["points"] for t in trips if t["points"] is not None]
+    summary = {"traded": bool(trips), "negative": True, "correct": not trips, "points": round(sum(closed), 2) if closed else None}
+    _remember(session_id, summary)
+    return {"session_id": session_id, "category": marker["category"], "strategy": marker["strategy"], "symbol": marker["symbol"],
+            "date": marker["date"], "start_time": marker["start_time"], "start_offset_min": marker["start_offset_min"],
+            "negative": True, "setups": [], "other_trades": trips, "summary": summary}
 
 
 def _summary(setups: list[dict]) -> dict:
