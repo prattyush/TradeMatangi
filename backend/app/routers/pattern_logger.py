@@ -327,3 +327,49 @@ async def ohlc_options(
     except Exception as exc:
         logger.error("ohlc_options error %s %s %s %s: %s", symbol, date, strike, right, exc)
         raise HTTPException(status_code=500, detail="Failed to load options OHLC")
+
+
+# ── Traded patterns (Phase 26, S10): the user's labelled trades as pattern material ──────────────
+
+class SaveTradedRequest(BaseModel):
+    session_id: str
+    round_trip_index: int
+    category: str
+    strategy: str
+
+
+async def _traded(fn, *args, **kwargs):
+    import asyncio
+    try:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0]) if exc.args else str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc.args[0]) if exc.args else str(exc)) from exc
+    except Exception as exc:
+        logger.exception("traded patterns request failed")
+        raise HTTPException(status_code=500, detail="Traded patterns request failed") from exc
+
+
+@router.get("/traded/summary")
+async def traded_summary(start_date: Optional[str] = Query(None), end_date: Optional[str] = Query(None),
+                         user_id: str = Depends(get_request_user_id)):
+    """Every strategy the user has labelled a trade with (expected or actual): counts and the last day. Reads labels only."""
+    from app.services import traded_patterns_service
+    return {"strategies": await _traded(traded_patterns_service.summary, user_id, start_date, end_date)}
+
+
+@router.get("/traded")
+async def traded_trades(category: str = Query(...), strategy: str = Query(...), start_date: Optional[str] = Query(None),
+                        end_date: Optional[str] = Query(None), limit: int = Query(50, ge=1, le=200),
+                        user_id: str = Depends(get_request_user_id)):
+    """The user's trades labelled with one strategy, newest first, each with its entry and exit."""
+    from app.services import traded_patterns_service
+    return await _traded(traded_patterns_service.list_traded, user_id, category, strategy, start_date, end_date, limit)
+
+
+@router.post("/traded/save")
+async def traded_save(req: SaveTradedRequest, user_id: str = Depends(get_request_user_id)):
+    """Copy one labelled trade's entry and exit into the pattern chart of its day (then edit it in Annotate)."""
+    from app.services import traded_patterns_service
+    return await _traded(traded_patterns_service.save_traded, user_id, req.session_id, req.round_trip_index, req.category, req.strategy)

@@ -617,24 +617,6 @@ def save_to_patterns(user_id: str, category: str, strategy: str, symbol: str, da
     marks = setup["annotations"]
     if not marks:
         raise ValueError("Mark the setup on the charts first")
-    has_options = any(a.get("instrument") in ("CE", "PE") for a in marks)
-    instrument_type, right = ("options", "CE") if has_options else ("equity", None)
-    patterns.register_annotation_names(user_id, marks)
-    existing = patterns.find_chart_by_date(user_id, setup["symbol"], setup["date"], instrument_type, right)
-    if existing and existing.get("can_delete"):
-        wanted = {"CE": setup["strike_ce"], "PE": setup["strike_pe"] or setup["strike_ce"]}
-        have = {"CE": _int_or_none(existing.get("strike")),
-                "PE": _int_or_none(existing.get("strike_pe", existing.get("strike")))}
-        for leg in ("CE", "PE"):
-            if any(a.get("instrument") == leg for a in marks) and wanted[leg] and have[leg] and wanted[leg] != have[leg]:
-                raise ValueError(f"The pattern chart for this day uses a different {leg} strike ({have[leg]})")
-        known = {a["id"] for a in existing["annotations"]}
-        added = [a for a in marks if a["id"] not in known]
-        patterns.update_chart(existing["chart_id"], existing["annotations"] + added, existing.get("notes", ""),
-                              strike=None, strike_pe=None)
-        return {"chart_id": existing["chart_id"], "merged": True, "added": len(added)}
-    chart = patterns.create_chart(
-        user_id=user_id, symbol=setup["symbol"], date=setup["date"], instrument_type=instrument_type,
-        annotations=marks, notes=setup["notes"], right=right, strike=setup["strike_ce"],
-        strike_pe=setup["strike_pe"], interval_minutes=setup["interval_minutes"])
-    return {"chart_id": chart["chart_id"], "merged": False, "added": len(marks)}
+    return patterns.save_marks_to_chart(
+        user_id, setup["symbol"], setup["date"], marks, strike_ce=setup["strike_ce"], strike_pe=setup["strike_pe"],
+        interval_minutes=setup["interval_minutes"], notes=setup["notes"])
