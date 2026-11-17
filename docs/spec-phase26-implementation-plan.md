@@ -7,7 +7,7 @@ Approved 2026-11-16. Source of truth for sprint order; update the status column 
 
 Today the Pattern Library lets the owner mark a strategy (category + strategy) on single-day charts. It says nothing about *how often* a setup behaves a certain way. Phase 26 adds a **Deep Dive** on one strategy at a time so the owner can understand a setup in detail:
 
-1. Pick a category + strategy, then mark on a calendar the days the setup occurred, each as **Buy**, **Sell** or **both** (spec: `docs/spec-phase26.md`, untracked owner draft, never commit it unless asked).
+1. Pick a category + strategy, then mark on a calendar the days the setup occurred, each as **Buy**, **Sell** or **both** (spec: `docs/spec-phase26.md`, the owner's requirement draft; committed to `dev` on 2026-11-17 with the status and what was built under each point).
 2. Walk the marked days one by one (underlying chart + the matching CE/PE chart), mark the setup on the charts, mark **tags** valid or not valid ("second leg", "reversed by double top"), and flag the day **success / failed**.
 3. Tags grow as the owner goes. Gaps (a tag added on the 20th is unmarked on the 11th) must be visible.
 4. The tag marks become **frequency %**, shown (a) in a Deep Dive results view, (b) next to the Expected Pattern selector **during trade labelling, with most value in live sessions** (replay, stepwise, paper, real), and also in post-analysis Label Trades.
@@ -96,7 +96,7 @@ No separate dive table: a dive exists when it has setups or tags. Sharing reads 
 
 | Sprint | Scope | Tests | Exit |
 |---|---|---|---|
-| **S0** Docs | `docs/spec-phase26-implementation-plan.md` (from this plan), `docs/phase26-manual-acceptance.md` skeleton, `docs/todo.md`, memory. Spec draft stays untracked unless the owner asks. Docs go straight to `dev`. | n/a | Plan doc on `dev` |
+| **S0** Docs | `docs/spec-phase26-implementation-plan.md` (from this plan), `docs/phase26-manual-acceptance.md` skeleton, `docs/todo.md`, memory. The owner's spec draft was committed later, on request (2026-11-17). Docs go straight to `dev`. | n/a | Plan doc on `dev` |
 | **S1** Max Price 30 → 50 (**merged, #865**) | `desktop_preparation.py` (`range(30)`, message "within 30 strikes", docstring), `options_service.py` `_MAX_SCAN_INTERVALS`; update the tests asserting 30 (`test_desktop_preparation.py`, `test_fetch_patterns_script.py`, `test_minute_ohlc.py`, `test_reselect_strike.py`, `pattern-library.spec.ts`, `browseModel.test.ts`, `browse.spec.ts`), the comment and `MAX_PRICE_TIMEOUT_MS` check in `BrowseScreen.tsx`, docs (`live-history-providers.md`, `architecture-phone.md`, `spec-phase24.md`, `phase24-manual-acceptance.md`). `scripts/fetch-patterns-data.py` `MAX_PRICES` are rupee caps, not strike counts: leave. | backend suite | scan stops at the first hit; cold worst case measured and noted |
 | **S2** Backend core (**in PR**) | tables, service, router, stats, sharing, save-to-patterns, desktop mirror, Rust + TS allowlists and parity tests, setup script, architecture-backend | new `test_deep_dive.py` (moto): CRUD, side validation, tag-values map, gap matrix, stats incl. few-days, sharing read-only, archive; `test_desktop_patterns.py`; cargo; `patternsApi.test.ts` | routes exposed on both transports |
 | **S3** Shared model + API client (**merged, #867**) | `shared/deepdive/model.ts`, `api` type + website client in `services/api.ts`, desktop `patternsClient` methods | `windowsapp/src/deepDive.test.ts` | pure logic fully tested |
@@ -133,7 +133,7 @@ Weekend/holiday days (calendar + server validation); day without data (chart sho
 - End to end by hand (`docs/phase26-manual-acceptance.md`): start the stack (`scripts/start-backend.sh`, `scripts/start-frontend.sh`), mark 4–5 days (one with both sides), mark tags, add a tag on day 3 and confirm earlier days flag, check results %, open Label Trades and a replay/stepwise label popup and see the % for that strategy, check a shared account read-only, check Pattern view traded markers.
 
 ## Open points to confirm during build (no action needed now)
-1. Whether the owner wants the spec draft committed (untracked now).
+1. ~~Whether the owner wants the spec draft committed~~: done on request, 2026-11-17 (`docs/spec-phase26.md` now carries the status).
 2. The 3-min bar interval for traded markers when the owner's pattern chart used another interval (use the pattern's saved `interval_minutes`, else 3).
 3. S10 cost on many real-session snapshots; fall back to a stored entry/exit time on labels if the round-trip rebuild is too slow.
 
@@ -263,4 +263,4 @@ What was reviewed for real-use problems, and what changed:
 
 ## Final status (2026-11-17)
 
-All sprints are merged to `dev` except S11 (in PR). What remains is the **owner's acceptance** of sections A to I in `docs/phase26-manual-acceptance.md` (Windows build, website and a real session), and nothing from Phase 26 goes to `preprod` before the owner's real-session try of S9 (`docs/todo.md`). `docs/spec-phase26.md` is the owner's draft and stays untracked unless asked.
+All sprints are merged to `dev` except S11 (in PR). What remains is the **owner's acceptance** of sections A to I in `docs/phase26-manual-acceptance.md` (Windows build, website and a real session), and nothing from Phase 26 goes to `preprod` before the owner's real-session try of S9 (`docs/todo.md`). `docs/spec-phase26.md` (the owner's requirement draft) carries the status and a "Built" note under every requirement.
