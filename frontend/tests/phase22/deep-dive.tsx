@@ -97,6 +97,50 @@ const savedTradedChart = { chart_id: "chart-9", user_id: "owner", symbol: "NIFTY
   notes: "", interval_minutes: 3, top_patterns: {}, risk_reward_ratios: {}, created_at: "", updated_at: "", can_delete: true,
   annotations: [{ id: "m1", time: tradeBase + 21 * 60, price: 100, type: "entry", instrument: "CE", strategy_name: "Opening range", category: "Breakout", text: "" }] };
 
+// ── Strategy Practice (S15): stub routes, and a host that records the starts the page asks for ──
+w.practicePicks = [] as any[];
+w.practiceStarts = [] as any[];
+const practiceStrategies = [{ category: "Breakout", strategy: "Opening range", days: 3, grades: { ideal: 1, average: 0, poor: 0, ungraded: 1, failed: 1, open: 0 }, symbols: [{ symbol: "BSESEN", days: 1 }, { symbol: "NIFTY", days: 2 }] }];
+const practicePlan = { symbol: "NIFTY", date: "2026-10-16", start_time: "09:33:00", interval_minutes: 3, instrument_type: "options", strike_ce: 24500, strike_pe: 24400, expiry: "2026-10-20",
+  practice: { category: "Breakout", strategy: "Opening range", start_offset_min: 12 }, days_available: 2, repeated: params.get("repeated") === "1" };
+const at = (minutes: number) => base + minutes * 60; // minutes after 09:15
+const mk = (id: string, type: string, instrument: string, time: number, price: number) => ({ id, time, price, type, instrument, strategy_name: "Opening range", category: "Breakout", text: "" });
+const clockOf = (time: number) => new Date(time * 1000).toISOString().slice(11, 16);
+const recorded = { entry: { time: at(30), clock: clockOf(at(30)), price: 100, instrument: "underlying" }, exit: { time: at(75), clock: clockOf(at(75)), price: 112, instrument: "underlying" }, marks: [] as any[] };
+const trade = (index: number, extra: any = {}) => ({ index, instrument: "CE", right: "CE", strike: 24500, expiry: "2026-10-20", action: "BUY", side: "buy", state: "closed", quantity: 75, pnl: 1500, pnl_pct: 2,
+  entry: { time: at(36) + 20, price: 55 }, exit: { time: at(69) + 5, price: 75 }, points: 20, entry_delta_min: 6, exit_delta_min: -6, capture_pct: 50, theoretical_points: 40, theoretical_rupees: 3000, ...extra });
+const review = {
+  session_id: "ended1", category: "Breakout", strategy: "Opening range", symbol: "NIFTY", date: "2026-10-16", start_time: "09:33:00", start_offset_min: 12,
+  setups: [
+    { side: "buy", interval_minutes: 3, outcome: "success", strength: "ideal", strike_ce: 24500, strike_pe: null, recorded,
+      annotations: [mk("a1", "entry", "underlying", at(30), 100), mk("a2", "exit", "underlying", at(75), 112), mk("a3", "entry", "CE", at(30), 50)],
+      theoretical: [
+        { instrument: "underlying", strike: null, expiry: null, entry: { time: at(30), clock: clockOf(at(30)), price: 100 }, exit: { time: at(75), clock: clockOf(at(75)), price: 112 }, points: 12, pct: 12 },
+        { instrument: "CE", strike: 24500, expiry: "2026-10-20", unavailable: "No price data for this instrument on that day" }],
+      trades: [trade(0)] },
+    { side: "sell", interval_minutes: 3, outcome: "failed", strength: null, strike_ce: null, strike_pe: 24400, recorded: { entry: null, exit: null, marks: [] },
+      annotations: [], theoretical: [{ instrument: "underlying", strike: null, expiry: null, unavailable: "Needs both an Entry and an Exit mark" }], trades: [] }],
+  other_trades: [trade(1, { action: "SELL", side: "sell", instrument: "PE", right: "PE", strike: 24400, points: -3, pnl: -225, entry_delta_min: null, exit_delta_min: null, capture_pct: null, theoretical_points: null, theoretical_rupees: null })],
+  summary: { traded: true, side: "buy", entry_delta_min: 6, exit_delta_min: -6, capture_pct: 50, points: 20, theoretical_points: 40 },
+};
+const practiceRuns = [
+  { session_id: "running1", category: "Breakout", strategy: "Opening range", symbol: "NIFTY", date: "2026-10-15", start_time: "09:40:00", start_offset_min: 8, state: "running", ended: false, created_at: 2, result: null },
+  { session_id: "ended1", category: "Breakout", strategy: "Opening range", symbol: "NIFTY", date: "2026-10-16", start_time: "09:33:00", start_offset_min: 12, state: "ended", ended: true, created_at: 1,
+    result: { traded: true, side: "buy", entry_delta_min: 6, exit_delta_min: -6, capture_pct: 50, points: 20, theoretical_points: 40 } }];
+function practice(path: string, body: any, query: Record<string, string>): any {
+  if (path === "practice/strategies") return { strategies: practiceStrategies };
+  if (path === "practice/pick") {
+    w.practicePicks.push(body);
+    if (params.get("pickerror")) throw new Error("No day of this strategy with an Entry mark matches your choice");
+    return practicePlan;
+  }
+  if (path === "practice/runs") return { runs: practiceRuns };
+  if (path === "practice/evaluate") {
+    if (query.session_id === "running1") return json({ detail: "Stop the session first: the review shows the recorded answer" }, 409);
+    return review;
+  }
+  throw new Error(`unknown practice route ${path}`);
+}
 const original = window.fetch.bind(window);
 window.fetch = async (input: any, options: any = {}) => {
   const url = new URL(typeof input === "string" ? input : input.url, location.origin);
@@ -111,6 +155,7 @@ window.fetch = async (input: any, options: any = {}) => {
   if (params.get("server") === "old" && isNew) return json({ detail: "Not Found" }, 404);
   if (params.get("server") === "down" && isNew) throw new TypeError("Failed to fetch");
   try {
+    if (path.startsWith("/api/deep-dive/practice/")) { const out = practice(path.replace("/api/deep-dive/", ""), body, query); return out instanceof Response ? out : json(out); }
     if (path.startsWith("/api/deep-dive/")) return json(deepDive(path.replace("/api/deep-dive/", ""), method, body, query));
     if (path === "/api/pattern/traded/summary") return json({ strategies: tradedSummary });
     if (path === "/api/pattern/traded") return json(tradedList);
@@ -129,4 +174,9 @@ window.fetch = async (input: any, options: any = {}) => {
   } catch (error) { return json({ detail: String((error as Error).message) }, 400); }
   return json({});
 };
-createRoot(document.getElementById("test-root")!).render(<PatternLibrary />);
+const practiceHost = params.get("practice") === "1" ? {
+  startPractice: async (plan: any, speed: number) => { w.practiceStarts.push({ plan, speed }); if (params.get("startfail")) throw new Error("Could not load that day's data"); },
+  blockedReason: params.get("blocked") === "1" ? "A session is running. Stop it before you start a practice run." : null,
+  reviewSessionId: params.get("review"), onReviewOpened: () => { w.reviewOpened = true; },
+} : undefined;
+createRoot(document.getElementById("test-root")!).render(<PatternLibrary practice={practiceHost} />);
