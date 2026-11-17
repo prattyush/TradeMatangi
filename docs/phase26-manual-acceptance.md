@@ -94,4 +94,10 @@ Needs a deep dive with several days, tags and outcomes. **Try replay or stepwise
 6. Stop the backend's Deep Dive tables or use an older backend (or turn the network off for a moment): the popup still opens, shows its category and strategy lists and saves, just without the panel.
 7. **Real session** (last): the same as step 1 and 3 on a real trade; the label saves and the order flow is not affected in any way. Report anything that feels slower or different while trading.
 
+## G. Fixes after the first tries (symbols, calendar, chart layout)
+
+1. **Symbols:** in the Deep dive start form and in the marking step, the Symbol is a dropdown with NIFTY 50, SENSEX, Reliance Industries, Tata Motors CV and Tata Power. Start a deep dive on a stock: the in-depth step shows its underlying chart and a **CE** (Buy day) or **PE** (Sell day) chart, picked at OTM from the 09:15 price at the stock's strike gap (5). The desktop Pattern Library's symbol box lists the same five.
+2. **Calendar:** check a month you know: each date sits under its own weekday (a Monday under MON, a Friday under FRI), including months that start on a Sunday or a Thursday. Go back a month and check again.
+3. **In-depth layout:** on a tall window the two charts (underlying on top, option below) together fill the height down to the bottom of the window, half each, with no empty half-page; both time axes are visible. On a short window each chart keeps a usable height and the page scrolls. Resize the window: the charts follow. Open the "Needs marking" box or add a tag note: the charts adjust.
+
 ## Report back

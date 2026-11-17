@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { readableError } from '../../analysis/behavior/types'
 import {
-  applyTagValues, formatDay, nextGapIndex, positionLabel, stepIndex, toDiveSetup, withSetups, withTags,
+  applyTagValues, nextGapIndex, positionLabel, stepIndex, toDiveSetup, withSetups, withTags,
 } from '../model'
 import type { DeepDiveTag, Dive, DiveSetup, SetupFields, TagValue } from '../types'
 import DayStrip from './DayStrip'
@@ -95,6 +95,5 @@ export default function InDepth({ dive, setDive, onGoMark, focus }: Props) {
     <DayWorkspace key={`${setup.symbol}|${setup.date}|${setup.side}`} setup={setup} setups={setups} tags={dive.tags}
       category={dive.category} strategy={dive.strategy} canEdit={canEdit} change={change} markTags={markTags}
       addTag={addTag} archiveTag={id => changeTagStatus(id, 'archive')} restoreTag={id => changeTagStatus(id, 'restore')} />
-    <p className="pl-muted dd-foot">{formatDay(setup.date)} · {setup.symbol}</p>
   </div>
 }

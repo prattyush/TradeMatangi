@@ -5,6 +5,7 @@ import { dayMarksByDate, formatDay, removalImpact, sideLabel, toDiveSetup, withS
 import type { Dive, DiveSetup, Side } from '../types'
 import DiveCalendar from './DiveCalendar'
 import { useDeepDiveHost } from './host'
+import { symbolChoices } from '../symbols'
 
 interface Props {
   dive: Dive
@@ -58,8 +59,8 @@ export default function DateMarking({ dive, setDive, symbol, onSymbol }: Props) 
   return <div className="dd-mark">
     <div className="dd-mark-left">
       <div className="pl-bar">
-        <label>Symbol <input list="dd-symbols" value={symbol} onChange={e => onSymbol(e.target.value.toUpperCase())} size={9} /></label>
-        <datalist id="dd-symbols"><option value="NIFTY" /><option value="BSESEN" /></datalist>
+        <label>Symbol <select value={symbol} onChange={e => onSymbol(e.target.value)} aria-label="Symbol">
+          {symbolChoices(symbol).map(choice => <option key={choice.symbol} value={choice.symbol}>{choice.label}</option>)}</select></label>
         <span className="pl-muted">{forSymbol.length} marked {forSymbol.length === 1 ? 'day' : 'days'}</span>
       </div>
       {readOnly && <p className="pl-muted" role="status">This deep dive was shared with you: you can look at it but not change it.</p>}

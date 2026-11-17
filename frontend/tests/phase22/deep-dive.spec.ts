@@ -25,6 +25,7 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await page.getByText("Start a deep dive").waitFor();
     await page.getByText("No deep dives yet").waitFor();
     const selects = page.locator(".dd-start select");
+    expect(await page.locator('.dd-start select[aria-label="Symbol"] option').evaluateAll((options) => options.map((o) => (o as HTMLOptionElement).value))).toEqual(["NIFTY", "BSESEN", "RELIND", "TATMOT", "TATPOW"]);
     await selects.nth(0).selectOption("Breakout");
     await selects.nth(1).selectOption("Opening range");
     await page.getByRole("button", { name: "Start deep dive" }).click();
@@ -35,6 +36,21 @@ for (const renderer of ["lightweight", "kline"] as const) {
     for (const date of [dayA, dayB]) {
       for (let i = 0; i < 3 && !(await cell(date).isVisible()); i += 1) await page.getByRole("button", { name: "Previous month" }).click();
     }
+    // Every day of the month sits under its own weekday header (a hidden neighbouring-month cell must not shift the grid).
+    const misplaced = () => page.evaluate(() => {
+      const heads = [...document.querySelectorAll(".dd-cal-dow")].map((e) => { const r = e.getBoundingClientRect(); return r.left + r.width / 2; });
+      return [...document.querySelectorAll(".dd-cal-cell:not([hidden]) .dd-cal-day")].flatMap((button) => {
+        const date = (button.getAttribute("aria-label") ?? "").slice(0, 10);
+        const r = button.getBoundingClientRect(), x = r.left + r.width / 2;
+        const column = heads.reduce((best, h, i) => (Math.abs(h - x) < Math.abs(heads[best] - x) ? i : best), 0);
+        const wanted = (new Date(date + "T00:00:00Z").getUTCDay() + 6) % 7; // Monday first
+        return column === wanted ? [] : [`${date} is under column ${column}, wanted ${wanted}`];
+      });
+    });
+    expect(await misplaced()).toEqual([]);
+    await page.getByRole("button", { name: "Previous month" }).click();
+    expect(await misplaced()).toEqual([]);
+    await page.getByRole("button", { name: "Next month" }).click();
     await cell(dayB).getByRole("button", { name: "B", exact: true }).click();
     await cell(dayA).getByRole("button", { name: "S", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll(".dd-days li").length === 2);
@@ -47,6 +63,30 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await page.getByText(/1 \/ 2 ·/).waitFor();
     await expect(page.locator(".dd-chartbox")).toHaveCount(2);
     await page.locator(".dd-chartbox canvas").first().waitFor();
+    // The day area runs to the bottom of the window and the two stacked charts share all of it, half each: no empty half-page on a
+    // tall window. On a short window each chart keeps a height where its time axis is not clipped and the page scrolls.
+    const measure = () => page.evaluate(() => {
+      const rect = (el: Element) => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, bottom: r.bottom, height: r.height }; };
+      return { day: rect(document.querySelector(".dd-day")!), charts: [...document.querySelectorAll(".dd-chartbox")].map(rect) };
+    });
+    for (const [width, height] of [[1920, 1080], [1600, 900]]) {
+      await page.setViewportSize({ width, height });
+      // The layout settles a moment after the window changes size: wait for it, then check.
+      await expect.poll(async () => { const m = await measure(); return m.day.bottom > height - 40 && m.day.bottom <= height && Math.abs(m.charts[0].height - m.charts[1].height) < 4; }).toBe(true);
+      const m = await measure();
+      expect(m.day.bottom).toBeLessThanOrEqual(height);
+      expect(m.charts).toHaveLength(2);
+      expect(m.charts[1].top).toBeGreaterThan(m.charts[0].top); // stacked
+      expect(m.charts[1].left).toBe(m.charts[0].left);
+      expect(m.charts[0].height + m.charts[1].height).toBeGreaterThan(m.day.height * 0.75); // together they use the area
+      expect(Math.abs(m.charts[0].height - m.charts[1].height)).toBeLessThan(4); // half each
+      expect(m.charts[1].bottom).toBeLessThanOrEqual(height); // the lower chart and its axis are in view
+      if (process.env.DD_SHOTS) await page.screenshot({ path: `${process.env.DD_SHOTS}/fill-${renderer}-${width}x${height}.png` });
+    }
+    await page.setViewportSize({ width: 1366, height: 768 });
+    const short = await measure();
+    for (const chart of short.charts) expect(chart.height).toBeGreaterThanOrEqual(255); // never squeezed below an unclipped axis
+    await page.setViewportSize({ width: 1200, height: 800 });
     await expect(page.locator(".dd-chartbox").nth(1)).toContainText(/CE 24500/); // a Buy setup is traded on its CE
     await page.getByLabel("New tag").fill("Second leg");
     await page.getByRole("button", { name: "Add tag" }).click();

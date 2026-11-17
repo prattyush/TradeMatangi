@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { toggleAnnotation } from '../marking'
 import { formatDay, optionRight, sideLabel, strikeLabel } from '../model'
 import type { DeepDiveTag, DiveSetup, Outcome, SetupFields, TagValue } from '../types'
 import DayIntervalBridge from './DayIntervalBridge'
 import { useDeepDiveHost } from './host'
 import TagPanel from './TagPanel'
-import { markCount, optionEligible, strikeForSide, toolsFor } from './inDepthModel'
+import { markCount, optionEligible, strikeForSide, strikeModeFor, toolsFor } from './inDepthModel'
 import { useDayStrikes } from './useDayStrikes'
+import { useFillWindow } from './useFillWindow'
 
 interface Props {
   setup: DiveSetup
@@ -48,7 +49,10 @@ export default function DayWorkspace(props: Props) {
   const setOutcome = (outcome: Outcome | null) => change({ outcome }, { outcome })
   const strikeText = strikes.state === 'ready' ? `${right} ${strikeForSide(setup.side, strikes)}` : ''
 
-  return <div className="dd-day">
+  const area = useRef<HTMLDivElement>(null)
+  useFillWindow(area, { minHeight: 640 })
+
+  return <div className="dd-day" ref={area}>
     <DayIntervalBridge interval={setup.interval_minutes} onUserChange={canEdit ? minutes => change({ interval_minutes: minutes }, { interval_minutes: minutes }) : undefined} />
     <div className="dd-day-main">
       {canEdit && <div className="pl-bar">
@@ -80,7 +84,7 @@ export default function DayWorkspace(props: Props) {
       {optionEligible(setup.symbol) && strikes.state === 'ready' && <div className="pl-bar">
         <span className="pl-muted">{sideLabel(setup.side)} setup → {strikeText} (CE {strikes.ce} / PE {strikes.pe}{setup.strike_mode ? `, ${strikeLabel(setup.strike_mode)}` : ''})</span>
         {canEdit && <>
-          {settings.mode !== 'threshold' && <label className="pl-muted">OTM <input type="number" value={offset} onChange={e => setOffset(Number(e.target.value) || 0)} style={{ width: 56 }} aria-label="OTM offset in strikes" /></label>}
+          {strikeModeFor(setup.symbol, settings) === 'otm' && <label className="pl-muted">OTM <input type="number" value={offset} onChange={e => setOffset(Number(e.target.value) || 0)} style={{ width: 56 }} aria-label="OTM offset in strikes" /></label>}
           <button onClick={() => void strikes.repick(offset)} title="Pick the strikes again from the account's strike setting">Pick strikes again</button>
         </>}
       </div>}

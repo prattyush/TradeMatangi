@@ -1,11 +1,12 @@
 /** Pure helpers of the in-depth step: which charts a day needs, which mark tools it offers, what must be saved again. */
 import type { SetupFields, DeepDiveSetup, Side } from '../types'
 import { optionRight } from '../model'
-import { PATTERN_INDEX_SYMBOLS, patternStrikeRule, type PatternStrikeSettings } from '../../../frontend/src/patternStrikes'
+import { patternStrikeRule, type PatternStrikeSettings } from '../../../frontend/src/patternStrikes'
+import { STRIKE_INTERVALS } from '../strikes'
 import { TOOL_OPTIONS, type ToolOption } from '../marking'
 
-/** Only indices have option chains here (the Patterns rule): other symbols get the underlying chart alone. */
-export const optionEligible = (symbol: string) => PATTERN_INDEX_SYMBOLS.includes(symbol)
+/** The Pattern symbols all have option chains and a strike gap, so each gets an option chart (Max Price is for the indices only). */
+export const optionEligible = (symbol: string) => symbol in STRIKE_INTERVALS
 
 export const needsStrikes = (setup: Pick<DeepDiveSetup, 'strike_ce' | 'strike_pe'>) => setup.strike_ce == null || setup.strike_pe == null
 

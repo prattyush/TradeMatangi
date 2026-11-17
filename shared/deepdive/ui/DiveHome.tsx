@@ -3,6 +3,7 @@ import PatternNameSelect from '../../analysis/PatternNameSelect'
 import { readableError } from '../../analysis/behavior/types'
 import type { DiveRef, DiveSummary } from '../types'
 import { useDeepDiveHost } from './host'
+import { symbolChoices } from '../symbols'
 
 interface Props {
   loading: boolean
@@ -41,8 +42,8 @@ export default function DiveHome({ loading, error, onOpen }: Props) {
           onCreate={createName(names.addCategory)} /></label>
         <label>Strategy <PatternNameSelect noun="strategy" value={strategy} options={strategies} placeholder="— select —" style={{}} onChange={setStrategy}
           onCreate={createName(names.addStrategy)} /></label>
-        <label>Symbol <input list="dd-symbols" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} size={9} /></label>
-        <datalist id="dd-symbols"><option value="NIFTY" /><option value="BSESEN" /></datalist>
+        <label>Symbol <select value={symbol} onChange={e => setSymbol(e.target.value)} aria-label="Symbol">
+          {symbolChoices(symbol).map(choice => <option key={choice.symbol} value={choice.symbol}>{choice.label}</option>)}</select></label>
         <button className="pl-primary" disabled={!category || !strategy || !symbol || loading} onClick={() => onOpen({ category, strategy }, symbol)}>
           {loading ? 'Opening…' : 'Start deep dive'}
         </button>
