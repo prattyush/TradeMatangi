@@ -140,11 +140,34 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await page.getByRole("button", { name: "Next day" }).click();
     await expect(page.locator(".dd-chartbox").nth(1)).toContainText(/PE 24500/); // the Sell day shows its PE
 
+    // Rename a tag from another day than the one it was marked on: the name changes everywhere, the marks stay.
+    await page.getByLabel("New tag").fill("Double top");
+    await page.getByRole("button", { name: "Add tag" }).click();
+    await expect(page.locator(".dd-taglist li", { hasText: "Double top" })).toHaveCount(1);
+    await page.getByRole("button", { name: "Rename Second leg" }).click();
+    await page.getByLabel("New name for Second leg").fill("Double top"); // taken by another active tag
+    await page.getByLabel("New name for Second leg").press("Enter");
+    await expect(page.getByRole("alert").filter({ hasText: /already exists/ })).toBeVisible();
+    expect(await page.evaluate(() => (window as any).renames ?? [])).toEqual([]); // nothing was sent
+    await page.getByLabel("New name for Second leg").press("Escape"); // cancel
+    await expect(page.locator(".dd-taglist li", { hasText: "Second leg" })).toHaveCount(1);
+    await page.getByRole("button", { name: "Rename Second leg" }).click();
+    await page.getByLabel("New name for Second leg").fill("  Second leg follows  ");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.locator(".dd-taglist li", { hasText: "Second leg follows" })).toHaveCount(1);
+    await expect(page.getByText(/Renamed\./)).toBeVisible();
+    expect(await page.evaluate(() => (window as any).renames)).toEqual(["Second leg follows"]);
+    await page.locator("button[aria-label='Previous day']").click(); // the day it was marked on: same mark, new name
+    await page.getByText(/1 \/ 2 ·/).waitFor();
+    await expect(page.locator(".dd-taglist li.valid", { hasText: "Second leg follows" })).toHaveCount(1);
+    await page.locator("button[aria-label='Next day']").click();
+    await page.getByText(/2 \/ 2 ·/).waitFor();
+
     if (process.env.DD_SHOTS) await page.screenshot({ path: `${process.env.DD_SHOTS}/${renderer}-step2.png` });
     // Step 3: results.
     await page.getByRole("tab", { name: "3 · Results" }).click();
     await page.getByText("How often each tag was valid").waitFor();
-    expect(await page.locator(".dd-freq li", { hasText: "Second leg" }).innerText()).toMatch(/100%\s*\(n=1\)/);
+    expect(await page.locator(".dd-freq li", { hasText: "Second leg follows" }).innerText()).toMatch(/100%\s*\(n=1\)/); // the renamed tag, with its old mark
     await page.getByRole("button", { name: /^Sell \(1\)/ }).click();
     expect(await page.locator(".dd-freq li", { hasText: "Second leg" }).innerText()).toMatch(/—\s*\(n=0\)/);
     await page.getByRole("button", { name: /^All \(2\)/ }).click();

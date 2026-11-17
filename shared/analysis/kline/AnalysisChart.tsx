@@ -284,7 +284,8 @@ export default function DesktopAnalysisChart(props: Props) {
   },[props.liveCandles,chartKey])
   useEffect(()=>{
     if(!props.pickMode)return
-    const escape=(event:KeyboardEvent)=>{ if(event.key==='Escape'){ event.stopPropagation(); pickRef.current.onCancel?.() } }
+    // Escape cancels a pick, but not while the user is typing in a field elsewhere on the screen (it belongs to that field, e.g. cancelling a rename).
+    const escape=(event:KeyboardEvent)=>{ if(event.key!=='Escape')return; const target=event.target as HTMLElement|null; if(target&&(['INPUT','TEXTAREA','SELECT'].includes(target.tagName)||target.isContentEditable))return; event.stopPropagation(); pickRef.current.onCancel?.() }
     window.addEventListener('keydown',escape,true); return()=>window.removeEventListener('keydown',escape,true)
   },[props.pickMode])
   useEffect(()=>{

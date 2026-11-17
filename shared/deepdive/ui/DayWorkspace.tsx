@@ -21,6 +21,7 @@ interface Props {
   change: (patch: Partial<DiveSetup>, fields?: SetupFields) => void
   markTags: (values: Record<string, TagValue | null>) => void
   addTag: (name: string) => Promise<DeepDiveTag>
+  renameTag: (tagId: string, name: string) => Promise<void>
   archiveTag: (tagId: string) => void
   restoreTag: (tagId: string) => void
 }
@@ -30,7 +31,7 @@ interface Props {
  * PE) with the setup's mark tools, and beside them the outcome, the tags and the notes. Mount it with a key per day.
  */
 export default function DayWorkspace(props: Props) {
-  const { setup, setups, tags, category, strategy, canEdit, change, markTags, addTag, archiveTag, restoreTag } = props
+  const { setup, setups, tags, category, strategy, canEdit, change, markTags, addTag, renameTag, archiveTag, restoreTag } = props
   const right = optionRight(setup.side)
   const { settings, Chart } = useDeepDiveHost()
   const strikes = useDayStrikes(setup, canEdit, fields => change({ ...fields } as Partial<DiveSetup>, fields))
@@ -99,7 +100,7 @@ export default function DayWorkspace(props: Props) {
           <button aria-pressed={setup.outcome === 'failed'} disabled={!canEdit} className="dd-failed" onClick={() => setOutcome(setup.outcome === 'failed' ? null : 'failed')}>Failed</button>
         </div>
       </div>
-      <TagPanel tags={tags} setups={setups} setup={setup} canEdit={canEdit} onMark={markTags} onAdd={addTag} onArchive={archiveTag} onRestore={restoreTag} />
+      <TagPanel tags={tags} setups={setups} setup={setup} canEdit={canEdit} onMark={markTags} onAdd={addTag} onRename={renameTag} onArchive={archiveTag} onRestore={restoreTag} />
       <label className="pl-notes">Notes
         <textarea rows={3} key={`${setup.date}-${setup.side}`} defaultValue={setup.notes} disabled={!canEdit} placeholder="What made this setup work or fail?"
           onBlur={e => { if (e.target.value !== setup.notes) change({ notes: e.target.value }, { notes: e.target.value }) }} />

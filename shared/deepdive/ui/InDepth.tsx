@@ -64,6 +64,10 @@ export default function InDepth({ dive, setDive, onGoMark, focus }: Props) {
     setDive(current => withTags(current, [...current.tags, created]))
     return created
   }
+  const renameTag = async (tagId: string, name: string) => {
+    const updated = await api.updateTag(ref, tagId, name)
+    setDive(current => withTags(current, current.tags.map((t: DeepDiveTag) => (t.tag_id === tagId ? updated : t))))
+  }
   const changeTagStatus = (tagId: string, action: 'archive' | 'restore') => {
     setFailure(null)
     const run = action === 'archive' ? api.archiveTag(ref, tagId) : api.restoreTag(ref, tagId)
@@ -95,6 +99,6 @@ export default function InDepth({ dive, setDive, onGoMark, focus }: Props) {
     </details>
     <DayWorkspace key={`${setup.symbol}|${setup.date}|${setup.side}`} setup={setup} setups={setups} tags={dive.tags}
       category={dive.category} strategy={dive.strategy} canEdit={canEdit} change={change} markTags={markTags}
-      addTag={addTag} archiveTag={id => changeTagStatus(id, 'archive')} restoreTag={id => changeTagStatus(id, 'restore')} />
+      addTag={addTag} renameTag={renameTag} archiveTag={id => changeTagStatus(id, 'archive')} restoreTag={id => changeTagStatus(id, 'restore')} />
   </div>
 }

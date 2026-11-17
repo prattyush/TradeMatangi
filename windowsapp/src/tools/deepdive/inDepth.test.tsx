@@ -115,7 +115,7 @@ describe('panels', () => {
   })
 
   const panel = (index: number, canEdit = true) => renderToStaticMarkup(<TagPanel tags={tags} setups={state.setups} setup={state.setups[index]} canEdit={canEdit}
-    onMark={() => undefined} onAdd={async () => tag('x')} onArchive={() => undefined} onRestore={() => undefined} />)
+    onMark={() => undefined} onAdd={async () => tag('x')} onRename={async () => undefined} onArchive={() => undefined} onRestore={() => undefined} />)
 
   it('shows each tag as valid, not valid or unmarked, and warns about an open day', () => {
     const complete = panel(0)
@@ -127,6 +127,14 @@ describe('panels', () => {
     const open = panel(2)
     expect(open).toContain('2 tags are not marked on this day.')
     expect(open).toContain('Mark the rest not valid (2)')
+  })
+
+  it('offers a rename on each tag you can edit, and none on a shared deep dive', () => {
+    const html = panel(2)
+    expect(html).toContain('aria-label="Rename Second leg"')
+    expect(html).toContain('aria-label="Rename Double top"')
+    expect(html).not.toContain('Rename Retired') // an archived tag is restored first
+    expect(panel(2, false)).not.toContain('Rename ')
   })
 
   it('shows a shared deep dive without editing controls', () => {

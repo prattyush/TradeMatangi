@@ -14,6 +14,7 @@ Sections are added as sprints land. Report back with what failed, with the strat
 | H | From your trades | labelled trades in several sessions |
 | I | Hardening (S11) | |
 | J | Review changes: side-by-side traded charts, Maximize per chart, Deep Dive header in one row | |
+| K | Rename a tag | |
 
 ## A. Desktop: Deep dive tab, marking days (S4)
 
@@ -134,5 +135,13 @@ Needs the desktop rebuilt from `dev` and trades you have labelled (expected and 
 4. **Older backend or no connection:** point the app at a backend without the Deep Dive (or stop the backend). Deep dive and From your trades say "This server does not have this feature yet" or "Could not reach the server", the category and strategy lists still load, and "Your deep dives" says it could not be loaded instead of "Loading…".
 5. **Many days:** a deep dive with a hundred marked days still opens at once; Next, Prev, the day strip and Results stay quick.
 6. **Speed of the percentages:** open Label Trades or a live label popup twice in a row: the second time is instant. Add a tag mark in the Deep Dive and open a label form at once: the new percentage is there.
+
+## K. Rename a tag
+
+1. In the in-depth step, click **✎** on a tag. The name becomes an input; type a new name and press Enter (or Save). The row shows the new name and a note says it shows on every day.
+2. Go to a day where the tag was marked Valid or Not valid: it has the **same mark** under the **new name**. Results shows the new name with the same percentage and n.
+3. Try a name another active tag already has: "An active tag with this name already exists" and nothing changes. Press Escape in the input: it goes back to the name.
+4. Open Label Trades and choose this strategy as the Expected Pattern: the Your deep dive panel shows the new name (within about 20 seconds).
+5. A deep dive shared with you (read-only) shows no ✎.
 
 ## Report back

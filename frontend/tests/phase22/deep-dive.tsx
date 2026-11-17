@@ -60,6 +60,14 @@ function deepDive(path: string, method: string, body: any, query: Record<string,
     store.tags.push(tag);
     return tag;
   }
+  const renamed = /^tags\/(\w+)\/update$/.exec(path);
+  if (renamed) {
+    const t = store.tags.find((x) => x.tag_id === renamed[1]);
+    if (store.tags.some((x) => x.status === "active" && x.tag_id !== t.tag_id && x.name.toLowerCase() === String(body.name).trim().toLowerCase())) throw new Error("An active tag with this name already exists");
+    t.name = String(body.name).trim();
+    w.renames = [...(w.renames ?? []), t.name];
+    return t;
+  }
   const m = /^tags\/(\w+)\/(archive|restore)$/.exec(path);
   if (m) { const t = store.tags.find((x) => x.tag_id === m[1]); t.status = m[2] === "archive" ? "archived" : "active"; return t; }
   throw new Error("unhandled deep dive path " + path);
