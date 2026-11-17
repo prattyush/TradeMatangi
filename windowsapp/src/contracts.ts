@@ -66,6 +66,8 @@ export interface DesktopTradingSession {
   stepwise: boolean; total_bars: number | null
   group_id: string | null; wallet_ledger_id: string
   lot_size: number
+  /** Strategy Practice run: its strategy only, never the recorded side or marks. */
+  practice?: { category: string; strategy: string } | null
 }
 
 export interface DesktopTradingSettings {
