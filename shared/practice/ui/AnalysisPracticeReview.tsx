@@ -12,7 +12,7 @@ export default function AnalysisPracticeReview({ host, sessionId, onBack }: { ho
   const full = useMemo<PracticeHost>(() => ({
     api: { ...host.api, strategies: async () => [], pick: async () => { throw new Error('A practice run is started from the Pattern Library.') } },
     Chart: host.Chart, historicalDays: host.historicalDays ?? 2, blockedReason: 'A practice run is started from the Pattern Library.',
-    defaultSpeed: 1, renderSpeed: () => null, startPractice: async () => { throw new Error('A practice run is started from the Pattern Library.') },
+    modes: ['replay'], defaultSpeed: 1, renderSpeed: () => null, startPractice: async () => { throw new Error('A practice run is started from the Pattern Library.') },
   }), [host])
   return <PracticeHostProvider host={full}><div className="pr"><PracticeReview sessionId={sessionId} onBack={onBack} /></div></PracticeHostProvider>
 }

@@ -453,3 +453,9 @@ cd frontend && node node_modules/typescript/bin/tsc --noEmit
 ## Phase 26: Strategy Practice hardening (S18)
 
 The Start screen remembers the days a start could not use: when the day was picked but the replay could not start for a reason about the day (its data could not be loaded), the day goes into a skipped list, the screen says "That day could not be started: ... Press Start practice again for another day.", shows "n days skipped", and sends the list as `exclude` with the next pick. A refusal about the session (one is already running: `isDayProblem` is false) skips nothing. Choosing another strategy forgets the list. The Start button has `aria-busy` while starting and `aria-describedby` for its hint.
+
+## Phase 26: Strategy Practice, Stepwise on the website (S20)
+
+- **Mode switch on Start:** when the host offers two modes (`PracticeHost.modes`; the website lists Replay and Stepwise, the Windows app only Replay until S21) the Start screen shows a **Mode** radio group, default Replay, remembered in `localStorage` (`practice-mode`, optional). Stepwise hides the speed control and says to press Next Bar; `host.startPractice(plan, {mode, speed})`.
+- **Website start** (`App.tsx` `startPractice`): a Stepwise run is `session_type: 'stepwise'` (speed 1) with the user's own Stepwise bar (`stratIntervalSecs`) and the start **snapped down to a bar boundary** (`snapStartTime`, the twin of the server's `snap_start`, never before 09:15), so the first bar is a full one; the server snaps the same way and records the start it used. The ordinary Next Bar control and the Stepwise label popup work as in normal Stepwise. The header badge reads "Practice: strategy · Stepwise".
+- **History** shows each run's mode ("09:33 · Replay" / "09:40 · Stepwise") from `PracticeRun.session_type`; Analysis already separated the two by session type and labels a Stepwise practice run "Stepwise".

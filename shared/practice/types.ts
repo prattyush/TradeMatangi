@@ -54,8 +54,13 @@ export interface RunSummary {
   correct?: boolean
 }
 
+/** A practice run is a Replay (time runs at a speed) or a Stepwise run (one bar per Next Bar press). */
+export type PracticeMode = 'replay' | 'stepwise'
+
 export interface PracticeRun {
   session_id: string
+  /** `sim` (a replay) or `stepwise`; absent from an older server (a replay). */
+  session_type?: 'sim' | 'stepwise'
   category: string
   strategy: string
   symbol: string

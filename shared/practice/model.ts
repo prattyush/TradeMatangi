@@ -1,7 +1,7 @@
 /** Pure Strategy Practice logic shared by every host: wording of the review, grade filters and the chart marks of your trades. */
 import type { PatternAnnotation } from '../analysis/api'
 import { clock } from '../traded/model'
-import { GRADES, type Grade, type PracticeDayRef, type PracticePick, type PracticeRun, type PracticeStrategy, type ReviewSetup, type ReviewTrade, type RunSummary, type TheoreticalPair } from './types'
+import { GRADES, type Grade, type PracticeDayRef, type PracticeMode, type PracticePick, type PracticeRun, type PracticeStrategy, type ReviewSetup, type ReviewTrade, type RunSummary, type TheoreticalPair } from './types'
 
 export const gradeLabel = (grade: Grade) => ({ ideal: 'Ideal', average: 'Average', poor: 'Poor', ungraded: 'Success (not graded)', failed: 'Failed', open: 'No outcome' }[grade])
 
@@ -50,6 +50,25 @@ export function captureSentence(trade: Pick<ReviewTrade, 'capture_pct' | 'theore
   if (trade.theoretical_points <= 0) return 'The recorded marks made nothing on this contract.'
   if (trade.points === null) return 'Still open: no exit to compare.'
   return `You kept ${captureText(trade.capture_pct)} of the ${pointsText(trade.theoretical_points)} on offer.`
+}
+
+export const modeLabel = (mode: PracticeMode) => (mode === 'stepwise' ? 'Stepwise' : 'Replay')
+/** A run's mode as History shows it (a record from an older server is a replay). */
+export const runModeLabel = (run: Pick<PracticeRun, 'session_type'>) => modeLabel(run.session_type === 'stepwise' ? 'stepwise' : 'replay')
+
+const OPENS_SECONDS = 9 * 3600 + 15 * 60
+
+/**
+ * A Stepwise practice start snapped down to a bar boundary (never before 09:15:00): the twin of the server's `snap_start`, same test table.
+ * Stepwise plays from the start to the end of the bar that contains it, so a start inside a bar would give a short first bar. 09:15 is a
+ * boundary for 180 and 300 second bars but not for 120, hence the floor at the open.
+ */
+export function snapStartTime(start: string, intervalSecs: number): string {
+  const [h, m, s = 0] = start.split(':').map(Number)
+  const seconds = h * 3600 + m * 60 + s
+  const snapped = intervalSecs > 0 ? Math.max(OPENS_SECONDS, seconds - (seconds % intervalSecs)) : seconds
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${two(Math.floor(snapped / 3600))}:${two(Math.floor((snapped % 3600) / 60))}:${two(snapped % 60)}`
 }
 
 /** What a no-setup day (the strategy was absent) came to: staying out is right, any trade is one that should not have been taken. */

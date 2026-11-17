@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { formatDay } from '../../deepdive/model'
 import { friendlyError } from '../../deepdive/ui/errors'
-import { historyLine, historySummary, runLine } from '../model'
+import { historyLine, historySummary, runLine, runModeLabel } from '../model'
 import type { PracticeRun } from '../types'
 import { usePracticeHost } from './host'
 
@@ -26,7 +26,7 @@ export default function PracticeHistory({ onReview }: { onReview: (sessionId: st
         <td>{formatDay(run.date)}</td>
         <td>{run.category} / {run.strategy}</td>
         <td>{run.symbol}</td>
-        <td className="pl-muted">{run.start_time.slice(0, 5)}</td>
+        <td className="pl-muted">{run.start_time.slice(0, 5)} · {runModeLabel(run)}</td>
         <td>{run.ended ? runLine(run.result) : <span className="pl-muted">In progress</span>}</td>
         <td className="pl-actions"><button disabled={!run.ended} title={run.ended ? 'Review this run' : 'Stop the session first'} onClick={() => onReview(run.session_id)}>Review</button></td>
       </tr>)}</tbody>

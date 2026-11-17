@@ -39,8 +39,9 @@ const BrowseWorkspace = lazy(() => import('./components/browse/BrowseWorkspace')
 // Games (Phase 25): a lazy overlay like Browse; nothing loads until it is opened.
 const GamesWorkspace = lazy(() => import('./components/games/GamesWorkspace'))
 import PatternLibrary from './pages/PatternLibrary'
-import type { PracticePlan } from '../../shared/practice/types'
+import type { PracticeMode, PracticePlan } from '../../shared/practice/types'
 import { practiceStartConfig } from '../../shared/practice/startConfig'
+import { snapStartTime } from '../../shared/practice/model'
 import ChartStructures from './pages/ChartStructures'
 import type { ChartVisibleRange, PaneType } from './components/Chart'
 import ChartContextMenu, { ContextMenuAction } from './components/ChartContextMenu'
@@ -1646,7 +1647,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
 
   // ── Strategy Practice (Phase 26): a replay on a day marked in a Deep Dive, started from the Pattern Library's Practice tab ──
   // The day, start minute and strikes come from the server's pick; the trading screen is the ordinary replay screen.
-  const startPractice = useCallback(async (plan: PracticePlan, speed: number) => {
+  const startPractice = useCallback(async (plan: PracticePlan, { mode, speed }: { mode: PracticeMode; speed: number }) => {
+    const sessionType = mode === 'stepwise' ? 'stepwise' : 'sim'
     const c = await practiceStartConfig(plan, {
       getExpiry: (symbol, date) => api.getExpiry(symbol, date),
       getPriceAt: (symbol, date, time) => api.getPriceAt(symbol, date, time, 'replay'),
@@ -1654,15 +1656,18 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
     let config: InstrumentConfig
     if (c.instrument_type === 'options' && c.expiry && c.strike_ce != null && c.strike_pe != null) {
       handleOptionsReady({ strike: c.strike_ce, ceStrike: c.strike_ce, peStrike: c.strike_pe, expiry: c.expiry, atmStrike: c.strike_ce, underlyingPrice: c.underlyingPrice })
-      config = { symbol: c.symbol, date: c.date, instrument_type: 'options', strike: c.strike_ce, expiry: c.expiry, strike_ce: c.strike_ce, strike_pe: c.strike_pe, session_type: 'sim' }
+      config = { symbol: c.symbol, date: c.date, instrument_type: 'options', strike: c.strike_ce, expiry: c.expiry, strike_ce: c.strike_ce, strike_pe: c.strike_pe, session_type: sessionType }
     } else {
       handleOptionsReady(null)
-      config = { symbol: c.symbol, date: c.date, instrument_type: 'equity', session_type: 'sim' }
+      config = { symbol: c.symbol, date: c.date, instrument_type: 'equity', session_type: sessionType }
     }
     // No override: earlier replays of the day are never deleted, and a practice run is kept apart from them.
-    await handleStart(plan.start_time, speed, { ...config, practice: plan.practice })
+    // A Stepwise run advances by whole bars (the user's own Stepwise bar), so it starts on a bar boundary: the first bar is a full one.
+    // The server snaps it the same way and records the start it used.
+    const startTime = mode === 'stepwise' ? snapStartTime(plan.start_time, stratIntervalSecs) : plan.start_time
+    await handleStart(startTime, mode === 'stepwise' ? 1 : speed, { ...config, practice: plan.practice })
     setShowPatternLibrary(false)
-  }, [handleStart, handleOptionsReady])
+  }, [handleStart, handleOptionsReady, stratIntervalSecs])
   const practiceBlockedReason = sim.sessionState !== 'idle' && sim.sessionState !== 'ended'
     ? 'A session is running. Stop it before you start a practice run.' : null
 
@@ -2301,7 +2306,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         {sim.practice && sim.sessionState !== 'idle' && (
           <div data-testid="practice-badge" style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d2238', border: '1px solid #1f6feb', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#79c0ff' }}
             title="A practice run: its trades are kept apart from your normal replays and Performance totals">
-            <span>Practice: {sim.practice.strategy}</span>
+            <span>Practice: {sim.practice.strategy}{sim.stepwise ? ' · Stepwise' : ''}</span>
             {sim.sessionState === 'ended' && sim.sessionId && (
               <button onClick={() => { setPracticeReviewId(sim.sessionId); setShowPatternLibrary(true) }}
                 style={{ background: '#1f6feb', border: 'none', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}>

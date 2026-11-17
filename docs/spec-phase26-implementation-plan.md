@@ -318,5 +318,5 @@ The owner asked for Stepwise (one bar per Next Bar press) in Strategy Practice. 
 | Sprint | Scope |
 |---|---|
 | S19 | Backend: the marker on `stepwise`, the snap, the recomputed offset, no attaching a practice start to another screen's session, practice runs out of context trades, `session_type` on runs. **Built:** `test_strategy_practice.py` (45), the desktop trading, Stepwise, simulation and analysis suites unchanged (316) |
-| S20 | Shared screens and website: the Replay / Stepwise switch (speed hidden for Stepwise), `startPractice(plan, {mode, speed})`, History and badge show the mode, the TS snap twin |
+| S20 | Shared screens and website: the Replay / Stepwise switch (speed hidden for Stepwise), `startPractice(plan, {mode, speed})`, History and badge show the mode, the TS snap twin. **Built:** `PracticeHost.modes` (the website offers both, the desktop only Replay until S21), `snapStartTime` with the same table as the server, the website start as `session_type: 'stepwise'` with the user's bar; `practice.test.ts` (27), `practice.spec.ts` (mode switch, remembered, History mode) |
 | S21 | Windows app: launch mode, the practice effects for Stepwise, the snap inside `startRun`, the badge for both modes, the check script for both modes, acceptance items, `CLAUDE.md` row |

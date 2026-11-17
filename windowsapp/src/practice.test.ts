@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createPracticeClient } from '../../shared/practice/client'
 import { practiceStartConfig } from '../../shared/practice/startConfig'
 import {
-  bestFor, captureSentence, captureText, daysOnOffer, deltaText, gradeLabel, isDayProblem, negativeDays, negativeVerdict, pctText, pickFilter, pointsText, runLine, tripMarks,
+  bestFor, captureSentence, captureText, daysOnOffer, deltaText, gradeLabel, isDayProblem, modeLabel, negativeDays, runModeLabel, snapStartTime, negativeVerdict, pctText, pickFilter, pointsText, runLine, tripMarks,
 } from '../../shared/practice/model'
 import { GRADES, type Grade, type PracticeStrategy, type ReviewTrade } from '../../shared/practice/types'
 
@@ -36,6 +36,27 @@ describe('what to send for a pick', () => {
   })
   it('names every grade', () => {
     expect(GRADES.map(gradeLabel)).toEqual(['Ideal', 'Average', 'Poor', 'Success (not graded)', 'Failed', 'No outcome'])
+  })
+})
+
+describe('a Stepwise start snapped to a bar boundary (the twin of the server\'s snap_start, same table)', () => {
+  it('floors to a multiple of the bar and never before the open', () => {
+    expect([snapStartTime('09:33:00', 180), snapStartTime('09:34:00', 180), snapStartTime('09:35:00', 180), snapStartTime('09:36:00', 180)]).toEqual(['09:33:00', '09:33:00', '09:33:00', '09:36:00'])
+    expect([snapStartTime('09:34:00', 300), snapStartTime('09:20:00', 300)]).toEqual(['09:30:00', '09:20:00'])
+    expect([snapStartTime('09:15:00', 180), snapStartTime('09:15:00', 300), snapStartTime('09:15:00', 120)]).toEqual(['09:15:00', '09:15:00', '09:15:00']) // 120 s: its bar starts at 09:14, clamped to the open
+    expect([snapStartTime('09:16:00', 120), snapStartTime('09:17:00', 120), snapStartTime('09:16:30', 120)]).toEqual(['09:16:00', '09:16:00', '09:16:00'])
+    for (let h = 9; h < 14; h += 1) for (let m = 0; m < 60; m += 1) {
+      if (h === 9 && m < 15) continue
+      for (const interval of [120, 180, 300]) {
+        const text = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
+        const snapped = snapStartTime(text, interval)
+        expect(snapped <= text && snapped >= '09:15:00').toBe(true)
+        expect(snapped === '09:15:00' || (Number(snapped.slice(0, 2)) * 3600 + Number(snapped.slice(3, 5)) * 60) % interval === 0).toBe(true)
+      }
+    }
+  })
+  it('names the modes', () => {
+    expect([modeLabel('replay'), modeLabel('stepwise'), runModeLabel({ session_type: 'stepwise' }), runModeLabel({ session_type: 'sim' }), runModeLabel({})]).toEqual(['Replay', 'Stepwise', 'Stepwise', 'Replay', 'Replay'])
   })
 })
 
