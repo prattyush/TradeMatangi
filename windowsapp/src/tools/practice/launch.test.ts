@@ -12,9 +12,16 @@ const ids = () => { let n = 0; return () => `t${++n}` }
 describe('a practice launch', () => {
   it('carries the day, start, contracts, speed and marker, and nothing of the recorded answer', () => {
     const launch = launchFrom(7, plan(), config(), 2)
-    expect(launch).toEqual({ id: 7, symbol: 'NIFTY', date: '2026-10-08', start_time: '09:33:00', interval_minutes: 3, instrument_type: 'options',
+    expect(launch).toEqual({ id: 7, mode: 'replay', symbol: 'NIFTY', date: '2026-10-08', start_time: '09:33:00', interval_minutes: 3, instrument_type: 'options',
       strike_ce: 24500, strike_pe: 24400, expiry: '2026-10-13', speed: 2, practice: { category: 'Breakout', strategy: 'Opening range', start_offset_min: 12 } })
     expect(JSON.stringify(launch)).not.toMatch(/side|annotation|recorded/)
+  })
+
+  it('is a replay unless a Stepwise run is asked for', () => {
+    expect(launchFrom(1, plan(), config(), 2).mode).toBe('replay')
+    const stepwise = launchFrom(2, plan(), config(), 1, 'stepwise')
+    expect(stepwise.mode).toBe('stepwise')
+    expect(JSON.stringify(stepwise)).not.toMatch(/side|annotation|recorded/)
   })
 
   it('opens the underlying with the CE and PE the day was marked on, on the chart interval', () => {

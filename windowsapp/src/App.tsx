@@ -43,6 +43,7 @@ import { StepInput } from './StepInput'
 import { availableExitQuantity, isStopOrder, orderBusy, orderPosition } from './orderEditing'
 import { retainedPanes, compactLayout, type PreparedSession } from './sessionPreparation'
 import { practiceTiles, type PracticeLaunch } from './tools/practice/launch'
+import { snapStartTime } from '../../shared/practice/model'
 import { FloatingOrderWindow, type FloatingOrderDraft } from './FloatingOrderWindow'
 import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing, ticketQuantityTiers, TICKET_SIZING_CHOICES } from './ticketSizing'
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
@@ -1716,7 +1717,7 @@ function ScreenController(props: ScreenControllerProps) {
       override: false,
       resume_bar_index: null as number | null,
       // Strategy Practice: the marker makes this replay a practice run (the server resolves the recorded day from it).
-      ...(practiceRef.current && mode === 'Replay' ? { practice: practiceRef.current.practice } : {}),
+      ...(practiceRef.current && isHistoricalTradingMode(mode) ? { practice: practiceRef.current.practice } : {}),
     }
   }
   // Strategy Practice (Pattern Library > Practice): a launch for this screen sets up the day (charts, date, start, speed) in the
@@ -1773,6 +1774,14 @@ function ScreenController(props: ScreenControllerProps) {
       let resumeSessionId: string | null = null
       let replayStartTime = `${runStartTime}:00`
       let initialBarIndex: number | undefined
+      if (startBody && practiceRef.current && mode === 'Stepwise') {
+        // A Stepwise practice run advances by whole bars (the user's own Stepwise bar), so it starts on a bar boundary and the first bar is a
+        // full one. The server snaps the same way and records the start it used; the run controls show it.
+        const snapped = snapStartTime(replayStartTime, Number(startBody.strategy_interval_secs))
+        startBody.start_time = snapped
+        replayStartTime = snapped
+        setRunStartTime(snapped.slice(0, 5))
+      }
       if (startBody && !attached && !practiceRef.current) {
         const candidateParams = new URLSearchParams({ symbol: String(startBody.symbol), date, instrument_type: String(startBody.instrument_type), desktop_mode: mode.toLowerCase() })
         candidateQuery = `candidate?${candidateParams}`
@@ -2048,16 +2057,16 @@ function ScreenController(props: ScreenControllerProps) {
     setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles, layout: compactLayout(tiles.length) } : screen))
     setActiveToolTileId(tiles[0].id)
     setMaximizedTileId(null)
-    switchMode('Replay')
+    switchMode(launch.mode === 'stepwise' ? 'Stepwise' : 'Replay')
     setRunDate(launch.date)
     setRunStartTime(launch.start_time.slice(0, 5))
     setReplaySpeed(String(launch.speed))
     setPracticeStage(launch)
   }, [props.practiceRequest])
-  // Step 2: once the screen shows Replay on that day with the practice charts, start it and report how it went.
+  // Step 2: once the screen shows Replay or Stepwise on that day with the practice charts, start it and report how it went.
   useEffect(() => {
     const launch = practiceStage
-    if (!launch || mode !== 'Replay' || runDate !== launch.date || activeScreen.tiles[0]?.symbol !== launch.symbol || activeScreen.tiles[0]?.tradingDate !== launch.date) return
+    if (!launch || mode !== (launch.mode === 'stepwise' ? 'Stepwise' : 'Replay') || runDate !== launch.date || activeScreen.tiles[0]?.symbol !== launch.symbol || activeScreen.tiles[0]?.tradingDate !== launch.date) return
     setPracticeStage(null)
     practiceRef.current = launch
     void startRun().then(outcome => {
@@ -2913,13 +2922,13 @@ function ScreenController(props: ScreenControllerProps) {
       })()}<button className="flatten-button icon-button" title="Flatten" aria-label="Flatten" onClick={() => void flattenTrading().catch(reportTradingError)}><ToolbarIcon name="Flatten" /></button><button className="block-button icon-button" title="Block trading" aria-label="Block trading" disabled={blockPending || trading.guardrails?.ban_active} onClick={() => void blockTrading()}><ToolbarIcon name="Block" /></button></>}</>}
       {isTradingMode(mode) && <button disabled={!trading || trading.session.state === 'ended'} onClick={() => setOrderWindowOpen(true)}>Order</button>}
       {isHistoricalTradingMode(mode) && trading && trading.session.state !== 'ended' && (!replay || replay.state === 'stopped') && <span className="run-controls"><ToolbarActionButton icon="Refresh" disabled={historicalStarting} onClick={() => void startRun()}>Recover charts</ToolbarActionButton><ToolbarActionButton icon={sharedTradingSession ? 'Detach' : 'Stop'} disabled={historicalStarting} onClick={() => { void (async () => { if (!sharedTradingSession) await desktopTradingRequest(`${trading.session.session_id}/stop`, 'POST'); setTrading(null); setSharedTradingSession(false); setOrderWindowOpen(false) })().catch(reportTradingError) }}>{sharedTradingSession ? 'Detach session' : 'Stop session'}</ToolbarActionButton></span>}
-      {mode === 'Replay' && !companion && (() => {
+      {isHistoricalTradingMode(mode) && !companion && (() => {
         // Strategy Practice: the strategy in the toolbar while it runs (never the recorded side or marks), then a way to the review.
         const practice = trading?.session.practice ? { sessionId: trading.session.session_id, strategy: trading.session.practice.strategy } : lastPractice
         if (!practice) return null
         const finished = (!trading || trading.session.state === 'ended') && (!replay || replay.state === 'stopped')
         return <span className="run-controls" data-testid="practice-badge" title="A practice run: its trades are kept apart from your normal replays and Performance totals">
-          <small>Practice: {practice.strategy}</small>
+          <small>Practice: {practice.strategy}{mode === 'Stepwise' ? ' · Stepwise' : ''}</small>
           {finished && <ToolbarActionButton icon="Inspect" onClick={() => props.onReviewPractice(practice.sessionId)}>Review practice</ToolbarActionButton>}
         </span>
       })()}
