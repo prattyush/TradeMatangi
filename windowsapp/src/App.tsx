@@ -42,6 +42,7 @@ import { bounded, createWindowCloser, controlledScreens, SAVE_TIMEOUT_MS, journa
 import { StepInput } from './StepInput'
 import { availableExitQuantity, isStopOrder, orderBusy, orderPosition } from './orderEditing'
 import { retainedPanes, compactLayout, type PreparedSession } from './sessionPreparation'
+import { practiceTiles, type PracticeLaunch } from './tools/practice/launch'
 import { FloatingOrderWindow, type FloatingOrderDraft } from './FloatingOrderWindow'
 import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing, ticketQuantityTiers, TICKET_SIZING_CHOICES } from './ticketSizing'
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
@@ -538,6 +539,11 @@ interface ScreenControllerProps {
   connection: Connection; setConnection: Dispatch<SetStateAction<Connection>>
   browserToken: string; setBrowserToken: Dispatch<SetStateAction<string>>
   serverUrl: string; setServerUrl: Dispatch<SetStateAction<string>>
+  /** Strategy Practice: a launch from Pattern Library > Practice for this (the visible) screen, and how to report the outcome. */
+  practiceRequest: { launch: PracticeLaunch } | null
+  onPracticeSettled: (launchId: number, failure?: string) => void
+  /** Opens the review of a finished practice run in the Pattern Library. */
+  onReviewPractice: (sessionId: string) => void
 }
 
 export default function App() {
@@ -549,6 +555,9 @@ export default function App() {
   useEffect(()=>{if(assignedId||!('__TAURI_INTERNALS__' in window))return;let cancelled=false;const listener=listen<{portfolioId:string}>('desktop-swing-analysis',event=>{if(!cancelled&&[...navigationGuards.current.values()].every(guard=>guard())){setAnalysisPortfolio(event.payload.portfolioId);setAnalysisVisited(true);setMainTab('Analysis')}});return()=>{cancelled=true;void listener.then(stop=>stop())}},[])
   const [analysisVisited, setAnalysisVisited] = useState(false)
   const [toolsVisited, setToolsVisited] = useState(false)
+  // Strategy Practice: a launch waits here until the visible screen has started (or refused) it; the Tools view's Start awaits it.
+  const [practiceRequest, setPracticeRequest] = useState<{ launch: PracticeLaunch; screenId: string; resolve: () => void; reject: (error: Error) => void } | null>(null)
+  const [practiceReviewId, setPracticeReviewId] = useState<string | null>(null)
   const [analysisContextDays,setAnalysisContextDays] = useState(2)
   const [screens, setScreens] = useState<Screen[]>([newScreen(1)])
   const setDayScreens=useCallback((update:Screen[]|((previous:Screen[])=>Screen[]))=>setScreens(previous=>updateDayScreens(previous,update)),[])
@@ -748,6 +757,25 @@ export default function App() {
     if (connection === 'authentication_required') { setMainTab('Workspace'); setAnalysisVisited(false) }
   }, [connection, serverUrl, browserToken])
   const visibleId = screens.some(screen => screen.id === selectedId && screen.saved?.workspace_kind!=='swing') ? selectedId : screens.find(screen=>screen.saved?.workspace_kind!=='swing')?.id ?? ''
+  const visibleIdRef = useRef(visibleId)
+  visibleIdRef.current = visibleId
+  // Strategy Practice: the Tools view asks the visible workspace screen to start a Replay; this resolves when it has started (the
+  // view then switches to the workspace) and rejects with the screen's own sentence when it could not.
+  const practiceRequestRef = useRef<typeof practiceRequest>(null)
+  const launchPractice = useCallback((launch: PracticeLaunch) => new Promise<void>((resolve, reject) => {
+    const request = { launch, screenId: visibleIdRef.current, resolve, reject }
+    practiceRequestRef.current = request
+    setPracticeRequest(request)
+  }), [])
+  const settlePractice = useCallback((launchId: number, failure?: string) => {
+    const current = practiceRequestRef.current
+    if (!current || current.launch.id !== launchId) return
+    practiceRequestRef.current = null
+    setPracticeRequest(null)
+    if (failure) current.reject(new Error(failure))
+    else { current.resolve(); setMainTab('Workspace') }
+  }, [])
+  const reviewPractice = useCallback((sessionId: string) => { setPracticeReviewId(sessionId); setToolsVisited(true); setMainTab('Tools') }, [])
   const assigned = screens.find(screen => screen.id === assignedId || screen.persistedId === assignedId)
   const dayScreens=screens.filter(screen=>screen.saved?.workspace_kind!=='swing')
   const ownedScreens = controlledScreens(dayScreens, assignedId, loaded, external)
@@ -843,13 +871,13 @@ export default function App() {
     {!assignedId && mainTab === 'Workspace' && external.includes(visibleId) && <main><header>{viewSelector}<nav className="screen-tabs">{screens.map(screen => <button key={screen.id} onClick={() => selectScreen(screen.id)}>{screen.name}{external.includes(screen.id) ? ' ↗' : ''}</button>)}</nav><button onClick={() => void invoke('focus_screen_window', { screenId: visibleId })}>Focus window</button><button onClick={() => void invoke('close_screen_window', { screenId: visibleId })}>Bring back</button></header><p>This screen is open in another window.</p></main>}
     {assignedId && loaded && !assigned && <main><p>Saved screen not found. Return to the main window.</p></main>}
     {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
-      <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={dayScreens} setScreens={setDayScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
+      <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={dayScreens} setScreens={setDayScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} practiceRequest={practiceRequest && practiceRequest.screenId === screen.id ? { launch: practiceRequest.launch } : null} onPracticeSettled={settlePractice} onReviewPractice={reviewPractice} />
     </div>)}
     {!assignedId && mainTab === 'Swing' && connection === 'connected' && <>{swingWindowError&&<p role="alert">{swingWindowError}</p>}<SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${browserToken}`} navigationControls={<>{viewSelector}{linkedSwing.map(screen=><button key={screen.id} onClick={()=>void openSwingWindow(screen.saved!.portfolio_id!,screen)}>{screen.name}{external.includes(screen.id)?' ↗':''}</button>)}</>} request={swingRequest} subscribe={swingSubscribe} loadSymbols={swingSymbols} Renderer={swingChart} registerSave={registerSave} onCreateLinked={id=>void openSwingWindow(id)} onPopOut={id=>{if(!mayNavigate())return;void openSwingWindow(id).then(opened=>{if(opened)setMainTab('Workspace')})}} onAnalyse={id=>{setAnalysisPortfolio(id);setAnalysisVisited(true);setMainTab('Analysis')}} onDetach={() => setMainTab('Workspace')} /></>}
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection!=='connected' && <main><p>{connection==='authentication_required'?'Sign in in the main window to reconnect this portfolio.':'Waiting for the backend connection. The portfolio stays attached to its saved book.'}</p><button onClick={()=>void invoke('focus_main_window')}>Main window</button></main>}
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${assignedId}`} navigationControls={<><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button><NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>} request={swingRequest} subscribe={swingSubscribe} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
     {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis onNavigationReady={guard=>registerNavigationGuard("analysis",guard)} initialPortfolioId={analysisPortfolio} viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
-    {!assignedId && toolsVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Tools…</p>}><ToolsView key={`${serverUrl}:${browserToken}`} viewSelector={viewSelector} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} active={mainTab === 'Tools'} /></Suspense>}
+    {!assignedId && toolsVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Tools…</p>}><ToolsView key={`${serverUrl}:${browserToken}`} viewSelector={viewSelector} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} active={mainTab === 'Tools'} onStartPractice={launchPractice} practiceReviewId={practiceReviewId} onPracticeReviewOpened={() => setPracticeReviewId(null)} /></Suspense>}
   </div>
 }
 
@@ -1687,8 +1715,16 @@ function ScreenController(props: ScreenControllerProps) {
       desktop_mode: mode.toLowerCase(),
       override: false,
       resume_bar_index: null as number | null,
+      // Strategy Practice: the marker makes this replay a practice run (the server resolves the recorded day from it).
+      ...(practiceRef.current && mode === 'Replay' ? { practice: practiceRef.current.practice } : {}),
     }
   }
+  // Strategy Practice (Pattern Library > Practice): a launch for this screen sets up the day (charts, date, start, speed) in the
+  // ordinary Replay controls, then starts the ordinary Replay once that state is in place. No candidate prompts, never an override.
+  const practiceRef = useRef<PracticeLaunch | null>(null)
+  const practiceHandled = useRef(0)
+  const [practiceStage, setPracticeStage] = useState<PracticeLaunch | null>(null)
+  const [lastPractice, setLastPractice] = useState<{ sessionId: string; strategy: string } | null>(null)
   const startRun = async () => {
     if (startPending.current || historicalStarting || (trading && trading.session.state !== 'ended' && (isLiveTradingMode(mode) ? Boolean(live) : Boolean(replay && replay.state !== 'stopped')))) return
     startPending.current = true
@@ -1703,6 +1739,7 @@ function ScreenController(props: ScreenControllerProps) {
     let startDispatched = false
     let attachedExisting = false
     let realSessionId: string | null = null
+    let failure: string | null = null
     try {
       setReplayError('')
       clearTradingError()
@@ -1736,7 +1773,7 @@ function ScreenController(props: ScreenControllerProps) {
       let resumeSessionId: string | null = null
       let replayStartTime = `${runStartTime}:00`
       let initialBarIndex: number | undefined
-      if (startBody && !attached) {
+      if (startBody && !attached && !practiceRef.current) {
         const candidateParams = new URLSearchParams({ symbol: String(startBody.symbol), date, instrument_type: String(startBody.instrument_type), desktop_mode: mode.toLowerCase() })
         candidateQuery = `candidate?${candidateParams}`
         const candidate = await desktopTradingRequest<DesktopTradingCandidate>(candidateQuery, 'GET')
@@ -1869,6 +1906,7 @@ function ScreenController(props: ScreenControllerProps) {
           setSharedTradingSession(false)
         }
         setTrading(tradeSnapshot)
+        setLastPractice(practiceRef.current ? { sessionId: tradeSnapshot.session.session_id, strategy: practiceRef.current.practice.strategy } : null)
         setPreStartWallet(tradeSnapshot.wallet_balance)
         setRunDate(preparation.date)
         const retainedIds = new Set(preparedTiles.map(tile => tile.id))
@@ -1885,6 +1923,7 @@ function ScreenController(props: ScreenControllerProps) {
         }
       }
     } catch (error) {
+      failure = String(error)
       if (!committed && createdLiveId) {
         stopNativeStream(`browse-live:${activeScreenId}:${createdLiveId}`)
         try { await liveRequest(`${createdLiveId}/stop`, 'POST'); if (contextRef.current === context) { setLiveSnapshot(live); setLiveEnabled(Boolean(live)) } } catch (cleanup) { reportLiveError(`Live cleanup needs retry: ${String(cleanup)}`) }
@@ -1905,6 +1944,7 @@ function ScreenController(props: ScreenControllerProps) {
       startPending.current = false
       setHistoricalStarting(false)
     }
+    return { committed, failure }
   }
   const replayAction = async (action: string, throwOnError = false) => {
     if (!replay) return
@@ -1994,6 +2034,37 @@ function ScreenController(props: ScreenControllerProps) {
     setRunDate(isLiveTradingMode(value) ? paperMarketDate() : activeScreen.tiles[0].tradingDate)
     setWalletOpen(false)
   }
+  // Strategy Practice, step 1: take the launch addressed to this screen. A screen that is running something refuses it with the reason.
+  useEffect(() => {
+    const request = props.practiceRequest
+    if (!request || practiceHandled.current === request.launch.id) return
+    practiceHandled.current = request.launch.id
+    const launch = request.launch
+    if ((trading && trading.session.state !== 'ended') || (replay && replay.state !== 'stopped') || historicalStarting || startPending.current) {
+      props.onPracticeSettled(launch.id, 'A session is running on this screen. Stop it before you start a practice run.')
+      return
+    }
+    const tiles = practiceTiles(launch) as TileConfig[]
+    setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles, layout: compactLayout(tiles.length) } : screen))
+    setActiveToolTileId(tiles[0].id)
+    setMaximizedTileId(null)
+    switchMode('Replay')
+    setRunDate(launch.date)
+    setRunStartTime(launch.start_time.slice(0, 5))
+    setReplaySpeed(String(launch.speed))
+    setPracticeStage(launch)
+  }, [props.practiceRequest])
+  // Step 2: once the screen shows Replay on that day with the practice charts, start it and report how it went.
+  useEffect(() => {
+    const launch = practiceStage
+    if (!launch || mode !== 'Replay' || runDate !== launch.date || activeScreen.tiles[0]?.symbol !== launch.symbol || activeScreen.tiles[0]?.tradingDate !== launch.date) return
+    setPracticeStage(null)
+    practiceRef.current = launch
+    void startRun().then(outcome => {
+      practiceRef.current = null
+      props.onPracticeSettled(launch.id, outcome?.committed ? undefined : outcome?.failure ?? 'The practice run did not start')
+    })
+  }, [practiceStage, mode, runDate, activeScreen.tiles])
   useEffect(() => {
     if (!isTradingMode(mode) || walletSessionActive || historicalStarting || connection !== 'connected') return
     void loadPreStartWallet(isLiveTradingMode(mode) ? paperMarketDate() : runDate).catch(reportTradingError)
@@ -2842,6 +2913,16 @@ function ScreenController(props: ScreenControllerProps) {
       })()}<button className="flatten-button icon-button" title="Flatten" aria-label="Flatten" onClick={() => void flattenTrading().catch(reportTradingError)}><ToolbarIcon name="Flatten" /></button><button className="block-button icon-button" title="Block trading" aria-label="Block trading" disabled={blockPending || trading.guardrails?.ban_active} onClick={() => void blockTrading()}><ToolbarIcon name="Block" /></button></>}</>}
       {isTradingMode(mode) && <button disabled={!trading || trading.session.state === 'ended'} onClick={() => setOrderWindowOpen(true)}>Order</button>}
       {isHistoricalTradingMode(mode) && trading && trading.session.state !== 'ended' && (!replay || replay.state === 'stopped') && <span className="run-controls"><ToolbarActionButton icon="Refresh" disabled={historicalStarting} onClick={() => void startRun()}>Recover charts</ToolbarActionButton><ToolbarActionButton icon={sharedTradingSession ? 'Detach' : 'Stop'} disabled={historicalStarting} onClick={() => { void (async () => { if (!sharedTradingSession) await desktopTradingRequest(`${trading.session.session_id}/stop`, 'POST'); setTrading(null); setSharedTradingSession(false); setOrderWindowOpen(false) })().catch(reportTradingError) }}>{sharedTradingSession ? 'Detach session' : 'Stop session'}</ToolbarActionButton></span>}
+      {mode === 'Replay' && !companion && (() => {
+        // Strategy Practice: the strategy in the toolbar while it runs (never the recorded side or marks), then a way to the review.
+        const practice = trading?.session.practice ? { sessionId: trading.session.session_id, strategy: trading.session.practice.strategy } : lastPractice
+        if (!practice) return null
+        const finished = (!trading || trading.session.state === 'ended') && (!replay || replay.state === 'stopped')
+        return <span className="run-controls" data-testid="practice-badge" title="A practice run: its trades are kept apart from your normal replays and Performance totals">
+          <small>Practice: {practice.strategy}</small>
+          {finished && <ToolbarActionButton icon="Inspect" onClick={() => props.onReviewPractice(practice.sessionId)}>Review practice</ToolbarActionButton>}
+        </span>
+      })()}
       {realEnabled && <ToolbarActionButton icon="Real" className={mode === 'Real' ? 'selected mode-button' : 'mode-button'} onClick={() => switchMode('Real')}>Real</ToolbarActionButton>}
       {mode === 'Real' && !companion && <span className="run-controls">{(!trading || trading.session.state === 'ended') && <label>Capital % <input aria-label="Real Day capital allocation percent" type="number" min="0.01" max="100" step="0.01" style={{ width: 65 }} value={realAllocationPct} onChange={event => setRealAllocationPct(event.target.value)} /></label>}{realDay?.date === paperMarketDate() && realDay.state !== 'active' && <small>{realDay.state === 'done' ? 'Done for day 🔒' : 'Closing for day…'}</small>}<small>{realBroker?.broker ?? trading?.session.execution_broker ?? 'Broker'} · {realBroker?.authenticated ? 'Connected' : 'Authentication required'}</small>{!realBroker?.authenticated && <ToolbarActionButton icon="Refresh" onClick={() => { if(realBroker?.broker==='kotak'){setShowKotakLogin(true);return;} const context = contextRef.current; void settingsAccountRequest<{ broker: string; authenticated: boolean; active_session_id?: string | null; restrictions_enabled?: boolean }>('broker/status', 'GET').then(value => { if (context === contextRef.current) {setRealBroker(value);if(value.broker==='kotak'&&!value.authenticated)setShowKotakLogin(true)} }).catch(reportTradingError) }}>{realBroker?.broker==='kotak'?'Connect Kotak Neo':'Check broker'}</ToolbarActionButton>}
         {(!trading || trading.session.state === 'ended') && realBroker?.active_session_id && <ToolbarActionButton icon={trading?.session.session_id === realBroker.active_session_id ? 'Stop' : 'Inspect'} disabled={realActionPending} onClick={() => { if (trading?.session.session_id === realBroker.active_session_id) void closeReal(false); else void desktopTradingRequest<DesktopTradingSnapshot>(`${realBroker.active_session_id}/snapshot`, 'GET').then(setTrading).catch(reportTradingError) }}>{trading?.session.session_id === realBroker.active_session_id ? 'Close outstanding session' : 'Inspect outstanding session'}</ToolbarActionButton>}

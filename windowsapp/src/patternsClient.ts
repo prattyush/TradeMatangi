@@ -2,6 +2,7 @@ import type { PatternAnnotation, PatternChart, PatternChartMeta, TopPatterns } f
 import type { PatternsRequest } from './patternsApi'
 import { createDeepDiveClient } from '../../shared/deepdive/client'
 import { createTradedClient } from '../../shared/traded/client'
+import { createPracticeClient } from '../../shared/practice/client'
 
 const query = (values: Record<string, unknown>) => {
   const q = new URLSearchParams(Object.entries(values).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, String(v)])).toString()
@@ -45,6 +46,7 @@ export function createPatternsClient(request: PatternsRequest) {
     deepDive: createDeepDiveClient((path, method, body) => request(path, method, body)),
     /** The user's labelled trades as pattern material (Phase 26, S10), over the same transport. */
     traded: createTradedClient((path, method, body) => request(path, method, body)),
+    practice: createPracticeClient((path, method, body) => request(path, method, body)),
     listStrategies: () => request<{ strategies: string[] }>('pattern/strategies', 'GET'),
     listCategories: () => request<{ categories: string[] }>('pattern/categories', 'GET'),
     addStrategy: (name: string) => request<{ strategies: string[] }>('pattern/strategies', 'POST', { name }),
