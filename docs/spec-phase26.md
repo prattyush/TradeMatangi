@@ -122,5 +122,6 @@ Do discuss anything as required.
 > - **Hidden until Stop:** the setup's Buy or Sell side and its marks stay hidden while practising; the review is refused while the session runs.
 > - **Review:** your entries and exits against the recorded ones (minutes early or late), and your P&L against the **theoretical P&L** of the marks (entry at the open of the marked bar, exit at the close of the marked bar; with several entries or exits the most profitable pair), as points, % and capture %.
 > - **Performance:** practice runs are **excluded from the Performance totals** and stay in Analysis session lists marked Practice.
+> - **Negative tests (owner, 2026-11-17):** a day where the strategy was **absent** is also a valid practice day, like a day labelled Failed: the right call is not to trade. The unmarked days **between the oldest and the newest marked day** (per symbol) are taken as reviewed and absent; days outside that range are never offered (they may never have been looked at). A Start option includes them, about one pick in four; the review says "No setup was recorded" and treats any trade as one you should not have taken.
 > - Days already marked in the Deep Dive are used as they are; nothing needs re-marking (an Exit mark is only needed for the theoretical P&L).
 
