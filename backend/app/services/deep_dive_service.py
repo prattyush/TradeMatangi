@@ -34,6 +34,7 @@ SETUPS_TABLE = "DeepDiveSetups"
 TAGS_TABLE = "DeepDiveTags"
 SIDES = ("buy", "sell")
 OUTCOMES = ("success", "failed")
+STRENGTHS = ("ideal", "average", "poor")  # how good a successful setup was; a failed day has no grade
 STRIKE_MODES = ("max_price", "otm", "manual")
 MAX_NAME_LENGTH = 60
 MAX_TAG_LENGTH = 140
@@ -343,11 +344,74 @@ def _serialize_setup(row: dict) -> dict:
         "interval_minutes": int(row.get("interval_minutes", 3)),
         "annotations": json.loads(raw) if isinstance(raw, str) else (raw or []),
         "outcome": row.get("outcome") or None,
+        # A grade only belongs to a success; a row written any other way never shows a stray one.
+        "strength": (row.get("strength") or None) if row.get("outcome") == "success" else None,
+        "timings": entry_exit_times(json.loads(raw) if isinstance(raw, str) else (raw or [])),
         "tag_values": {qid: bool(value) for qid, value in (row.get("tag_values") or {}).items()},
         "notes": row.get("notes", ""),
         "created_at": row.get("created_at", ""),
         "updated_at": row.get("updated_at", ""),
     }
+
+
+def _clock(epoch: int) -> str:
+    """HH:MM of a mark's time. Chart times carry IST wall-clock as if it were UTC, so the UTC clock is the IST clock."""
+    seconds = int(epoch) % 86400
+    return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
+
+
+def entry_exit_times(annotations: list[dict]) -> dict:
+    """The entry and exit times of a day, read from its chart marks (nothing extra is stored).
+
+    ``entry`` is the earliest Entry mark and ``exit`` the latest Exit mark (``None`` when there is none), taken from the
+    underlying's marks and from the option's only when the underlying has none of that kind. ``marks`` lists every entry
+    and exit mark in time order. A mark's time is the start of the candle it sits on (IST), so with a 3 minute chart an
+    entry at 09:47 reads 09:45.
+    """
+    marks = []
+    for a in annotations:
+        if a.get("type") not in ("entry", "exit") or a.get("time") is None:
+            continue
+        marks.append({"type": a["type"], "instrument": a.get("instrument") or "underlying", "time": int(a["time"]),
+                      "clock": _clock(a["time"]), "price": a.get("price")})
+    marks.sort(key=lambda m: (m["time"], m["type"] != "entry"))
+
+    def pick(kind: str, latest: bool):
+        of_kind = [m for m in marks if m["type"] == kind]
+        chosen = [m for m in of_kind if m["instrument"] == "underlying"] or of_kind
+        if not chosen:
+            return None
+        m = chosen[-1] if latest else chosen[0]
+        return {"time": m["time"], "clock": m["clock"], "price": m["price"], "instrument": m["instrument"]}
+
+    return {"entry": pick("entry", False), "exit": pick("exit", True), "marks": marks}
+
+
+def list_timings(user_id: str, category: Optional[str] = None, strategy: Optional[str] = None,
+                 side: Optional[str] = None, owner_id: Optional[str] = None) -> list[dict]:
+    """One row per marked day with its entry and exit times, for every deep dive (or one) of the caller or a sharer."""
+    if side is not None:
+        _side(side)
+    owners = [_resolve_owner(user_id, owner_id)] if owner_id else _accessible_owners(user_id)
+    rows = []
+    for owner in owners:
+        for key, entry in _owner_dives(owner).items():
+            cat, strat = key.split("::", 1)
+            if (category and cat != category.strip()) or (strategy and strat != strategy.strip()):
+                continue
+            for setup in entry["setups"]:
+                if side and setup["side"] != side:
+                    continue
+                t = setup["timings"]
+                rows.append({
+                    "owner_id": owner, "category": cat, "strategy": strat, "symbol": setup["symbol"], "date": setup["date"],
+                    "side": setup["side"], "outcome": setup["outcome"], "strength": setup["strength"],
+                    "interval_minutes": setup["interval_minutes"],
+                    "entry_time": t["entry"]["clock"] if t["entry"] else None,
+                    "exit_time": t["exit"]["clock"] if t["exit"] else None,
+                    "entry": t["entry"], "exit": t["exit"], "marks": t["marks"],
+                })
+    return sorted(rows, key=lambda r: (r["category"].casefold(), r["strategy"].casefold(), r["date"], SIDES.index(r["side"]), r["symbol"]))
 
 
 def _order(setups: list[dict]) -> list[dict]:
@@ -407,6 +471,20 @@ def upsert_setup(user_id: str, category: str, strategy: str, symbol: str, date: 
             sets["outcome"] = outcome
         else:
             raise ValueError("Outcome must be 'success' or 'failed'")
+        if outcome != "success":
+            removes.append("strength")  # a failed or cleared day has no grade
+    if fields.get("strength") is not None:
+        strength = fields["strength"]
+        if strength not in STRENGTHS:
+            raise ValueError("Strength must be 'ideal', 'average' or 'poor'")
+        if sets.get("outcome", "success") != "success" or ("outcome" in fields and fields["outcome"] is None):
+            raise ValueError("Only a successful setup has a strength")
+        sets["outcome"] = "success"  # grading a day makes it a success
+        sets["strength"] = strength
+        if "strength" in removes:
+            removes.remove("strength")
+    elif "strength" in fields and "strength" not in removes:
+        removes.append("strength")
     if "notes" in fields:
         notes = fields["notes"] or ""
         if len(notes) > MAX_NOTES_LENGTH:
@@ -529,6 +607,7 @@ def compute_stats(setups: list[dict], tags: list[dict], side: Optional[str] = No
         })
     with_outcome = [s for s in days if s["outcome"]]
     success = sum(1 for s in with_outcome if s["outcome"] == "success")
+    graded = {grade: sum(1 for s in with_outcome if s["outcome"] == "success" and s.get("strength") == grade) for grade in STRENGTHS}
     return {
         "days": len(days),
         "buy_days": sum(1 for s in days if s["side"] == "buy"),
@@ -537,6 +616,8 @@ def compute_stats(setups: list[dict], tags: list[dict], side: Optional[str] = No
         "success": success, "failed": len(with_outcome) - success, "with_outcome": len(with_outcome),
         "success_pct": round(100 * success / len(with_outcome), 1) if with_outcome else None,
         "outcome_few_days": len(with_outcome) < FEW_DAYS,
+        # How the successful days were graded; ``ungraded`` are successes marked before grading existed or not graded yet.
+        "strength": {**graded, "ungraded": success - sum(graded.values())},
     }
 
 

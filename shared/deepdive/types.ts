@@ -3,6 +3,8 @@ import type { PatternAnnotation } from '../analysis/api'
 
 export type Side = 'buy' | 'sell'
 export type Outcome = 'success' | 'failed'
+/** How good a successful day was. A failed day has none. */
+export type Strength = 'ideal' | 'average' | 'poor'
 export type StrikeMode = 'max_price' | 'otm' | 'manual'
 /** A tag on one day: marked valid (true), not valid (false), or not looked at yet (absent). */
 export type TagValue = boolean
@@ -28,6 +30,8 @@ export interface DeepDiveSetup extends SetupRef {
   interval_minutes: number
   annotations: PatternAnnotation[]
   outcome: Outcome | null
+  /** Only with a success; `null` for an older success that was never graded. */
+  strength?: Strength | null
   tag_values: Record<string, TagValue>
   notes: string
   created_at: string
@@ -77,7 +81,15 @@ export interface StatsBlock {
   with_outcome: number
   success_pct: number | null
   outcome_few_days: boolean
+  /** How the successful days were graded (absent from an older server). */
+  strength?: StrengthCounts
 }
+
+export interface StrengthCounts { ideal: number; average: number; poor: number; ungraded: number }
+
+/** A day's entry and exit as read from its chart marks. `clock` is the IST time of the candle the mark sits on. */
+export interface MarkTime { time: number; clock: string; price: number | null; instrument: string }
+export interface SetupTimings { entry: MarkTime | null; exit: MarkTime | null; marks: Array<MarkTime & { type: 'entry' | 'exit' }> }
 
 export interface DiveStats extends StatsBlock, DiveRef { owner_id: string; can_edit: boolean; side: Side | null }
 
@@ -98,6 +110,8 @@ export interface SetupFields {
   interval_minutes?: number
   annotations?: PatternAnnotation[]
   outcome?: Outcome | null
+  /** Grading a day makes it a success; `null` removes the grade and keeps the success; ignored by the server for a failed day. */
+  strength?: Strength | null
   notes?: string
 }
 

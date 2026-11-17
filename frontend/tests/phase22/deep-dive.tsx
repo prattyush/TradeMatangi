@@ -37,6 +37,9 @@ function deepDive(path: string, method: string, body: any, query: Record<string,
     let s = store.setups.find((x) => key(x) === `${date}|${symbol}|${side}`);
     if (!s) { s = { category, strategy, symbol, date, side, strike_ce: null, strike_pe: null, strike_mode: null, interval_minutes: 3, annotations: [], outcome: null, tag_values: {}, notes: "", created_at: "", updated_at: "" }; store.setups.push(s); }
     Object.assign(s, fields);
+    // what the server does: a grade makes the day a success, and a failed or cleared day has no grade
+    if (fields.strength) s.outcome = "success";
+    else if ("outcome" in fields && fields.outcome !== "success") delete s.strength;
     return s;
   }
   if (path === "setup" && method === "DELETE") {

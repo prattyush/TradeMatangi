@@ -53,7 +53,7 @@ try {
   const panel = () => page.locator('.dd-stats')
   const choose = async () => { const selects = popup().locator('select'); await selects.nth(0).selectOption('Momentum'); await selects.nth(1).selectOption('Breakout') }
   const open = async (index) => { await page.getByTestId('entry-btn').nth(index).click(); await popup().waitFor() }
-  const mount = async (mode, show = 'showPanel') => { await page.evaluate(() => window.hideAll()); await page.evaluate(m => { window.statsMode = m }, mode); await page.evaluate(s => window[s](), show) }
+  const mount = async (mode, show = 'showPanel') => { await page.evaluate(() => window.hideAll()); await page.waitForFunction(() => document.getElementById('root').childElementCount === 0) /* unmounted, so no state of the last popup survives */; await page.evaluate(m => { window.statsMode = m }, mode); await page.evaluate(s => window[s](), show) }
 
   // Entry popup: the panel appears once an expected strategy with a deep dive is chosen, on the side the position profits from.
   await mount('ok')

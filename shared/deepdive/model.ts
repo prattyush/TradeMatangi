@@ -1,6 +1,7 @@
 /** Pure Deep Dive logic shared by every host: day marks, tag gaps, navigation and the percentage wording. */
+import type { PatternAnnotation } from '../analysis/api'
 import type {
-  DeepDiveSetup, DeepDiveTag, Dive, DiveSetup, SetupRef, Side, StatsAllEntry, StatsBlock, TagState, TagStat, TagValue,
+  DeepDiveSetup, DeepDiveTag, Dive, DiveSetup, MarkTime, SetupRef, SetupTimings, Side, StatsAllEntry, StatsBlock, Strength, TagState, TagStat, TagValue,
 } from './types'
 
 export const SIDES: Side[] = ['buy', 'sell']
@@ -209,11 +210,15 @@ export function computeStats(setups: readonly DeepDiveSetup[], tags: readonly De
     }
   })
   const withOutcome = days.filter(day => day.outcome)
-  const success = withOutcome.filter(day => day.outcome === 'success').length
+  const successes = withOutcome.filter(day => day.outcome === 'success')
+  const success = successes.length
+  const graded = { ideal: 0, average: 0, poor: 0 }
+  for (const day of successes) if (day.strength) graded[day.strength] += 1
   return {
     days: days.length, buy_days: days.filter(d => d.side === 'buy').length, sell_days: days.filter(d => d.side === 'sell').length,
     tags: rows, success, failed: withOutcome.length - success, with_outcome: withOutcome.length,
     success_pct: withOutcome.length ? roundTenth((100 * success) / withOutcome.length) : null, outcome_few_days: withOutcome.length < FEW_DAYS,
+    strength: { ...graded, ungraded: success - graded.ideal - graded.average - graded.poor },
   }
 }
 
@@ -228,6 +233,48 @@ export function sortTagStats(rows: readonly TagStat[]): TagStat[] {
 
 export const successLine = (block: Pick<StatsBlock, 'success' | 'with_outcome' | 'success_pct'>) =>
   block.with_outcome ? `Success ${block.success} of ${block.with_outcome} (${formatPct(block.success_pct)})` : 'No outcome marked yet'
+
+export const STRENGTHS: readonly Strength[] = ['ideal', 'average', 'poor']
+export const strengthLabel = (strength: Strength) => strength[0].toUpperCase() + strength.slice(1)
+
+/** "Ideal 3 · Average 2 · Poor 1" of the successful days, plus "not graded 1" for successes with no grade; empty when there are none. */
+export function strengthLine(block: Pick<StatsBlock, 'strength'>): string {
+  const counts = block.strength
+  if (!counts || counts.ideal + counts.average + counts.poor + counts.ungraded === 0) return ''
+  const parts = STRENGTHS.map(grade => `${strengthLabel(grade)} ${counts[grade]}`)
+  if (counts.ungraded) parts.push(`not graded ${counts.ungraded}`)
+  return parts.join(' · ')
+}
+
+/** What a day's outcome reads as: Ideal / Average / Poor for a graded success, Success for an ungraded one, Failed, or null. */
+export const outcomeText = (day: Pick<DeepDiveSetup, 'outcome' | 'strength'>): string | null =>
+  day.outcome === 'failed' ? 'Failed' : day.outcome === 'success' ? (day.strength ? strengthLabel(day.strength) : 'Success') : null
+
+const clockOf = (epoch: number) => {
+  const seconds = ((Math.floor(epoch) % 86400) + 86400) % 86400
+  return `${String(Math.floor(seconds / 3600)).padStart(2, '0')}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}`
+}
+
+/**
+ * A day's entry and exit times read from its chart marks (nothing extra is stored); the same rule as the server's
+ * `entry_exit_times`: the earliest Entry and the latest Exit, the underlying's marks first, the option's when the
+ * underlying has none of that kind. A mark's time is the start of its candle, in IST.
+ */
+export function setupTimings(annotations: ReadonlyArray<Pick<PatternAnnotation, 'time' | 'price' | 'type' | 'instrument'>>): SetupTimings {
+  const marks = annotations
+    .filter(a => (a.type === 'entry' || a.type === 'exit') && typeof a.time === 'number')
+    .map(a => ({ type: a.type as 'entry' | 'exit', instrument: a.instrument || 'underlying', time: a.time, clock: clockOf(a.time), price: a.price ?? null }))
+    .sort((a, b) => a.time - b.time || Number(b.type === 'entry') - Number(a.type === 'entry'))
+  const pick = (kind: 'entry' | 'exit', latest: boolean): MarkTime | null => {
+    const ofKind = marks.filter(m => m.type === kind)
+    const preferred = ofKind.filter(m => m.instrument === 'underlying')
+    const chosen = preferred.length ? preferred : ofKind
+    if (!chosen.length) return null
+    const { time, clock, price, instrument } = latest ? chosen[chosen.length - 1] : chosen[0]
+    return { time, clock, price, instrument }
+  }
+  return { entry: pick('entry', false), exit: pick('exit', true), marks }
+}
 
 export const blockFor = (entry: StatsAllEntry, side: Side | 'all'): StatsBlock => entry[side]
 

@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { toggleAnnotation } from '../marking'
-import { formatDay, optionRight, sideLabel, strikeLabel } from '../model'
-import type { DeepDiveTag, DiveSetup, Outcome, SetupFields, TagValue } from '../types'
+import { formatDay, optionRight, setupTimings, sideLabel, STRENGTHS, strengthLabel, strikeLabel } from '../model'
+import type { DeepDiveTag, DiveSetup, SetupFields, Strength, TagValue } from '../types'
 import DayIntervalBridge from './DayIntervalBridge'
 import { useDeepDiveHost } from './host'
 import TagPanel from './TagPanel'
@@ -48,7 +48,13 @@ export default function DayWorkspace(props: Props) {
   }
   const undo = () => { const annotations = setup.annotations.slice(0, -1); change({ annotations }, { annotations }) }
   const clear = () => change({ annotations: [] }, { annotations: [] })
-  const setOutcome = (outcome: Outcome | null) => change({ outcome }, { outcome })
+  // One choice per day: Ideal, Average or Poor (each a success) or Failed; the same choice again clears it. The server drops a grade with a failure.
+  const choose = (choice: Strength | 'failed' | 'success') => {
+    if (choice === 'failed') return setup.outcome === 'failed' ? change({ outcome: null, strength: null }, { outcome: null }) : change({ outcome: 'failed', strength: null }, { outcome: 'failed' })
+    if (choice === 'success' || setup.strength === choice) return change({ outcome: null, strength: null }, { outcome: null }) // an old, ungraded success is cleared by its own button
+    change({ outcome: 'success', strength: choice }, { outcome: 'success', strength: choice })
+  }
+  const times = setupTimings(setup.annotations)
   const strikeText = strikes.state === 'ready' ? `${right} ${strikeForSide(setup.side, strikes)}` : ''
 
   const area = useRef<HTMLDivElement>(null)
@@ -95,10 +101,17 @@ export default function DayWorkspace(props: Props) {
     <aside className="dd-day-side">
       <div className="dd-outcome">
         <h4>Outcome</h4>
-        <div className="pl-bar">
-          <button aria-pressed={setup.outcome === 'success'} disabled={!canEdit} className="dd-success" onClick={() => setOutcome(setup.outcome === 'success' ? null : 'success')}>Success</button>
-          <button aria-pressed={setup.outcome === 'failed'} disabled={!canEdit} className="dd-failed" onClick={() => setOutcome(setup.outcome === 'failed' ? null : 'failed')}>Failed</button>
+        <div className="pl-bar" role="group" aria-label="How this setup turned out">
+          {STRENGTHS.map(grade => <button key={grade} aria-pressed={setup.outcome === 'success' && setup.strength === grade} disabled={!canEdit}
+            className={`dd-success dd-grade-${grade}`} title={`A success: ${grade}`} onClick={() => choose(grade)}>{strengthLabel(grade)}</button>)}
+          {setup.outcome === 'success' && !setup.strength && <button aria-pressed disabled={!canEdit} className="dd-success" title="Marked a success before grades existed: pick Ideal, Average or Poor, or click to clear" onClick={() => choose('success')}>Success (not graded)</button>}
+          <button aria-pressed={setup.outcome === 'failed'} disabled={!canEdit} className="dd-failed" onClick={() => choose('failed')}>Failed</button>
         </div>
+        <p className="pl-muted dd-times" aria-label="Entry and exit times from the marks">
+          {times.entry || times.exit
+            ? <>Entry {times.entry ? times.entry.clock : '—'} · Exit {times.exit ? times.exit.clock : '—'} <span title="From the Entry and Exit marks on the charts (the start of the candle, IST)">(from the marks)</span></>
+            : 'Mark an Entry and an Exit on the chart to record their times.'}
+        </p>
       </div>
       <TagPanel tags={tags} setups={setups} setup={setup} canEdit={canEdit} onMark={markTags} onAdd={addTag} onRename={renameTag} onArchive={archiveTag} onRestore={restoreTag} />
       <label className="pl-notes">Notes

@@ -39,7 +39,7 @@ These questions are more for calculating frequency of occurence within a setup, 
 
 These questions are used to further define the setup more clearly. User can also to list whether this days setup is failed or success case. 
 
-> **Built.** Each day also has an **Outcome** (Success or Failed) and free **Notes**. The percentages count, per tag, the days where it was Valid over the days where it was marked (Valid or Not valid), with the number of days shown ("70% (n=14)") and a "Only n days marked" note under 5 days.
+> **Built.** Each day also has an **Outcome** and free **Notes**. The outcome is **Ideal, Average, Poor** (three grades of a success, owner's request 2026-11-17) or **Failed**: one choice per day, kept with the day; an older Success shows as not graded. The entry and exit times of a day are read from its Entry and Exit chart marks (`GET /api/deep-dive/timings` lists them for every deep dive) and shown beside the outcome and in Results. The percentages count, per tag, the days where it was Valid over the days where it was marked (Valid or Not valid), with the number of days shown ("70% (n=14)") and a "Only n days marked" note under 5 days.
 
 user can add more questions as user passes through days. However, the system should show which days have unanswered questions, ideally, next or prev is not allowed untill all questions are answered. Hoewver, let say user add question on 11th, then went to 20th and added 1 more new question, this new question is un-answered for 11th, so that should be pointed out, when deep dive is not or some other way.
 
@@ -91,3 +91,25 @@ Extensions:-
 | Tables and routes | `docs/architecture-backend.md` (`DeepDiveSetups`, `DeepDiveTags`, `/api/deep-dive`, `/api/pattern/traded`) |
 | Backlog and later ideas | `docs/todo.md` (items 10 and 11) |
 | Tests at the end of the phase | backend 3570, `windowsapp` vitest 1762, website Playwright 64 specs, plus the browser checks under `scripts/` |
+
+
+
+### Strategy Practice
+This section lists a feature which the deep dive strategy and calendar days marked by user is used for replay trading for practicing strategy. In the deep dive section, user marks the entry and exit points, success, fail and also strength.
+
+
+The steps of the feature:-
+1) User selects a strategy which needs to be practiced.
+2) User chooses the symbol, (optional)
+3) User also chooses the replay speed.
+4) The system from its deep dive automatically chooses a date and for time when to start the replay, Time can be found from the first entry and going back few bars. Keep it some random number of bars, so user doesn't start guessing, the system can start from any minute, even if the strategy is recorded with 3 min bars lets say. 
+5) User practices the strategy, and does trading similar to replay trading, with all features similar to replay trading.
+6) User ccan evaluate entry and exit against reccorded or marked entries.
+7) System can also evaluate profit from entry and exits as marked, and taking start of bar as entry and may be close of bar, as exit. If 2 exits or entries are present, choose the pair most profitable. System can use this to evaluate what user performed.
+
+
+Not sure where this feature will land up, feel free to choose. Make sure the traing UI is similar or exactly as replay trading, just to create better habits. 
+
+Some way to post analyze as well.
+
+Do discuss anything as required.
