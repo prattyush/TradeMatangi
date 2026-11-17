@@ -90,6 +90,13 @@ def get_trades_for_session(session_id: str) -> list[dict]:
         raise RuntimeError("Execution history could not be read")
 
 
+def _practice_flag(session: dict) -> dict | None:
+    """A practice run's strategy for the session list. Never its recorded side or marks (those appear in the review once it has ended)."""
+    from app.services.simulation import load_practice
+    marker = load_practice(session)
+    return {"category": marker["category"], "strategy": marker["strategy"]} if marker else None
+
+
 def compute_session_summary(session: dict, trades: list[dict], cycles: list[dict] | None = None) -> dict:
     """
     Given a session record and its trades, compute P&L metrics.
@@ -140,6 +147,7 @@ def compute_session_summary(session: dict, trades: list[dict], cycles: list[dict
         "winning_round_trip_count": sum(c["state"] == "closed" and c["net_pnl"] > 0 for c in cycles),
         "buy_count": buy_count,
         "sell_count": sell_count,
+        "practice": _practice_flag(session),
     }
 
 

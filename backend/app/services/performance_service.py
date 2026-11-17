@@ -1014,6 +1014,8 @@ def load_cycles(user_id, **filters):
             continue
         if ":archive:" in session["session_id"]:
             continue
+        if session.get("practice") and not filters.get("include_practice"):
+            continue  # Strategy Practice runs stay out of the Performance totals
         if any(
             filters.get(k)
             and session.get(k, "sim" if k == "session_type" else "intraday" if k=="trading_style" else None) != filters[k]
