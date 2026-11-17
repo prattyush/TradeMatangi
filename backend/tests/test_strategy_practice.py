@@ -262,17 +262,49 @@ def test_a_pick_starts_5_to_25_whole_minutes_before_the_first_entry_and_hides_th
     assert practice.build_marker(USER, picked["practice"], picked["symbol"], picked["date"], picked["start_time"])["recorded"]
 
 
+def clock_minutes(text):
+    return int(text[:2]) * 60 + int(text[3:5])
+
+
 def test_a_start_is_never_before_the_open_and_a_day_entered_at_the_open_is_skipped(database):
-    mark_day(day="2026-10-06", marks=[mark("entry", at(9, 21))])  # 6 minutes after the open: 09:15 start
-    mark_day(day="2026-10-07", marks=[mark("entry", at(9, 15))])  # nothing to start before
-    for seed in range(20):
+    mark_day(day="2026-10-06", marks=[mark("entry", at(9, 21))])  # 6 minutes after the open
+    mark_day(day="2026-10-07", marks=[mark("entry", at(9, 15))])  # nothing to start before: never offered
+    for seed in range(40):
         picked = practice.pick(USER, CAT, STRAT, rng=random.Random(seed))
-        assert picked["date"] == "2026-10-06" and picked["start_time"] >= "09:15:00"
-        assert picked["start_time"] == "09:15:00" or picked["start_time"] > "09:15:00"
-        assert picked["practice"]["start_offset_min"] == (9 * 60 + 21) - (int(picked["start_time"][:2]) * 60 + int(picked["start_time"][3:5]))
-        assert picked["start_time"] >= "09:15:00" and picked["practice"]["start_offset_min"] <= 6  # clamped at the open
+        assert picked["date"] == "2026-10-06"
+        assert clock_minutes(picked["start_time"]) >= 9 * 60 + 15
+        assert picked["practice"]["start_offset_min"] == 9 * 60 + 21 - clock_minutes(picked["start_time"])
     with pytest.raises(ValueError, match="No day"):
         practice.pick(USER, CAT, STRAT, symbol="BSESEN")
+
+
+def test_an_early_entry_is_still_a_random_start_between_the_open_and_the_entry(database):
+    """An entry at 09:24 allows only 9 minutes back: 5 to 9, so 09:15 to 09:19. Not 25 minutes (08:59), and not always 09:15."""
+    mark_day(marks=[mark("entry", at(9, 24))])
+    offsets = set()
+    for seed in range(200):
+        picked = practice.pick(USER, CAT, STRAT, rng=random.Random(seed))
+        start = clock_minutes(picked["start_time"])
+        assert 9 * 60 + 15 <= start <= 9 * 60 + 19 and start < 9 * 60 + 24  # inside the session, before the entry
+        offsets.add(picked["practice"]["start_offset_min"])
+    assert offsets == {5, 6, 7, 8, 9}  # varied, and the 09:15 start is one of five, not the only one
+    # the start it picks is accepted when the session starts
+    assert practice.build_marker(USER, picked["practice"], "NIFTY", DAY, picked["start_time"])["recorded"]
+
+
+def test_the_start_offset_edges(database):
+    rng = random.Random(0)
+    clock = lambda h, m: h * 3600 + m * 60
+    assert practice.start_offset_minutes(clock(9, 16), rng) == 1    # one minute after the open: start at 09:15
+    assert practice.start_offset_minutes(clock(9, 18), rng) == 3
+    assert practice.start_offset_minutes(clock(9, 20), rng) == 5    # exactly 5 minutes of room
+    assert {practice.start_offset_minutes(clock(9, 21), rng) for _ in range(100)} == {5, 6}
+    assert {practice.start_offset_minutes(clock(9, 40), rng) for _ in range(500)} == set(range(5, 26))  # 25 minutes of room: the full range
+    assert {practice.start_offset_minutes(clock(14, 0), rng) for _ in range(500)} == set(range(5, 26))
+    for hour_minute in [(9, 16), (9, 24), (9, 30), (9, 40), (11, 2)]:
+        entry = clock(*hour_minute)
+        for _ in range(50):
+            assert entry - practice.start_offset_minutes(entry, rng) * 60 >= clock(9, 15)
 
 
 def test_filters_by_symbol_and_grade(database):

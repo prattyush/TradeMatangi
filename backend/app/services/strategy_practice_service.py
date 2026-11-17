@@ -155,6 +155,17 @@ def _practised(user_id: str, category: str, strategy: str) -> set[tuple[str, str
     return {(m["date"], m["symbol"]) for _, m in _practice_sessions(user_id) if (m["category"], m["strategy"]) == (category, strategy)}
 
 
+def start_offset_minutes(entry_at: int, rng: random.Random) -> int:
+    """How many whole minutes before the first Entry candle (``entry_at``, seconds after midnight) the replay starts.
+
+    A random 5 to 25, but never back past the open: an entry at 09:24 has only 9 minutes before 09:15, so the pick is 5 to 9
+    (a start of 09:15 to 09:19), not a 25 that would land at 08:59 and, clamped, always start at 09:15 and give the entry away.
+    An entry less than 5 minutes after the open starts at 09:15. The caller has excluded entries at or before the open.
+    """
+    room = (entry_at - REPLAY_OPENS_SECONDS) // 60
+    return rng.randint(START_OFFSET_MIN, min(START_OFFSET_MAX, room)) if room >= START_OFFSET_MIN else room
+
+
 def pick(user_id: str, category: str, strategy: str, symbol: Optional[str] = None, grades: Optional[list[str]] = None,
          rng: Optional[random.Random] = None, include_negatives: bool = False) -> dict:
     """Choose a day and a replay start for a practice run.
@@ -204,8 +215,8 @@ def pick(user_id: str, category: str, strategy: str, symbol: Optional[str] = Non
         pool = sorted(fresh or candidates)
         date, sym = rng.choice(pool)
         setups, entry_at = candidates[(date, sym)]
-    start_at = max(REPLAY_OPENS_SECONDS, entry_at - rng.randint(START_OFFSET_MIN, START_OFFSET_MAX) * 60)
-    offset = (entry_at - start_at) // 60  # whole minutes: entry marks sit on a candle start
+    offset = start_offset_minutes(entry_at, rng)
+    start_at = entry_at - offset * 60
     strike_ce = next((s["strike_ce"] for s in setups if s["strike_ce"]), None)
     strike_pe = next((s["strike_pe"] for s in setups if s["strike_pe"]), None)
     optionable = sym in options_service.STRIKE_INTERVALS
