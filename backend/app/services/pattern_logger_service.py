@@ -409,6 +409,39 @@ def create_chart(
     return result
 
 
+def save_marks_to_chart(
+    user_id: str, symbol: str, date: str, marks: list[dict], strike_ce: Optional[int] = None,
+    strike_pe: Optional[int] = None, interval_minutes: int = 3, notes: str = "",
+) -> dict:
+    """Put pattern marks on the user's chart for that symbol and day (Phase 26: used by the Deep Dive and by traded patterns).
+
+    An own chart for the day gets the marks it does not have yet (merged by mark id); a chart that uses other CE or PE strikes
+    than the marks need is refused rather than drawn on the wrong contract. Without one, a new chart is created. Returns
+    ``{chart_id, merged, added}``.
+    """
+    def whole(value):
+        return None if value is None else int(value)
+
+    has_options = any(a.get("instrument") in ("CE", "PE") for a in marks)
+    instrument_type, right = ("options", "CE") if has_options else ("equity", None)
+    register_annotation_names(user_id, marks)
+    existing = find_chart_by_date(user_id, symbol, date, instrument_type, right)
+    if existing and existing.get("can_delete"):
+        wanted = {"CE": strike_ce, "PE": strike_pe or strike_ce}
+        have = {"CE": whole(existing.get("strike")), "PE": whole(existing.get("strike_pe", existing.get("strike")))}
+        for leg in ("CE", "PE"):
+            if any(a.get("instrument") == leg for a in marks) and wanted[leg] and have[leg] and wanted[leg] != have[leg]:
+                raise ValueError(f"The pattern chart for this day uses a different {leg} strike ({have[leg]})")
+        known = {a["id"] for a in existing["annotations"]}
+        added = [a for a in marks if a["id"] not in known]
+        update_chart(existing["chart_id"], existing["annotations"] + added, existing.get("notes", ""), strike=None, strike_pe=None)
+        return {"chart_id": existing["chart_id"], "merged": True, "added": len(added)}
+    chart = create_chart(
+        user_id=user_id, symbol=symbol, date=date, instrument_type=instrument_type, annotations=marks, notes=notes, right=right,
+        strike=strike_ce if strike_ce is not None else strike_pe, strike_pe=strike_pe, interval_minutes=interval_minutes)
+    return {"chart_id": chart["chart_id"], "merged": False, "added": len(marks)}
+
+
 def _parse_top_patterns(item: dict) -> dict:
     tp = item.get("top_patterns", {})
     if isinstance(tp, str):
