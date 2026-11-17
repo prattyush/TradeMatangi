@@ -239,6 +239,14 @@ Three tools under the desktop **Tools** view (`windowsapp/src/tools/ToolsView.ts
 - **Toolbar:** "Practice: strategy" while it runs (from `session.practice`, never the recorded side or marks); after Stop, **Review practice** takes you to the Tools view, Pattern Library > Practice, straight into that run's review (`practiceReviewId`).
 - Browser check: `scripts/desktop-practice-check.mjs` (the whole path on the built app with a faked native layer and server).
 
+## Phase 26: Lightweight chart tools in the Deep Dive (2026-11-17)
+
+The website's Lightweight renderer for the Deep Dive and the Practice review (`components/deepdive/DeepDiveLightChart.tsx`) now has the same two menus as the Analysis Lightweight charts (`useLightweightTools`, `LightweightChartTools`):
+- **Indicators ▾**: one indicator, **EMA 9/21**, on by default; the choice is remembered per account (`analysis-lw-ema`) like on the Analysis charts. VWAP and Volume are not offered (the Deep Dive feeds no volume).
+- **Draw ▾**: the usual tools (Horizontal Line, Trend Line, Fib Retracement, Rectangle, Buy and Sell Marker, Risk:Reward), a **Clear** for the last drawing. Drawings are kept per account, instrument **and day**, so each Deep Dive day starts clean and keeps what was drawn on it.
+- **Marks and drawings do not mix:** while a drawing tool is active a click on the chart draws and is never also an Entry / Exit mark (the chart's own click handler is registered before the drawing tools', so it still sees the tool as active on the click that finishes the drawing). A tool draws once and switches itself off; the next click is a mark again.
+- The KLine mode already had its own Draw and Indicators in the toolbar.
+
 ## Phase 26: Strategy Practice screens (S15)
 
 - **Shared module** `shared/practice/` (host-injected like `shared/deepdive`): `types.ts`, `client.ts` (`createPracticeClient(request)` over the `deep-dive/practice/...` paths), `model.ts` (grade filters, wording of the review, your trades as gold marks), `startConfig.ts` (the instrument settings of a practice replay), `ui/` (`Practice` container with **Start practice** and **History** tabs, `PracticeStart`, `PracticeHistory`, `PracticeReview`, `host.tsx`, `practice.css`). Tests: `windowsapp/src/practice.test.ts`.
