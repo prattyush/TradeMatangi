@@ -88,6 +88,7 @@
 .dd-taglist li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; border-radius: 6px; background: #0d1117; border: 1px solid #21262d; }
 .dd-taglist li.unmarked { border-color: #b45309; }
 .dd-tagname { font-size: 13px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dd-tagrename { flex: 1; min-width: 0; }
 .dd-tagbtns { display: flex; gap: 4px; }
 .dd-tagbtns .valid[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
 .dd-tagbtns .not-valid[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }

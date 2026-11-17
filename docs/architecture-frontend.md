@@ -231,6 +231,12 @@ Three tools under the desktop **Tools** view (`windowsapp/src/tools/ToolsView.ts
 - **From your trades**: the two charts are side by side (the Deep Dive's in-depth step stays stacked).
 - **Deep Dive header in the library's own row** (`ui/HeaderPortal.tsx`, `DeepDiveHost.headerSlot`): the back button ("← All"), the deep dive's name (truncated when long), the three steps and, in the in-depth step, the day walk (‹, "1 / 21 · 5 Oct · BUY", ›, "Next unmarked day", the save state) are a portal into the Pattern Library's header row, so they take no rows of their own and the charts get that height. The website page and the desktop Pattern Library each provide the slot while the Deep dive tab is open; the header wraps when the window is too narrow (the whole row fits on one line from about 1500px). Without a slot the controls render in their own row as before. The day label leaves out the year when it is the current year (`positionLabel(..., omitYear)`).
 
+## Phase 26: rename a tag (2026-11-17)
+
+- **✎ on every active tag** (`TagPanel`, `onRename` → `DeepDiveApi.updateTag`, the existing `POST /tags/{id}/update`): the name becomes an input with Save / Cancel (Enter saves, Escape cancels). The same checks as adding run first (not empty, 140 characters, no other active tag with that name, case-insensitive; changing only the case is allowed), and the server repeats them.
+- **Older days follow with no migration:** day marks are stored by tag id (`tag_values`), and a name is read from the one tag record, so every day, the Results bars, the Needs marking list and (after the 20-second stats cache is dropped by the write) the percentages in label forms show the new name. No marks change, so no day becomes open or complete by a rename. Archived tags are restored before they can be renamed; a name an archived tag held can be reused.
+- The KLine chart's pick-mode Escape listener now ignores Escape pressed in a text field, so cancelling a rename never cancels a chart pick.
+
 ## Phase 26 hardening (S11)
 
 - `shared/deepdive/ui/errors.ts` (`friendlyError`): every Deep Dive and traded-patterns screen words transport errors plainly (a route an older backend lacks, a connection that did not get through) and passes the server's own sentences through. The start screen loads its names and the list of dives independently so one failure never empties the other.

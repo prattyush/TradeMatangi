@@ -36,7 +36,7 @@ const tradedList = { category: 'Breakout', strategy: 'Opening range', total: 2, 
   tradedTrade(2, { right: 'PE', strike: 24400, action: 'SELL', pnl: -300, matched_as: 'actual', entry: { time: tradeBase + 100 * 60, price: 90, quantity: 65 }, exit: { time: tradeBase + 130 * 60, price: 96, quantity: 65 } })] }
 const tradedChart = { chart_id: 'chart-9', user_id: 'alice', symbol: 'NIFTY', date: dayA, instrument_type: 'options', right: 'CE', strike: 24500, notes: '', interval_minutes: 3, top_patterns: {}, risk_reward_ratios: {}, created_at: '', updated_at: '', can_delete: true,
   annotations: [{ id: 'm1', time: tradeBase + 21 * 60, price: 100, type: 'entry', instrument: 'CE', strategy_name: 'Opening range', category: 'Breakout', text: '' }] }
-const store = { setups: [], tags: [], tradedSaves: [], names: { categories: ['Breakout'], strategies: ['Opening range'] }, calls: [], saved: [] }
+const store = { setups: [], tags: [], tradedSaves: [], renames: [], names: { categories: ['Breakout'], strategies: ['Opening range'] }, calls: [], saved: [] }
 const key = s => `${s.date}|${s.symbol}|${s.side}`
 const order = list => [...list].sort((a, b) => a.date.localeCompare(b.date) || (a.side === 'buy' ? -1 : 1))
 const active = () => store.tags.filter(t => t.status === 'active')
@@ -58,6 +58,12 @@ function deepDive(path, method, body, params) {
   if (path === 'setup/save-to-patterns') { const s = store.setups.find(x => key(x) === `${body.date}|${body.symbol}|${body.side}`); store.saved.push(key(s)); return { chart_id: 'chart-1', merged: store.saved.length > 1, added: s.annotations.length } }
   if (path === 'setup/tag-values') { const s = store.setups.find(x => key(x) === `${body.date}|${body.symbol}|${body.side}`); for (const [id, v] of Object.entries(body.tag_values)) { if (v === null) delete s.tag_values[id]; else s.tag_values[id] = v } return s }
   if (path === 'tags' && method === 'POST') { const tag = { tag_id: 't' + (store.tags.length + 1), name: body.name, status: 'active', sort_order: store.tags.length, created_at: '', archived_at: null }; store.tags.push(tag); return tag }
+  const renamed = /^tags\/(\w+)\/update$/.exec(path)
+  if (renamed) {
+    const t = store.tags.find(x => x.tag_id === renamed[1])
+    if (store.tags.some(x => x.status === 'active' && x.tag_id !== t.tag_id && x.name.toLowerCase() === String(body.name).trim().toLowerCase())) throw new Error('An active tag with this name already exists')
+    t.name = String(body.name).trim(); store.renames.push(t.name); return t
+  }
   const m = /^tags\/(\w+)\/(archive|restore)$/.exec(path)
   if (m) { const t = store.tags.find(x => x.tag_id === m[1]); t.status = m[2] === 'archive' ? 'archived' : 'active'; return t }
   throw new Error('unhandled deep dive path ' + path)
@@ -279,6 +285,17 @@ try {
 
   // Jump with "Next unmarked day"; an archived tag stops counting at once.
   await page.getByRole('button', { name: 'Next unmarked day' }).click()
+  // Rename a tag: a name another active tag has is refused with nothing sent; a free name is saved, and the marks stay.
+  await page.getByRole('button', { name: 'Rename Second leg' }).click()
+  await page.getByLabel('New name for Second leg').fill('double TOP'); await page.getByLabel('New name for Second leg').press('Enter')
+  await page.getByRole('alert').filter({ hasText: /already exists/ }).waitFor()
+  assert.deepEqual(store.renames, [])
+  await page.getByLabel('New name for Second leg').press('Escape')
+  await page.getByRole('button', { name: 'Rename Second leg' }).click()
+  await page.getByLabel('New name for Second leg').fill('Second leg follows'); await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await page.locator('.dd-taglist li', { hasText: 'Second leg follows' }).waitFor()
+  assert.deepEqual(store.renames, ['Second leg follows'])
+  assert.ok(store.setups.some(s => Object.keys(s.tag_values).includes('t1')), 'the marks of the renamed tag are still there')
   await page.getByRole('button', { name: 'Archive Double top' }).click()
   await page.getByText('Archived tags (1)').waitFor()
   await page.waitForFunction(() => /Needs marking: [0-9] day/.test(document.body.textContent))

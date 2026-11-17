@@ -463,3 +463,70 @@ def test_a_deep_dive_day_must_be_before_today_in_india(database):
         with pytest.raises(ValueError, match="before today"):
             mark(today.isoformat())
     assert mark(D1)["date"] == D1  # a completed day is fine
+
+
+# ── Rename a tag (marks follow because they are kept by tag id) ──────────────
+
+def test_renaming_a_tag_changes_it_on_every_older_day_and_in_the_stats(database):
+    tag = ask("2nd leg")
+    other = ask("Double top")
+    for day in (D1, D2, D3):
+        mark(day)
+    svc.set_tag_values(USER, CAT, STRAT, "NIFTY", D1, "buy", {tag["tag_id"]: True, other["tag_id"]: False})
+    svc.set_tag_values(USER, CAT, STRAT, "NIFTY", D2, "buy", {tag["tag_id"]: False})
+    svc.set_tag_values(USER, CAT, STRAT, "NIFTY", D3, "buy", {tag["tag_id"]: True})
+    complete_before = [s["complete"] for s in svc.get_dive(USER, CAT, STRAT)["setups"]]
+    cached = svc.stats_all(USER)  # fills the label-form cache with the old name
+    assert [t["name"] for t in cached[0]["all"]["tags"]] == ["2nd leg", "Double top"]
+
+    renamed = svc.update_tag(USER, CAT, STRAT, tag["tag_id"], "  Second   leg follows ")
+    assert renamed["name"] == "Second leg follows" and renamed["tag_id"] == tag["tag_id"]
+
+    dive = svc.get_dive(USER, CAT, STRAT)
+    assert [t["name"] for t in dive["tags"]] == ["Second leg follows", "Double top"]
+    # the marks of the older days are untouched: same tag id, same values
+    assert [s["tag_values"].get(tag["tag_id"]) for s in dive["setups"]] == [True, False, True]
+    assert [s["complete"] for s in dive["setups"]] == complete_before == [True, False, False]  # no day became open or complete by a rename
+    stats = svc.stats(USER, CAT, STRAT)["tags"][0]
+    assert (stats["name"], stats["valid"], stats["not_valid"], stats["marked"]) == ("Second leg follows", 2, 1, 3)
+    # the percentages the label forms read follow at once (the cache was dropped by the rename)
+    assert [t["name"] for t in svc.stats_all(USER)[0]["all"]["tags"]] == ["Second leg follows", "Double top"]
+
+
+def test_rename_rules_match_adding_a_tag(database):
+    first = ask("Second leg?")
+    second = ask("Double top")
+    # only the case changes: the tag does not clash with itself
+    assert svc.update_tag(USER, CAT, STRAT, first["tag_id"], "second LEG?")["name"] == "second LEG?"
+    with pytest.raises(ValueError, match="already exists"):
+        svc.update_tag(USER, CAT, STRAT, second["tag_id"], "SECOND leg?")
+    for bad in ("", "   ", "x" * 141):
+        with pytest.raises(ValueError):
+            svc.update_tag(USER, CAT, STRAT, second["tag_id"], bad)
+    assert [t["name"] for t in svc.list_tags(USER, CAT, STRAT)] == ["second LEG?", "Double top"]  # nothing changed
+
+
+def test_an_archived_tag_can_be_renamed_and_its_name_can_be_reused(database):
+    old = ask("Retired idea")
+    svc.archive_tag(USER, CAT, STRAT, old["tag_id"])
+    assert svc.update_tag(USER, CAT, STRAT, old["tag_id"], "Old idea")["name"] == "Old idea"
+    ask("Retired idea")  # the archived tag no longer holds that name
+    ask("Old idea")      # and an archived tag does not block a new tag's name
+
+
+def test_only_the_owner_can_rename_a_tag(database, monkeypatch):
+    tag = ask("Second leg?")
+    share(monkeypatch, OTHER, [USER])  # bob can read alice's deep dive, never write it
+    with pytest.raises(LookupError):
+        svc.update_tag(OTHER, CAT, STRAT, tag["tag_id"], "Mine now")
+    assert svc.list_tags(USER, CAT, STRAT)[0]["name"] == "Second leg?"
+
+
+def test_api_renames_a_tag_and_reports_problems(client):
+    qid = client.post("/api/deep-dive/tags", json={**REF, "name": "2nd leg"}).json()["tag_id"]
+    client.post("/api/deep-dive/tags", json={**REF, "name": "Double top"})
+    ok = client.post(f"/api/deep-dive/tags/{qid}/update", json={**REF, "name": "Second leg"})
+    assert ok.status_code == 200 and ok.json()["name"] == "Second leg"
+    assert client.post(f"/api/deep-dive/tags/{qid}/update", json={**REF, "name": "double TOP"}).status_code == 400
+    assert client.post(f"/api/deep-dive/tags/{qid}/update", json={**REF, "name": " "}).status_code == 400
+    assert client.post("/api/deep-dive/tags/missing/update", json={**REF, "name": "X"}).status_code == 404

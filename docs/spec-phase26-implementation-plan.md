@@ -272,3 +272,8 @@ All sprints are merged to `dev` except S11 (in PR). What remains is the **owner'
 - **Deep Dive header in the Pattern Library's own row** (`HeaderPortal`, `DeepDiveHost.headerSlot`, a slot in the website page header and the desktop `.pl-head`): back ("← All"), name, steps and the day walk no longer take rows of their own. Compact controls (‹ ›, no year in the day label, a truncating name) so the row fits on one line from about 1500px.
 - **Tests:** website `deep-dive.spec.ts` (header controls in the library's row at 1920px; maximize, persistence to the next day, restore) and `traded-patterns.spec.ts` (side by side, maximize, restore) on both renderers; `scripts/desktop-deepdive-check.mjs` (same on the built desktop app); `positionLabel` year rule in `deepDive.test.ts`.
 
+## Rename a tag (2026-11-17)
+
+- The owner asked to rename a tag and have older entries follow. Marks are stored by tag id, so nothing is migrated and no secondary index is needed; the backend rename route and `updateTag` client call already existed, so the work was the **✎ Rename** control in `TagPanel`, wired through `DayWorkspace` and `InDepth` (the dive's tag list is updated from the server's reply).
+- Tests: backend (`test_deep_dive.py`: older days and stats follow, marks and completeness unchanged, the label-form cache is dropped, case-only change, duplicate and empty/long names refused, an archived tag can be renamed, a shared viewer cannot, the route's 400/404), desktop SSR (`inDepth.test.tsx`), website `deep-dive.spec.ts` on both renderers, `scripts/desktop-deepdive-check.mjs`.
+
