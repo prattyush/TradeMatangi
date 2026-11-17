@@ -27,6 +27,7 @@ def database(monkeypatch):
         monkeypatch.setattr(svc, "_TAGS_ENSURED", False)
         monkeypatch.setattr(patterns, "_names_table_ready", False, raising=False)
         monkeypatch.setattr(patterns, "get_accessible_owner_ids", lambda user_id: [user_id])
+        monkeypatch.setattr(svc, "_stats_cache", {})
         yield db
 
 
@@ -398,3 +399,67 @@ def test_api_errors_are_400_and_404(client):
     assert missing.status_code == 404
     assert client.get("/api/deep-dive/dive", params={**REF, "owner_id": "stranger"}).status_code == 404
     assert client.post("/api/deep-dive/tags/missing/archive", json=REF).status_code == 404
+
+
+# ── Hardening (S11): the stats cache and the past-days rule ──────────────────
+
+def test_stats_all_is_cached_briefly_and_every_write_drops_it(database, monkeypatch):
+    first = ask("Second leg?")
+    mark()
+    svc.set_tag_values(USER, CAT, STRAT, "NIFTY", D1, "buy", {first["tag_id"]: True})
+    reads = []
+    original = svc._owner_dives
+    monkeypatch.setattr(svc, "_owner_dives", lambda owner: reads.append(owner) or original(owner))
+    assert svc.stats_all(USER)[0]["all"]["tags"][0]["valid"] == 1
+    assert svc.stats_all(USER) == svc.stats_all(USER)
+    assert reads == [USER], "a repeat call inside the TTL does not read the tables again"
+    # every kind of write drops the cache, so the next call sees it at once
+    writes = [
+        lambda: svc.set_tag_values(USER, CAT, STRAT, "NIFTY", D1, "buy", {first["tag_id"]: False}),
+        lambda: svc.upsert_setup(USER, CAT, STRAT, "NIFTY", D1, "buy", {"outcome": "success"}),
+        lambda: svc.upsert_setup(USER, CAT, STRAT, "NIFTY", D2, "buy", {}),
+        lambda: ask("Double top?"),
+        lambda: svc.update_tag(USER, CAT, STRAT, first["tag_id"], "Second leg follows?"),
+        lambda: svc.archive_tag(USER, CAT, STRAT, first["tag_id"]),
+        lambda: svc.restore_tag(USER, CAT, STRAT, first["tag_id"]),
+        lambda: svc.delete_setup(USER, CAT, STRAT, "NIFTY", D2, "buy"),
+    ]
+    for write in writes:
+        svc.stats_all(USER)
+        before = len(reads)
+        write()
+        svc.stats_all(USER)
+        assert len(reads) == before + 1, "the write did not drop the cached percentages"
+    assert svc.stats_all(USER)[0]["all"]["success"] == 1
+
+
+def test_stats_all_cache_expires_and_callers_cannot_corrupt_it(database, monkeypatch):
+    tag = ask("Second leg?")
+    mark()
+    svc.set_tag_values(USER, CAT, STRAT, "NIFTY", D1, "buy", {tag["tag_id"]: True})
+    clock = [1000.0]
+    monkeypatch.setattr(svc.time, "monotonic", lambda: clock[0])
+    reads = []
+    original = svc._owner_dives
+    monkeypatch.setattr(svc, "_owner_dives", lambda owner: reads.append(owner) or original(owner))
+    result = svc.stats_all(USER)
+    result[0]["all"]["tags"][0]["valid"] = 99  # a caller changing what it got must not change the cache
+    result.clear()
+    assert svc.stats_all(USER)[0]["all"]["tags"][0]["valid"] == 1 and len(reads) == 1
+    clock[0] += svc.STATS_ALL_TTL_SECONDS + 1
+    svc.stats_all(USER)
+    assert len(reads) == 2, "after the TTL the tables are read again"
+
+
+def test_a_deep_dive_day_must_be_before_today_in_india(database):
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from app.utils import is_trading_day
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    future = next(d for d in (today + timedelta(days=n) for n in range(1, 10)) if is_trading_day(d))
+    with pytest.raises(ValueError, match="before today"):
+        mark(future.isoformat())
+    if is_trading_day(today):
+        with pytest.raises(ValueError, match="before today"):
+            mark(today.isoformat())
+    assert mark(D1)["date"] == D1  # a completed day is fine

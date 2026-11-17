@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { readableError } from '../../analysis/behavior/types'
+import { friendlyError } from './errors'
 import { computeStats, formatDay, formatPct, nLabel, SIDE_MEANING, sideLabel, sortTagStats, successLine, tagDots, thinNote } from '../model'
 import type { Dive, DiveSetup, Side } from '../types'
 import { useDeepDiveHost } from './host'
@@ -36,7 +36,7 @@ export default function Results({ dive, onOpenDay }: Props) {
   const saveDay = async (day: DiveSetup) => {
     setBusy(dayId(day)); setMessage(null)
     try { setMessage({ kind: 'ok', text: describe(day, await api.saveToPatterns(day)) }) }
-    catch (error) { setMessage({ kind: 'error', text: `${formatDay(day.date)} ${sideLabel(day.side)}: ${readableError(error)}` }) }
+    catch (error) { setMessage({ kind: 'error', text: `${formatDay(day.date)} ${sideLabel(day.side)}: ${friendlyError(error)}` }) }
     finally { setBusy(null) }
   }
   const saveAll = async () => {
@@ -45,7 +45,7 @@ export default function Results({ dive, onOpenDay }: Props) {
     const failed: string[] = []
     for (const day of withMarks) {
       try { const result = await api.saveToPatterns(day); if (result.merged) merged += 1; else created += 1; added += result.added }
-      catch (error) { failed.push(`${formatDay(day.date)} ${sideLabel(day.side)} (${readableError(error)})`) }
+      catch (error) { failed.push(`${formatDay(day.date)} ${sideLabel(day.side)} (${friendlyError(error)})`) }
     }
     setBusy(null)
     const done = `${created} new and ${merged} updated pattern ${created + merged === 1 ? 'chart' : 'charts'}, ${added} marks added`

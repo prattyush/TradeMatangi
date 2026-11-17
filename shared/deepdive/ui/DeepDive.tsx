@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { readableError } from '../../analysis/behavior/types'
+import { friendlyError } from './errors'
 import type { Dive, DiveRef, DiveSetup } from '../types'
 import DateMarking from './DateMarking'
 import DiveHome from './DiveHome'
@@ -33,7 +33,7 @@ function DeepDiveSteps() {
       setDive(loaded)
       setStep('mark'); setFocus(null)
       setSymbol(startSymbol ?? loaded.setups.slice(-1)[0]?.symbol ?? 'NIFTY')
-    } catch (e) { setError(readableError(e)) } finally { setLoading(false) }
+    } catch (e) { setError(friendlyError(e)) } finally { setLoading(false) }
   }, [api])
 
   if (!dive) return <DiveHome loading={loading} error={error} onOpen={(ref, start, owner) => void open(ref, start, owner)} />

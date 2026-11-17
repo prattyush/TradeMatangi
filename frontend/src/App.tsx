@@ -1,3 +1,4 @@
+import { feedNotice } from '../../shared/liveFeedNotice'
 import { shouldResetLabelTracking } from './hooks/roundTripIndexer'
 import { AppWindowControls } from '../../shared/AppWindowControls'
 import { InstallAppControl } from '../../webapp/src/InstallApp'
@@ -2676,7 +2677,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       )}
 
       {/* Broker error banner (paper trading) */}
-      {liveFeed && sim.sessionType !== 'real' && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>Feed {liveFeed.actual_provider ?? liveFeed.selected_provider} · {liveFeed.connection}{liveFeed.actual_provider && liveFeed.actual_provider !== liveFeed.selected_provider ? ` (fallback from ${liveFeed.selected_provider})` : ''}</div>}
+      {/* Only when the feed needs attention (connecting, reconnecting, unavailable, or a fallback provider): a healthy feed takes no row from the chart. */}
+      {sim.sessionType !== 'real' && feedNotice(liveFeed) && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>{feedNotice(liveFeed)}</div>}
       {/* Main content */}
       <div ref={mainContentRef} style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* Chart column */}

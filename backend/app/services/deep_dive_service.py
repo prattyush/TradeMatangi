@@ -19,11 +19,14 @@ an ``owner_id`` that shared patterns with the caller (read-only); writes are alw
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
+import time
 import uuid
 from datetime import date as calendar_date, datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,16 @@ FEW_DAYS = 5  # fewer marked days than this and a percentage is flagged as thin
 
 _SETUPS_ENSURED = False
 _TAGS_ENSURED = False
+
+# The label forms and live popups ask for the percentages of every deep dive each time they open. That reads all of a user's
+# marked days, so the answer is kept for a few seconds per process and dropped by every write made here. Another process (or a
+# viewer of a shared deep dive) sees a change within the TTL at most.
+STATS_ALL_TTL_SECONDS = 20.0
+_stats_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+def _changed() -> None:
+    _stats_cache.clear()
 
 
 # ── Tables ───────────────────────────────────────────────────────────────────
@@ -149,6 +162,9 @@ def _trading_date(value: str) -> str:
         raise ValueError("Date must be YYYY-MM-DD") from None
     if not is_trading_day(day):
         raise ValueError("The selected date is not a trading day")
+    # Same rule as the calendar: only completed days (before today in India), so a day's candles are all there.
+    if day >= datetime.now(ZoneInfo("Asia/Kolkata")).date():
+        raise ValueError("A deep dive day must be before today")
     return day.isoformat()
 
 
@@ -254,6 +270,7 @@ def add_tag(user_id: str, category: str, strategy: str, name: str) -> dict:
         "created_at": _now(),
     }
     _tags().put_item(Item=item)
+    _changed()
     _register_names(user_id, item["category"], item["strategy"])
     return _serialize_tag(item)
 
@@ -270,6 +287,7 @@ def update_tag(user_id: str, category: str, strategy: str, tag_id: str, name: st
         ExpressionAttributeNames={"#t": "name"},
         ExpressionAttributeValues={":t": cleaned},
     )
+    _changed()
     return {**current, "name": cleaned}
 
 
@@ -285,6 +303,7 @@ def archive_tag(user_id: str, category: str, strategy: str, tag_id: str) -> dict
         ExpressionAttributeNames={"#s": "status"},
         ExpressionAttributeValues={":s": "archived", ":a": archived_at},
     )
+    _changed()
     return {**current, "status": "archived", "archived_at": archived_at}
 
 
@@ -304,6 +323,7 @@ def restore_tag(user_id: str, category: str, strategy: str, tag_id: str) -> dict
         ExpressionAttributeNames={"#s": "status"},
         ExpressionAttributeValues={":s": "active"},
     )
+    _changed()
     return {**current, "status": "active", "archived_at": None}
 
 
@@ -416,6 +436,7 @@ def upsert_setup(user_id: str, category: str, strategy: str, symbol: str, date: 
         UpdateExpression=expression, ExpressionAttributeNames=names, ExpressionAttributeValues=values,
         ReturnValues="ALL_NEW",
     )["Attributes"]
+    _changed()
     _register_names(user_id, category, strategy)
     return _serialize_setup(row)
 
@@ -425,6 +446,7 @@ def delete_setup(user_id: str, category: str, strategy: str, symbol: str, date: 
     key = dive_key(category, strategy)
     result = _setups().delete_item(
         Key={"user_id": user_id, "setup_key": _setup_key(key, date, symbol, _side(side))}, ReturnValues="ALL_OLD")
+    _changed()
     return bool(result.get("Attributes"))
 
 
@@ -462,6 +484,7 @@ def set_tag_values(user_id: str, category: str, strategy: str, symbol: str, date
         UpdateExpression=expression, ExpressionAttributeNames=names, ExpressionAttributeValues=values,
         ConditionExpression="attribute_exists(user_id)", ReturnValues="ALL_NEW",
     )["Attributes"]
+    _changed()
     return _serialize_setup(updated)
 
 
@@ -588,6 +611,15 @@ def stats_all(user_id: str) -> list[dict]:
     One entry per category + strategy: the caller's own dive wins; otherwise the first owner who shared with
     them. Each entry carries ``all``, ``buy`` and ``sell`` blocks so the form can switch side without a request.
     """
+    cached = _stats_cache.get(user_id)
+    if cached and cached[0] > time.monotonic():
+        return copy.deepcopy(cached[1])
+    result = _stats_all_uncached(user_id)
+    _stats_cache[user_id] = (time.monotonic() + STATS_ALL_TTL_SECONDS, result)
+    return copy.deepcopy(result)
+
+
+def _stats_all_uncached(user_id: str) -> list[dict]:
     chosen: dict[str, dict] = {}
     for owner in _accessible_owners(user_id):
         for key, entry in _owner_dives(owner).items():

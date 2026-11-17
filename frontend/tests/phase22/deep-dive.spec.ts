@@ -61,6 +61,20 @@ for (const renderer of ["lightweight", "kline"] as const) {
     // Step 2: one underlying chart and the option chart of the day's side; tags; a mark on the chart.
     await page.getByRole("tab", { name: /2 · In-depth/ }).click();
     await page.getByText(/1 \/ 2 ·/).waitFor();
+    // The day strip is one tab stop and the arrow keys walk the days (and focus follows).
+    const chips = page.getByRole("tab", { name: /Nov|Oct|Sep|Dec|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug/ }).filter({ has: page.locator("b") });
+    await expect(chips).toHaveCount(2);
+    await expect(chips.nth(0)).toHaveAttribute("tabindex", "0");
+    await expect(chips.nth(1)).toHaveAttribute("tabindex", "-1");
+    await chips.nth(0).focus();
+    await page.keyboard.press("ArrowRight");
+    await page.getByText(/2 \/ 2 ·/).waitFor();
+    await expect(chips.nth(1)).toBeFocused();
+    await page.keyboard.press("ArrowRight"); // already on the last day
+    await page.getByText(/2 \/ 2 ·/).waitFor();
+    await page.keyboard.press("Home");
+    await page.getByText(/1 \/ 2 ·/).waitFor();
+    await expect(chips.nth(0)).toBeFocused();
     await expect(page.locator(".dd-chartbox")).toHaveCount(2);
     await page.locator(".dd-chartbox canvas").first().waitFor();
     // The day area runs to the bottom of the window and the two stacked charts share all of it, half each: no empty half-page on a

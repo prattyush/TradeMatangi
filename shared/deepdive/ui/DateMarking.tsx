@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { readableError } from '../../analysis/behavior/types'
+import { friendlyError } from './errors'
 import { lastPickableDay, monthOf, todayIso, type MonthRef } from '../calendar'
 import { dayMarksByDate, formatDay, removalImpact, sideLabel, toDiveSetup, withSetups } from '../model'
 import type { Dive, DiveSetup, Side } from '../types'
@@ -34,7 +34,7 @@ export default function DateMarking({ dive, setDive, symbol, onSymbol }: Props) 
 
   const run = async (key: string, action: () => Promise<void>) => {
     setBusy(key); setError(null)
-    try { await action() } catch (e) { setError(readableError(e)) } finally { setBusy(null) }
+    try { await action() } catch (e) { setError(friendlyError(e)) } finally { setBusy(null) }
   }
   const add = (date: string, side: Side) => run(`${date}|${side}`, async () => {
     const saved = await api.saveSetup({ ...ref, symbol, date, side })

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { readableError } from '../../analysis/behavior/types'
+import { friendlyError } from '../../deepdive/ui/errors'
 import { formatDay, sideLabel } from '../../deepdive/model'
 import { useFillWindow } from '../../deepdive/ui/useFillWindow'
 import { contractFor, directionText, filterStrategies, instrumentName, matchedText, pnlText, saveText, timeRange, tradedMarks, tradeInstrument } from '../model'
@@ -27,7 +27,7 @@ function TradedScreen() {
   const [selected, setSelected] = useState<{ category: string; strategy: string } | null>(null)
 
   const load = useCallback(async () => {
-    try { setStrategies(await api.summary()); setError(null) } catch (e) { setError(readableError(e)); setStrategies([]) }
+    try { setStrategies(await api.summary()); setError(null) } catch (e) { setError(friendlyError(e)); setStrategies([]) }
   }, [api])
   useEffect(() => { void load() }, [load])
 
@@ -67,7 +67,7 @@ function StrategyTrades({ category, strategy }: { category: string; strategy: st
   useEffect(() => {
     let alive = true
     api.list({ category, strategy }).then(value => { if (alive) { setResult(value); setChosen(value.trades[0] ? tradeKey(value.trades[0]) : null) } },
-      e => { if (alive) setError(readableError(e)) })
+      e => { if (alive) setError(friendlyError(e)) })
     return () => { alive = false }
   }, [api, category, strategy])
 
@@ -117,7 +117,7 @@ function TradeViewer({ trade, category, strategy }: { trade: TradedTrade; catego
       saved = await api.save(trade, { category, strategy })
       setMessage({ kind: 'ok', text: saveText(saved), chartId: saved.chart_id })
       if (edit) await onEdit(saved.chart_id)
-    } catch (e) { setMessage({ kind: 'error', text: readableError(e) }) } finally { setBusy(false) }
+    } catch (e) { setMessage({ kind: 'error', text: friendlyError(e) }) } finally { setBusy(false) }
   }
 
   const chartProps = { symbol: trade.symbol, date: trade.date, historicalDays, activeStrategy: strategy, activeCategory: category, focusTime: trade.entry.time }
