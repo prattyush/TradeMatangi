@@ -16,6 +16,7 @@ import {
 import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, TopPatterns } from '../services/api'
 import { buildMarkers, patternIdentity, cleanTopPatterns, MARKER_COLORS } from '../services/patternMarkers'
 import WebsiteDeepDive from '../components/deepdive/WebsiteDeepDive'
+import WebsiteTradedPatterns from '../components/deepdive/WebsiteTradedPatterns'
 import { loadHistoricalDays, loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../components/SettingsModal'
 import {
   PATTERN_ATM_TIME, PATTERN_MAX_PRICE_TIME, otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
@@ -691,7 +692,7 @@ function galleryGridStyle(columns: number): CSSProperties {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function PatternLibrary() {
-  const [mode, setMode] = useState<'create' | 'view' | 'deepdive'>('create')
+  const [mode, setMode] = useState<'create' | 'view' | 'deepdive' | 'traded'>('create')
 
   // Form
   const [symbol, setSymbol] = useState('NIFTY')
@@ -1107,6 +1108,9 @@ export default function PatternLibrary() {
     }
   }, [mode, galleryStrategy, galleryCategory, galleryUnderlyingOnly])
 
+  // "From your trades" (Phase 26, S10): a trade saved as pattern marks opens in Create, like a chart loaded from the gallery.
+  const openTradedChart = useCallback(async (chartId: string) => { await handleGalleryLoad(chartId); setMode('create') }, [handleGalleryLoad])
+
   // ── Gallery delete ────────────────────────────────────────────────────────
 
   const handleGalleryDelete = useCallback(async (chartId: string) => {
@@ -1348,11 +1352,11 @@ export default function PatternLibrary() {
       <div style={HEADER}>
         <span style={{ fontSize: 14, fontWeight: 700, marginRight: 4 }}>Pattern Library</span>
 
-        {(['create', 'view', 'deepdive'] as const).map(m => (
+        {(['create', 'view', 'deepdive', 'traded'] as const).map(m => (
           <button key={m}
             style={{ ...btn(mode === m ? '#1f6feb' : '#21262d'), border: '1px solid #30363d' }}
             onClick={() => setMode(m)}>
-            {m === 'create' ? '✏ Create' : m === 'view' ? '👁 View' : '🔍 Deep dive'}
+            {m === 'create' ? '✏ Create' : m === 'view' ? '👁 View' : m === 'deepdive' ? '🔍 Deep dive' : '🧾 From your trades'}
           </button>
         ))}
 
@@ -1529,6 +1533,10 @@ export default function PatternLibrary() {
       {mode === 'deepdive' ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
           <WebsiteDeepDive />
+        </div>
+      ) : mode === 'traded' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
+          <WebsiteTradedPatterns onEdit={openTradedChart} />
         </div>
       ) : mode === 'create' ? (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

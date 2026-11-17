@@ -24,7 +24,9 @@ function ema(closes: number[], period: number): Array<number | null> {
  * day's pattern marks, and a click that reports the candle and price under it while `pickMode` is on. The candle interval is
  * the shared Analysis interval, so both charts of a day and the saved interval of the day stay in step with the KLine mode.
  */
-export default function DeepDiveLightChart({ symbol, date, title, strike, right, expiry, historicalDays, annotations = [], activeStrategy, activeCategory, pickMode, onPick, pickHint }: DiveChartProps) {
+export default function DeepDiveLightChart({ symbol, date, title, strike, right, expiry, historicalDays, annotations = [], activeStrategy, activeCategory, pickMode, onPick, pickHint, focusTime }: DiveChartProps) {
+  const focus = useRef(focusTime)
+  focus.current = focusTime
   const env = useAnalysisEnvironment()
   const interval = env.intervalMinutes ?? 3
   const container = useRef<HTMLDivElement>(null)
@@ -78,7 +80,10 @@ export default function DeepDiveLightChart({ symbol, date, title, strike, right,
       const toLine = (values: Array<number | null>): LineData[] => values.flatMap((value, index) => (value === null ? [] : [{ time: candles[index].time as Time, value }]))
       ema9.current.setData(toLine(ema(closes, 9)))
       ema21.current.setData(toLine(ema(closes, 21)))
-      chartRef.current?.timeScale().fitContent()
+      // Centre on the trade when there is one (its candle a little left of the middle, room to the right), else show the whole day.
+      const at = focus.current === undefined ? -1 : candles.findIndex(c => c.time >= (focus.current as number))
+      if (at >= 0) chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, at - 25), to: at + 70 })
+      else chartRef.current?.timeScale().fitContent()
       setState({ status: 'ready', empty: candles.length === 0 })
     }).catch(error => { if (!cancelled) setState({ status: 'error', message: error instanceof Error ? error.message : String(error) }) })
     return () => { cancelled = true }

@@ -100,4 +100,17 @@ Needs a deep dive with several days, tags and outcomes. **Try replay or stepwise
 2. **Calendar:** check a month you know: each date sits under its own weekday (a Monday under MON, a Friday under FRI), including months that start on a Sunday or a Thursday. Go back a month and check again.
 3. **In-depth layout:** on a tall window the two charts (underlying on top, option below) together fill the height down to the bottom of the window, half each, with no empty half-page; both time axes are visible. On a short window each chart keeps a usable height and the page scrolls. Resize the window: the charts follow. Open the "Needs marking" box or add a tag note: the charts adjust.
 
+## H. From your trades (S10)
+
+Needs the desktop rebuilt from `dev` and trades you have labelled (expected and actual strategies) in Analysis or in a live popup, in more than one session.
+
+1. Pattern Library > **From your trades** (website: **🧾 From your trades**). The left list has every strategy you have labelled a trade with, each with "n trades · n expected · n actual · last <day>". A strategy you only ever used as the *actual* one is there too. The filter narrows by category or name.
+2. Choose a strategy: a table of the trades behind it, newest first: day, instrument (with strike for options), position (**Buy** or **Sell** badge and bought or sold), time range, P&L, whether it was the **expected** or the **actual** strategy (or both), and the session type. Check the Buy / Sell badge against the rule: long equity or index, CE bought and **PE sold** = Buy; short equity, CE sold and **PE bought** = Sell.
+3. The first trade is drawn below the table: the **underlying chart on top and, for an option trade, the CE or PE contract chart under it** with that trade's strike, both centred on the entry. A gold **⚑ BUY** marks the entry bar and a gold **⚑ SELL** the exit bar (a short trade shows SELL first and BUY at its exit). The gold marks look different from the green, red, blue marks of a marked pattern. A legend says "gold = your actual orders".
+4. Click other trades: the charts follow. The charts and table fill the window height; nothing is hidden below the fold on a normal window.
+5. **Save as pattern chart**: a message says it saved a new pattern chart with 2 marks. Find it under **View** (Saved charts): the same symbol and day, with the entry and exit as ordinary marks of that strategy on the traded leg. Do it for another trade of the same day: "Added 2 marks to the day's pattern chart" and the old marks are not duplicated.
+6. **Save and edit**: the saved chart opens in **Annotate** (Create on the website) with its marks; move or add a mark and save as usual.
+7. A day whose pattern chart already uses other strikes than the trade's: the save is refused with a message that names the strike; nothing is overwritten.
+8. A real session's labelled trades appear once (not twice), and with a very long history the screen stays quick (the strategy list does not wait for trades; a strategy with many trades shows the newest 50 and says so).
+
 ## Report back

@@ -65,6 +65,27 @@ function deepDive(path: string, method: string, body: any, query: Record<string,
   throw new Error("unhandled deep dive path " + path);
 }
 
+// Phase 26, S10: the strategies labelled on trades and the trades behind one (entry 09:21, exit 09:48 on the 3-minute chart clock).
+w.tradedSaves = [] as any[];
+const tradeBase = Date.parse("2026-10-16T09:00:00Z") / 1000;
+const tradedSummary = [
+  { category: "Breakout", strategy: "Opening range", trades: 2, expected: 1, actual: 1, last_date: "2026-10-16", sessions: 2 },
+  { category: "Reversal", strategy: "Double top", trades: 1, expected: 1, actual: 0, last_date: "2026-10-09", sessions: 1 },
+];
+const tradedTrade = (index: number, extra: any) => ({
+  session_id: "s" + index, round_trip_index: index, date: "2026-10-16", symbol: "NIFTY", session_type: "paper", instrument_type: "options",
+  right: "CE", strike: 24500, expiry: "2026-10-20", action: "BUY", side: "buy", state: "closed", pnl: 1950, pnl_pct: 1.9,
+  entry: { time: tradeBase + 21 * 60 + 5, price: 100, quantity: 65 }, exit: { time: tradeBase + 48 * 60, price: 130, quantity: 65 },
+  expected: { category: "Breakout", strategy: "Opening range" }, actual: { category: "", strategy: "" }, matched_as: "expected", ...extra,
+});
+const tradedList = { category: "Breakout", strategy: "Opening range", total: 2, truncated: false, unavailable: 0, trades: [
+  tradedTrade(1, {}),
+  tradedTrade(2, { right: "PE", strike: 24400, action: "SELL", side: "buy", pnl: -300, matched_as: "actual", entry: { time: tradeBase + 100 * 60, price: 90, quantity: 65 }, exit: { time: tradeBase + 130 * 60, price: 96, quantity: 65 } }),
+] };
+const savedTradedChart = { chart_id: "chart-9", user_id: "owner", symbol: "NIFTY", date: "2026-10-16", instrument_type: "options", right: "CE", strike: 24500,
+  notes: "", interval_minutes: 3, top_patterns: {}, risk_reward_ratios: {}, created_at: "", updated_at: "", can_delete: true,
+  annotations: [{ id: "m1", time: tradeBase + 21 * 60, price: 100, type: "entry", instrument: "CE", strategy_name: "Opening range", category: "Breakout", text: "" }] };
+
 const original = window.fetch.bind(window);
 window.fetch = async (input: any, options: any = {}) => {
   const url = new URL(typeof input === "string" ? input : input.url, location.origin);
@@ -76,6 +97,10 @@ window.fetch = async (input: any, options: any = {}) => {
   const path = url.pathname;
   try {
     if (path.startsWith("/api/deep-dive/")) return json(deepDive(path.replace("/api/deep-dive/", ""), method, body, query));
+    if (path === "/api/pattern/traded/summary") return json({ strategies: tradedSummary });
+    if (path === "/api/pattern/traded") return json(tradedList);
+    if (path === "/api/pattern/traded/save") { w.tradedSaves.push(body); return json({ chart_id: "chart-9", merged: w.tradedSaves.length > 1, added: 2 }); }
+    if (path === "/api/pattern/chart/chart-9") return json(savedTradedChart);
     if (path === "/api/pattern/strategies") return json({ strategies: ["Opening range"] });
     if (path === "/api/pattern/categories") return json({ categories: ["Breakout"] });
     if (path === "/api/pattern/charts") return json({ charts: [] });

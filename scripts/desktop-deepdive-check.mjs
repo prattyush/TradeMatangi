@@ -25,7 +25,18 @@ const [dayA, dayB, dayC] = days // newest first
 const weekend = (() => { const d = new Date(); while (![0, 6].includes(d.getDay())) d.setDate(d.getDate() - 1); return iso(d) })()
 
 // ── in-memory Deep Dive server ───────────────────────────────────────────────
-const store = { setups: [], tags: [], names: { categories: ['Breakout'], strategies: ['Opening range'] }, calls: [], saved: [] }
+// Phase 26, S10: the strategies labelled on trades and the trades behind one (entry 09:21, exit 09:48 on the chart clock).
+const tradeBase = Date.parse(dayA + 'T09:00:00Z') / 1000
+const tradedTrade = (index, extra) => ({ session_id: 's' + index, round_trip_index: index, date: dayA, symbol: 'NIFTY', session_type: 'paper', instrument_type: 'options', right: 'CE', strike: 24500,
+  expiry: dayA, action: 'BUY', side: 'buy', state: 'closed', pnl: 1950, pnl_pct: 1.9, entry: { time: tradeBase + 21 * 60 + 5, price: 100, quantity: 65 }, exit: { time: tradeBase + 48 * 60, price: 130, quantity: 65 },
+  expected: { category: 'Breakout', strategy: 'Opening range' }, actual: { category: '', strategy: '' }, matched_as: 'expected', ...extra })
+const tradedSummary = [{ category: 'Breakout', strategy: 'Opening range', trades: 2, expected: 1, actual: 1, last_date: dayA, sessions: 2 },
+  { category: 'Reversal', strategy: 'Double top', trades: 1, expected: 1, actual: 0, last_date: dayB, sessions: 1 }]
+const tradedList = { category: 'Breakout', strategy: 'Opening range', total: 2, truncated: false, unavailable: 0, trades: [tradedTrade(1, {}),
+  tradedTrade(2, { right: 'PE', strike: 24400, action: 'SELL', pnl: -300, matched_as: 'actual', entry: { time: tradeBase + 100 * 60, price: 90, quantity: 65 }, exit: { time: tradeBase + 130 * 60, price: 96, quantity: 65 } })] }
+const tradedChart = { chart_id: 'chart-9', user_id: 'alice', symbol: 'NIFTY', date: dayA, instrument_type: 'options', right: 'CE', strike: 24500, notes: '', interval_minutes: 3, top_patterns: {}, risk_reward_ratios: {}, created_at: '', updated_at: '', can_delete: true,
+  annotations: [{ id: 'm1', time: tradeBase + 21 * 60, price: 100, type: 'entry', instrument: 'CE', strategy_name: 'Opening range', category: 'Breakout', text: '' }] }
+const store = { setups: [], tags: [], tradedSaves: [], names: { categories: ['Breakout'], strategies: ['Opening range'] }, calls: [], saved: [] }
 const key = s => `${s.date}|${s.symbol}|${s.side}`
 const order = list => [...list].sort((a, b) => a.date.localeCompare(b.date) || (a.side === 'buy' ? -1 : 1))
 const active = () => store.tags.filter(t => t.status === 'active')
@@ -106,6 +117,10 @@ try {
       let value = {}
       if (path === 'auth/desktop/token') value = { access_token: 'synthetic' }
       else if (path.startsWith('patterns/deep-dive/')) value = deepDive(path.replace('patterns/deep-dive/', ''), method, body, url.searchParams)
+      else if (path === 'patterns/pattern/traded/summary') value = { strategies: tradedSummary }
+      else if (path === 'patterns/pattern/traded') value = tradedList
+      else if (path === 'patterns/pattern/traded/save') { store.tradedSaves.push(body); value = { chart_id: 'chart-9', merged: store.tradedSaves.length > 1, added: 2 } }
+      else if (path === 'patterns/pattern/chart/chart-9') value = tradedChart
       else if (path === 'patterns/pattern/categories') value = { categories: store.names.categories }
       else if (path === 'patterns/pattern/strategies') value = { strategies: store.names.strategies }
       else if (path === 'patterns/pattern/charts') value = { charts: [] }
@@ -284,6 +299,35 @@ try {
   await page.getByRole('button', { name: 'Open' }).click()
   await page.getByRole('tab', { name: /2 · In-depth/ }).waitFor()
   assert.equal(store.setups.length, 4)
+  // "From your trades": the strategies labelled on trades, the trades behind one, a trade drawn on its charts, save, and edit.
+  await page.getByRole('tab', { name: 'From your trades' }).click()
+  await page.getByRole('heading', { name: /From your trades \(2\)/ }).waitFor()
+  const strategyItems = page.locator('.td-strategies li')
+  assert.equal(await strategyItems.count(), 2)
+  assert.match(await strategyItems.first().innerText(), /2 trades · 1 expected · 1 actual/)
+  await page.getByLabel('Filter strategies').fill('double'); assert.equal(await strategyItems.count(), 1)
+  await page.getByLabel('Filter strategies').fill('')
+  await strategyItems.first().getByRole('button').click()
+  const tradeRows = page.locator('.td-table tbody tr')
+  await tradeRows.nth(1).waitFor()
+  assert.match(await tradeRows.nth(0).innerText(), /NIFTY CE 24500[\s\S]*bought[\s\S]*09:21 → 09:48[\s\S]*\+1950\.00/)
+  assert.match(await tradeRows.nth(1).innerText(), /NIFTY PE 24400[\s\S]*Buy[\s\S]*sold[\s\S]*Actual/) // a short put is a Buy-side position
+  await page.locator('.td-chartbox canvas').first().waitFor()
+  assert.equal(await page.locator('.td-chartbox').count(), 2)
+  assert.match(await page.locator('.td-legend').innerText(), /your actual orders/)
+  const viewer = await page.evaluate(() => { const r = document.querySelector('.td-viewer').getBoundingClientRect(); const [a, b] = [...document.querySelectorAll('.td-chartbox')].map(e => e.getBoundingClientRect()); return { bottom: r.bottom, inner: innerHeight, stacked: b.top > a.top && b.left === a.left } })
+  assert.ok(viewer.stacked && viewer.bottom <= viewer.inner + 1, 'the viewer is stacked and runs to the bottom of the window')
+  await page.screenshot({ path: artifacts + '/step4-traded.png' })
+  await tradeRows.nth(1).getByRole('button').click()
+  await page.getByText('NIFTY PE 24400 · 3m').first().waitFor()
+  await page.getByRole('button', { name: 'Save as pattern chart' }).click()
+  await page.getByText(/Saved as a new pattern chart with 2 marks/).waitFor()
+  assert.deepEqual(store.tradedSaves, [{ session_id: 's2', round_trip_index: 2, category: 'Breakout', strategy: 'Opening range' }])
+  await page.getByRole('button', { name: 'Save and edit' }).click()
+  await page.getByRole('tab', { name: 'Annotate' }).waitFor()
+  await page.waitForFunction(() => document.querySelector('.pl-tabs [aria-selected="true"]')?.textContent === 'Annotate')
+  await page.getByRole('button', { name: 'Update' }).waitFor() // the saved chart is open for editing
+  assert.equal(store.tradedSaves.length, 2)
   assert.deepEqual(errors, [])
   console.log('Desktop Deep Dive browser check passed:', store.calls.length, 'server calls')
 } finally { await browser.close(); await new Promise(r => server.close(r)) }
