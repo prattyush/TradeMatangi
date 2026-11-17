@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { friendlyError } from './errors'
-import { computeStats, formatDay, formatPct, nLabel, SIDE_MEANING, sideLabel, sortTagStats, successLine, tagDots, thinNote } from '../model'
+import { computeStats, formatDay, formatPct, nLabel, SIDE_MEANING, sideLabel, outcomeText, setupTimings, sortTagStats, strengthLine, successLine, tagDots, thinNote } from '../model'
 import type { Dive, DiveSetup, Side } from '../types'
 import { useDeepDiveHost } from './host'
 
@@ -74,6 +74,7 @@ export default function Results({ dive, onOpenDay }: Props) {
       <strong>{stats.days} {stats.days === 1 ? 'day' : 'days'}</strong>
       <span className="pl-muted">{stats.buy_days} buy · {stats.sell_days} sell</span>
       <span>{successLine(stats)}</span>
+      {strengthLine(stats) && <span title="How the successful days were graded">{strengthLine(stats)}</span>}
       {thinNote(stats.with_outcome) && stats.with_outcome > 0 && <span className="dd-thin">{thinNote(stats.with_outcome)}</span>}
     </div>
 
@@ -90,11 +91,14 @@ export default function Results({ dive, onOpenDay }: Props) {
 
     <h4>Days</h4>
     <table className="dd-table dd-days-table">
-      <thead><tr><th>Date</th><th>Setup</th><th>Outcome</th><th>Tags</th><th>Marks</th><th>Notes</th><th /></tr></thead>
+      <thead><tr><th>Date</th><th>Setup</th><th>Outcome</th><th>Entry</th><th>Exit</th><th>Tags</th><th>Marks</th><th>Notes</th><th /></tr></thead>
       <tbody>{days.map(day => <tr key={dayId(day)}>
         <td><button className="dd-day-link" onClick={() => onOpenDay(day)} title="Open this day in the in-depth step">{formatDay(day.date)}</button></td>
         <td><span className={`dd-side-tag ${day.side}`}>{sideLabel(day.side)}</span> <span className="pl-muted">{day.symbol}</span></td>
-        <td>{day.outcome === 'success' ? <span className="dd-ok">Success</span> : day.outcome === 'failed' ? <span className="dd-bad">Failed</span> : <span className="pl-muted">—</span>}</td>
+        <td>{day.outcome === 'failed' ? <span className="dd-bad">Failed</span> : day.outcome === 'success' ? <span className="dd-ok" title={day.strength ? `A success, graded ${day.strength}` : 'A success that was not graded'}>{outcomeText(day)}</span> : <span className="pl-muted">—</span>}</td>
+        {(() => { const times = setupTimings(day.annotations); return <>
+          <td className="dd-clock" title={times.entry ? `${times.entry.instrument} mark, IST` : 'No Entry mark on the charts'}>{times.entry?.clock ?? <span className="pl-muted">—</span>}</td>
+          <td className="dd-clock" title={times.exit ? `${times.exit.instrument} mark, IST` : 'No Exit mark on the charts'}>{times.exit?.clock ?? <span className="pl-muted">—</span>}</td></> })()}
         <td><span className="dd-dots">{tagDots(day, dive.tags).map(dot => <span key={dot.tag_id} className={`dd-dot ${dot.state}`} title={`${dot.name}: ${dot.state === 'valid' ? 'valid' : dot.state === 'not_valid' ? 'not valid' : 'not marked'}`} />)}</span></td>
         <td>{day.annotations.length || <span className="pl-muted">—</span>}</td>
         <td className="dd-notes-cell" title={day.notes}>{day.notes}</td>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { blockFor, defaultSideForTrade, findStats, formatPct, nLabel, SIDE_MEANING, sideLabel, sortTagStats, successLine, thinNote } from '../model'
+import { blockFor, defaultSideForTrade, findStats, formatPct, nLabel, SIDE_MEANING, sideLabel, sortTagStats, strengthLine, successLine, thinNote } from '../model'
 import type { Side, StatsAllEntry } from '../types'
 import './statsPanel.css'
 
@@ -47,7 +47,7 @@ export default function StatsPanel({ entries, category, strategy, trade, limit =
         </li>)}
       </ul>}
       {rows.length > limit && <p className="dd-stats-note">+{rows.length - limit} more in the deep dive</p>}
-      <p className="dd-stats-success">{successLine(block)}</p>
+      <p className="dd-stats-success">{successLine(block)}{strengthLine(block) ? ` · ${strengthLine(block)}` : ''}</p>
     </>}
   </div>
 }

@@ -81,6 +81,11 @@
 .dd-chartbox[hidden], .td-chartbox[hidden] { display: none; }
 .dd-outcome h4, .dd-tags h4 { margin: 0 0 4px; font-size: 13px; color: #cbd5e1; }
 .dd-success[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-grade-ideal[aria-pressed="true"] { background: #14532d; border-color: #86efac; }
+.dd-grade-average[aria-pressed="true"] { background: #4d5a1c; border-color: #bef264; }
+.dd-grade-poor[aria-pressed="true"] { background: #7c5a10; border-color: #fcd34d; }
+.dd-times { margin: 4px 0 0; font-size: 12px; }
+.dd-clock { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dd-failed[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
 .dd-tags { display: flex; flex-direction: column; gap: 8px; }
 .dd-banner { margin: 0; padding: 4px 8px; background: #2a1a0a; border: 1px solid #b45309; border-radius: 6px; color: #fde68a; font-size: 13px; }

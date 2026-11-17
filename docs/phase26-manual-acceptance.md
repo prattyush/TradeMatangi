@@ -15,6 +15,7 @@ Sections are added as sprints land. Report back with what failed, with the strat
 | I | Hardening (S11) | |
 | J | Review changes: side-by-side traded charts, Maximize per chart, Deep Dive header in one row | |
 | K | Rename a tag | |
+| L | Strength (Ideal / Average / Poor) and entry / exit times | |
 
 ## A. Desktop: Deep dive tab, marking days (S4)
 
@@ -143,5 +144,14 @@ Needs the desktop rebuilt from `dev` and trades you have labelled (expected and 
 3. Try a name another active tag already has: "An active tag with this name already exists" and nothing changes. Press Escape in the input: it goes back to the name.
 4. Open Label Trades and choose this strategy as the Expected Pattern: the Your deep dive panel shows the new name (within about 20 seconds).
 5. A deep dive shared with you (read-only) shows no ✎.
+
+## L. Strength and entry / exit times
+
+1. In the in-depth step, under **Outcome**, choose **Ideal**, **Average** or **Poor**: only one stays pressed. Click **Failed**: the grade goes. Click a grade again: it clears. Step to another day and back: the choice is still there.
+2. A day you marked Success before this change shows **Success (not graded)** pressed; pick a grade (or click it to clear).
+3. Place an Entry mark and an Exit mark on the chart: the line under Outcome reads "Entry hh:mm · Exit hh:mm" (the candle the mark sits on, IST). Undo the Exit: it reads "Exit —".
+4. Results: the summary line shows "Ideal n · Average n · Poor n", each day's Outcome says its grade, and the Entry and Exit columns show the times.
+5. Label Trades (or a live label popup): choose an Expected Pattern with a deep dive: the success line also shows the grades.
+6. Optional, with the backend: `GET /api/deep-dive/timings` (with your token) lists every marked day with `entry_time` and `exit_time`.
 
 ## Report back

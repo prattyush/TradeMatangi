@@ -320,3 +320,40 @@ describe('stats (mirror of the server)', () => {
       { tag_id: 'q1', name: 'Second leg', state: 'valid' }, { tag_id: 'q2', name: 'Double top', state: 'unmarked' }])
   })
 })
+
+describe('strength of a successful day and the times read from the marks', () => {
+  const mark = (type: 'entry' | 'exit', clock: string, instrument = 'underlying', price = 100) => {
+    const [h, m] = clock.split(':').map(Number)
+    return { id: `${type}${clock}${instrument}`, time: 1_791_244_800 + h * 3600 + m * 60, price, type, instrument, strategy_name: 'Opening range', category: 'Breakout' }
+  }
+
+  it('counts graded successes, and an old success with no grade as not graded', async () => {
+    const { computeStats, strengthLine, outcomeText } = await import('../../shared/deepdive/model')
+    const days = [
+      setup('2026-10-06', 'buy', {}, { outcome: 'success', strength: 'ideal' }),
+      setup('2026-10-07', 'buy', {}, { outcome: 'success', strength: 'poor' }),
+      setup('2026-10-08', 'sell', {}, { outcome: 'success' }), // marked before grades existed
+      setup('2026-10-09', 'sell', {}, { outcome: 'failed', strength: 'ideal' }), // a stray grade on a failure never counts
+      setup('2026-10-12', 'buy'),
+    ]
+    const stats = computeStats(days, [])
+    expect([stats.success, stats.failed, stats.success_pct]).toEqual([3, 1, 75])
+    expect(stats.strength).toEqual({ ideal: 1, average: 0, poor: 1, ungraded: 1 })
+    expect(computeStats(days, [], 'sell').strength).toEqual({ ideal: 0, average: 0, poor: 0, ungraded: 1 })
+    expect(strengthLine(stats)).toBe('Ideal 1 · Average 0 · Poor 1 · not graded 1')
+    expect(strengthLine(computeStats([setup('2026-10-06', 'buy')], []))).toBe('')
+    expect(strengthLine({})).toBe('') // an older server sends no grades
+    expect(days.map(outcomeText)).toEqual(['Ideal', 'Poor', 'Success', 'Failed', null])
+  })
+
+  it('reads the earliest entry and the latest exit, the underlying first, like the server', async () => {
+    const { setupTimings } = await import('../../shared/deepdive/model')
+    const marks = [mark('exit', '11:30'), mark('entry', '09:45'), mark('entry', '09:51', 'CE', 150), mark('exit', '10:06', 'CE', 190), mark('entry', '10:15')]
+    const t = setupTimings(marks)
+    expect([t.entry?.clock, t.entry?.instrument, t.exit?.clock, t.exit?.price]).toEqual(['09:45', 'underlying', '11:30', 100])
+    expect(t.marks.map(m => `${m.type} ${m.clock}`)).toEqual(['entry 09:45', 'entry 09:51', 'exit 10:06', 'entry 10:15', 'exit 11:30'])
+    const option = setupTimings([mark('entry', '09:48', 'PE'), mark('exit', '10:00', 'PE')])
+    expect([option.entry?.instrument, option.entry?.clock, option.exit?.clock]).toEqual(['PE', '09:48', '10:00'])
+    expect(setupTimings([])).toEqual({ entry: null, exit: null, marks: [] })
+  })
+})

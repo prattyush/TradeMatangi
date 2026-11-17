@@ -26,7 +26,7 @@ export const markCount = (setup: Pick<DeepDiveSetup, 'annotations'>, instrument:
 /** Everything a day stores outside its tag marks, for "Retry" after a failed save (saving it again is harmless). */
 export function fullFields(setup: DeepDiveSetup): SetupFields {
   return {
-    annotations: setup.annotations, outcome: setup.outcome, notes: setup.notes, interval_minutes: setup.interval_minutes,
+    annotations: setup.annotations, outcome: setup.outcome, strength: setup.strength ?? null, notes: setup.notes, interval_minutes: setup.interval_minutes,
     strike_ce: setup.strike_ce, strike_pe: setup.strike_pe, strike_mode: setup.strike_mode,
   }
 }

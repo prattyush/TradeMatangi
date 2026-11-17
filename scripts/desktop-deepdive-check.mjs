@@ -52,7 +52,10 @@ function deepDive(path, method, body, params) {
     const { category, strategy, symbol, date, side, ...fields } = body
     let s = store.setups.find(x => key(x) === `${date}|${symbol}|${side}`)
     if (!s) { s = { category, strategy, symbol, date, side, strike_ce: null, strike_pe: null, strike_mode: null, interval_minutes: 3, annotations: [], outcome: null, tag_values: {}, notes: '', created_at: '', updated_at: '' }; store.setups.push(s) }
-    Object.assign(s, fields); return s
+    Object.assign(s, fields)
+    if (fields.strength) s.outcome = 'success' // what the server does: a grade makes the day a success, and a failed or cleared day has no grade
+    else if ('outcome' in fields && fields.outcome !== 'success') delete s.strength
+    return s
   }
   if (path === 'setup' && method === 'DELETE') { const k = `${params.get('date')}|${params.get('symbol')}|${params.get('side')}`; const had = store.setups.some(s => key(s) === k); store.setups = store.setups.filter(s => key(s) !== k); return { status: had ? 'deleted' : 'not_found' } }
   if (path === 'setup/save-to-patterns') { const s = store.setups.find(x => key(x) === `${body.date}|${body.symbol}|${body.side}`); store.saved.push(key(s)); return { chart_id: 'chart-1', merged: store.saved.length > 1, added: s.annotations.length } }
@@ -270,7 +273,15 @@ try {
   await page.getByText(/2 tags are not marked on this day/).waitFor()
   await page.getByRole('button', { name: /Mark the rest not valid \(2\)/ }).click()
   await page.waitForFunction(() => document.querySelectorAll('.dd-chip.complete').length === 2)
-  await page.getByRole('button', { name: 'Success', exact: true }).click()
+  await page.getByRole('button', { name: 'Failed', exact: true }).click()
+  await page.waitForFunction(() => document.querySelector('.dd-save')?.textContent?.includes('Saved'))
+  assert.ok(store.setups.some(s => s.outcome === 'failed' && !s.strength))
+  await page.getByRole('button', { name: 'Ideal', exact: true }).click() // grading a failed day makes it a success again
+  await page.getByRole('button', { name: 'Average', exact: true }).click() // one grade per day: the last click wins
+  await page.getByRole('button', { name: 'Ideal', exact: true }).click()
+  assert.equal(await page.getByRole('button', { name: 'Ideal', exact: true }).getAttribute('aria-pressed'), 'true')
+  assert.equal(await page.getByRole('button', { name: 'Average', exact: true }).getAttribute('aria-pressed'), 'false')
+  await page.getByText('Mark an Entry and an Exit on the chart to record their times.').waitFor()
   await page.getByLabel('Notes').fill('clean break'); await page.getByLabel('Notes').blur()
   await page.waitForFunction(() => document.querySelector('.dd-save')?.textContent?.includes('Saved'))
   assert.ok(store.setups.some(s => s.outcome === 'success' && s.notes === 'clean break'))
@@ -281,6 +292,10 @@ try {
   await page.waitForFunction(() => /1 marks/.test(document.body.textContent))
   await page.waitForFunction(() => document.querySelector('.dd-save')?.textContent?.includes('Saved'))
   assert.equal(store.setups.reduce((n, s) => n + s.annotations.length, 0), 1)
+  const markedDay = store.setups.find(s => s.annotations.length)
+  const clockOf = t => `${String(Math.floor(t % 86400 / 3600)).padStart(2, '0')}:${String(Math.floor(t % 3600 / 60)).padStart(2, '0')}`
+  const markClock = clockOf(markedDay.annotations[0].time)
+  await page.getByText(`Entry ${markClock} · Exit —`).waitFor() // the day shows the time of its Entry mark
   await page.screenshot({ path: artifacts + '/step2-indepth.png' })
 
   // Jump with "Next unmarked day"; an archived tag stops counting at once.
@@ -309,6 +324,11 @@ try {
   assert.match(await freq.innerText(), /Only 2 days marked/)
   assert.equal(await page.locator('.dd-freq li', { hasText: 'Double top' }).count(), 0, 'archived tag is not counted')
   await page.getByText('Success 1 of 1 (100%)').waitFor()
+  await page.getByText(/Ideal 1 · Average 0 · Poor 0/).waitFor()
+  assert.ok(store.setups.some(s => s.outcome === 'success' && s.strength === 'ideal'))
+  assert.deepEqual(await page.locator('.dd-days-table tbody td.dd-clock:nth-child(4)').allInnerTexts().then(list => list.filter(t => t !== '—')), [markClock]) // one day has an Entry
+  assert.deepEqual(await page.locator('.dd-days-table tbody td.dd-clock:nth-child(5)').allInnerTexts().then(list => list.filter(t => t !== '—')), []) // none has an Exit
+  assert.match(await page.locator('.dd-days-table tbody').innerText(), /Ideal/)
   assert.equal(await page.locator('.dd-days-table tbody tr').count(), 4)
   await page.getByRole('button', { name: /^Sell \(2\)/ }).click()   // the sell days never marked Second leg
   assert.match(await page.locator('.dd-freq li', { hasText: 'Second leg' }).innerText(), /—\s*\(n=0\)/)

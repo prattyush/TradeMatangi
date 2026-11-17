@@ -137,6 +137,21 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await page.waitForFunction(() => /1 marks/.test(document.body.textContent ?? ""));
     await page.waitForFunction(() => document.querySelector(".dd-save")?.textContent?.includes("Saved"));
     expect((await store(page)).setups.reduce((n: number, s: any) => n + s.annotations.length, 0)).toBe(1);
+    // The day shows the time of its Entry mark; Exit is still empty.
+    const markedDay = (await store(page)).setups.find((x: any) => x.annotations.length);
+    const seconds = markedDay.annotations[0].time % 86400;
+    const markClock = `${String(Math.floor(seconds / 3600)).padStart(2, "0")}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}`;
+    await expect(page.getByText(`Entry ${markClock} · Exit —`)).toBeVisible();
+    // Grade the day: Failed has no grade, a grade makes it a success, one grade per day (the last click wins).
+    const pressed = (name: string) => page.getByRole("button", { name, exact: true }).getAttribute("aria-pressed");
+    await page.getByRole("button", { name: "Failed", exact: true }).click();
+    await page.getByRole("button", { name: "Ideal", exact: true }).click();
+    await page.getByRole("button", { name: "Poor", exact: true }).click();
+    expect([await pressed("Ideal"), await pressed("Average"), await pressed("Poor"), await pressed("Failed")]).toEqual(["false", "false", "true", "false"]);
+    await page.getByRole("button", { name: "Ideal", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".dd-save")?.textContent?.includes("Saved"));
+    const saved = (await store(page)).setups.find((x: any) => x.annotations.length);
+    expect([saved.outcome, saved.strength]).toEqual(["success", "ideal"]);
     await page.getByRole("button", { name: "Next day" }).click();
     await expect(page.locator(".dd-chartbox").nth(1)).toContainText(/PE 24500/); // the Sell day shows its PE
 
@@ -167,6 +182,11 @@ for (const renderer of ["lightweight", "kline"] as const) {
     // Step 3: results.
     await page.getByRole("tab", { name: "3 · Results" }).click();
     await page.getByText("How often each tag was valid").waitFor();
+    await expect(page.getByText(/Ideal 1 · Average 0 · Poor 0/)).toBeVisible();
+    const rows = page.locator(".dd-days-table tbody tr");
+    await expect(rows.locator("td.dd-clock:nth-child(4)").filter({ hasText: markClock })).toHaveCount(1); // Entry
+    expect((await rows.locator("td.dd-clock:nth-child(5)").allInnerTexts()).filter((t) => t !== "—")).toEqual([]); // no Exit marked
+    await expect(rows.filter({ hasText: "Ideal" })).toHaveCount(1);
     expect(await page.locator(".dd-freq li", { hasText: "Second leg follows" }).innerText()).toMatch(/100%\s*\(n=1\)/); // the renamed tag, with its old mark
     await page.getByRole("button", { name: /^Sell \(1\)/ }).click();
     expect(await page.locator(".dd-freq li", { hasText: "Second leg" }).innerText()).toMatch(/—\s*\(n=0\)/);

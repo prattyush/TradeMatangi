@@ -530,3 +530,108 @@ def test_api_renames_a_tag_and_reports_problems(client):
     assert client.post(f"/api/deep-dive/tags/{qid}/update", json={**REF, "name": "double TOP"}).status_code == 400
     assert client.post(f"/api/deep-dive/tags/{qid}/update", json={**REF, "name": " "}).status_code == 400
     assert client.post("/api/deep-dive/tags/missing/update", json={**REF, "name": "X"}).status_code == 404
+
+
+# ── Strength of a successful day, and entry / exit times read from the marks ──
+
+def _mark_at(kind, clock_seconds, instrument="underlying", price=100.0, idx=[0]):
+    idx[0] += 1
+    day_start = 1_791_244_800  # a multiple of 86400: midnight of a day in chart time (IST wall-clock as UTC)
+    return {"id": f"m{idx[0]}", "time": day_start + clock_seconds, "price": price, "type": kind,
+            "instrument": instrument, "strategy_name": STRAT, "category": CAT}
+
+
+def test_strength_is_kept_with_a_success_and_cleared_with_anything_else(database):
+    row = mark(D1, outcome="success", strength="ideal")
+    assert (row["outcome"], row["strength"]) == ("success", "ideal")
+    assert svc.get_dive(USER, CAT, STRAT)["setups"][0]["strength"] == "ideal"
+    # another change of the day does not touch it
+    assert mark(D1, notes="clean breakout")["strength"] == "ideal"
+    # re-grading replaces it, Failed drops it, and a cleared outcome has none
+    assert mark(D1, strength="poor")["strength"] == "poor"
+    failed = mark(D1, outcome="failed")
+    assert (failed["outcome"], failed["strength"]) == ("failed", None)
+    assert svc.get_dive(USER, CAT, STRAT)["setups"][0]["strength"] is None
+    mark(D1, outcome="success", strength="average")
+    cleared = mark(D1, outcome=None)
+    assert (cleared["outcome"], cleared["strength"]) == (None, None)
+
+
+def test_grading_a_day_makes_it_a_success_and_a_failure_cannot_be_graded(database):
+    graded = mark(D2, strength="average")  # no outcome sent: the grade is a success
+    assert (graded["outcome"], graded["strength"]) == ("success", "average")
+    with pytest.raises(ValueError, match="Only a successful"):
+        mark(D3, outcome="failed", strength="poor")
+    with pytest.raises(ValueError, match="Only a successful"):
+        mark(D3, outcome=None, strength="poor")
+    with pytest.raises(ValueError, match="Strength must be"):
+        mark(D3, outcome="success", strength="great")
+    # explicitly clearing the grade keeps the success
+    ungraded = mark(D2, strength=None)
+    assert (ungraded["outcome"], ungraded["strength"]) == ("success", None)
+
+
+def test_an_old_success_without_a_grade_still_counts_and_is_listed_as_ungraded(database):
+    mark(D1, outcome="success")  # marked before grades existed
+    mark(D2, outcome="success", strength="ideal")
+    mark(D3, outcome="success", strength="poor")
+    mark(D3, "sell", outcome="failed")
+    block = svc.stats(USER, CAT, STRAT)
+    assert (block["success"], block["failed"], block["success_pct"]) == (3, 1, 75.0)
+    assert block["strength"] == {"ideal": 1, "average": 0, "poor": 1, "ungraded": 1}
+    assert svc.stats(USER, CAT, STRAT, "sell")["strength"] == {"ideal": 0, "average": 0, "poor": 0, "ungraded": 0}
+    assert svc.stats_all(USER)[0]["buy"]["strength"]["ideal"] == 1
+
+
+def test_entry_and_exit_times_come_from_the_marks(database):
+    marks = [_mark_at("exit", 11 * 3600 + 30 * 60), _mark_at("entry", 9 * 3600 + 45 * 60),
+             _mark_at("entry", 9 * 3600 + 51 * 60, "CE", 150.0), _mark_at("exit", 10 * 3600 + 6 * 60, "CE", 190.0),
+             _mark_at("entry", 10 * 3600 + 15 * 60)]
+    t = svc.entry_exit_times(marks)
+    assert (t["entry"]["clock"], t["entry"]["instrument"]) == ("09:45", "underlying")  # the earliest underlying entry
+    assert (t["exit"]["clock"], t["exit"]["price"]) == ("11:30", 100.0)               # the latest underlying exit
+    assert [(m["type"], m["clock"]) for m in t["marks"]] == [
+        ("entry", "09:45"), ("entry", "09:51"), ("exit", "10:06"), ("entry", "10:15"), ("exit", "11:30")]
+    # with no underlying marks of a kind the option's are used; with no marks there are no times
+    only_option = svc.entry_exit_times([_mark_at("entry", 9 * 3600 + 48 * 60, "PE"), _mark_at("exit", 10 * 3600, "PE")])
+    assert (only_option["entry"]["instrument"], only_option["entry"]["clock"], only_option["exit"]["clock"]) == ("PE", "09:48", "10:00")
+    assert svc.entry_exit_times([]) == {"entry": None, "exit": None, "marks": []}
+    assert svc.entry_exit_times([{"type": "note", "time": 5}])["marks"] == []
+
+
+def test_timings_are_part_of_the_day_and_listed_for_every_deep_dive(database):
+    mark(D1, annotations=[_mark_at("entry", 9 * 3600 + 45 * 60), _mark_at("exit", 10 * 3600 + 30 * 60)], outcome="success", strength="ideal")
+    mark(D2, "sell", annotations=[_mark_at("entry", 10 * 3600, "PE")])
+    mark(D3)
+    svc.upsert_setup(USER, "Reversal", "Double top", "NIFTY", D1, "sell", {"annotations": [_mark_at("entry", 12 * 3600)]})
+    day = svc.get_dive(USER, CAT, STRAT)["setups"][0]
+    assert day["timings"]["entry"]["clock"] == "09:45" and day["timings"]["exit"]["clock"] == "10:30"
+
+    rows = svc.list_timings(USER)
+    assert [(r["category"], r["strategy"], r["date"], r["side"], r["entry_time"], r["exit_time"]) for r in rows] == [
+        (CAT, STRAT, D1, "buy", "09:45", "10:30"), (CAT, STRAT, D2, "sell", "10:00", None),
+        (CAT, STRAT, D3, "buy", None, None), ("Reversal", "Double top", D1, "sell", "12:00", None)]
+    assert rows[0]["strength"] == "ideal" and rows[0]["outcome"] == "success"
+    # narrowed to one deep dive and one side
+    assert [r["date"] for r in svc.list_timings(USER, CAT, STRAT)] == [D1, D2, D3]
+    assert [r["date"] for r in svc.list_timings(USER, CAT, STRAT, "sell")] == [D2]
+    assert svc.list_timings(USER, "Nothing", "Here") == []
+
+
+def test_timings_of_a_shared_deep_dive_are_readable_but_nothing_else_leaks(database, monkeypatch):
+    mark(D1, annotations=[_mark_at("entry", 9 * 3600 + 45 * 60)])
+    share(monkeypatch, OTHER, [USER])
+    seen = svc.list_timings(OTHER)
+    assert [(r["owner_id"], r["entry_time"]) for r in seen] == [(USER, "09:45")]
+    assert svc.list_timings(USER) == svc.list_timings(USER, owner_id=USER)
+
+
+def test_api_sets_a_strength_and_lists_timings(client):
+    base = {**REF, "symbol": "NIFTY", "date": D1, "side": "buy"}
+    put = client.put("/api/deep-dive/setup", json={**base, "strength": "poor"})
+    assert put.status_code == 200 and (put.json()["outcome"], put.json()["strength"]) == ("success", "poor")
+    assert client.put("/api/deep-dive/setup", json={**base, "strength": "great"}).status_code == 422
+    assert client.put("/api/deep-dive/setup", json={**base, "outcome": "failed", "strength": "poor"}).status_code == 400
+    listing = client.get("/api/deep-dive/timings", params=REF)
+    assert listing.status_code == 200 and listing.json()["days"][0]["strength"] == "poor"
+    assert client.get("/api/deep-dive/timings", params={"side": "up"}).status_code == 422

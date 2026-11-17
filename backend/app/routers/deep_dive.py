@@ -46,6 +46,7 @@ class SetupIn(SetupRef):
     interval_minutes: Optional[int] = None
     annotations: Optional[list[AnnotationItem]] = None
     outcome: Optional[Literal["success", "failed"]] = None
+    strength: Optional[Literal["ideal", "average", "poor"]] = None  # only with a success; grading a day makes it a success
     notes: Optional[str] = None
 
 
@@ -99,6 +100,13 @@ async def get_dive(category: str = Query(...), strategy: str = Query(...), owner
 async def get_stats(category: str = Query(...), strategy: str = Query(...), side: Optional[Side] = Query(None),
                     owner_id: Optional[str] = Query(None), user_id: str = Depends(get_request_user_id)):
     return await _run(svc.stats, user_id, category, strategy, side, owner_id)
+
+
+@router.get("/timings")
+async def get_timings(category: Optional[str] = Query(None), strategy: Optional[str] = Query(None), side: Optional[Side] = Query(None),
+                      owner_id: Optional[str] = Query(None), user_id: str = Depends(get_request_user_id)):
+    """The entry and exit time of every marked day, read from its chart marks (all deep dives unless one is named)."""
+    return {"days": await _run(svc.list_timings, user_id, category, strategy, side, owner_id)}
 
 
 @router.get("/stats/all")
