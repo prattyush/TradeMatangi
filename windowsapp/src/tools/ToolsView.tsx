@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import VideoMaker from './VideoMaker'
 import PatternLibrary from './PatternLibrary'
 import ChartStructures from './ChartStructures'
+import type { PracticeLaunch } from './practice/launch'
 import './videoTools.css'
 
 interface ToolsViewProps {
@@ -10,14 +11,20 @@ interface ToolsViewProps {
   token: string
   onUnauthorized: () => void
   active: boolean
+  /** Strategy Practice (Pattern Library > Practice): starts a replay on the visible workspace screen. */
+  onStartPractice?: (launch: PracticeLaunch) => Promise<void>
+  /** A practice run to review: opens the Pattern Library on its review. */
+  practiceReviewId?: string | null
+  onPracticeReviewOpened?: () => void
 }
 
 const TOOLS = [{ id: 'video', label: 'Trading Video Maker' }, { id: 'patterns', label: 'Pattern Library' }, { id: 'structures', label: 'Chart Structures' }] as const
 type ToolId = (typeof TOOLS)[number]['id']
 
 /** Desktop "Tools" view: a list of tools on the left, the chosen tool on the right. */
-export default function ToolsView({ viewSelector, baseUrl, token, onUnauthorized, active }: ToolsViewProps) {
-  const [tool, setTool] = useState<ToolId>('video')
+export default function ToolsView({ viewSelector, baseUrl, token, onUnauthorized, active, onStartPractice, practiceReviewId = null, onPracticeReviewOpened }: ToolsViewProps) {
+  const [tool, setTool] = useState<ToolId>(practiceReviewId ? 'patterns' : 'video')
+  useEffect(() => { if (practiceReviewId) setTool('patterns') }, [practiceReviewId])
   return <div className="tools-view" hidden={!active}>
     <nav className="tools-nav" aria-label="Tools">{viewSelector}<span className="tools-title">Tools</span></nav>
     <div className="tools-body">
@@ -27,7 +34,7 @@ export default function ToolsView({ viewSelector, baseUrl, token, onUnauthorized
       </aside>
       <section className="tools-content">
         {tool === 'video' && <VideoMaker baseUrl={baseUrl} token={token} onUnauthorized={onUnauthorized} />}
-        {tool === 'patterns' && <PatternLibrary baseUrl={baseUrl} token={token} onUnauthorized={onUnauthorized} active={active} />}
+        {tool === 'patterns' && <PatternLibrary baseUrl={baseUrl} token={token} onUnauthorized={onUnauthorized} active={active} onStartPractice={onStartPractice} practiceReviewId={practiceReviewId} onPracticeReviewOpened={onPracticeReviewOpened} />}
         {tool === 'structures' && <ChartStructures baseUrl={baseUrl} token={token} onUnauthorized={onUnauthorized} active={active} />}
       </section>
     </div>

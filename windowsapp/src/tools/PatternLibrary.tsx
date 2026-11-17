@@ -6,6 +6,9 @@ import DeepDive from '../../../shared/deepdive/ui/DeepDive'
 import { useDesktopDeepDiveHost } from './deepdive/desktopHost'
 import { PATTERN_SYMBOLS } from '../../../shared/deepdive/symbols'
 import TradedPatterns from '../../../shared/traded/ui/TradedPatterns'
+import Practice from '../../../shared/practice/ui/Practice'
+import { useDesktopPracticeHost } from './practice/desktopPractice'
+import type { PracticeLaunch } from './practice/launch'
 import type { TradedHost } from '../../../shared/traded/ui/host'
 import type { DiveChartProps } from '../../../shared/deepdive/ui/host'
 import { IntervalBridge } from './IntervalBridge'
@@ -15,7 +18,14 @@ import '../../../shared/analysis/kline/desktopAnalysis.css'
 import './patternTools.css'
 import { RANKS, TOOL_OPTIONS, buildSaveBody, defaultPatternDate, resolveStrikes, riskRewardKey, savedStrikePair, setRank, setRiskReward, strikesOf, toggleAnnotation, uniquePatterns, type ExtraPane, type OptionStrikes } from './patternLibraryModel'
 
-interface Props { baseUrl: string; token: string; onUnauthorized: () => void; active: boolean }
+interface Props {
+  baseUrl: string; token: string; onUnauthorized: () => void; active: boolean
+  /** Strategy Practice: starts a replay on a workspace screen (rejects with a sentence when it cannot). */
+  onStartPractice?: (launch: PracticeLaunch) => Promise<void>
+  /** A practice run whose review should open now (the workspace's Review button after Stop). */
+  practiceReviewId?: string | null
+  onPracticeReviewOpened?: () => void
+}
 interface Loaded { symbol: string; date: string; instrumentType: 'equity' | 'options'; strikes: { ce: number; pe: number } | null; expiry: string | null }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -25,13 +35,14 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * note an R:R per pattern, add or remove strike panes, draw on the charts, save per day and browse the saved charts.
  * Built on the Analysis KLine chart (it already draws the saved markers and can pick a point).
  */
-export default function PatternLibrary({ baseUrl, token, onUnauthorized, active }: Props) {
+export default function PatternLibrary({ baseUrl, token, onUnauthorized, active, onStartPractice, practiceReviewId = null, onPracticeReviewOpened }: Props) {
   const { client, environment, settings } = usePatternsRuntime(baseUrl, token, onUnauthorized, active)
   // The Deep Dive puts its own header controls in this row (a portal into the slot below), so the charts get the height.
   const [deepDiveSlot, setDeepDiveSlot] = useState<HTMLElement | null>(null)
   const deepDiveHost = useDesktopDeepDiveHost(client, settings, deepDiveSlot)
 
-  const [view, setView] = useState<'create' | 'view' | 'deepdive' | 'traded'>('create')
+  const [view, setView] = useState<'create' | 'view' | 'deepdive' | 'traded' | 'practice'>(practiceReviewId ? 'practice' : 'create')
+  useEffect(() => { if (practiceReviewId) setView('practice') }, [practiceReviewId])
   const [symbol, setSymbol] = useState('NIFTY')
   const [date, setDate] = useState(() => defaultPatternDate())
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
@@ -126,6 +137,9 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
     historicalDays: settings.historicalDays, onEdit: async chartId => { await openSaved({ chart_id: chartId } as PatternChartMeta) },
   }), [client, settings.historicalDays, openSaved])
 
+  const noPractice = useCallback(async () => { throw new Error('Practice can only start from the desktop workspace.') }, [])
+  const practiceHost = useDesktopPracticeHost(client, settings, onStartPractice ?? noPractice, { sessionId: practiceReviewId, onOpened: onPracticeReviewOpened ?? (() => undefined) })
+
   const tool = TOOL_OPTIONS.find(t => t.key === toolKey)!
   const effectiveStrategy = strategy || newStrategy.trim()
   const effectiveCategory = category || newCategory.trim()
@@ -201,6 +215,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
           <button role="tab" aria-selected={view === 'view'} onClick={() => setView('view')}>Saved charts ({gallery.length})</button>
           <button role="tab" aria-selected={view === 'deepdive'} onClick={() => setView('deepdive')}>Deep dive</button>
           <button role="tab" aria-selected={view === 'traded'} onClick={() => setView('traded')}>From your trades</button>
+          {onStartPractice && <button role="tab" aria-selected={view === 'practice'} onClick={() => setView('practice')}>Practice</button>}
         </div>
         {view === 'deepdive' && <span ref={setDeepDiveSlot} className="pl-head-slot" />}
       </header>
@@ -269,6 +284,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
       </>}
       {view === 'deepdive' && <DeepDive host={deepDiveHost} />}
       {view === 'traded' && <TradedPatterns host={tradedHost} />}
+      {view === 'practice' && onStartPractice && <Practice host={practiceHost} />}
       {view === 'view' && <div className="pl-gallery">
         <div className="pl-bar">
           <label>Strategy <select value={filterStrategy} onChange={e => setFilterStrategy(e.target.value)}><option value="">All</option>{strategies.map(s => <option key={s}>{s}</option>)}</select></label>

@@ -1187,6 +1187,7 @@ fn valid_patterns_path(path: &str, method: &str) -> bool {
         ("PUT" | "DELETE", ["fine-structures", "definition" | "flow", v]) => id(v),
         ("GET", ["deep-dive", "dives" | "dive" | "stats"]) => true,
         ("GET", ["deep-dive", "stats", "all"]) => true,
+        ("GET", ["deep-dive", "practice", "strategies" | "runs" | "evaluate"]) | ("POST", ["deep-dive", "practice", "pick"]) => true,
         ("PUT", ["deep-dive", "setup"]) | ("DELETE", ["deep-dive", "setup"]) => true,
         ("PUT", ["deep-dive", "setup", "tag-values"]) => true,
         ("POST", ["deep-dive", "tags"]) | ("POST", ["deep-dive", "setup", "save-to-patterns"]) => true,
@@ -2649,6 +2650,8 @@ mod tests {
             ("GET", "deep-dive/stats/all"), ("PUT", "deep-dive/setup"), ("DELETE", "deep-dive/setup?date=2026-10-01"),
             ("PUT", "deep-dive/setup/tag-values"), ("POST", "deep-dive/setup/save-to-patterns"), ("POST", "deep-dive/tags"),
             ("POST", "deep-dive/tags/abc123/update"), ("POST", "deep-dive/tags/abc123/archive"), ("POST", "deep-dive/tags/abc123/restore"),
+            ("GET", "deep-dive/practice/strategies"), ("GET", "deep-dive/practice/runs"), ("GET", "deep-dive/practice/evaluate?session_id=abc"),
+            ("POST", "deep-dive/practice/pick"),
         ];
         for (method, path) in ok { assert!(super::valid_patterns_path(path, method), "{method} {path}"); }
         let bad = [
@@ -2661,6 +2664,9 @@ mod tests {
             ("POST", "deep-dive/dives"), ("DELETE", "deep-dive/dive"), ("PUT", "deep-dive/tags"), ("GET", "deep-dive/setup"),
             ("POST", "deep-dive/setup"), ("GET", "deep-dive/stats/all/x"), ("POST", "deep-dive/tags/a/b/update"),
             ("POST", "deep-dive/tags/abc/delete"), ("POST", "deep-dive/tags//update"), ("GET", "deep-dive/tags"),
+            ("POST", "deep-dive/practice/strategies"), ("POST", "deep-dive/practice/runs"), ("POST", "deep-dive/practice/evaluate"), ("GET", "deep-dive/practice/pick"),
+            ("PUT", "deep-dive/practice/pick"), ("DELETE", "deep-dive/practice/runs"), ("GET", "deep-dive/practice"), ("GET", "deep-dive/practice/evaluate/x"),
+            ("GET", "deep-dive/practice/strategies/x"), ("POST", "deep-dive/practice/pick/x"),
         ];
         for (method, path) in bad { assert!(!super::valid_patterns_path(path, method), "{method} {path}"); }
     }
