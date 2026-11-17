@@ -100,7 +100,7 @@ const savedTradedChart = { chart_id: "chart-9", user_id: "owner", symbol: "NIFTY
 // ── Strategy Practice (S15): stub routes, and a host that records the starts the page asks for ──
 w.practicePicks = [] as any[];
 w.practiceStarts = [] as any[];
-const practiceStrategies = [{ category: "Breakout", strategy: "Opening range", days: 3, grades: { ideal: 1, average: 0, poor: 0, ungraded: 1, failed: 1, open: 0 }, symbols: [{ symbol: "BSESEN", days: 1 }, { symbol: "NIFTY", days: 2 }] }];
+const practiceStrategies = [{ category: "Breakout", strategy: "Opening range", days: 3, grades: { ideal: 1, average: 0, poor: 0, ungraded: 1, failed: 1, open: 0 }, symbols: [{ symbol: "BSESEN", days: 1 }, { symbol: "NIFTY", days: 2 }], negative_days: [{ symbol: "NIFTY", days: 6 }] }];
 const practicePlan = { symbol: "NIFTY", date: "2026-10-16", start_time: "09:33:00", interval_minutes: 3, instrument_type: "options", strike_ce: 24500, strike_pe: 24400, expiry: "2026-10-20",
   practice: { category: "Breakout", strategy: "Opening range", start_offset_min: 12 }, days_available: 2, repeated: params.get("repeated") === "1" };
 const at = (minutes: number) => base + minutes * 60; // minutes after 09:15
@@ -123,10 +123,16 @@ const review = {
   other_trades: [trade(1, { action: "SELL", side: "sell", instrument: "PE", right: "PE", strike: 24400, points: -3, pnl: -225, entry_delta_min: null, exit_delta_min: null, capture_pct: null, theoretical_points: null, theoretical_rupees: null })],
   summary: { traded: true, side: "buy", entry_delta_min: 6, exit_delta_min: -6, capture_pct: 50, points: 20, theoretical_points: 40 },
 };
+const negativeReview = (traded: boolean) => ({ session_id: "negative1", category: "Breakout", strategy: "Opening range", symbol: "NIFTY", date: "2026-10-16", start_time: "09:41:00", start_offset_min: 9,
+  negative: true, setups: [], other_trades: traded ? [trade(0, { points: -5, pnl: -375, entry_delta_min: null, exit_delta_min: null, capture_pct: null, theoretical_points: null, theoretical_rupees: null })] : [],
+  summary: { traded, negative: true, correct: !traded, points: traded ? -5 : null } });
 const practiceRuns = [
   { session_id: "running1", category: "Breakout", strategy: "Opening range", symbol: "NIFTY", date: "2026-10-15", start_time: "09:40:00", start_offset_min: 8, state: "running", ended: false, created_at: 2, result: null },
   { session_id: "ended1", category: "Breakout", strategy: "Opening range", symbol: "NIFTY", date: "2026-10-16", start_time: "09:33:00", start_offset_min: 12, state: "ended", ended: true, created_at: 1,
-    result: { traded: true, side: "buy", entry_delta_min: 6, exit_delta_min: -6, capture_pct: 50, points: 20, theoretical_points: 40 } }];
+    result: { traded: true, side: "buy", entry_delta_min: 6, exit_delta_min: -6, capture_pct: 50, points: 20, theoretical_points: 40 } },
+  { session_id: "negative1", category: "Breakout", strategy: "Opening range", symbol: "NIFTY", date: "2026-10-14", start_time: "09:41:00", start_offset_min: 9, state: "ended", ended: true, created_at: 3,
+    result: { traded: false, negative: true, correct: true, points: null } }
+];
 function practice(path: string, body: any, query: Record<string, string>): any {
   if (path === "practice/strategies") return { strategies: practiceStrategies };
   if (path === "practice/pick") {
@@ -137,6 +143,8 @@ function practice(path: string, body: any, query: Record<string, string>): any {
   if (path === "practice/runs") return { runs: practiceRuns };
   if (path === "practice/evaluate") {
     if (query.session_id === "running1") return json({ detail: "Stop the session first: the review shows the recorded answer" }, 409);
+    if (query.session_id === "negative1") return negativeReview(false);
+    if (query.session_id === "negative2") return negativeReview(true);
     return review;
   }
   throw new Error(`unknown practice route ${path}`);

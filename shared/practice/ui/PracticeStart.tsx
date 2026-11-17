@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { friendlyError } from '../../deepdive/ui/errors'
-import { daysOnOffer, gradeLabel, pickFilter } from '../model'
+import { daysOnOffer, gradeLabel, negativeDays, pickFilter } from '../model'
 import { GRADES, type Grade, type PracticeStrategy } from '../types'
 import { usePracticeHost } from './host'
 
@@ -12,6 +12,7 @@ export default function PracticeStart() {
   const [chosen, setChosen] = useState<string | null>(null)
   const [symbol, setSymbol] = useState('')
   const [grades, setGrades] = useState<ReadonlySet<Grade>>(new Set(GRADES))
+  const [negatives, setNegatives] = useState(false)
   const [speed, setSpeed] = useState(host.defaultSpeed)
   const [starting, setStarting] = useState(false)
   const [note, setNote] = useState<string | null>(null)
@@ -23,7 +24,8 @@ export default function PracticeStart() {
 
   const strategy = useMemo(() => strategies?.find(s => `${s.category}::${s.strategy}` === chosen) ?? null, [strategies, chosen])
   const toggle = (grade: Grade) => setGrades(current => { const next = new Set(current); if (next.has(grade)) next.delete(grade); else next.add(grade); return next })
-  const offer = strategy ? daysOnOffer(strategy, symbol, grades) : 0
+  const absent = strategy ? negativeDays(strategy, symbol) : 0
+  const offer = strategy ? daysOnOffer(strategy, symbol, grades) + (negatives ? absent : 0) : 0
   const blocked = host.blockedReason
   const cannot = !strategy || starting || offer === 0 || grades.size === 0 || blocked !== null
 
@@ -31,7 +33,7 @@ export default function PracticeStart() {
     if (!strategy) return
     setStarting(true); setError(null); setNote(null)
     try {
-      const plan = await host.api.pick(strategy, pickFilter(symbol, grades))
+      const plan = await host.api.pick(strategy, pickFilter(symbol, grades, negatives && absent > 0))
       if (plan.repeated) setNote('You have practised every matching day, so this one repeats.')
       await host.startPractice(plan, speed)
     } catch (e) { setError(friendlyError(e)) } finally { setStarting(false) }
@@ -64,6 +66,10 @@ export default function PracticeStart() {
             <input type="checkbox" checked={grades.has(grade)} onChange={() => toggle(grade)} /> {gradeLabel(grade)} ({strategy.grades[grade]})
           </label>)}
         </fieldset>
+        {(strategy.negative_days?.length ?? 0) > 0 && <label className="pr-negatives" title="Days between your oldest and newest marked day that you did not mark: you reviewed them and the strategy was not there">
+          <input type="checkbox" checked={negatives} onChange={e => setNegatives(e.target.checked)} aria-label="Include no-setup days" /> Include no-setup days
+          <span className="pl-muted"> ({absent} {absent === 1 ? 'day' : 'days'}; about 1 run in 4 is one, and the right call there is not to trade)</span>
+        </label>}
         <div className="pr-field">Replay speed {host.renderSpeed(speed, setSpeed)}</div>
         <p className="pl-muted">The replay starts a few minutes before the first recorded entry (a different minute each time). Nothing tells you whether the setup is Buy or Sell, or where you marked it; you see that in the review after you stop.</p>
         <div className="pl-bar">

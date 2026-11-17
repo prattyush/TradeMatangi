@@ -167,6 +167,6 @@ You can mark Deep Dive days now; practice uses the days you have marked, with th
 6. Analysis: the run is listed with a **Practice** badge and can be filtered; the Performance dashboard totals do not include it.
 7. Start again: it does not repeat a day until all your days were used. A day whose second-level data cannot be downloaded says so and offers another day.
 8. Windows app: the same (needs the rebuild). Phone: the Practice badge and the review only.
-9. **No-setup days (after S15b):** tick **Include no-setup days** at Start. About one run in four is a day inside your marked range where you marked nothing for the strategy; nothing in the replay tells you. Stop it: the review says no setup was recorded, **No trade** counts as correct, and any trade is shown as one you should not have taken. A day you labelled **Failed** is not one of these: it is reviewed against your marks.
+9. **No-setup days:** tick **Include no-setup days** at Start. About one run in four is a day inside your marked range where you marked nothing for the strategy; nothing in the replay tells you. Stop it: the review says no setup was recorded, **No trade** counts as correct, and any trade is shown as one you should not have taken. A day you labelled **Failed** is not one of these: it is reviewed against your marks.
 
 ## Report back

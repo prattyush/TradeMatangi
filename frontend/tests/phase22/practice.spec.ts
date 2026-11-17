@@ -40,6 +40,16 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await grade("Poor").uncheck();
     for (const name of ["Ideal", "Average", "Poor", "Success (not graded)", "Failed", "No outcome"]) await grade(name).check();
 
+    // No-setup days: an option that is off until ticked, with the days it adds; the pick asks for them only then.
+    const negatives = page.getByRole("checkbox", { name: "Include no-setup days" });
+    await expect(negatives).not.toBeChecked();
+    await expect(page.locator(".pr-negatives")).toContainText("6 days");
+    await page.getByLabel("Symbol").selectOption("BSESEN");
+    await expect(page.locator(".pr-negatives")).toContainText("0 days"); // none reviewed for this symbol
+    await page.getByLabel("Symbol").selectOption("");
+    await negatives.check();
+    await expect(page.getByText("About 9 days on offer")).toBeVisible();
+    await negatives.uncheck();
     // Start: the pick is asked for with the symbol and grades only when they narrow it, the speed is the host's own, and the host starts it.
     await page.getByLabel("Replay speed").fill("0.5");
     await start.click();
@@ -54,7 +64,8 @@ for (const renderer of ["lightweight", "kline"] as const) {
     // History: a run still going cannot be reviewed; an ended one can.
     await page.getByRole("tab", { name: "History" }).click();
     const rows = page.locator(".pr-history tbody tr");
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(2)).toContainText("No-setup day: you stayed out, the right call");
     await expect(rows.nth(0)).toContainText("In progress");
     await expect(rows.nth(0).getByRole("button", { name: "Review" })).toBeDisabled();
     await expect(rows.nth(1)).toContainText("6 min late · kept 50%");
@@ -96,6 +107,31 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await expect(page.locator(".td-chartbox").nth(1)).toBeVisible();
     await page.getByRole("button", { name: "← Back" }).click();
     await expect(page.locator(".pr-history")).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  test(`Practice on the website (${renderer}): a no-setup day asks for it and rewards staying out`, async ({ page }) => {
+    const errors = watch(page);
+    await open(page);
+    await page.getByRole("button", { name: /Practice/ }).click();
+    await page.locator(".pr-strategies li button").click();
+    await page.getByRole("checkbox", { name: "Include no-setup days" }).check();
+    await page.getByRole("button", { name: "Start practice" }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).practicePicks.length)).toBe(1);
+    expect(await page.evaluate(() => (window as any).practicePicks[0])).toEqual({ category: "Breakout", strategy: "Opening range", include_negatives: true });
+
+    // The review of a day with no setup: no recorded entry to compare, staying out is the result to aim for.
+    await open(page, "&review=negative1");
+    await expect(page.locator(".pr-recorded")).toContainText("No setup");
+    await expect(page.locator(".pr-recorded")).toContainText("you stayed out, the right call");
+    await expect(page.getByText("The right call was not to trade.")).toBeVisible();
+    await expect(page.getByText(/before the first recorded entry/)).toHaveCount(0); // the start offset means nothing here
+    await expect(page.locator(".td-chartbox")).toHaveCount(0);
+    // And when you did trade: the trade is shown as one that was not wanted.
+    await open(page, "&review=negative2");
+    await expect(page.locator(".pr-recorded")).toContainText("you traded (-5.00 pts), no trade was wanted");
+    await expect(page.getByRole("heading", { name: "The trades you took" })).toBeVisible();
+    await expect(page.locator(".pr-table tbody tr")).toHaveCount(1);
     expect(errors).toEqual([]);
   });
 

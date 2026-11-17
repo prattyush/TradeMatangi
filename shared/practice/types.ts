@@ -13,9 +13,11 @@ export interface PracticeStrategy {
   days: number
   grades: Record<Grade, number>
   symbols: Array<{ symbol: string; days: number }>
+  /** Days you reviewed and did not mark (between a symbol's oldest and newest marked day): the strategy was absent. Absent from an older server. */
+  negative_days?: Array<{ symbol: string; days: number }>
 }
 
-export interface PracticePick { symbol?: string; grades?: Grade[] }
+export interface PracticePick { symbol?: string; grades?: Grade[]; include_negatives?: boolean }
 
 /** The marker the replay start carries (the server resolves the rest from the user's own Deep Dive day). */
 export interface PracticeMarker { category: string; strategy: string; start_offset_min: number }
@@ -44,6 +46,9 @@ export interface RunSummary {
   capture_pct?: number | null
   points?: number | null
   theoretical_points?: number | null
+  /** A day the strategy was absent: `correct` is true when you placed no trade. */
+  negative?: boolean
+  correct?: boolean
 }
 
 export interface PracticeRun {
@@ -117,6 +122,8 @@ export interface PracticeReview {
   setups: ReviewSetup[]
   other_trades: ReviewTrade[]
   summary: RunSummary
+  /** A day the strategy was absent (no setup was recorded): staying out is the right call. */
+  negative?: boolean
 }
 
 /** Every Strategy Practice operation. Implemented over the website's fetch and the desktop's patterns transport. */
