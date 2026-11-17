@@ -61,6 +61,14 @@ for (const renderer of ["lightweight", "kline"] as const) {
     // Step 2: one underlying chart and the option chart of the day's side; tags; a mark on the chart.
     await page.getByRole("tab", { name: /2 · In-depth/ }).click();
     await page.getByText(/1 \/ 2 ·/).waitFor();
+    // The Deep Dive's controls (back, title, steps, Prev and Next) sit in the Pattern Library's own header row: no rows of their own.
+    await page.setViewportSize({ width: 1920, height: 1000 }); // wide enough for the library's tabs and the Deep Dive's controls on one line
+    const y = async (locator: import("@playwright/test").Locator) => (await locator.first().boundingBox())!.y;
+    const libraryTitle = await y(page.getByText("Pattern Library", { exact: true }));
+    for (const control of [page.getByRole("button", { name: "All deep dives" }), page.getByRole("tab", { name: /2 · In-depth/ }), page.getByRole("button", { name: "Previous day" }), page.getByRole("button", { name: "Next day" })]) {
+      expect(Math.abs((await y(control)) - libraryTitle)).toBeLessThan(10);
+    }
+    await page.setViewportSize({ width: 1200, height: 800 });
     // The day strip is one tab stop and the arrow keys walk the days (and focus follows).
     const chips = page.getByRole("tab", { name: /Nov|Oct|Sep|Dec|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug/ }).filter({ has: page.locator("b") });
     await expect(chips).toHaveCount(2);
@@ -75,6 +83,23 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await page.keyboard.press("Home");
     await page.getByText(/1 \/ 2 ·/).waitFor();
     await expect(chips.nth(0)).toBeFocused();
+    // Each chart has a Maximize button: the other chart hides, the chosen one takes the whole chart area, and the choice stays when
+    // walking to the next day; Restore brings both back.
+    const boxes = page.locator(".dd-chartbox");
+    const normal = (await boxes.nth(1).boundingBox())!;
+    await page.getByRole("button", { name: /Maximize .* chart/ }).nth(1).click();
+    await expect(boxes.nth(0)).toBeHidden();
+    const maximized = (await boxes.nth(1).boundingBox())!;
+    expect(maximized.height).toBeGreaterThan(normal.height * 1.6);
+    expect(Math.abs(maximized.width - normal.width)).toBeLessThan(4);
+    await page.locator("button[aria-label='Next day']").click();
+    await page.getByText(/2 \/ 2 ·/).waitFor();
+    await expect(boxes.nth(0)).toBeHidden(); // still maximized on the next day
+    await page.getByRole("button", { name: /Restore .* chart/ }).click();
+    await expect(boxes.nth(0)).toBeVisible();
+    expect(Math.abs((await boxes.nth(1).boundingBox())!.height - normal.height)).toBeLessThan(4);
+    await page.locator("button[aria-label='Previous day']").click();
+    await page.getByText(/1 \/ 2 ·/).waitFor();
     await expect(page.locator(".dd-chartbox")).toHaveCount(2);
     await page.locator(".dd-chartbox canvas").first().waitFor();
     // The day area runs to the bottom of the window and the two stacked charts share all of it, half each: no empty half-page on a

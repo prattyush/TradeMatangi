@@ -264,3 +264,11 @@ What was reviewed for real-use problems, and what changed:
 ## Final status (2026-11-17)
 
 All sprints are merged to `dev` except S11 (in PR). What remains is the **owner's acceptance** of sections A to I in `docs/phase26-manual-acceptance.md` (Windows build, website and a real session), and nothing from Phase 26 goes to `preprod` before the owner's real-session try of S9 (`docs/todo.md`). `docs/spec-phase26.md` (the owner's requirement draft) carries the status and a "Built" note under every requirement.
+
+## Review changes (2026-11-17, after the owner's first look)
+
+- **From your trades**: charts side by side (each the full height of the viewer; under 1000px wide they stack). The Deep Dive's in-depth step stays stacked.
+- **Maximize per chart** in both screens (`ChartFrame`, `useMaximizedChart`): a thin bar above each chart with its name and Maximize / Restore; the other chart hides but stays mounted; the choice is remembered across days and trades.
+- **Deep Dive header in the Pattern Library's own row** (`HeaderPortal`, `DeepDiveHost.headerSlot`, a slot in the website page header and the desktop `.pl-head`): back ("← All"), name, steps and the day walk no longer take rows of their own. Compact controls (‹ ›, no year in the day label, a truncating name) so the row fits on one line from about 1500px.
+- **Tests:** website `deep-dive.spec.ts` (header controls in the library's row at 1920px; maximize, persistence to the next day, restore) and `traded-patterns.spec.ts` (side by side, maximize, restore) on both renderers; `scripts/desktop-deepdive-check.mjs` (same on the built desktop app); `positionLabel` year rule in `deepDive.test.ts`.
+

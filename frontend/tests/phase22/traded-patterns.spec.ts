@@ -33,17 +33,30 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await expect(rows.nth(1)).toContainText("Buy");
     await expect(rows.nth(1)).toContainText("Actual");
 
-    // The first trade is drawn: the underlying chart and its CE chart, stacked, with the "actual orders" legend.
+    // The first trade is drawn: the underlying chart and its CE chart, side by side, with the "actual orders" legend.
     await expect(page.locator(".td-chartbox")).toHaveCount(2);
     await page.locator(".td-chartbox canvas").first().waitFor();
     await expect(page.locator(".td-chartbox").nth(1)).toContainText("NIFTY CE 24500");
     await expect(page.locator(".td-legend")).toContainText("your actual orders");
-    // The viewer runs to the bottom of the window (no empty half page) and stays stacked.
-    const m = await page.evaluate(() => { const r = (el: Element) => el.getBoundingClientRect(); const v = r(document.querySelector(".td-viewer")!); const [a, b] = [...document.querySelectorAll(".td-chartbox")].map(r); return { bottom: v.bottom, inner: innerHeight, stacked: b.top > a.top && b.left === a.left }; });
-    expect(m.stacked).toBe(true);
+    // The viewer runs to the bottom of the window (no empty half page); the two charts are side by side at the same height and width.
+    const m = await page.evaluate(() => { const r = (el: Element) => el.getBoundingClientRect(); const v = r(document.querySelector(".td-viewer")!); const [a, b] = [...document.querySelectorAll(".td-chartbox")].map(r); return { bottom: v.bottom, inner: innerHeight, row: b.left > a.left && Math.abs(b.top - a.top) < 2 && Math.abs(b.width - a.width) < 4 && Math.abs(b.height - a.height) < 2, chartBottom: Math.max(a.bottom, b.bottom), height: a.height }; });
+    expect(m.row).toBe(true);
     expect(m.bottom).toBeLessThanOrEqual(m.inner + 1);
+    expect(m.chartBottom).toBeLessThanOrEqual(m.inner + 1);
+    expect(m.height).toBeGreaterThan(400); // full height, not half
 
     if (process.env.DD_SHOTS) { await page.waitForTimeout(500); await page.screenshot({ path: `${process.env.DD_SHOTS}/traded-${renderer}.png` }); }
+    // Each chart has a Maximize button: the other hides and the chosen one takes the whole width; Restore brings both back.
+    const boxes = page.locator(".td-chartbox");
+    const normal = (await boxes.nth(1).boundingBox())!;
+    await page.getByRole("button", { name: /Maximize .* chart/ }).nth(1).click();
+    await expect(boxes.nth(0)).toBeHidden();
+    const wide = (await boxes.nth(1).boundingBox())!;
+    expect(wide.width).toBeGreaterThan(normal.width * 1.8);
+    expect(Math.abs(wide.height - normal.height)).toBeLessThan(4);
+    await page.getByRole("button", { name: /Restore .* chart/ }).click();
+    await expect(boxes.nth(0)).toBeVisible();
+    expect(Math.abs((await boxes.nth(1).boundingBox())!.width - normal.width)).toBeLessThan(4);
     // The short PE: its contract chart is the PE.
     await rows.nth(1).getByRole("button").click();
     await expect(page.locator(".td-chartbox").nth(1)).toContainText("NIFTY PE 24400");

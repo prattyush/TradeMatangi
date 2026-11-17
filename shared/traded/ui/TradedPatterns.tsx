@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { friendlyError } from '../../deepdive/ui/errors'
 import { formatDay, sideLabel } from '../../deepdive/model'
 import { useFillWindow } from '../../deepdive/ui/useFillWindow'
+import ChartFrame, { useMaximizedChart } from '../../deepdive/ui/ChartFrame'
 import { contractFor, directionText, filterStrategies, instrumentName, matchedText, pnlText, saveText, timeRange, tradedMarks, tradeInstrument } from '../model'
 import type { SaveTradedResult, TradedList, TradedStrategy, TradedTrade } from '../types'
 import { TradedHostProvider, useTradedHost, type TradedHost } from './host'
@@ -109,6 +110,7 @@ function TradeViewer({ trade, category, strategy }: { trade: TradedTrade; catego
   const marks = useMemo(() => tradedMarks(trade, { category, strategy }), [trade, category, strategy])
   const contract = contractFor(trade)
   const instrument = tradeInstrument(trade)
+  const { maximized, toggle } = useMaximizedChart<'underlying' | 'contract'>('traded', contract ? ['underlying', 'contract'] : ['underlying'])
 
   const save = async (edit: boolean) => {
     setBusy(true); setMessage(null)
@@ -136,13 +138,13 @@ function TradeViewer({ trade, category, strategy }: { trade: TradedTrade; catego
       {message.kind === 'ok' && message.chartId && <> <button onClick={() => void onEdit(message.chartId!)}>Open in Annotate</button></>}
     </p>}
     <div className="td-charts">
-      <div className="td-chartbox">
+      <ChartFrame className="td-chartbox" label={trade.symbol} isMaximized={maximized === 'underlying'} isHidden={maximized === 'contract'} onToggle={() => toggle('underlying')}>
         <Chart key={`ul-${tradeKey(trade)}`} {...chartProps} title={`${trade.symbol} · ${formatDay(trade.date)}`} annotations={instrument === 'underlying' ? marks : []} />
-      </div>
-      {contract && <div className="td-chartbox">
+      </ChartFrame>
+      {contract && <ChartFrame className="td-chartbox" label={`${trade.symbol} ${contract.right} ${contract.strike}`} isMaximized={maximized === 'contract'} isHidden={maximized === 'underlying'} onToggle={() => toggle('contract')}>
         <Chart key={`ct-${tradeKey(trade)}-${contract.strike}`} {...chartProps} title={`${trade.symbol} ${contract.right} ${contract.strike}`}
           strike={contract.strike} right={contract.right} expiry={contract.expiry} annotations={marks} />
-      </div>}
+      </ChartFrame>}
     </div>
   </div>
 }

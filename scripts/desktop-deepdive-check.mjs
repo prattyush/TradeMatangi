@@ -203,19 +203,40 @@ try {
   // Step 2: in-depth. Oldest day first, Buy before Sell.
   await page.getByRole('tab', { name: /2 · In-depth/ }).click()
   await page.getByText(/1 \/ 4 ·/).waitFor()
-  assert.match(await page.locator('.dd-depth-head strong').innerText(), new RegExp(`BUY`))
+  assert.match(await page.locator('.dd-head-group strong[aria-live="polite"]').innerText(), new RegExp(`BUY`))
   await page.locator('.dd-chartbox canvas').first().waitFor()
   // The day area runs to the bottom of the window and the two stacked charts share it, half each (no empty half-page).
   const layout = () => page.evaluate(() => {
     const rect = el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height, left: r.left } }
     return { inner: innerHeight, day: rect(document.querySelector('.dd-day')), charts: [...document.querySelectorAll('.dd-chartbox')].map(rect) }
   })
+  // The Deep Dive's controls sit in the Pattern Library's own header row (no rows of their own).
+  await page.setViewportSize({ width: 1920, height: 1100 }) // wide enough for the library's tabs and the Deep Dive's controls on one line
+  const rowY = async locator => (await locator.first().boundingBox()).y
+  const libraryRow = await rowY(page.getByRole('heading', { name: 'Pattern Library' }))
+  for (const control of [page.getByRole('button', { name: 'All deep dives' }), page.getByRole('tab', { name: /2 · In-depth/ }), page.getByRole('button', { name: 'Previous day' }), page.getByRole('button', { name: 'Next day' })]) {
+    assert.ok(Math.abs(await rowY(control) - libraryRow) < 10, 'a Deep Dive control is not in the Pattern Library header row')
+  }
+  await page.setViewportSize({ width: 1500, height: 1100 })
+  await page.waitForFunction(() => { const d = document.querySelector('.dd-day').getBoundingClientRect(); return d.bottom > innerHeight - 40 && d.bottom <= innerHeight }) // the layout refits a moment after a resize
   const fill = await layout()
   assert.ok(fill.day.bottom > fill.inner - 40 && fill.day.bottom <= fill.inner, 'the day area runs to the bottom of the window')
   assert.equal(fill.charts.length, 2)
   assert.ok(fill.charts[1].top > fill.charts[0].top && fill.charts[1].left === fill.charts[0].left, 'the charts are stacked')
   assert.ok(Math.abs(fill.charts[0].height - fill.charts[1].height) < 4, 'half each')
   assert.ok(fill.charts[0].height + fill.charts[1].height > fill.day.height * 0.75, 'together they use the area')
+  // Maximize one chart: the other hides, the choice stays on the next day, Restore brings both back.
+  await page.getByRole('button', { name: /Maximize .* chart/ }).nth(1).click()
+  await page.waitForFunction(() => document.querySelectorAll('.dd-chartbox')[0].hidden)
+  const maxed = await layout()
+  assert.ok(maxed.charts[1].height > fill.charts[1].height * 1.6, 'the maximized chart takes the whole chart area')
+  await page.getByRole('button', { name: 'Next day' }).click()
+  await page.getByText(/2 \/ 4 ·/).waitFor()
+  assert.equal(await page.evaluate(() => document.querySelectorAll('.dd-chartbox')[0].hidden), true, 'still maximized on the next day')
+  await page.getByRole('button', { name: /Restore .* chart/ }).click()
+  await page.getByRole('button', { name: 'Previous day' }).click()
+  await page.getByText(/1 \/ 4 ·/).waitFor()
+  assert.equal(await page.evaluate(() => document.querySelectorAll('.dd-chartbox')[0].hidden), false)
   await page.getByText('No tags yet').waitFor()
   assert.equal(await page.locator('.dd-chip').count(), 4)
 
@@ -294,7 +315,7 @@ try {
   await page.getByText(/3 \/ 4 ·/).waitFor()
 
   // Back on the list: counts match, then everything survives a reopen.
-  await page.getByRole('button', { name: '← All deep dives' }).click()
+  await page.getByRole('button', { name: 'All deep dives' }).click()
   await page.getByText('Your deep dives (1)').waitFor()
   await page.getByRole('button', { name: 'Open' }).click()
   await page.getByRole('tab', { name: /2 · In-depth/ }).waitFor()
@@ -315,8 +336,18 @@ try {
   await page.locator('.td-chartbox canvas').first().waitFor()
   assert.equal(await page.locator('.td-chartbox').count(), 2)
   assert.match(await page.locator('.td-legend').innerText(), /your actual orders/)
-  const viewer = await page.evaluate(() => { const r = document.querySelector('.td-viewer').getBoundingClientRect(); const [a, b] = [...document.querySelectorAll('.td-chartbox')].map(e => e.getBoundingClientRect()); return { bottom: r.bottom, inner: innerHeight, stacked: b.top > a.top && b.left === a.left } })
-  assert.ok(viewer.stacked && viewer.bottom <= viewer.inner + 1, 'the viewer is stacked and runs to the bottom of the window')
+  const viewer = await page.evaluate(() => { const r = document.querySelector('.td-viewer').getBoundingClientRect(); const [a, b] = [...document.querySelectorAll('.td-chartbox')].map(e => e.getBoundingClientRect()); return { bottom: r.bottom, inner: innerHeight, row: b.left > a.left && Math.abs(b.top - a.top) < 2 && Math.abs(b.width - a.width) < 4 && Math.abs(b.height - a.height) < 2, height: a.height } })
+  assert.ok(viewer.row && viewer.bottom <= viewer.inner + 1, 'the two charts are side by side and the viewer runs to the bottom of the window')
+  assert.ok(viewer.height > 400, 'each chart has the full height')
+  // Maximize the contract chart: the underlying hides, the contract takes the whole width; Restore brings both back.
+  const tradedWidths = () => page.evaluate(() => [...document.querySelectorAll('.td-chartbox')].map(e => ({ hidden: e.hidden, width: e.getBoundingClientRect().width })))
+  const sideBySide = await tradedWidths()
+  await page.getByRole('button', { name: /Maximize .* chart/ }).nth(1).click()
+  await page.waitForFunction(() => document.querySelectorAll('.td-chartbox')[0].hidden)
+  assert.ok((await tradedWidths())[1].width > sideBySide[1].width * 1.8, 'the maximized chart takes the whole width')
+  await page.getByRole('button', { name: /Restore .* chart/ }).click()
+  await page.waitForFunction(() => !document.querySelectorAll('.td-chartbox')[0].hidden)
+  assert.ok(Math.abs((await tradedWidths())[1].width - sideBySide[1].width) < 4, 'Restore brings both charts back')
   await page.screenshot({ path: artifacts + '/step4-traded.png' })
   await tradeRows.nth(1).getByRole('button').click()
   await page.getByText('NIFTY PE 24400 · 3m').first().waitFor()

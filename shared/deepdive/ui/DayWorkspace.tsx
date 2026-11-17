@@ -8,6 +8,7 @@ import TagPanel from './TagPanel'
 import { markCount, optionEligible, strikeForSide, strikeModeFor, toolsFor } from './inDepthModel'
 import { useDayStrikes } from './useDayStrikes'
 import { useFillWindow } from './useFillWindow'
+import ChartFrame, { useMaximizedChart } from './ChartFrame'
 
 interface Props {
   setup: DiveSetup
@@ -50,6 +51,7 @@ export default function DayWorkspace(props: Props) {
   const strikeText = strikes.state === 'ready' ? `${right} ${strikeForSide(setup.side, strikes)}` : ''
 
   const area = useRef<HTMLDivElement>(null)
+  const { maximized, toggle } = useMaximizedChart<'underlying' | 'option'>('in-depth', optionEligible(setup.symbol) ? ['underlying', 'option'] : ['underlying'])
   useFillWindow(area, { minHeight: 640 })
 
   return <div className="dd-day" ref={area}>
@@ -63,13 +65,13 @@ export default function DayWorkspace(props: Props) {
         <span className="pl-muted">{setup.annotations.length} marks · candle {setup.interval_minutes}m (set on a chart)</span>
       </div>}
       <div className="dd-charts">
-        <div className="dd-chartbox">
+        <ChartFrame className="dd-chartbox" label={setup.symbol} isMaximized={maximized === 'underlying'} isHidden={maximized === 'option'} onToggle={() => toggle('underlying')}>
           <Chart key={`${setup.symbol}-${setup.date}-ul`} symbol={setup.symbol} date={setup.date}
             title={`${setup.symbol} · ${formatDay(setup.date)} · ${markCount(setup, 'underlying')} marks`} historicalDays={settings.historicalDays}
             annotations={setup.annotations.filter(a => a.instrument === 'underlying')} activeStrategy={strategy} activeCategory={category}
             pickMode={canEdit && tool?.instrument === 'underlying'} onPick={pick} pickHint={`${tool?.label ?? ''} — click a candle`} />
-        </div>
-        {optionEligible(setup.symbol) && <div className="dd-chartbox">
+        </ChartFrame>
+        {optionEligible(setup.symbol) && <ChartFrame className="dd-chartbox" label={strikeText || `${right} chart`} isMaximized={maximized === 'option'} isHidden={maximized === 'underlying'} onToggle={() => toggle('option')}>
           {strikes.state === 'ready'
             ? <Chart key={`${setup.symbol}-${setup.date}-${right}-${strikeForSide(setup.side, strikes)}`} symbol={setup.symbol} date={setup.date}
               title={`${strikeText} · ${markCount(setup, right)} marks`} strike={strikeForSide(setup.side, strikes)} right={right} expiry={strikes.expiry}
@@ -79,7 +81,7 @@ export default function DayWorkspace(props: Props) {
             : strikes.state === 'error'
               ? <p className="pl-error" role="alert">Could not pick the {right} strike: {strikes.error}</p>
               : <p className="pl-muted dd-empty">Picking the {right} strike…</p>}
-        </div>}
+        </ChartFrame>}
       </div>
       {optionEligible(setup.symbol) && strikes.state === 'ready' && <div className="pl-bar">
         <span className="pl-muted">{sideLabel(setup.side)} setup → {strikeText} (CE {strikes.ce} / PE {strikes.pe}{setup.strike_mode ? `, ${strikeLabel(setup.strike_mode)}` : ''})</span>

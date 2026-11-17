@@ -6,7 +6,7 @@ import type { PatternsClient } from '../../patternsClient'
 import type { PatternSettings } from '../usePatternsRuntime'
 
 /** The Deep Dive's host on the Windows app: the patterns transport, the account settings and the KLine Analysis chart. */
-export function useDesktopDeepDiveHost(client: PatternsClient, settings: PatternSettings): DeepDiveHost {
+export function useDesktopDeepDiveHost(client: PatternsClient, settings: PatternSettings, headerSlot: HTMLElement | null = null): DeepDiveHost {
   return useMemo(() => ({
     api: client.deepDive,
     names: {
@@ -19,5 +19,6 @@ export function useDesktopDeepDiveHost(client: PatternsClient, settings: Pattern
     resolveStrikes: (symbol, date, offset, current) => resolveStrikes(client, symbol, date, offset, current),
     settings,
     Chart: DesktopAnalysisChart as ComponentType<DiveChartProps>,
-  }), [client, settings])
+    headerSlot,
+  }), [client, settings, headerSlot])
 }

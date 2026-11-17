@@ -17,7 +17,7 @@ const lookup: StrikeLookup = {
   findStrikeByPrice: (symbol, date, expiry, right, maxPrice, referenceTime) => api.findStrikeByPrice(symbol, date, expiry, right, maxPrice, referenceTime, 'replay', 'minute'),
 }
 
-function Page() {
+function Page({ headerSlot = null }: { headerSlot?: HTMLElement | null }) {
   const env = useAnalysisEnvironment()
   const renderer = useAnalysisChartRenderer()
   const mode = loadMaxPriceMode(), ceCap = loadMaxPriceThresholdCE(), peCap = loadMaxPriceThresholdPE(), historicalDays = loadHistoricalDays()
@@ -34,7 +34,8 @@ function Page() {
     settings: { mode, ceCap, peCap, historicalDays, loaded: true },
     // KLine: the shared Analysis chart the rest of Analysis uses. Lightweight: the page's own candles, EMA and marks.
     Chart: (renderer === 'kline' && env.charts?.AnalysisChart ? env.charts.AnalysisChart : DeepDiveLightChart) as DeepDiveHost['Chart'] & ((props: DiveChartProps) => unknown),
-  }), [renderer, env.charts, mode, ceCap, peCap, historicalDays])
+    headerSlot,
+  }), [renderer, env.charts, mode, ceCap, peCap, historicalDays, headerSlot])
   return <div className="dd-web"><DeepDive host={host} /></div>
 }
 

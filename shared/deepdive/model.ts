@@ -162,9 +162,12 @@ export function formatDay(date: string): string {
   return MONTHS[month - 1] ? `${day} ${MONTHS[month - 1]} ${year}` : date
 }
 
-/** `3 / 12 · 11 Mar 2026 · BUY` */
-export const positionLabel = (index: number, setups: readonly DayKey[]) =>
-  setups.length ? `${index + 1} / ${setups.length} · ${formatDay(setups[index].date)} · ${setups[index].side.toUpperCase()}` : 'No days marked'
+/** `3 / 12 · 11 Mar 2026 · BUY`; with `omitYear` the year of that value is left out (`11 Mar`), to keep the header row short. */
+export const positionLabel = (index: number, setups: readonly DayKey[], omitYear?: number) => {
+  if (!setups.length) return 'No days marked'
+  const day = formatDay(setups[index].date)
+  return `${index + 1} / ${setups.length} · ${omitYear !== undefined && day.endsWith(` ${omitYear}`) ? day.slice(0, -5) : day} · ${setups[index].side.toUpperCase()}`
+}
 
 // ── Percentages ──────────────────────────────────────────────────────────────
 
