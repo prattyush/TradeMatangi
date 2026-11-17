@@ -905,7 +905,11 @@ def _historical_context_trades(session, user_id: str) -> list[dict]:
             session_type=session.session_type,
         )
         trades: list[dict] = []
+        from app.services.simulation import load_practice
         for record in sessions:
+            # A practice run starts clean, and a normal run does not show practice runs as that day's history.
+            if session.practice or load_practice(record):
+                continue
             if session.session_type == 'real':
                 from app.services.execution_broker import name
                 if name(record.get('execution_broker')) != name(session):
@@ -1140,6 +1144,10 @@ async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = 
                 if (session.session_id in active_before and session.date == req.date
                         and session.symbol == req.symbol and session.instrument_type == req.instrument_type
                         and _desktop_mode(session) == req.desktop_mode):
+                    if req.practice:
+                        # A practice run is never attached to another screen's session (the marker would be dropped, and its trades
+                        # would join that session): stop that one first.
+                        raise HTTPException(status_code=409, detail=f"Another screen already has a {req.desktop_mode} session on this day and symbol. Stop it before you start a practice run.")
                     snapshot = _snapshot(session, user_id)
                     snapshot.created_for_request = False
                     return snapshot

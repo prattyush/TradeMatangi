@@ -71,11 +71,24 @@ def negative_days(user_id: str, category: str, strategy: str) -> dict[str, list[
     return negative_days_of(dd._setup_rows(user_id, dd.dive_key(category, strategy)))
 
 
+def snap_start(start_time: str, interval_secs: int) -> str:
+    """A Stepwise practice start snapped down to a bar boundary (never before 09:15:00), as ``HH:MM:SS``.
+
+    Stepwise advances by whole bars, but plays from the start to the end of the bar that contains it: a start inside a bar gives a short
+    first bar (and a chart candle that loses its real open). Snapping down keeps the start before the first Entry and makes the first
+    bar a full one. 09:15 is a boundary for 180 and 300 second bars but not for 120 (its bar starts at 09:14), hence the floor at the open.
+    """
+    seconds = _seconds_of_day(start_time)
+    snapped = max(REPLAY_OPENS_SECONDS, seconds - seconds % interval_secs) if interval_secs > 0 else seconds
+    return f"{snapped // 3600:02d}:{snapped % 3600 // 60:02d}:{snapped % 60:02d}"
+
+
 def build_marker(user_id: str, practice: dict, symbol: str, date: str, start_time: str) -> dict:
     """The marker stored on a practice session; ``ValueError`` (shown to the user) when the day cannot be practised.
 
     ``practice`` is ``{category, strategy, start_offset_min}``; the symbol and date are those of the session request. The day
-    must be one of the user's own Deep Dive days with an Entry mark, and the replay must start before that Entry.
+    must be one of the user's own Deep Dive days with an Entry mark, and the replay must start before that Entry. The stored
+    ``start_offset_min`` is worked out here from the start actually used (a Stepwise start is snapped), not taken from the client.
     """
     category, strategy = practice["category"].strip(), practice["strategy"].strip()
     setups = recorded_day(user_id, category, strategy, symbol, date)
@@ -96,7 +109,7 @@ def build_marker(user_id: str, practice: dict, symbol: str, date: str, start_tim
         raise ValueError("The replay must start before the first recorded entry")
     return {
         "category": category, "strategy": strategy, "symbol": symbol, "date": date,
-        "start_time": start_time, "start_offset_min": int(practice.get("start_offset_min") or 0),
+        "start_time": start_time, "start_offset_min": (entry_at - start_at) // 60,
         "recorded": [{
             "side": s["side"], "interval_minutes": s["interval_minutes"], "strike_ce": s["strike_ce"], "strike_pe": s["strike_pe"],
             "strike_mode": s["strike_mode"], "outcome": s["outcome"], "strength": s["strength"],
@@ -277,6 +290,7 @@ def list_runs(user_id: str) -> list[dict]:
         runs.append({"session_id": row["session_id"], "category": marker["category"], "strategy": marker["strategy"],
                      "symbol": marker["symbol"], "date": marker["date"], "start_time": marker["start_time"],
                      "start_offset_min": marker["start_offset_min"], "state": row.get("state"), "ended": ended,
+                     "session_type": row.get("session_type") or "sim",
                      "created_at": row.get("created_at"), "result": result})
     return runs
 

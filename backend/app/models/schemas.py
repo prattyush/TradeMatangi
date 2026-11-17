@@ -61,7 +61,7 @@ class SimulationStartRequest(ContractModel):
     override: bool = False             # if true, delete previous session data for same (symbol, date, type) before starting
     group_id: str | None = None
     session_alias: str | None = Field(default=None, max_length=40)
-    practice: PracticeStart | None = None  # only with session_type="sim" (replay)
+    practice: PracticeStart | None = None  # only with session_type="sim" (replay) or "stepwise"
 
 
 class SimulationStartResponse(ContractModel):

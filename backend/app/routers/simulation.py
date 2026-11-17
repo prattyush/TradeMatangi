@@ -422,10 +422,17 @@ async def _start_simulation_impl(
     is_stepwise = (req.session_type == "stepwise")
     practice_marker = None
     if req.practice:
-        # Strategy Practice is a replay: the marker (with the recorded marks, kept server-side) is built from the user's own Deep Dive day.
-        if internal_session_type != "sim":
-            raise HTTPException(400, "Strategy Practice runs as a replay session")
+        # Strategy Practice is a replay or a stepwise run: the marker (with the recorded marks, kept server-side) is built from the user's
+        # own Deep Dive day. Paper and real sessions never carry one.
+        if internal_session_type not in ("sim", "stepwise"):
+            raise HTTPException(400, "Strategy Practice runs as a replay or stepwise session")
         from app.services import strategy_practice_service
+        if internal_session_type == "stepwise":
+            # Stepwise advances by whole bars: start on a bar boundary so the first bar is a full one (the marker records this start).
+            try:
+                req.start_time = strategy_practice_service.snap_start(req.start_time, req.strategy_interval_secs)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
         try:
             practice_marker = await asyncio.to_thread(
                 strategy_practice_service.build_marker, user_id, req.practice.model_dump(), req.symbol, req.date, req.start_time)
