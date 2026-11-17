@@ -4,6 +4,9 @@ import api, { type OHLCCandle } from '../../services/api'
 import { buildMarkers } from '../../../../shared/analysis/patternMarkers'
 import { useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import type { DiveChartProps } from '../../../../shared/deepdive/ui/host'
+import { rendererAccountKey } from '../../services/websiteChartPreferences'
+import { LightweightChartTools, useLightweightTools } from '../analysis/LightweightChartTools'
+import { lightweightDrawingKey } from '../analysis/lightweightDrawings'
 
 const INTERVALS = [1, 2, 3, 5, 15, 30]
 
@@ -20,8 +23,9 @@ function ema(closes: number[], period: number): Array<number | null> {
 }
 
 /**
- * The Deep Dive chart for the website's Lightweight renderer: minute candles from the Patterns routes, EMA 9 and 21, the
- * day's pattern marks, and a click that reports the candle and price under it while `pickMode` is on. The candle interval is
+ * The Deep Dive chart for the website's Lightweight renderer: minute candles from the Patterns routes, an EMA 9/21 indicator
+ * (the one indicator, on by default), the usual drawing tools (kept per account, instrument and day), the day's pattern marks,
+ * and a click that reports the candle and price under it while `pickMode` is on and no drawing tool is active. The candle interval is
  * the shared Analysis interval, so both charts of a day and the saved interval of the day stay in step with the KLine mode.
  */
 export default function DeepDiveLightChart({ symbol, date, title, strike, right, expiry, historicalDays, annotations = [], activeStrategy, activeCategory, pickMode, onPick, pickHint, focusTime }: DiveChartProps) {
@@ -34,8 +38,12 @@ export default function DeepDiveLightChart({ symbol, date, title, strike, right,
   const candleSeries = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema9 = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21 = useRef<ISeriesApi<'Line'> | null>(null)
-  const pick = useRef({ pickMode, onPick })
-  pick.current = { pickMode, onPick }
+  // Drawings are kept per account, instrument and day, so each Deep Dive day starts clean and keeps what was drawn on it.
+  const tools = useLightweightTools(`${lightweightDrawingKey(rendererAccountKey(), symbol, right, strike, expiry)}:deepdive:${date}`)
+  const attachTools = useRef(tools.attach)
+  attachTools.current = tools.attach
+  const pick = useRef({ pickMode, onPick, drawing: false })
+  pick.current = { pickMode, onPick, drawing: tools.state.mode !== 'none' }
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ready'; empty: boolean } | { status: 'error'; message: string }>({ status: 'loading' })
 
   useEffect(() => {
@@ -52,8 +60,9 @@ export default function DeepDiveLightChart({ symbol, date, title, strike, right,
     ema9.current = chart.addLineSeries({ color: '#f0883e', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     ema21.current = chart.addLineSeries({ color: '#79c0ff', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     chartRef.current = chart
+    // Registered before the drawing tools' own click handler, so the click that finishes a drawing is never also a mark.
     chart.subscribeClick(param => {
-      if (!pick.current.pickMode || !param.point || !param.time || !candleSeries.current) return
+      if (pick.current.drawing || !pick.current.pickMode || !param.point || !param.time || !candleSeries.current) return
       const price = candleSeries.current.coordinateToPrice(param.point.y)
       if (price === null) return
       pick.current.onPick?.({ time: param.time as number, price })
@@ -63,8 +72,15 @@ export default function DeepDiveLightChart({ symbol, date, title, strike, right,
       if (width > 0 && height > 0) chart.applyOptions({ width, height })
     })
     observer.observe(element)
-    return () => { observer.disconnect(); chart.remove(); chartRef.current = null; candleSeries.current = null }
+    const detach = attachTools.current(chart, candleSeries.current)
+    return () => { detach(); observer.disconnect(); chart.remove(); chartRef.current = null; candleSeries.current = null }
   }, [])
+
+  // The Indicators menu's EMA 9/21 switch.
+  useEffect(() => {
+    ema9.current?.applyOptions({ visible: tools.showEma })
+    ema21.current?.applyOptions({ visible: tools.showEma })
+  }, [tools.showEma])
 
   useEffect(() => {
     let cancelled = false
@@ -99,11 +115,12 @@ export default function DeepDiveLightChart({ symbol, date, title, strike, right,
       <select aria-label="Candle interval" value={interval} onChange={e => env.setIntervalMinutes?.(Number(e.target.value))}>
         {INTERVALS.map(minutes => <option key={minutes} value={minutes}>{minutes}m</option>)}
       </select>
-      {pickMode && pickHint && <span className="dd-light-hint">{pickHint}</span>}
+      <LightweightChartTools tools={tools} />
+      {pickMode && pickHint && tools.state.mode === 'none' && <span className="dd-light-hint">{pickHint}</span>}
       {state.status === 'loading' && <span className="dd-light-note" role="status">Loading…</span>}
       {state.status === 'ready' && state.empty && <span className="dd-light-note" role="status">No candles for this day.</span>}
       {state.status === 'error' && <span className="dd-light-error" role="alert">{state.message}</span>}
     </div>
-    <div ref={container} className="dd-light-canvas" style={{ flex: 1, minHeight: 0, cursor: pickMode ? 'crosshair' : 'default' }} />
+    <div ref={container} className="dd-light-canvas" style={{ flex: 1, minHeight: 0, cursor: pickMode || tools.state.mode !== 'none' ? 'crosshair' : 'default' }} />
   </div>
 }
