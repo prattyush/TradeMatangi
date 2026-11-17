@@ -270,6 +270,8 @@ export interface SimulationStartRequest {
   override?: boolean
   group_id?: string
   session_alias?: string
+  /** Strategy Practice (replay only): practise this Deep Dive strategy on the request's symbol and date. */
+  practice?: { category: string; strategy: string; start_offset_min: number }
 }
 
 export interface UserSettingsResponse {
@@ -396,6 +398,8 @@ export interface SimulationStartResponse {
   group_state: 'running' | 'paused' | 'ended' | null
   group_current_time: string | null
   session_alias: string | null
+  /** Set for a Strategy Practice run. Never carries the recorded side or marks. */
+  practice?: { category: string; strategy: string } | null
   wallet_ledger_id: string
   lot_size: number
 }
@@ -556,6 +560,7 @@ export interface AdminTokensResponse {
 // ── Analysis types ──────────────────────────────────────────────────────────
 
 export interface SessionSummary {
+  practice?: { category: string; strategy: string } | null // a Strategy Practice run
   trading_style?: 'intraday'|'swing'; portfolio_id?:string; entry_date?:string|null;exit_date?:string|null;
   snapshot_session_ids?: string[]
   shared?: boolean

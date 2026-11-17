@@ -28,6 +28,19 @@ class SimulationState(str, Enum):
     ENDED = "ended"
 
 
+class PracticeStart(ContractModel):
+    """Strategy Practice: this replay session practises a Deep Dive strategy on the request's symbol and date."""
+    category: str = Field(max_length=60)
+    strategy: str = Field(max_length=60)
+    start_offset_min: int = Field(default=0, ge=0, le=120)  # minutes before the first recorded Entry the replay starts
+
+
+class PracticeInfo(ContractModel):
+    """What a response tells the client about a practice session: never the setup's side or marks."""
+    category: str
+    strategy: str
+
+
 class SimulationStartRequest(ContractModel):
     symbol: str = "NIFTY"
     date: str
@@ -48,6 +61,7 @@ class SimulationStartRequest(ContractModel):
     override: bool = False             # if true, delete previous session data for same (symbol, date, type) before starting
     group_id: str | None = None
     session_alias: str | None = Field(default=None, max_length=40)
+    practice: PracticeStart | None = None  # only with session_type="sim" (replay)
 
 
 class SimulationStartResponse(ContractModel):
@@ -80,6 +94,7 @@ class SimulationStartResponse(ContractModel):
     session_alias: str | None = None
     wallet_ledger_id: str = ""
     lot_size: int = 1
+    practice: PracticeInfo | None = None
 
 
 class SessionGroupMember(ContractModel):

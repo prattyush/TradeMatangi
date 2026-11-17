@@ -160,7 +160,7 @@ Strategies are in-process; cross-process cancellation writes `CANCELLED` to Dyna
 
 | Table | PK | SK | GSI | Purpose |
 |-------|----|----|-----|---------|
-| `Sessions` | `session_id` (S) | — | `user_id-index` | Session metadata (symbol, date, type, capital) |
+| `Sessions` | `session_id` (S) | — | `user_id-index` | Session metadata (symbol, date, type, capital); a Strategy Practice replay also has `practice`, a JSON string (strategy, day, start offset and a snapshot of the user's recorded Deep Dive day: side, marks, grade), written only when set |
 | `Trades` | `session_id` (S) | `trade_id` (S) | `user_id-date-index` | Filled trades |
 | `Orders` | `session_id` (S) | `order_id` (S) | — | All orders (PENDING/FILLED/CANCELLED) |
 | `Wallets` | `user_id` (S) | `date` (S) | — | Daily wallet balance per user |
@@ -339,6 +339,19 @@ adding workers alone duplicates feeds and loses access to in-memory sessions.
 ### Traded patterns (Phase 26, S10)
 
 `traded_patterns_service.py` turns the user's own `TradeLabels` into pattern material, with no table of its own. `GET /api/pattern/traded/summary` (labels only), `GET /api/pattern/traded?category&strategy&start_date&end_date&limit` (round trips rebuilt per session for the newest `limit` labels, one rebuild per session, unreadable sessions counted as `unavailable`) and `POST /api/pattern/traded/save` (copies a labelled trade's entry and exit into the day's pattern chart as marks, through `pattern_logger_service.save_marks_to_chart`, which the Deep Dive also uses). All read the caller's own labels only; a linked real session is counted once through `trade_label_service.canonical_labels`. Mirrored for the desktop under `/api/desktop/v1/patterns/pattern/traded...`.
+
+### Deep Dive strength and entry / exit times (Phase 26)
+
+- **Strength.** `PUT /api/deep-dive/setup` takes `strength` (`ideal` | `average` | `poor`) beside `outcome`. One grade per day (a field of the day item, so the last write wins). Sending a grade sets the outcome to success; `outcome: failed` or `null` removes the grade; sending `strength: null` removes only the grade; a grade together with `failed` or a cleared outcome is a 400, an unknown grade a 422. A success saved before grades existed has none and is reported as **ungraded**. `compute_stats` (and so `stats` and `stats/all` for the label forms) add `strength: {ideal, average, poor, ungraded}` over the successful days; `success`, `failed` and `success_pct` are unchanged.
+- **Entry and exit times** are read from the day's chart marks, not stored a second time (`entry_exit_times`): `entry` is the earliest Entry mark and `exit` the latest Exit mark, from the underlying's marks, or the option's when the underlying has none of that kind, each with `time` (chart time), `clock` (`HH:MM` IST) and `price`; `marks` lists every entry and exit mark in time order. Every setup the API returns carries this as `timings`. A mark's time is the start of its candle, so on a 3 minute chart an entry at 09:47 reads 09:45.
+- **`GET /api/deep-dive/timings`** (`category`, `strategy`, `side`, `owner_id` optional; none = every deep dive of the caller and of owners who shared with them): one row per marked day (`entry_time` / `exit_time` as `HH:MM`, plus `entry`, `exit`, `marks`, `outcome`, `strength`). Read-only; no screen calls it, so it is not in the desktop allowlist.
+
+### Strategy Practice marker (Phase 26, S13)
+
+- A practice run is an ordinary `sim` replay plus an optional **`practice` marker** (no new `session_type`: wallet recalculation, `routers/wallet.py`, the `routers/performance.py` literal and `practice_wallets.kind_for` all switch on the four existing types). `POST /api/simulation/start` (and the desktop `trading/start`, which inherits the request) takes `practice: {category, strategy, start_offset_min}`; the symbol and date are the request's own. It is refused (400) on any other session type, for a day with no Entry-marked setup of the user's own Deep Dive, or when the start time is not before the first recorded Entry.
+- `strategy_practice_service.build_marker` reads the user's own setups of that day and symbol (`recorded_day`) and stores a **snapshot** (side, chart marks, grade, strikes, interval), so the review still works if the Deep Dive day is edited or deleted later. `SimulationSession.practice` is written to `Sessions.practice` as a JSON string only when set (`_upsert_session_to_db`) and read back by `load_practice`.
+- **Hidden:** `SimulationStartResponse.practice` and `SessionSummary.practice` carry only `{category, strategy}`; the side and marks are never in a response (the review route, S14, refuses while the session runs).
+- **Kept apart from normal replay:** `find_session_by_context` and `find_all_sessions_by_context` skip practice sessions (so a normal replay does not restart a practice run and its `override` never deletes one); `GET /api/trades/by-context` leaves practice trades out of a day's history; `performance_service.load_cycles` leaves them out of the Performance totals unless `include_practice` is passed. They stay in `/api/analysis/sessions`.
 
 ### Deep Dive hardening (Phase 26, S11)
 
