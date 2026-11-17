@@ -10,6 +10,7 @@ export function createPracticeClient(request: PracticeRequest): PracticeApi {
     pick: (ref, filter) => request('deep-dive/practice/pick', 'POST', {
       category: ref.category, strategy: ref.strategy,
       ...(filter?.symbol ? { symbol: filter.symbol } : {}), ...(filter?.grades?.length ? { grades: filter.grades } : {}), ...(filter?.include_negatives ? { include_negatives: true } : {}),
+      ...(filter?.exclude?.length ? { exclude: filter.exclude } : {}),
     }),
     runs: async () => (await request<{ runs: PracticeRun[] }>('deep-dive/practice/runs', 'GET')).runs,
     evaluate: sessionId => request(`deep-dive/practice/evaluate?session_id=${encodeURIComponent(sessionId)}`, 'GET'),

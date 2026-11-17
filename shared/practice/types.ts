@@ -17,7 +17,10 @@ export interface PracticeStrategy {
   negative_days?: Array<{ symbol: string; days: number }>
 }
 
-export interface PracticePick { symbol?: string; grades?: Grade[]; include_negatives?: boolean }
+/** A day and symbol, for the days a start could not use. */
+export interface PracticeDayRef { date: string; symbol: string }
+
+export interface PracticePick { symbol?: string; grades?: Grade[]; include_negatives?: boolean; exclude?: PracticeDayRef[] }
 
 /** The marker the replay start carries (the server resolves the rest from the user's own Deep Dive day). */
 export interface PracticeMarker { category: string; strategy: string; start_offset_min: number }

@@ -16,7 +16,7 @@ Sections are added as sprints land. Report back with what failed, with the strat
 | J | Review changes: side-by-side traded charts, Maximize per chart, Deep Dive header in one row | |
 | K | Rename a tag | |
 | L | Strength (Ideal / Average / Poor) and entry / exit times | |
-| M | Strategy Practice (S12 to S18) | website and webapp from S15; Windows app from S16 |
+| M | Strategy Practice (S12 to S18), built | the Windows app needs the rebuild; the phone needs the new APK for the Analysis review |
 
 ## A. Desktop: Deep dive tab, marking days (S4)
 
@@ -170,5 +170,7 @@ You can mark Deep Dive days now; practice uses the days you have marked, with th
 9. **No-setup days:** tick **Include no-setup days** at Start. About one run in four is a day inside your marked range where you marked nothing for the strategy; nothing in the replay tells you. Stop it: the review says no setup was recorded, **No trade** counts as correct, and any trade is shown as one you should not have taken. A day you labelled **Failed** is not one of these: it is reviewed against your marks.
 
 **Analysis (S17).** 10. Analysis (website, Windows app and phone): the practice run is its own card with **Practice: strategy**, not merged into a normal replay of the same day; a practice run with no trade is listed too. 11. The **Practice** filter (Include / Exclude / Only; on the phone, Filters > Practice runs): Exclude hides them, Only shows just them; the totals at the top (Days, Win Rate, Trades, P&L) do not count them unless only practice runs are shown. 12. On the card, **Practice review** opens the same review as the Pattern Library (website: a full window; Windows app: on the card; phone: the View menu > Practice review, full screen). Try it on a run that is still going: it says to stop the session first. 13. Pattern Library > Practice > History: a line "n reviewed · entered early/late/on time · kept n% on average · no-setup days: stayed out n of n".
+
+**Hardening (S18).** 14. If a day's data cannot be loaded when the replay starts, Start says so, and the next Start does not offer that day ("1 day skipped" shows). Starting while a session runs says so and skips nothing. 15. A practice run that was left running when the app or server crashed shows **In progress** in History for 12 hours, then can be reviewed.
 
 ## Report back

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import random
+import time
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ GRADES = ("ideal", "average", "poor", "ungraded", "failed", "open")  # what a ma
 START_OFFSET_MIN, START_OFFSET_MAX = 5, 25  # minutes before the first recorded Entry the replay starts (whole minutes)
 REPLAY_OPENS_SECONDS = 9 * 3600 + 15 * 60  # 09:15:00, the earliest a practice replay may start
 REPLAY_CLOSES_SECONDS = 15 * 3600  # a replay starts before 15:00:00
+STALE_RUN_HOURS = 12  # a run still 'running' after this long was left by a crash: it can be reviewed
 NEGATIVE_SHARE = 0.25  # about one pick in four is a day the strategy was absent, when the user asks for them
 
 
@@ -167,7 +169,8 @@ def start_offset_minutes(entry_at: int, rng: random.Random) -> int:
 
 
 def pick(user_id: str, category: str, strategy: str, symbol: Optional[str] = None, grades: Optional[list[str]] = None,
-         rng: Optional[random.Random] = None, include_negatives: bool = False) -> dict:
+         rng: Optional[random.Random] = None, include_negatives: bool = False,
+         exclude: Optional[set[tuple[str, str]]] = None) -> dict:
     """Choose a day and a replay start for a practice run.
 
     Only the user's own Entry-marked days that match the filters, and whose first Entry is after 09:15 (so there is a start
@@ -182,9 +185,10 @@ def pick(user_id: str, category: str, strategy: str, symbol: Optional[str] = Non
 
     rng = rng or random.Random()
     wanted = {g for g in (grades or []) if g in GRADES}
+    skipped = exclude or set()  # days the screen could not start (their data could not be loaded): not offered again
     candidates = {}
     for (date, sym), setups in _entry_days(user_id, category, strategy).items():
-        if symbol and sym != symbol:
+        if (symbol and sym != symbol) or (date, sym) in skipped:
             continue
         if wanted and not any(grade_of(s) in wanted for s in setups):
             continue
@@ -198,7 +202,7 @@ def pick(user_id: str, category: str, strategy: str, symbol: Optional[str] = Non
     absent = {}
     if include_negatives:
         absent = {(day, sym): None for sym, days in negative_days(user_id, category, strategy).items() if not symbol or sym == symbol
-                  for day in days if (day, sym) not in used}
+                  for day in days if (day, sym) not in used and (day, sym) not in skipped}
     if not candidates and not absent:
         raise ValueError("No day of this strategy with an Entry mark matches your choice")
     fresh = [k for k in candidates if k not in used]
@@ -248,11 +252,22 @@ def _practice_sessions(user_id: str) -> list[tuple[dict, dict]]:
     return sorted(runs, key=lambda pair: int(pair[0].get("created_at") or 0), reverse=True)
 
 
+def run_finished(row: dict) -> bool:
+    """A run is finished when it ended, or when it was started so long ago that it cannot still be going (left 'running' by a crash).
+
+    Only a plausible epoch-millisecond ``created_at`` counts, so a record without one is never taken for stale.
+    """
+    if row.get("state") == "ended":
+        return True
+    created = int(row.get("created_at") or 0)
+    return created > 10**12 and time.time() * 1000 - created > STALE_RUN_HOURS * 3600 * 1000
+
+
 def list_runs(user_id: str) -> list[dict]:
     """The user's practice runs for the History list. The recorded answer (a result) appears only once a run has ended."""
     runs = []
     for row, marker in _practice_sessions(user_id):
-        ended = row.get("state") == "ended"
+        ended = run_finished(row)
         result = None
         if ended and row.get("practice_result"):
             try:
@@ -374,7 +389,7 @@ def evaluate(user_id: str, session_id: str, loader: Optional[BarsLoader] = None)
     marker = sim_svc.load_practice(row) if row and row.get("user_id") == user_id else None
     if not marker:
         raise LookupError("Practice run not found")
-    if row.get("state") != "ended" or sim_svc.get_session(session_id):
+    if not run_finished(row) or sim_svc.get_session(session_id):
         raise PermissionError("Stop the session first: the review shows the recorded answer")
 
     symbol, date = marker["symbol"], marker["date"]

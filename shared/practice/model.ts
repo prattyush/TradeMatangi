@@ -1,17 +1,24 @@
 /** Pure Strategy Practice logic shared by every host: wording of the review, grade filters and the chart marks of your trades. */
 import type { PatternAnnotation } from '../analysis/api'
 import { clock } from '../traded/model'
-import { GRADES, type Grade, type PracticePick, type PracticeRun, type PracticeStrategy, type ReviewSetup, type ReviewTrade, type RunSummary, type TheoreticalPair } from './types'
+import { GRADES, type Grade, type PracticeDayRef, type PracticePick, type PracticeRun, type PracticeStrategy, type ReviewSetup, type ReviewTrade, type RunSummary, type TheoreticalPair } from './types'
 
 export const gradeLabel = (grade: Grade) => ({ ideal: 'Ideal', average: 'Average', poor: 'Poor', ungraded: 'Success (not graded)', failed: 'Failed', open: 'No outcome' }[grade])
 
 /** The filter to send: nothing when every grade is ticked (the server then offers every Entry-marked day). */
-export function pickFilter(symbol: string, grades: ReadonlySet<Grade>, includeNegatives = false): PracticePick {
+export function pickFilter(symbol: string, grades: ReadonlySet<Grade>, includeNegatives = false, exclude: readonly PracticeDayRef[] = []): PracticePick {
   return {
     ...(symbol ? { symbol } : {}), ...(grades.size > 0 && grades.size < GRADES.length ? { grades: GRADES.filter(g => grades.has(g)) } : {}),
     ...(includeNegatives ? { include_negatives: true } : {}),
+    ...(exclude.length ? { exclude: [...exclude] } : {}),
   }
 }
+
+/**
+ * Whether a failed start is about the day (its data could not be loaded, so another day should be tried) rather than about the session
+ * (one is already running: any day would fail the same way). Only the first kind adds the day to the ones not offered again.
+ */
+export const isDayProblem = (message: string) => !/session is running|active session|already running|stop it|stop the/i.test(message)
 
 /** Days the strategy was absent that a choice of symbol leaves on offer (0 from an older server). */
 export const negativeDays = (strategy: PracticeStrategy, symbol: string) =>

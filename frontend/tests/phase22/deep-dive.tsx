@@ -183,7 +183,7 @@ window.fetch = async (input: any, options: any = {}) => {
   return json({});
 };
 const practiceHost = params.get("practice") === "1" ? {
-  startPractice: async (plan: any, speed: number) => { w.practiceStarts.push({ plan, speed }); if (params.get("startfail")) throw new Error("Could not load that day's data"); },
+  startPractice: async (plan: any, speed: number) => { w.practiceStarts.push({ plan, speed }); if (params.get("startfail")) throw new Error(params.get("startfail") === "running" ? "A session is running on this screen. Stop it before you start a practice run." : "Could not load that day's data"); },
   blockedReason: params.get("blocked") === "1" ? "A session is running. Stop it before you start a practice run." : null,
   reviewSessionId: params.get("review"), onReviewOpened: () => { w.reviewOpened = true; },
 } : undefined;

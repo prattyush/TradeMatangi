@@ -113,10 +113,16 @@ async def get_timings(category: Optional[str] = Query(None), strategy: Optional[
 
 # ── Strategy Practice ────────────────────────────────────────────────────────
 
+class PracticeDayRef(BaseModel):
+    date: str
+    symbol: str
+
+
 class PracticePickIn(DiveRef):
     symbol: Optional[str] = None
     grades: Optional[list[Literal["ideal", "average", "poor", "ungraded", "failed", "open"]]] = None
     include_negatives: bool = False  # also offer days the strategy was absent (about 1 pick in 4)
+    exclude: Optional[list[PracticeDayRef]] = Field(default=None, max_length=100)  # days that could not be started: not offered again
 
 
 @router.get("/practice/strategies")
@@ -130,7 +136,8 @@ async def practice_strategies(user_id: str = Depends(get_request_user_id)):
 async def practice_pick(req: PracticePickIn, user_id: str = Depends(get_request_user_id)):
     """Choose a day and a replay start (a few minutes before the first Entry). Never the side or the marks."""
     from app.services import strategy_practice_service as practice
-    return await _run(practice.pick, user_id, req.category, req.strategy, req.symbol, req.grades, None, req.include_negatives)
+    return await _run(practice.pick, user_id, req.category, req.strategy, req.symbol, req.grades, None, req.include_negatives,
+                      {(d.date, d.symbol) for d in req.exclude or []})
 
 
 @router.get("/practice/runs")

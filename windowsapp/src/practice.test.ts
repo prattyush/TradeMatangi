@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createPracticeClient } from '../../shared/practice/client'
 import { practiceStartConfig } from '../../shared/practice/startConfig'
 import {
-  bestFor, captureSentence, captureText, daysOnOffer, deltaText, gradeLabel, negativeDays, negativeVerdict, pctText, pickFilter, pointsText, runLine, tripMarks,
+  bestFor, captureSentence, captureText, daysOnOffer, deltaText, gradeLabel, isDayProblem, negativeDays, negativeVerdict, pctText, pickFilter, pointsText, runLine, tripMarks,
 } from '../../shared/practice/model'
 import { GRADES, type Grade, type PracticeStrategy, type ReviewTrade } from '../../shared/practice/types'
 
@@ -36,6 +36,21 @@ describe('what to send for a pick', () => {
   })
   it('names every grade', () => {
     expect(GRADES.map(gradeLabel)).toEqual(['Ideal', 'Average', 'Poor', 'Success (not graded)', 'Failed', 'No outcome'])
+  })
+})
+
+describe('a start that fails', () => {
+  it('sends the days that could not be started, and nothing when there are none', () => {
+    const day = { date: '2026-10-06', symbol: 'NIFTY' }
+    expect(pickFilter('', all, false, [day])).toEqual({ exclude: [day] })
+    expect(pickFilter('NIFTY', all, true, [day, { date: '2026-10-07', symbol: 'NIFTY' }])).toEqual({ symbol: 'NIFTY', include_negatives: true, exclude: [day, { date: '2026-10-07', symbol: 'NIFTY' }] })
+    expect(pickFilter('', all, false, [])).toEqual({})
+  })
+  it('skips the day only when the failure is about the day, not about a session already running', () => {
+    expect(isDayProblem('No data for NIFTY on 2026-10-06')).toBe(true)
+    expect(isDayProblem('Could not load that day\'s data')).toBe(true)
+    expect(isDayProblem('A session is running on this screen. Stop it before you start a practice run.')).toBe(false)
+    expect(isDayProblem('You already have an active session group')).toBe(false)
   })
 })
 

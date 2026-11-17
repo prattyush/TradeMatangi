@@ -374,3 +374,8 @@ adding workers alone duplicates feeds and loses access to in-memory sessions.
 ### Strategy Practice on the analysis transport (Phase 26, S17)
 
 `GET /api/desktop/v1/analysis/deep-dive/practice/evaluate?session_id=` and `.../practice/runs` are on the desktop analysis allowlist (backend `desktop_analysis.py`, TS `validAnalysisPath`, Rust `valid_analysis_path`, with parity tests), read-only, next to `deep-dive/stats/all`. The desktop Analysis and the phone (which shares the TS allowlist and has no patterns transport) use them for the Practice review on the session card. Starting a run, `strategies` and `pick` stay on the patterns transport. `evaluate` enforces ownership itself (another user's or a shared reader's request is a 404) and refuses while the session runs (409).
+
+### Strategy Practice hardening (Phase 26, S18)
+
+- `POST practice/pick` takes `exclude: [{date, symbol}]` (at most 100): days the screen could not start (their second-level data could not be loaded, which creates no session and so would otherwise not count as practised). They are left out of both the Entry-marked and the no-setup pools; when nothing else matches the pick is a 400 "No day of this strategy with an Entry mark matches your choice".
+- `run_finished(row)`: a run is finished when its state is `ended`, or when it is still `running` more than `STALE_RUN_HOURS` (12) after its `created_at` (a plausible epoch-millisecond value only; a record without one is never taken for stale) because a crash left it so. `list_runs` and `evaluate` use it, so such a run can be reviewed; a session still active in this process is never reviewed.

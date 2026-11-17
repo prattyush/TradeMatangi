@@ -114,7 +114,7 @@ Some way to post analyze as well.
 
 Do discuss anything as required.
 
-> **Planned (2026-11-17), sprints S12 to S18, not built yet.** This stays inside Phase 26. Plan and sprints: `docs/spec-phase26-implementation-plan.md` ("Strategy Practice"). The owner's decisions:
+> **Built (2026-11-17), sprints S12 to S18** (PRs #882 to #891 and this one): see "Strategy Practice" in `docs/spec-phase26-implementation-plan.md` and section M of `docs/phase26-manual-acceptance.md`. This stays inside Phase 26. Plan and sprints: `docs/spec-phase26-implementation-plan.md` ("Strategy Practice"). The owner's decisions:
 > - **Where:** a **Practice** tab in the Pattern Library next to Deep dive and From your trades, on the **website, webapp and Windows app**. The phone can only review a practice run (it cannot trade).
 > - **Session:** a normal **Replay** session (no Stepwise), so the trading screen is exactly the replay one. Underneath it is an ordinary replay session with a practice marker, so orders, Analysis, Label Trades, Walkthrough and What If work unchanged.
 > - **Days offered:** the user's own Deep Dive days that have an **Entry mark** (any outcome; Ideal / Average / Poor / Failed can be ticked at start); optional symbol; days already practised are not repeated until all are used.
@@ -124,4 +124,4 @@ Do discuss anything as required.
 > - **Performance:** practice runs are **excluded from the Performance totals** and stay in Analysis session lists marked Practice.
 > - **Negative tests (owner, 2026-11-17):** a day where the strategy was **absent** is also a valid practice day, like a day labelled Failed: the right call is not to trade. The unmarked days **between the oldest and the newest marked day** (per symbol) are taken as reviewed and absent; days outside that range are never offered (they may never have been looked at). A Start option includes them, about one pick in four; the review says "No setup was recorded" and treats any trade as one you should not have taken.
 > - Days already marked in the Deep Dive are used as they are; nothing needs re-marking (an Exit mark is only needed for the theoretical P&L).
-
+> - **Hardening (S18):** a day whose data could not be loaded when the replay starts is skipped and not offered again (until another strategy is chosen); a run still marked running 12 hours after it started (a crash) can be reviewed; the real and paper session paths are unchanged (the marker is optional, written only when set, and refused on other session types).

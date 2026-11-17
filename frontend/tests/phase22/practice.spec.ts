@@ -155,8 +155,26 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await page.getByRole("button", { name: /Practice/ }).click();
     await page.locator(".pr-strategies li button").click();
     await page.getByRole("button", { name: "Start practice" }).click();
-    await expect(page.getByRole("alert")).toContainText("Could not load that day's data");
+    await expect(page.getByRole("alert")).toContainText("That day could not be started: Could not load that day's data");
+    await expect(page.getByRole("alert")).toContainText("Press Start practice again for another day.");
     await expect(page.getByRole("button", { name: "Start practice" })).toBeEnabled();
+    // The day that failed is not offered again: the next pick says so, and a second failure adds a second day.
+    await expect(page.getByText("1 day skipped: their data could not be loaded.")).toBeVisible();
+    await page.getByRole("button", { name: "Start practice" }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).practicePicks.length)).toBe(2);
+    expect(await page.evaluate(() => (window as any).practicePicks[0])).toEqual({ category: "Breakout", strategy: "Opening range" });
+    expect(await page.evaluate(() => (window as any).practicePicks[1])).toEqual({ category: "Breakout", strategy: "Opening range", exclude: [{ date: "2026-10-16", symbol: "NIFTY" }] });
+    // Choosing another strategy forgets the skipped days.
+    await page.locator(".pr-strategies li button").click();
+    await expect(page.getByText(/days? skipped/)).toHaveCount(0);
+    // A refusal because a session is running is not about the day: nothing is skipped.
+    await open(page, "&startfail=running");
+    await page.getByRole("button", { name: /Practice/ }).click();
+    await page.locator(".pr-strategies li button").click();
+    await page.getByRole("button", { name: "Start practice" }).click();
+    await expect(page.getByRole("alert")).toContainText("A session is running on this screen");
+    await expect(page.getByRole("alert")).not.toContainText("That day could not be started");
+    await expect(page.getByText(/days? skipped/)).toHaveCount(0);
     // Every matching day was already practised: the day repeats, and the screen says so.
     await open(page, "&repeated=1");
     await page.getByRole("button", { name: /Practice/ }).click();
