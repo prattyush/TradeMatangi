@@ -16,7 +16,7 @@ Sections are added as sprints land. Report back with what failed, with the strat
 | J | Review changes: side-by-side traded charts, Maximize per chart, Deep Dive header in one row | |
 | K | Rename a tag | |
 | L | Strength (Ideal / Average / Poor) and entry / exit times | |
-| M | Strategy Practice (planned S12 to S18) | not built yet |
+| M | Strategy Practice (S12 to S18) | website and webapp from S15; Windows app from S16 |
 
 ## A. Desktop: Deep dive tab, marking days (S4)
 
@@ -155,7 +155,7 @@ Needs the desktop rebuilt from `dev` and trades you have labelled (expected and 
 5. Label Trades (or a live label popup): choose an Expected Pattern with a deep dive: the success line also shows the grades.
 6. Optional, with the backend: `GET /api/deep-dive/timings` (with your token) lists every marked day with `entry_time` and `exit_time`.
 
-## M. Strategy Practice (planned: S12 to S18, to try once built)
+## M. Strategy Practice (S12 to S18; the website and webapp from S15, the Windows app from S16)
 
 You can mark Deep Dive days now; practice uses the days you have marked, with their Entry and Exit marks, saved strikes and chart interval. Mark at least three days with an **Entry** mark (and an **Exit** mark for the theoretical P&L) for a strategy.
 

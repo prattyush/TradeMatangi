@@ -17,6 +17,7 @@ import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, Top
 import { buildMarkers, patternIdentity, cleanTopPatterns, MARKER_COLORS } from '../services/patternMarkers'
 import WebsiteDeepDive from '../components/deepdive/WebsiteDeepDive'
 import WebsiteTradedPatterns from '../components/deepdive/WebsiteTradedPatterns'
+import WebsitePractice, { type WebsitePracticeProps } from '../components/deepdive/WebsitePractice'
 import { loadHistoricalDays, loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../components/SettingsModal'
 import {
   PATTERN_ATM_TIME, PATTERN_MAX_PRICE_TIME, otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
@@ -691,8 +692,10 @@ function galleryGridStyle(columns: number): CSSProperties {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function PatternLibrary() {
-  const [mode, setMode] = useState<'create' | 'view' | 'deepdive' | 'traded'>('create')
+export default function PatternLibrary({ practice }: { practice?: WebsitePracticeProps } = {}) {
+  const [mode, setMode] = useState<'create' | 'view' | 'deepdive' | 'traded' | 'practice'>(practice?.reviewSessionId ? 'practice' : 'create')
+  // A finished practice run asked to be reviewed (the trading screen's Review button): open the Practice tab.
+  useEffect(() => { if (practice?.reviewSessionId) setMode('practice') }, [practice?.reviewSessionId])
   // The Deep Dive puts its own header controls in this page's header row (a portal into the slot below), so the charts get the height.
   const [deepDiveSlot, setDeepDiveSlot] = useState<HTMLElement | null>(null)
 
@@ -1354,11 +1357,11 @@ export default function PatternLibrary() {
       <div style={HEADER}>
         <span style={{ fontSize: 14, fontWeight: 700, marginRight: 4 }}>Pattern Library</span>
 
-        {(['create', 'view', 'deepdive', 'traded'] as const).map(m => (
+        {(['create', 'view', 'deepdive', 'traded', ...(practice ? ['practice' as const] : [])] as const).map(m => (
           <button key={m}
             style={{ ...btn(mode === m ? '#1f6feb' : '#21262d'), border: '1px solid #30363d' }}
             onClick={() => setMode(m)}>
-            {m === 'create' ? '✏ Create' : m === 'view' ? '👁 View' : m === 'deepdive' ? '🔍 Deep dive' : '🧾 From your trades'}
+            {m === 'create' ? '✏ Create' : m === 'view' ? '👁 View' : m === 'deepdive' ? '🔍 Deep dive' : m === 'traded' ? '🧾 From your trades' : '🎯 Practice'}
           </button>
         ))}
         {mode === 'deepdive' && <span ref={setDeepDiveSlot} className="dd-web" style={{ display: 'contents' }} />}
@@ -1540,6 +1543,10 @@ export default function PatternLibrary() {
       ) : mode === 'traded' ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
           <WebsiteTradedPatterns onEdit={openTradedChart} />
+        </div>
+      ) : mode === 'practice' && practice ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
+          <WebsitePractice {...practice} />
         </div>
       ) : mode === 'create' ? (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

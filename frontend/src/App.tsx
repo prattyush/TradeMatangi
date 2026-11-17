@@ -39,6 +39,8 @@ const BrowseWorkspace = lazy(() => import('./components/browse/BrowseWorkspace')
 // Games (Phase 25): a lazy overlay like Browse; nothing loads until it is opened.
 const GamesWorkspace = lazy(() => import('./components/games/GamesWorkspace'))
 import PatternLibrary from './pages/PatternLibrary'
+import type { PracticePlan } from '../../shared/practice/types'
+import { practiceStartConfig } from '../../shared/practice/startConfig'
 import ChartStructures from './pages/ChartStructures'
 import type { ChartVisibleRange, PaneType } from './components/Chart'
 import ChartContextMenu, { ContextMenuAction } from './components/ChartContextMenu'
@@ -337,6 +339,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
 
   // ── Pattern Library page ─────────────────────────────────────────────────────
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
+  // Strategy Practice: the run whose review the Pattern Library's Practice tab should open (set by the Review button after Stop).
+  const [practiceReviewId, setPracticeReviewId] = useState<string | null>(null)
   const [showChartStructures, setShowChartStructures] = useState(false)
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
   const [addingSession, setAddingSession] = useState(false)
@@ -1640,6 +1644,28 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
     if (autoStartSnapshots) startSnapshots()
   }, [sim.startSession, sim.groupId, sim.group?.speed, addingSession, brokeragePerOrder, stratIntervalSecs, autoStartSnapshots, startSnapshots])
 
+  // ── Strategy Practice (Phase 26): a replay on a day marked in a Deep Dive, started from the Pattern Library's Practice tab ──
+  // The day, start minute and strikes come from the server's pick; the trading screen is the ordinary replay screen.
+  const startPractice = useCallback(async (plan: PracticePlan, speed: number) => {
+    const c = await practiceStartConfig(plan, {
+      getExpiry: (symbol, date) => api.getExpiry(symbol, date),
+      getPriceAt: (symbol, date, time) => api.getPriceAt(symbol, date, time, 'replay'),
+    })
+    let config: InstrumentConfig
+    if (c.instrument_type === 'options' && c.expiry && c.strike_ce != null && c.strike_pe != null) {
+      handleOptionsReady({ strike: c.strike_ce, ceStrike: c.strike_ce, peStrike: c.strike_pe, expiry: c.expiry, atmStrike: c.strike_ce, underlyingPrice: c.underlyingPrice })
+      config = { symbol: c.symbol, date: c.date, instrument_type: 'options', strike: c.strike_ce, expiry: c.expiry, strike_ce: c.strike_ce, strike_pe: c.strike_pe, session_type: 'sim' }
+    } else {
+      handleOptionsReady(null)
+      config = { symbol: c.symbol, date: c.date, instrument_type: 'equity', session_type: 'sim' }
+    }
+    // No override: earlier replays of the day are never deleted, and a practice run is kept apart from them.
+    await handleStart(plan.start_time, speed, { ...config, practice: plan.practice })
+    setShowPatternLibrary(false)
+  }, [handleStart, handleOptionsReady])
+  const practiceBlockedReason = sim.sessionState !== 'idle' && sim.sessionState !== 'ended'
+    ? 'A session is running. Stop it before you start a practice run.' : null
+
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
   const handleChartPriceSelect = useCallback((price: number, sourcePane: PaneConfig) => {
     if (!Number.isFinite(price) || price <= 0 || !panes.some(p=>p.id===sourcePane.id && matchesChartContract(sourcePane,p))) return
@@ -2243,7 +2269,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           </button>
         </div>
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          <PatternLibrary />
+          <PatternLibrary practice={{ startPractice, blockedReason: practiceBlockedReason, reviewSessionId: practiceReviewId, onReviewOpened: () => setPracticeReviewId(null) }} />
         </div>
       </div>
     )
@@ -2272,6 +2298,18 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           </button>
         )}
         <NotificationHeadline onOpenHistory={onOpenMessages} />
+        {sim.practice && sim.sessionState !== 'idle' && (
+          <div data-testid="practice-badge" style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d2238', border: '1px solid #1f6feb', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#79c0ff' }}
+            title="A practice run: its trades are kept apart from your normal replays and Performance totals">
+            <span>Practice: {sim.practice.strategy}</span>
+            {sim.sessionState === 'ended' && sim.sessionId && (
+              <button onClick={() => { setPracticeReviewId(sim.sessionId); setShowPatternLibrary(true) }}
+                style={{ background: '#1f6feb', border: 'none', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}>
+                Review practice
+              </button>
+            )}
+          </div>
+        )}
         {sim.sessionState !== 'idle' && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
