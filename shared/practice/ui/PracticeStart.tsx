@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { friendlyError } from '../../deepdive/ui/errors'
-import { daysOnOffer, gradeLabel, negativeDays, pickFilter } from '../model'
-import { GRADES, type Grade, type PracticeStrategy } from '../types'
+import { daysOnOffer, gradeLabel, isDayProblem, negativeDays, pickFilter } from '../model'
+import { GRADES, type Grade, type PracticeDayRef, type PracticePlan, type PracticeStrategy } from '../types'
 import { usePracticeHost } from './host'
 
 /** Choose a strategy (and optionally a symbol and grades), a speed, and start: the system picks the day and the start minute. */
@@ -16,6 +16,8 @@ export default function PracticeStart() {
   const [speed, setSpeed] = useState(host.defaultSpeed)
   const [starting, setStarting] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  // Days that could not be started (their data could not be loaded): not offered again until another strategy is chosen.
+  const [skipped, setSkipped] = useState<PracticeDayRef[]>([])
 
   const load = useCallback(async () => {
     try { setStrategies(await host.api.strategies()); setError(null) } catch (e) { setError(friendlyError(e)); setStrategies([]) }
@@ -32,11 +34,20 @@ export default function PracticeStart() {
   const start = async () => {
     if (!strategy) return
     setStarting(true); setError(null); setNote(null)
+    let plan: PracticePlan | null = null
     try {
-      const plan = await host.api.pick(strategy, pickFilter(symbol, grades, negatives && absent > 0))
+      plan = await host.api.pick(strategy, pickFilter(symbol, grades, negatives && absent > 0, skipped))
       if (plan.repeated) setNote('You have practised every matching day, so this one repeats.')
       await host.startPractice(plan, speed)
-    } catch (e) { setError(friendlyError(e)) } finally { setStarting(false) }
+    } catch (e) {
+      const message = friendlyError(e)
+      if (plan && isDayProblem(message)) {
+        // The day was chosen but could not be started (its data could not be loaded): it is not offered again.
+        const day = { date: plan.date, symbol: plan.symbol }
+        setSkipped(current => [...current, day])
+        setError(`That day could not be started: ${message} Press Start practice again for another day.`)
+      } else setError(message)
+    } finally { setStarting(false) }
   }
 
   return <div className="pr-start">
@@ -46,7 +57,7 @@ export default function PracticeStart() {
       {strategies === null ? <p className="pl-muted">Loading…</p> : strategies.length === 0 && !error
         ? <p className="pl-muted">Nothing to practise yet. In Deep dive, mark days for a strategy and put an Entry mark on their charts.</p>
         : <ul>{strategies.map(item => <li key={`${item.category}::${item.strategy}`}>
-          <button aria-pressed={`${item.category}::${item.strategy}` === chosen} onClick={() => { setChosen(`${item.category}::${item.strategy}`); setSymbol(''); setNote(null) }}>
+          <button aria-pressed={`${item.category}::${item.strategy}` === chosen} onClick={() => { setChosen(`${item.category}::${item.strategy}`); setSymbol(''); setNote(null); setSkipped([]) }}>
             <strong>{item.strategy}</strong>
             <span className="pl-muted">{item.category} · {item.days} {item.days === 1 ? 'day' : 'days'}</span>
           </button>
@@ -73,12 +84,13 @@ export default function PracticeStart() {
         <div className="pr-field">Replay speed {host.renderSpeed(speed, setSpeed)}</div>
         <p className="pl-muted">The replay starts a few minutes before the first recorded entry (a different minute each time). Nothing tells you whether the setup is Buy or Sell, or where you marked it; you see that in the review after you stop.</p>
         <div className="pl-bar">
-          <button className="pl-primary" disabled={cannot} onClick={() => void start()}>{starting ? 'Starting…' : 'Start practice'}</button>
-          <span className="pl-muted">{offer === 0 ? 'No day matches these choices.' : `About ${offer} ${offer === 1 ? 'day' : 'days'} on offer`}</span>
+          <button className="pl-primary" disabled={cannot} aria-busy={starting} aria-describedby="pr-start-hint" onClick={() => void start()}>{starting ? 'Starting…' : 'Start practice'}</button>
+          <span className="pl-muted" id="pr-start-hint">{offer === 0 ? 'No day matches these choices.' : `About ${offer} ${offer === 1 ? 'day' : 'days'} on offer`}</span>
         </div>
         {blocked && <p className="pl-muted" role="status">{blocked}</p>}
         {starting && <p className="pl-muted" role="status">Loading the day's data can take a minute the first time.</p>}
         {note && <p className="pl-muted" role="status">{note}</p>}
+        {skipped.length > 0 && <p className="pl-muted" role="status">{skipped.length} {skipped.length === 1 ? 'day' : 'days'} skipped: their data could not be loaded.</p>}
       </> : <p className="pl-muted pr-empty">Choose a strategy to practise.</p>}
       {error && <p className="pl-error" role="alert">{error}</p>}
     </section>

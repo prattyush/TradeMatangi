@@ -611,3 +611,65 @@ def test_the_pick_route_takes_include_negatives(database):
         assert not plain & set(ABSENT)
     finally:
         app.dependency_overrides.pop(get_request_user_id, None)
+
+
+# ── S18: hardening ───────────────────────────────────────────────────────────
+
+def test_a_day_that_could_not_be_started_is_not_offered_again(database):
+    mark_day(day="2026-10-06")
+    mark_day(day="2026-10-07")
+    for seed in range(30):
+        assert practice.pick(USER, CAT, STRAT, rng=random.Random(seed), exclude={("2026-10-06", "NIFTY")})["date"] == "2026-10-07"
+    with pytest.raises(ValueError, match="No day"):
+        practice.pick(USER, CAT, STRAT, exclude={("2026-10-06", "NIFTY"), ("2026-10-07", "NIFTY")})
+    # another symbol's day with the same date is a different day
+    assert practice.pick(USER, CAT, STRAT, rng=random.Random(1), exclude={("2026-10-06", "BSESEN"), ("2026-10-07", "BSESEN")})["date"] in ("2026-10-06", "2026-10-07")
+
+
+def test_an_excluded_absent_day_is_not_offered_either(database):
+    two_marked_days()
+    seen = {practice.pick(USER, CAT, STRAT, include_negatives=True, rng=random.Random(i), exclude={(d, "NIFTY") for d in ABSENT[:5]})["date"] for i in range(300)}
+    assert seen & {ABSENT[5]} and not seen & set(ABSENT[:5])
+
+
+def test_the_pick_route_takes_the_excluded_days(database):
+    from fastapi.testclient import TestClient
+    from app.dependencies import get_request_user_id
+    from app.main import app
+
+    mark_day(day="2026-10-06")
+    mark_day(day="2026-10-07")
+    app.dependency_overrides[get_request_user_id] = lambda: USER
+    try:
+        client = TestClient(app)
+        body = {"category": CAT, "strategy": STRAT, "exclude": [{"date": "2026-10-06", "symbol": "NIFTY"}]}
+        assert {client.post("/api/deep-dive/practice/pick", json=body).json()["date"] for _ in range(20)} == {"2026-10-07"}
+        both = {**body, "exclude": body["exclude"] + [{"date": "2026-10-07", "symbol": "NIFTY"}]}
+        assert client.post("/api/deep-dive/practice/pick", json=both).status_code == 400
+        assert client.post("/api/deep-dive/practice/pick", json={**body, "exclude": [{"date": "2026-10-06"}]}).status_code == 422
+        assert client.post("/api/deep-dive/practice/pick", json={**body, "exclude": [{"date": "x", "symbol": "NIFTY"}] * 101}).status_code == 422
+    finally:
+        app.dependency_overrides.pop(get_request_user_id, None)
+
+
+def test_a_run_left_running_by_a_crash_can_be_reviewed_after_twelve_hours(database):
+    import time
+    mark_day()
+    now_ms = int(time.time() * 1000)
+    fresh = store_run(state="running", created=now_ms - 3 * 3600 * 1000)       # started three hours ago: still treated as going
+    stale = store_run(state="running", created=now_ms - 13 * 3600 * 1000)      # started 13 hours ago: it cannot still be going
+    plain = store_run(state="running", created=2)                              # a record without a real timestamp is never taken for stale
+    for sid in (fresh, stale, plain):
+        sim_svc._sessions.pop(sid, None)  # after a crash nothing is running in memory; only the stored records remain
+    assert {r["session_id"]: r["ended"] for r in practice.list_runs(USER)} == {fresh: False, stale: True, plain: False}
+    with patch("app.services.trade_label_service.compute_round_trips_for_session", return_value=[]):
+        assert practice.evaluate(USER, stale, FakeBars({(None, None): {(9, 45): (100, 101), (10, 30): (118, 120)}}))["session_id"] == stale
+    for sid in (fresh, plain):
+        with pytest.raises(PermissionError):
+            practice.evaluate(USER, sid, FakeBars({}))
+    # a session still active in this process is never reviewed, however old its record is
+    active = store_run(state="running", created=now_ms - 20 * 3600 * 1000)
+    sim_svc._sessions[active] = object()
+    with pytest.raises(PermissionError):
+        practice.evaluate(USER, active, FakeBars({}))
+    sim_svc._sessions.pop(active)
