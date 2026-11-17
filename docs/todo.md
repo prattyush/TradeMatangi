@@ -27,5 +27,6 @@ Probe results are in `docs/spec-phase24.md`; Kite and Breeze are merged (#855, #
 
 ## Phase 26 (Patterns Strategy Deep Dive)
 10. **Owner acceptance of Phase 26**: `docs/phase26-manual-acceptance.md`, sections A to I (desktop rebuild needed; the website and webapp from `dev`; section F covers the real-trading label popups, try replay or stepwise first and real last).
+11a. **Strategy Practice** (Phase 26 sprints S12 to S18): practise a strategy by replaying its Deep Dive days, with a review against the recorded entries and exits and the theoretical P&L. Plan in `docs/spec-phase26-implementation-plan.md`; S12 (docs) done, S13 next.
 11. Ideas the owner may want later (not planned): tag notes per day (for example the price level of a double top); a wider side-by-side column for the percentages panel in Label Trades; deep dive days shown on the Analysis day list.
 

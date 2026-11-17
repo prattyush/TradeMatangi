@@ -283,3 +283,29 @@ All sprints are merged to `dev` except S11 (in PR). What remains is the **owner'
 - Decisions: the grade is its own field `strength` beside `outcome` (a grade means success), so every existing day, the success rate and older clients keep working and an old success reads as "not graded"; times are **derived from the marks** (earliest entry, latest exit, underlying first) rather than stored, so they can never disagree with the chart; a read-only `GET /api/deep-dive/timings` lists them across deep dives.
 - Tests: backend (`test_deep_dive.py`: grade rules, ungraded successes, stats counts, entry/exit rule, listing, sharing, route), `deepDive.test.ts` (client arithmetic and the same time rule), website `deep-dive.spec.ts`, `scripts/desktop-deepdive-check.mjs`. `scripts/website-live-deepdive-check.mjs` now waits for the popup to unmount (it was flaky: about one run in three failed on clean `dev`).
 
+## Strategy Practice (S12 to S18, planned 2026-11-17)
+
+Requirement: the "Strategy Practice" section of `docs/spec-phase26.md` (the owner's text, plus the decisions noted under it).
+
+### Design
+- **A practice run is a `sim` replay session plus an optional `practice` marker** on the `Sessions` record (no new `session_type`: that would break wallet recalculation, `routers/wallet.py`, the `routers/performance.py` literal and `practice_wallets.kind_for`). The marker is added to `SimulationSession`, `create_session`, `_upsert_session_to_db` (a whitelist; only written when set), the DB loader, `_session_response`, `SimulationStartRequest` / `Response`, `compute_session_summary`, `SessionSummary` / `SessionDetail` and the TS types. The desktop start request inherits it; `PersistedScreenState` keeps it. Start, attach and Analysis responses carry only `{category, strategy}` and a flag; the setup's side and a snapshot of the recorded marks stay server-side (the snapshot keeps old reviews valid if the Deep Dive day is later edited or deleted).
+- **Backend service** `strategy_practice_service.py`, routes under `/api/deep-dive/practice/*` (so both transports mirror them): `pick` (own setups with an Entry mark, symbol / grade filters, no repeat until all used, `start = first Entry bar start - k minutes`, `k` random 5..25, clamped to 09:15:00; returns date, symbol, start time, interval, saved strikes and expiry, **no side and no marks**), `evaluate` (owner only, refused while the session is not ended), `runs` (history).
+- **Theoretical P&L**: per instrument with marks, the best pair with `exit.time >= entry.time`; entry = open of the marked bar, exit = close of the marked bar (bars from `minute_history.load` resampled to the setup's `interval_minutes` with `minute_ohlc.resample_to_candles`); options are long, a Sell setup on the underlying flips the sign; shown as points, % of entry and rupees at the user's traded quantity (before costs). A missing bar (illiquid option minute) makes that pair "unavailable" with the reason. **Your side:** round trips from `trade_label_service.compute_round_trips_for_session`, matched with `traded_patterns_service.setup_side`; entry / exit deltas in minutes against the recorded bars; capture % = your points / theoretical points.
+- **Performance**: practice-marked sessions are left out of `performance_service.load_cycles` and the Stats / Habits totals; they stay in `/api/analysis/sessions` with a `practice` flag (badge and filter).
+- **Shared UI** `shared/practice/` (host-injected like `shared/deepdive`): Start screen, Review screen (scorecard; two charts side by side reusing `shared/traded/ui` and `ChartFrame`; recorded marks in their normal colours and your fills as gold marks), History with simple aggregates.
+- **Website / webapp**: a `practice` mode in `frontend/src/pages/PatternLibrary.tsx` plus an `onStartPractice` callback into `App.tsx` (closes the library, sets symbol and date, builds the options config from the saved strikes, starts through `handleStart` with the marker; no `override`; no same-day history trades for a practice session; header badge). **Desktop**: a Practice tab in `windowsapp/src/tools/PatternLibrary.tsx` and a `practiceRequest` lifted from the root into `ScreenController` (`switchMode`, `setRunDate`, `setRunStartTime`, `setReplaySpeed`, `saveTile`, `startRun`); the three new `deep-dive/practice/*` path shapes go in Rust `valid_patterns_path` and TS `ALLOWED` with parity tests (desktop rebuild needed). Speed is each host's own control (website: seconds per tick, lower is faster; desktop: a multiplier).
+
+### Sprints (each: branch off `origin/dev`, PR into `dev`, merge commit, docs inside the PR)
+| Sprint | Scope |
+|---|---|
+| S12 | Docs (this section, the spec note, acceptance section M, todo, memory); docs go straight to `dev` |
+| S13 | Backend marker and plumbing (start, attach, resume, analysis) and the Performance exclusion |
+| S14 | `strategy_practice_service`: pick, theoretical P&L, evaluate, runs, routes |
+| S15 | Shared model and client, Start and Review screens, website and webapp wiring |
+| S16 | Desktop tab, root bridge, allowlists with parity tests, desktop browser check |
+| S17 | Analysis badge, filter and "Practice review" button; phone review; History aggregates |
+| S18 | Hardening (no cached data: "pick another day"; running-session guard; accessibility), final acceptance, the Phase 26 row of `CLAUDE.md` |
+
+### Risks
+The replay start path is shared with normal replay (the marker is optional and only persisted when set; paper and real are untouched). Replay needs Breeze second-level data for the underlying and the option (slow the first time, missing for some days). Option marks need saved strikes (a day never opened in-depth has none: the start resolves strikes like a normal replay and the option pair is "unavailable" in the review). A practice run on a date shares that date's `sim:<date>` wallet with normal replay.
+

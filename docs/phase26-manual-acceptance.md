@@ -16,6 +16,7 @@ Sections are added as sprints land. Report back with what failed, with the strat
 | J | Review changes: side-by-side traded charts, Maximize per chart, Deep Dive header in one row | |
 | K | Rename a tag | |
 | L | Strength (Ideal / Average / Poor) and entry / exit times | |
+| M | Strategy Practice (planned S12 to S18) | not built yet |
 
 ## A. Desktop: Deep dive tab, marking days (S4)
 
@@ -153,5 +154,18 @@ Needs the desktop rebuilt from `dev` and trades you have labelled (expected and 
 4. Results: the summary line shows "Ideal n · Average n · Poor n", each day's Outcome says its grade, and the Entry and Exit columns show the times.
 5. Label Trades (or a live label popup): choose an Expected Pattern with a deep dive: the success line also shows the grades.
 6. Optional, with the backend: `GET /api/deep-dive/timings` (with your token) lists every marked day with `entry_time` and `exit_time`.
+
+## M. Strategy Practice (planned: S12 to S18, to try once built)
+
+You can mark Deep Dive days now; practice uses the days you have marked, with their Entry and Exit marks, saved strikes and chart interval. Mark at least three days with an **Entry** mark (and an **Exit** mark for the theoretical P&L) for a strategy.
+
+1. Pattern Library > **Practice**: your strategies with Entry-marked days are listed with the number of days. Pick one, optionally a symbol and grades, a speed, then **Start practice**.
+2. The normal Replay screen opens on a day, starting 5 to 25 minutes before the recorded first Entry (a different minute each time). The header shows **Practice: strategy**. Nothing tells you Buy or Sell or where the marks are.
+3. Trade as in any replay (orders, stop-loss, targets). Stop the session: a **Review practice** button appears.
+4. Review: recorded Buy / Sell side and marks appear with your fills in gold; your entry and exit against the recorded ones in minutes early or late; your P&L against the theoretical P&L (points, %, capture %).
+5. While a practice session still runs, opening its review is refused.
+6. Analysis: the run is listed with a **Practice** badge and can be filtered; the Performance dashboard totals do not include it.
+7. Start again: it does not repeat a day until all your days were used. A day whose second-level data cannot be downloaded says so and offers another day.
+8. Windows app: the same (needs the rebuild). Phone: the Practice badge and the review only.
 
 ## Report back

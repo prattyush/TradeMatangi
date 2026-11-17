@@ -113,3 +113,14 @@ Not sure where this feature will land up, feel free to choose. Make sure the tra
 Some way to post analyze as well.
 
 Do discuss anything as required.
+
+> **Planned (2026-11-17), sprints S12 to S18, not built yet.** This stays inside Phase 26. Plan and sprints: `docs/spec-phase26-implementation-plan.md` ("Strategy Practice"). The owner's decisions:
+> - **Where:** a **Practice** tab in the Pattern Library next to Deep dive and From your trades, on the **website, webapp and Windows app**. The phone can only review a practice run (it cannot trade).
+> - **Session:** a normal **Replay** session (no Stepwise), so the trading screen is exactly the replay one. Underneath it is an ordinary replay session with a practice marker, so orders, Analysis, Label Trades, Walkthrough and What If work unchanged.
+> - **Days offered:** the user's own Deep Dive days that have an **Entry mark** (any outcome; Ideal / Average / Poor / Failed can be ticked at start); optional symbol; days already practised are not repeated until all are used.
+> - **Start time:** a random whole number of minutes, **5 to 25, before the first Entry** (never before 09:15), so it need not match the chart's 3 minute bars.
+> - **Hidden until Stop:** the setup's Buy or Sell side and its marks stay hidden while practising; the review is refused while the session runs.
+> - **Review:** your entries and exits against the recorded ones (minutes early or late), and your P&L against the **theoretical P&L** of the marks (entry at the open of the marked bar, exit at the close of the marked bar; with several entries or exits the most profitable pair), as points, % and capture %.
+> - **Performance:** practice runs are **excluded from the Performance totals** and stay in Analysis session lists marked Practice.
+> - Days already marked in the Deep Dive are used as they are; nothing needs re-marking (an Exit mark is only needed for the theoretical P&L).
+
