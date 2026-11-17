@@ -300,7 +300,7 @@ Requirement: the "Strategy Practice" section of `docs/spec-phase26.md` (the owne
 |---|---|
 | S12 | Docs (this section, the spec note, acceptance section M, todo, memory); docs go straight to `dev` |
 | S13 | Backend marker and plumbing (start, attach, resume, analysis) and the Performance exclusion. **Built:** `practice` on the start request and response, `Sessions.practice`, `strategy_practice_service.build_marker`, lookups and by-context history skip practice runs, Performance excludes them; `backend/tests/test_strategy_practice.py` (9) |
-| S14 | `strategy_practice_service`: pick, theoretical P&L, evaluate, runs, routes |
+| S14 | `strategy_practice_service`: pick, theoretical P&L, evaluate, runs, routes. **Built:** `GET practice/strategies`, `POST practice/pick`, `GET practice/runs`, `GET practice/evaluate` (409 while running); the theoretical P&L is also priced on the contract the user actually traded; 24 tests in `test_strategy_practice.py` |
 | S15 | Shared model and client, Start and Review screens, website and webapp wiring |
 | S16 | Desktop tab, root bridge, allowlists with parity tests, desktop browser check |
 | S17 | Analysis badge, filter and "Practice review" button; phone review; History aggregates |
