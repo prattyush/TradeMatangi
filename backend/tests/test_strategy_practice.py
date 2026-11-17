@@ -673,3 +673,139 @@ def test_a_run_left_running_by_a_crash_can_be_reviewed_after_twelve_hours(databa
     with pytest.raises(PermissionError):
         practice.evaluate(USER, active, FakeBars({}))
     sim_svc._sessions.pop(active)
+
+
+# ── S19: Stepwise ────────────────────────────────────────────────────────────
+
+def test_a_stepwise_start_snaps_down_to_a_bar_boundary_and_never_before_the_open():
+    snap = practice.snap_start
+    assert snap("09:33:00", 180) == "09:33:00"        # 09:33 is 189 x 180 seconds: already a boundary
+    assert snap("09:34:00", 180) == "09:33:00"
+    assert snap("09:35:00", 180) == "09:33:00"
+    assert snap("09:36:00", 180) == "09:36:00"
+    assert snap("09:34:00", 300) == "09:30:00"        # 5 minute bars
+    assert snap("09:20:00", 300) == "09:20:00"
+    assert snap("09:15:00", 180) == "09:15:00" and snap("09:15:00", 300) == "09:15:00"  # the open is a boundary for these
+    assert snap("09:15:00", 120) == "09:15:00"        # for 120 s the bar starts at 09:14: clamped to the open
+    assert snap("09:16:00", 120) == "09:16:00" and snap("09:17:00", 120) == "09:16:00"
+    assert snap("09:16:30", 120) == "09:16:00"
+    for hh in range(9, 14):
+        for mm in range(0, 60):
+            if (hh, mm) < (9, 15):
+                continue
+            for interval in (120, 180, 300):
+                text = f"{hh:02d}:{mm:02d}:00"
+                snapped = snap(text, interval)
+                assert snapped <= text and snapped >= "09:15:00"             # never later than the start, never before the open
+                assert snapped == "09:15:00" or (int(snapped[:2]) * 3600 + int(snapped[3:5]) * 60) % interval == 0
+    with pytest.raises(ValueError):
+        snap("soon", 180)
+
+
+def test_the_stored_offset_is_worked_out_from_the_start_that_was_used(database):
+    mark_day(marks=[mark("entry", at(9, 45))])
+    marker = practice.build_marker(USER, {**PRACTICE, "start_offset_min": 99}, "NIFTY", DAY, "09:33:00")  # the client's figure is not trusted
+    assert marker["start_offset_min"] == 12
+    assert practice.build_marker(USER, PRACTICE, "NIFTY", DAY, "09:15:00")["start_offset_min"] == 30
+
+
+def test_a_stepwise_practice_start_is_accepted_snapped_and_paper_or_real_still_refused(database):
+    import asyncio
+    from app.models.schemas import SimulationStartRequest
+    from app.routers.simulation import _start_simulation_impl
+
+    mark_day(marks=[mark("entry", at(9, 45))])
+    seen = {}
+
+    def spy(user_id, practice_in, symbol, date, start_time):
+        seen.update(start_time=start_time, practice=practice_in)
+        raise ValueError("stop here")  # the rest of the start needs a data feed: only the marker step is under test
+
+    def start(**changes):
+        body = {"symbol": "NIFTY", "date": DAY, "start_time": "09:34:00", "session_type": "stepwise", "strategy_interval_secs": 180, "practice": PRACTICE, **changes}
+        return asyncio.run(_start_simulation_impl(SimulationStartRequest(**body), user_id=USER))
+
+    with patch("app.services.strategy_practice_service.build_marker", side_effect=spy):
+        with pytest.raises(HTTPException) as stopped:
+            start()
+    assert stopped.value.detail == "stop here" and seen["start_time"] == "09:33:00"  # 09:34 snapped to the 3 minute bar before it
+    with patch("app.services.strategy_practice_service.build_marker", side_effect=spy):
+        with pytest.raises(HTTPException):
+            start(strategy_interval_secs=300)
+    assert seen["start_time"] == "09:30:00"
+    seen.clear()
+    with patch("app.services.strategy_practice_service.build_marker", side_effect=spy):
+        with pytest.raises(HTTPException):
+            start(session_type="sim")  # a replay start is not snapped
+    assert seen["start_time"] == "09:34:00"
+    for kind in ("paper", "real"):
+        with pytest.raises(HTTPException) as refused:
+            start(session_type=kind)
+        assert refused.value.status_code == 400 and "replay or stepwise" in refused.value.detail
+    # a stepwise start after the first Entry is still refused by the marker itself
+    with pytest.raises(HTTPException) as late:
+        start(start_time="09:50:00")
+    assert "before the first recorded entry" in late.value.detail
+
+
+def test_a_stepwise_run_lists_its_mode_and_is_reviewed_like_a_replay(database):
+    mark_day(strike_ce=24500)
+    marker = run_marker()
+    stepwise = sim_svc.create_session("NIFTY", DAY, "09:30:00", 1.0, user_id=USER, session_type="stepwise", stepwise=True, practice=marker)
+    stepwise.created_at = 1
+    _stored(stepwise)
+    sim_svc_table().update_item(Key={"session_id": stepwise.session_id}, UpdateExpression="SET #s = :s", ExpressionAttributeNames={"#s": "state"}, ExpressionAttributeValues={":s": "ended"})
+    sim_svc._sessions.pop(stepwise.session_id, None)
+    replay = store_run(state="ended", created=2)
+    modes = {r["session_id"]: r["session_type"] for r in practice.list_runs(USER)}
+    assert modes == {stepwise.session_id: "stepwise", replay: "sim"}
+    bars = FakeBars({(None, None): {(9, 45): (100, 101), (10, 30): (118, 120)}, ("CE", 24500): {(9, 45): (50, 52), (10, 30): (80, 90)}})
+    with patch("app.services.trade_label_service.compute_round_trips_for_session", return_value=[trip(0, "BUY", "CE", 24500, (9, 51), 55.0, (10, 24), 75.0)]):
+        result = practice.evaluate(USER, stepwise.session_id, bars)
+    assert result["setups"][0]["trades"][0]["entry_delta_min"] == 6 and result["summary"]["traded"] is True
+    # a stepwise practice run is its own Analysis group, apart from an ordinary stepwise run of that day (the marker is in the key)
+    assert analysis_service.compute_session_summary(_stored(stepwise), [])["practice"] == {"category": CAT, "strategy": STRAT}
+
+
+def test_a_stepwise_practice_run_is_not_the_same_session_as_a_normal_stepwise_run(database):
+    mark_day()
+    run = sim_svc.create_session("NIFTY", DAY, "09:30:00", 1.0, user_id=USER, session_type="stepwise", stepwise=True, practice=run_marker())
+    _stored(run)
+    assert sim_svc.find_session_by_context(USER, "NIFTY", DAY, "stepwise", "equity") is None
+    assert sim_svc.find_all_sessions_by_context(USER, "NIFTY", DAY, "stepwise", "equity") == []  # a normal run's override cannot delete it
+
+
+def test_a_practice_start_is_never_attached_to_another_screens_session(database):
+    import asyncio
+    from app.routers import desktop_trading
+
+    mark_day()
+    other = sim_svc.create_session("NIFTY", DAY, "09:30:00", 1.0, user_id=USER)
+    other.desktop_mode = "replay"  # another screen's ordinary replay of the same day and symbol, still running
+    request = desktop_trading.DesktopTradingStartRequest(symbol="NIFTY", date=DAY, start_time="09:30:00", desktop_mode="replay", practice=PRACTICE)
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(desktop_trading.start_desktop_trading(request, user_id=USER))
+    assert refused.value.status_code == 409 and "Another screen already has a replay session" in refused.value.detail
+    assert "practice run" in refused.value.detail
+    stepwise = desktop_trading.DesktopTradingStartRequest(symbol="NIFTY", date=DAY, start_time="09:30:00", desktop_mode="stepwise", practice=PRACTICE)
+    other.desktop_mode = "stepwise"
+    other.session_type = "stepwise"
+    with pytest.raises(HTTPException) as refused_stepwise:
+        asyncio.run(desktop_trading.start_desktop_trading(stepwise, user_id=USER))
+    assert refused_stepwise.value.status_code == 409 and "stepwise session" in refused_stepwise.value.detail
+
+
+def test_a_desktop_snapshot_shows_no_practice_trades_as_history_and_a_practice_run_shows_none(database):
+    from app.routers import desktop_trading
+
+    mark_day()
+    marker = run_marker()
+    practice_run = sim_svc.create_session("NIFTY", DAY, "09:30:00", 1.0, user_id=USER, practice=marker)
+    other_practice = sim_svc.create_session("NIFTY", DAY, "09:30:00", 1.0, user_id=USER, practice=marker)
+    normal = sim_svc.create_session("NIFTY", DAY, "09:30:00", 1.0, user_id=USER)
+    current = sim_svc.create_session("NIFTY", DAY, "09:30:00", 1.0, user_id=USER)
+    rows = [_stored(s) for s in (practice_run, other_practice, normal)]
+    with patch("app.services.analysis_service.get_sessions_for_user", return_value=rows), \
+            patch("app.services.analysis_service.get_trades_for_session", side_effect=lambda sid: [{"session_id": sid}]):
+        assert desktop_trading._historical_context_trades(current, USER) == [{"session_id": normal.session_id}]  # practice runs are not that day's history
+        assert desktop_trading._historical_context_trades(practice_run, USER) == []                            # a practice run starts clean

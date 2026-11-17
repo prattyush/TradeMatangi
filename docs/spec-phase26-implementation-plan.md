@@ -310,3 +310,13 @@ Requirement: the "Strategy Practice" section of `docs/spec-phase26.md` (the owne
 ### Risks
 The replay start path is shared with normal replay (the marker is optional and only persisted when set; paper and real are untouched). Replay needs Breeze second-level data for the underlying and the option (slow the first time, missing for some days). Option marks need saved strikes (a day never opened in-depth has none: the start resolves strikes like a normal replay and the option pair is "unavailable" in the review). A practice run on a date shares that date's `sim:<date>` wallet with normal replay.
 - **Start before the open (2026-11-17):** a 25 minute lookback from an early entry (09:24) would be 08:59. The start is a random 5 to 25 minutes **within the room before the open** (09:24 gives 5 to 9, so 09:15 to 09:19), not a clamp to 09:15, so early entries are not always started at exactly 09:15; an entry less than 5 minutes after the open starts at 09:15; entries at the open are not offered.
+
+## Strategy Practice: Stepwise (S19 to S21, planned 2026-11-17)
+
+The owner asked for Stepwise (one bar per Next Bar press) in Strategy Practice. Decisions: a **Replay / Stepwise switch per run on the Start screen** (default Replay, remembered); the Stepwise bar is the user's **normal Stepwise setting** (120, 180 or 300 seconds), not the Deep Dive day's chart interval; the practice start is **snapped down to a bar boundary** (never before 09:15, still before the first Entry); the Stepwise label popup stays as in normal Stepwise.
+
+| Sprint | Scope |
+|---|---|
+| S19 | Backend: the marker on `stepwise`, the snap, the recomputed offset, no attaching a practice start to another screen's session, practice runs out of context trades, `session_type` on runs. **Built:** `test_strategy_practice.py` (45), the desktop trading, Stepwise, simulation and analysis suites unchanged (316) |
+| S20 | Shared screens and website: the Replay / Stepwise switch (speed hidden for Stepwise), `startPractice(plan, {mode, speed})`, History and badge show the mode, the TS snap twin |
+| S21 | Windows app: launch mode, the practice effects for Stepwise, the snap inside `startRun`, the badge for both modes, the check script for both modes, acceptance items, `CLAUDE.md` row |
