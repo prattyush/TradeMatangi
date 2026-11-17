@@ -3,7 +3,7 @@ import { formatDay, sideLabel, strengthLabel } from '../../deepdive/model'
 import ChartFrame, { useMaximizedChart } from '../../deepdive/ui/ChartFrame'
 import { friendlyError } from '../../deepdive/ui/errors'
 import { useFillWindow } from '../../deepdive/ui/useFillWindow'
-import { captureSentence, deltaText, pctText, pointsText, tripMarks } from '../model'
+import { captureSentence, deltaText, negativeVerdict, pctText, pointsText, tripMarks } from '../model'
 import type { PracticeReview as Review, ReviewSetup, ReviewTrade } from '../types'
 import { usePracticeHost } from './host'
 import '../../traded/ui/traded.css'
@@ -29,11 +29,12 @@ export default function PracticeReview({ sessionId, onBack }: { sessionId: strin
     <div className="pl-bar">
       <button onClick={onBack}>← Back</button>
       {review && <strong>{review.category} / {review.strategy}</strong>}
-      {review && <span className="pl-muted">{review.symbol} · {formatDay(review.date)} · started {review.start_time.slice(0, 5)}, {review.start_offset_min} min before the first recorded entry</span>}
+      {review && <span className="pl-muted">{review.symbol} · {formatDay(review.date)} · started {review.start_time.slice(0, 5)}{review.negative ? '' : `, ${review.start_offset_min} min before the first recorded entry`}</span>}
     </div>
     {error && <p className="pl-error" role="alert">{error} <button onClick={() => setAttempt(n => n + 1)}>Try again</button></p>}
     {!review && !error && <p className="pl-muted" role="status">Loading the review… (prices for the recorded marks are read the first time)</p>}
-    {review && <>
+    {review?.negative && <NegativeReview review={review} />}
+    {review && !review.negative && <>
       {review.setups.length > 1 && <div className="pl-bar" role="tablist" aria-label="Recorded setups of this day">
         {review.setups.map((s, i) => <button key={s.side} role="tab" aria-selected={i === side} className={i === side ? 'pl-primary' : ''} onClick={() => setSide(i)}>{sideLabel(s.side)} setup</button>)}
       </div>}
@@ -111,4 +112,20 @@ function TradeTable({ trades }: { trades: ReviewTrade[] }) {
       <td>{captureSentence(t)}{t.theoretical_rupees !== null && t.theoretical_points !== null && t.theoretical_points > 0 ? <div className="pl-muted">On offer at your size: {t.theoretical_rupees.toFixed(2)} (before costs)</div> : null}</td>
     </tr>)}</tbody>
   </table>
+}
+
+/** A day the strategy was absent: nothing was recorded, so the review is about whether you stayed out. */
+function NegativeReview({ review }: { review: Review }) {
+  const traded = review.other_trades.length > 0
+  return <div className="pr-setup">
+    <div className="pr-recorded">
+      <span className="dd-side-tag">No setup</span>
+      <strong className={traded ? 'dd-bad' : 'dd-ok'}>{negativeVerdict({ traded, correct: !traded, points: review.summary.points })}</strong>
+    </div>
+    <p className="pl-muted">This day sits between your oldest and newest marked day for this strategy and you did not mark it, so the setup was not there. The right call was not to trade.</p>
+    {traded ? <>
+      <h4>The trades you took</h4>
+      <TradeTable trades={review.other_trades} />
+    </> : <p role="status">You placed no trade. Staying out of a day with no setup is the result to aim for.</p>}
+  </div>
 }

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createPracticeClient } from '../../shared/practice/client'
 import { practiceStartConfig } from '../../shared/practice/startConfig'
 import {
-  bestFor, captureSentence, captureText, daysOnOffer, deltaText, gradeLabel, pctText, pickFilter, pointsText, runLine, tripMarks,
+  bestFor, captureSentence, captureText, daysOnOffer, deltaText, gradeLabel, negativeDays, negativeVerdict, pctText, pickFilter, pointsText, runLine, tripMarks,
 } from '../../shared/practice/model'
 import { GRADES, type Grade, type PracticeStrategy, type ReviewTrade } from '../../shared/practice/types'
 
@@ -36,6 +36,26 @@ describe('what to send for a pick', () => {
   })
   it('names every grade', () => {
     expect(GRADES.map(gradeLabel)).toEqual(['Ideal', 'Average', 'Poor', 'Success (not graded)', 'Failed', 'No outcome'])
+  })
+})
+
+describe('no-setup days (the strategy was absent)', () => {
+  const withAbsent: PracticeStrategy = { ...strategy, negative_days: [{ symbol: 'NIFTY', days: 6 }, { symbol: 'BSESEN', days: 2 }] }
+  it('counts the absent days a symbol leaves, and none from an older server', () => {
+    expect(negativeDays(withAbsent, '')).toBe(8)
+    expect(negativeDays(withAbsent, 'NIFTY')).toBe(6)
+    expect(negativeDays(withAbsent, 'RELIND')).toBe(0)
+    expect(negativeDays(strategy, '')).toBe(0)
+  })
+  it('asks for them only when ticked', () => {
+    expect(pickFilter('NIFTY', all, true)).toEqual({ symbol: 'NIFTY', include_negatives: true })
+    expect(pickFilter('NIFTY', all)).toEqual({ symbol: 'NIFTY' })
+  })
+  it('says whether you stayed out', () => {
+    expect(negativeVerdict({ traded: false, correct: true, points: null })).toBe('No-setup day: you stayed out, the right call')
+    expect(negativeVerdict({ traded: true, correct: false, points: -2 })).toBe('No-setup day: you traded (-2.00 pts), no trade was wanted')
+    expect(runLine({ traded: false, negative: true, correct: true })).toBe('No-setup day: you stayed out, the right call')
+    expect(runLine({ traded: true, negative: true, correct: false, points: 3 })).toMatch(/you traded \(\+3.00 pts\)/)
   })
 })
 
@@ -96,11 +116,13 @@ describe('the client', () => {
     expect(await api.runs()).toEqual([])
     await api.pick({ category: 'Breakout', strategy: 'Opening range' })
     await api.pick({ category: 'Breakout', strategy: 'Opening range' }, { symbol: 'NIFTY', grades: ['ideal', 'failed'] })
+    await api.pick({ category: 'Breakout', strategy: 'Opening range' }, { include_negatives: true })
     await api.evaluate('s 1')
     expect(request.mock.calls).toEqual([
       ['deep-dive/practice/strategies', 'GET'], ['deep-dive/practice/runs', 'GET'],
       ['deep-dive/practice/pick', 'POST', { category: 'Breakout', strategy: 'Opening range' }],
       ['deep-dive/practice/pick', 'POST', { category: 'Breakout', strategy: 'Opening range', symbol: 'NIFTY', grades: ['ideal', 'failed'] }],
+      ['deep-dive/practice/pick', 'POST', { category: 'Breakout', strategy: 'Opening range', include_negatives: true }],
       ['deep-dive/practice/evaluate?session_id=s%201', 'GET'],
     ])
   })
