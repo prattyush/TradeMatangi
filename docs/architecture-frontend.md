@@ -247,6 +247,10 @@ The website's Lightweight renderer for the Deep Dive and the Practice review (`c
 - **Marks and drawings do not mix:** while a drawing tool is active a click on the chart draws and is never also an Entry / Exit mark (the chart's own click handler is registered before the drawing tools', so it still sees the tool as active on the click that finishes the drawing). A tool draws once and switches itself off; the next click is a mark again.
 - The KLine mode already had its own Draw and Indicators in the toolbar.
 
+## Phase 26: Mark days fills the window (2026-11-17)
+
+In **Mark days** the row of the calendar, the list of marked days and the day's chart is sized to the bottom of the window (`useFillWindow`, as in the in-depth step), and the chart box inside it has its own explicit height (`FilledChart`): with many days marked (21 in the owner's report) the chart ran past the window and its time axis fell out of view on the KLine chart. The calendar and the list of days beside the chart scroll on their own (`.dd-mark-left`), the page does not scroll, and the chart always ends inside the window. A narrow window (under 1000px) is left to the stylesheet. Check: `frontend/tests/phase22/deep-dive-markdays-axis.spec.ts` (21 days, three window sizes, both renderers).
+
 ## Phase 26: Strategy Practice screens (S15)
 
 - **Shared module** `shared/practice/` (host-injected like `shared/deepdive`): `types.ts`, `client.ts` (`createPracticeClient(request)` over the `deep-dive/practice/...` paths), `model.ts` (grade filters, wording of the review, your trades as gold marks), `startConfig.ts` (the instrument settings of a practice replay), `ui/` (`Practice` container with **Start practice** and **History** tabs, `PracticeStart`, `PracticeHistory`, `PracticeReview`, `host.tsx`, `practice.css`). Tests: `windowsapp/src/practice.test.ts`.

@@ -14,9 +14,9 @@
 .dd-table th { color: #94a3b8; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
 .dd-warn { color: #fbbf24; font-weight: 600; }
 .dd-mark { display: flex; gap: 14px; flex: 1; min-height: 420px; }
-.dd-mark-left { flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow-y: auto; }
-.dd-mark-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-.dd-chart { flex: 1; min-height: 360px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
+.dd-mark-left { flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; overflow-y: auto; }
+.dd-mark-right { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.dd-chart { flex: 1 1 auto; min-height: 360px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
 .dd-chart > * { flex: 1; min-height: 0; }
 .dd-empty { margin: auto; }
 .dd-legend { margin: 0; }
