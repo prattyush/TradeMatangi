@@ -18,3 +18,4 @@
 .pr-setup .td-charts { flex: 1 1 0; min-height: 420px; }
 @media (max-width: 1000px) { .pr-start { flex-direction: column; } .pr-strategies { flex: none; } }
 .pr-negatives { font-size: 13px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pr-summary { font-size: 13px; padding: 4px 0; }

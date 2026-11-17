@@ -89,8 +89,9 @@ allowed = [
     (video_links.router, {"/api/video-links": {"GET", "POST", "DELETE"}, "/api/video-links/mine": {"GET"}}),
     # Phase 24 saved What If scenarios (owner only; the router never touches trades, orders or labels).
     (whatif.router, {"/api/whatif": {"GET", "POST", "DELETE"}, "/api/whatif/range": {"GET"}}),
-    # Phase 26 Deep Dive frequency percentages for the label forms: one read-only route (the Deep Dive itself is on the patterns transport).
-    (deep_dive.router, {"/api/deep-dive/stats/all": {"GET"}}),
+    # Phase 26 Deep Dive: the frequency percentages for the label forms, and Strategy Practice's review and run list for the Analysis
+    # screens: read-only routes (the Deep Dive itself and starting a practice run are on the patterns transport).
+    (deep_dive.router, {"/api/deep-dive/stats/all": {"GET"}, "/api/deep-dive/practice/evaluate": {"GET"}, "/api/deep-dive/practice/runs": {"GET"}}),
 ]
 for source, paths in allowed:
     for route in source.routes:

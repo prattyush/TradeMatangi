@@ -19,6 +19,7 @@ import TradeWhatIf from './whatif/TradeWhatIf'
 import StatsModal from './StatsModal'
 import LabelProgressBadge from './labeling/LabelProgressBadge'
 import PatternVsTradeComparison from './PatternVsTradeComparison'
+import AnalysisPracticeReview from '../practice/ui/AnalysisPracticeReview'
 
 interface Props {
   onClose: () => void
@@ -45,6 +46,8 @@ export interface SessionGroup {
   session_type: string
   trading_style?:string
   portfolio_id?:string
+  /** A Strategy Practice run (its strategy); practice runs are grouped apart from ordinary replays of the same day. */
+  practice?: { category: string; strategy: string } | null
   sessions: SessionSummary[]
   totalPnl: number
   totalTrades: number
@@ -57,8 +60,9 @@ export interface SessionGroup {
 export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
   const map = new Map<string, SessionGroup>()
   for (const s of sessions) {
-    if (s.trade_count === 0 && s.session_type !== 'real') continue
-    const key = `${s.user_id}|${s.date}|${s.symbol}|${s.instrument_type}|${s.session_type ?? ''}|${s.trading_style??'intraday'}|${s.portfolio_id??''}`
+    // A practice run is listed even with no trade: staying out of a no-setup day is a result, and the review is on its card.
+    if (s.trade_count === 0 && s.session_type !== 'real' && !s.practice) continue
+    const key = `${s.user_id}|${s.date}|${s.symbol}|${s.instrument_type}|${s.session_type ?? ''}|${s.trading_style??'intraday'}|${s.portfolio_id??''}|${s.practice ? `practice:${s.practice.category}/${s.practice.strategy}` : ''}`
     if (!map.has(key)) {
       map.set(key, {
         key,
@@ -67,6 +71,7 @@ export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
         instrument_type: s.instrument_type,
         session_type: s.session_type ?? '',
         trading_style:s.trading_style,portfolio_id:s.portfolio_id,
+        practice: s.practice ?? null,
         sessions: [],
         totalPnl: 0,
         totalTrades: 0,
@@ -155,6 +160,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const [detailError, setDetailError] = useState('')
   const [hasPattern, setHasPattern] = useState(false)
   const [showComparison, setShowComparison] = useState(false)
+  const [showPracticeReview, setShowPracticeReview] = useState(false)
 
   const handleExpand = async () => {
     if (expanded && group.trading_style==='swing') {
@@ -199,6 +205,8 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const pnlPct = group.sessionCapital > 0 ? (group.totalPnl / group.sessionCapital) * 100 : 0
   const typeLabel = group.instrument_type === 'options' ? 'Options' : 'Equity'
   const sessionTypeLabel = group.session_type === 'paper' ? 'Paper' : group.session_type === 'real' ? 'Real' : group.session_type === 'stepwise' ? 'Stepwise' : 'Sim'
+  // The run to review: a group is one practice strategy on one day, so its newest session.
+  const practiceSession = group.practice ? [...group.sessions].sort((a, b) => b.session_id.localeCompare(a.session_id))[0] : null
 
   return (
     <div className={environment.desktop && group.trading_style !== 'swing' && expanded && activeTab === 'trades' ? 'desktop-day-trades-card' : undefined} style={{
@@ -217,7 +225,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
         <div style={{ minWidth: 90 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: '#e6edf3' }}>{group.date}</div>
           <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-            {sessionTypeLabel}{group.trading_style==='swing'?' · Swing':''}{group.sessions[0]?.shared ? ` · Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id}` : ''}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
+            {sessionTypeLabel}{group.practice && <span data-testid="practice-badge" title="A practice run: kept out of the Performance totals" style={{ marginLeft: 6, padding: '0 6px', borderRadius: 8, background: '#0d2238', border: '1px solid #1f6feb', color: '#79c0ff', fontSize: 10, fontWeight: 600 }}>Practice: {group.practice.strategy}</span>}{group.trading_style==='swing'?' · Swing':''}{group.sessions[0]?.shared ? ` · Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id}` : ''}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
           </div>
           {group.trading_style !== 'swing' && <LabelProgressBadge sessionIds={group.sessions.map(s => s.session_id)} />}
         </div>
@@ -310,6 +318,19 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
               📊 Compare
             </button>
           )}
+          {practiceSession && environment.practice && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowPracticeReview(true) }}
+              title="Your trades against the days you recorded for this strategy"
+              style={{
+                background: '#0d2238', border: '1px solid #1f6feb',
+                color: '#79c0ff', borderRadius: 6, padding: '3px 10px',
+                fontSize: 11, cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              🎯 Practice review
+            </button>
+          )}
           <span style={{ fontSize: 16, color: '#484f58' }}>
             {loading ? '⟳' : expanded ? '▲' : '▼'}
           </span>
@@ -330,6 +351,13 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
             setViewingSnapshots(null)
           }}
         />
+      )}
+
+      {/* Strategy Practice review */}
+      {showPracticeReview && practiceSession && environment.practice && (
+        <div role="dialog" aria-label="Practice review" style={{ position: 'fixed', inset: 0, zIndex: 100, background: '#0d1117', overflow: 'auto', padding: 12 }}>
+          <AnalysisPracticeReview host={environment.practice} sessionId={practiceSession.session_id} onBack={() => setShowPracticeReview(false)} />
+        </div>
       )}
 
       {/* Pattern vs Trade comparison modal */}
@@ -496,6 +524,8 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
   const [symbol, setSymbol] = useState<string>('')
   const [instrumentType, setInstrumentType] = useState<string>('')
   const [sessionType, setSessionType] = useState<string>('')
+  // Strategy Practice runs: listed with the others, left out, or the only ones. Their P&L is never part of the totals below.
+  const [practiceFilter, setPracticeFilter] = useState<'include' | 'exclude' | 'only'>('include')
   const [startDate, setStartDate] = useState<string>(thirtyDaysAgo)
   const [endDate, setEndDate] = useState<string>(today)
 
@@ -549,10 +579,12 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
 
   useEffect(() => { void handleSearch(); return () => { searchGeneration.current++ } }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const groups = groupSessions(sessions)
-  const totalPnl = groups.reduce((s, g) => s + g.totalPnl, 0)
-  const totalTrades = groups.reduce((s, g) => s + g.totalTrades, 0)
-  const winningGroups = groups.filter(g => g.totalPnl > 0).length
+  const groups = groupSessions(sessions.filter(s => practiceFilter === 'include' || (practiceFilter === 'only' ? Boolean(s.practice) : !s.practice)))
+  // The totals leave practice runs out (as the Performance dashboard does), unless only practice runs are shown.
+  const counted = practiceFilter === 'only' ? groups : groups.filter(g => !g.practice)
+  const totalPnl = counted.reduce((s, g) => s + g.totalPnl, 0)
+  const totalTrades = counted.reduce((s, g) => s + g.totalTrades, 0)
+  const winningGroups = counted.filter(g => g.totalPnl > 0).length
 
   const inputStyle: React.CSSProperties = {
     background: '#0d1117', border: '1px solid #30363d', color: '#e6edf3',
@@ -622,6 +654,15 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
           </label>
 
           <label style={{ fontSize: 12, color: '#484f58', display: 'flex', alignItems: 'center', gap: 6 }}>
+            Practice:
+            <select aria-label="Practice runs" value={practiceFilter} onChange={e => setPracticeFilter(e.target.value as 'include' | 'exclude' | 'only')} style={inputStyle}>
+              <option value="include">Include</option>
+              <option value="exclude">Exclude</option>
+              <option value="only">Only</option>
+            </select>
+          </label>
+
+          <label style={{ fontSize: 12, color: '#484f58', display: 'flex', alignItems: 'center', gap: 6 }}>
             From:
             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inputStyle} />
           </label>
@@ -660,12 +701,12 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 20 }}>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 11, color: '#484f58' }}>Days</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3' }}>{groups.length}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3' }} title={practiceFilter === 'only' ? 'Practice runs' : counted.length < groups.length ? `${groups.length - counted.length} practice run${groups.length - counted.length === 1 ? '' : 's'} not counted` : undefined}>{counted.length}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 11, color: '#484f58' }}>Win Rate</div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: '#e6edf3' }}>
-                  {groups.length > 0 ? Math.round(winningGroups / groups.length * 100) : 0}%
+                  {counted.length > 0 ? Math.round(winningGroups / counted.length * 100) : 0}%
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>

@@ -23,7 +23,7 @@ export function SessionDayButton({ group, pressed, onSelect, badge }: { group: G
   return (
     <button type="button" className={`analysis-day day-${tone}`} aria-pressed={pressed} onClick={onSelect}>
       <strong>{group.date} · {group.symbol}</strong>
-      <span>{first?.shared ? `Shared by ${first.owner_email ?? first.user_id} · ` : ''}{group.instrument_type} · {group.session_type === 'sim' ? 'Replay' : group.session_type} · {group.sessions.length} session(s)</span>
+      <span>{first?.shared ? `Shared by ${first.owner_email ?? first.user_id} · ` : ''}{group.instrument_type} · {group.session_type === 'sim' ? 'Replay' : group.session_type}{group.practice ? <b className="practice-tag" title="A practice run: kept out of the Performance totals"> · Practice: {group.practice.strategy}</b> : null} · {group.sessions.length} session(s)</span>
       <span><b className={`day-pnl ${tone}`}>{signedMoney(group.totalPnl)}</b> · {group.totalTrades} closed trades{winText(group)}</span>
       {badge}
     </button>

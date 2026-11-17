@@ -6,6 +6,8 @@ import type { HabitLedger } from './habits/types'
 import type { VideoLinksSource } from './videoLinks'
 import type { WhatIfSource } from './whatif/scenarios'
 import type { StatsAllEntry } from '../deepdive/types'
+import type { DiveChartProps } from '../deepdive/ui/host'
+import type { PracticeApi } from '../practice/types'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -46,6 +48,11 @@ export interface AnalysisEnvironment {
   // Each adapter implements the existing chart's public props. The heterogeneous
   // snapshot/pattern inputs are normalized inside the desktop renderer boundary.
   charts?: Record<string, ComponentType<any>>
+  /**
+   * Strategy Practice (Phase 26): what the review of a practice run needs (its read-only API and a chart that draws marks). Absent where
+   * the host cannot show it, and the Practice review button is then not offered.
+   */
+  practice?: { api: Pick<PracticeApi, 'runs' | 'evaluate'>; Chart: ComponentType<DiveChartProps>; historicalDays?: number }
   reportError?: (error: string, source: string) => void
   active?: boolean
   desktop?: boolean

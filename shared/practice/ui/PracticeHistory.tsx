@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { formatDay } from '../../deepdive/model'
 import { friendlyError } from '../../deepdive/ui/errors'
-import { runLine } from '../model'
+import { historyLine, historySummary, runLine } from '../model'
 import type { PracticeRun } from '../types'
 import { usePracticeHost } from './host'
 
@@ -16,7 +16,9 @@ export default function PracticeHistory({ onReview }: { onReview: (sessionId: st
     return () => { alive = false }
   }, [api])
 
+  const line = runs ? historyLine(historySummary(runs)) : ''
   return <div className="pr-history">
+    {line && <p className="pr-summary" role="status">{line}</p>}
     {error && <p className="pl-error" role="alert">{error}</p>}
     {runs === null ? <p className="pl-muted">Loading…</p> : runs.length === 0 && !error ? <p className="pl-muted">No practice runs yet.</p> : <table className="dd-table">
       <thead><tr><th>Day</th><th>Strategy</th><th>Symbol</th><th>Started</th><th>How it went</th><th /></tr></thead>
