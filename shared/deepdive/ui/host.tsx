@@ -21,6 +21,8 @@ export interface DiveChartProps {
   pickMode?: boolean
   onPick?: (point: { time: number; price: number }) => void
   pickHint?: string
+  /** Epoch seconds (the chart clock) to centre the chart on, e.g. a trade's entry; absent = the whole day as before. */
+  focusTime?: number
 }
 
 /**

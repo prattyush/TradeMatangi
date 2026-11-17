@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalysisProvider } from '../../../shared/analysis/environment'
 import DesktopAnalysisChart from '../AnalysisChart'
 import { usePatternsRuntime } from './usePatternsRuntime'
 import DeepDive from '../../../shared/deepdive/ui/DeepDive'
 import { useDesktopDeepDiveHost } from './deepdive/desktopHost'
 import { PATTERN_SYMBOLS } from '../../../shared/deepdive/symbols'
+import TradedPatterns from '../../../shared/traded/ui/TradedPatterns'
+import type { TradedHost } from '../../../shared/traded/ui/host'
+import type { DiveChartProps } from '../../../shared/deepdive/ui/host'
 import { IntervalBridge } from './IntervalBridge'
 import type { PatternAnnotation, PatternChartMeta } from '../../../shared/analysis/api'
 import { cleanTopPatterns } from '../../../shared/analysis/patternMarkers'
@@ -26,7 +29,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
   const { client, environment, settings } = usePatternsRuntime(baseUrl, token, onUnauthorized, active)
   const deepDiveHost = useDesktopDeepDiveHost(client, settings)
 
-  const [view, setView] = useState<'create' | 'view' | 'deepdive'>('create')
+  const [view, setView] = useState<'create' | 'view' | 'deepdive' | 'traded'>('create')
   const [symbol, setSymbol] = useState('NIFTY')
   const [date, setDate] = useState(() => defaultPatternDate())
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
@@ -115,6 +118,12 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
     } catch (error) { fail(error) } finally { setLoading(false) }
   }, [client, fail])
 
+  // "From your trades" (Phase 26, S10): the labelled trades as pattern material. Edit opens the saved chart in Annotate.
+  const tradedHost = useMemo<TradedHost>(() => ({
+    api: client.traded, Chart: DesktopAnalysisChart as unknown as TradedHost['Chart'] & ((props: DiveChartProps) => unknown),
+    historicalDays: settings.historicalDays, onEdit: async chartId => { await openSaved({ chart_id: chartId } as PatternChartMeta) },
+  }), [client, settings.historicalDays, openSaved])
+
   const tool = TOOL_OPTIONS.find(t => t.key === toolKey)!
   const effectiveStrategy = strategy || newStrategy.trim()
   const effectiveCategory = category || newCategory.trim()
@@ -189,6 +198,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
           <button role="tab" aria-selected={view === 'create'} onClick={() => setView('create')}>Annotate</button>
           <button role="tab" aria-selected={view === 'view'} onClick={() => setView('view')}>Saved charts ({gallery.length})</button>
           <button role="tab" aria-selected={view === 'deepdive'} onClick={() => setView('deepdive')}>Deep dive</button>
+          <button role="tab" aria-selected={view === 'traded'} onClick={() => setView('traded')}>From your trades</button>
         </div>
       </header>
       {view === 'create' && <>
@@ -255,6 +265,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
         </>}
       </>}
       {view === 'deepdive' && <DeepDive host={deepDiveHost} />}
+      {view === 'traded' && <TradedPatterns host={tradedHost} />}
       {view === 'view' && <div className="pl-gallery">
         <div className="pl-bar">
           <label>Strategy <select value={filterStrategy} onChange={e => setFilterStrategy(e.target.value)}><option value="">All</option>{strategies.map(s => <option key={s}>{s}</option>)}</select></label>

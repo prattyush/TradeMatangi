@@ -483,6 +483,10 @@ export interface PatternAnnotation {
   strategy_name: string
   category?: string
   text: string
+  /** Phase 26: set only on marks drawn from the user's actual orders (never saved): the Pattern view shows them as "traded". */
+  source?: 'traded'
+  /** With `source: 'traded'`: the order that was placed at this mark. */
+  action?: 'BUY' | 'SELL'
 }
 
 export interface TopPatternItem {
