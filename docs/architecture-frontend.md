@@ -239,6 +239,14 @@ Three tools under the desktop **Tools** view (`windowsapp/src/tools/ToolsView.ts
 - **Toolbar:** "Practice: strategy" while it runs (from `session.practice`, never the recorded side or marks); after Stop, **Review practice** takes you to the Tools view, Pattern Library > Practice, straight into that run's review (`practiceReviewId`).
 - Browser check: `scripts/desktop-practice-check.mjs` (the whole path on the built app with a faked native layer and server).
 
+## Phase 26: Lightweight chart tools in the Deep Dive (2026-11-17)
+
+The website's Lightweight renderer for the Deep Dive and the Practice review (`components/deepdive/DeepDiveLightChart.tsx`) now has the same two menus as the Analysis Lightweight charts (`useLightweightTools`, `LightweightChartTools`):
+- **Indicators ▾**: one indicator, **EMA 9/21**, on by default; the choice is remembered per account (`analysis-lw-ema`) like on the Analysis charts. VWAP and Volume are not offered (the Deep Dive feeds no volume).
+- **Draw ▾**: the usual tools (Horizontal Line, Trend Line, Fib Retracement, Rectangle, Buy and Sell Marker, Risk:Reward), a **Clear** for the last drawing. Drawings are kept per account, instrument **and day**, so each Deep Dive day starts clean and keeps what was drawn on it.
+- **Marks and drawings do not mix:** while a drawing tool is active a click on the chart draws and is never also an Entry / Exit mark (the chart's own click handler is registered before the drawing tools', so it still sees the tool as active on the click that finishes the drawing). A tool draws once and switches itself off; the next click is a mark again.
+- The KLine mode already had its own Draw and Indicators in the toolbar.
+
 ## Phase 26: Mark days fills the window (2026-11-17)
 
 In **Mark days** the row of the calendar, the list of marked days and the day's chart is sized to the bottom of the window (`useFillWindow`, as in the in-depth step), and the chart box inside it has its own explicit height (`FilledChart`): with many days marked (21 in the owner's report) the chart ran past the window and its time axis fell out of view on the KLine chart. The calendar and the list of days beside the chart scroll on their own (`.dd-mark-left`), the page does not scroll, and the chart always ends inside the window. A narrow window (under 1000px) is left to the stylesheet. Check: `frontend/tests/phase22/deep-dive-markdays-axis.spec.ts` (21 days, three window sizes, both renderers).
