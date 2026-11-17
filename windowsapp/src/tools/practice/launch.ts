@@ -1,7 +1,7 @@
-import type { PracticePlan } from '../../../../shared/practice/types'
+import type { PracticeMode, PracticePlan } from '../../../../shared/practice/types'
 import type { PracticeStartConfig } from '../../../../shared/practice/startConfig'
 
-/** What the Tools view hands to the workspace to start a practice replay: the day, the start, the contracts and the marker. */
+/** What the Tools view hands to the workspace to start a practice replay or Stepwise run: the day, the start, the contracts and the marker. */
 export interface PracticeLaunch {
   /** Makes each request distinct, so a second Start on the same day is not taken for the first. */
   id: number
@@ -14,7 +14,9 @@ export interface PracticeLaunch {
   strike_ce?: number
   strike_pe?: number
   expiry?: string
-  /** The desktop's own multiplier (2 = twice as fast). */
+  /** Replay (time runs at `speed`) or Stepwise (one bar per Next bar press; `speed` is not used). */
+  mode: PracticeMode
+  /** The desktop's own multiplier (2 = twice as fast), for a replay. */
   speed: number
   practice: PracticePlan['practice']
 }
@@ -25,10 +27,10 @@ export interface LaunchTile {
   expiry: string; strike: string; right: string; selection_mode?: 'manual' | 'max_price'
 }
 
-export const launchFrom = (id: number, plan: PracticePlan, config: PracticeStartConfig, speed: number): PracticeLaunch => ({
+export const launchFrom = (id: number, plan: PracticePlan, config: PracticeStartConfig, speed: number, mode: PracticeMode = 'replay'): PracticeLaunch => ({
   id, symbol: plan.symbol, date: plan.date, start_time: plan.start_time, interval_minutes: plan.interval_minutes,
   instrument_type: config.instrument_type, strike_ce: config.strike_ce, strike_pe: config.strike_pe, expiry: config.expiry,
-  speed, practice: plan.practice,
+  mode, speed, practice: plan.practice,
 })
 
 /**

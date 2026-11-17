@@ -6,6 +6,7 @@
  * It checks the screens and the requests they make, not the server (which has its own tests).
  *
  *   PLAYWRIGHT_MODULE=/abs/path/to/playwright-core/index.mjs node scripts/desktop-practice-check.mjs
+ *   PRACTICE_MODE=stepwise ...   the same path as a Stepwise run (a 5 minute bar and a 09:34 start, so the snap to 09:30 shows)
  */
 import { createServer } from 'node:http'
 import { readFile, mkdir } from 'node:fs/promises'
@@ -16,29 +17,31 @@ const root = resolve(new URL('..', import.meta.url).pathname)
 const artifacts = root + '/.cache/desktop-practice-check'
 await mkdir(artifacts, { recursive: true })
 
+const STEPWISE = process.env.PRACTICE_MODE === 'stepwise'
 const date = '2026-10-08'
+const RUN_START = STEPWISE ? '09:30:00' : '09:33:00' // a Stepwise start is snapped to a bar boundary: 09:34 on a 5 minute bar is 09:30
 const start = Date.parse(date + 'T09:15:00Z') / 1000
 const at = minutes => start + minutes * 60
-const settings = { desktop_hide_chart_labels: false, desktop_order_size_mode: 'quantity', desktop_pnl_display_mode: 'currency', desktop_confirm_flatten: true, context_menu_sl_mode: 'longOnly', target_deviation_pct: .01, funds_ratio_l_pct: .03, funds_ratio_m_pct: .06, funds_ratio_h_pct: .12, risk_ratio_l_pct: 1, risk_ratio_m_pct: 2, risk_ratio_h_pct: 4, default_sl_pct: .25, historical_days: 0, max_price_mode: 'otm' }
+const settings = { desktop_hide_chart_labels: false, desktop_order_size_mode: 'quantity', desktop_pnl_display_mode: 'currency', desktop_confirm_flatten: true, context_menu_sl_mode: 'longOnly', target_deviation_pct: .01, funds_ratio_l_pct: .03, funds_ratio_m_pct: .06, funds_ratio_h_pct: .12, risk_ratio_l_pct: 1, risk_ratio_m_pct: 2, risk_ratio_h_pct: 4, default_sl_pct: .25, historical_days: 0, max_price_mode: 'otm', strategy_interval_secs: STEPWISE ? 300 : 180 }
 const flat = { symbol: 'NIFTY', side: 'FLAT', quantity: 0, avg_entry_price: 0, entry_commission: 0 }
 const candles = Array.from({ length: 125 }, (_, i) => ({ timestamp: start - 86400 + i * 180, time: start - 86400 + i * 180, open: 100 + i / 10, high: 102 + i / 10, low: 99 + i / 10, close: 101 + i / 10 }))
 const contract = t => ({ symbol: t.symbol, right: t.right, strike: Number(t.strike), expiry: t.expiry, contract_key: `${t.symbol}:${t.expiry}:${t.strike}:${t.right}` })
 
 const state = { calls: [], prepared: [], running: false, replayState: 'running', picks: [], failPick: false }
 const snapshot = () => ({
-  version: 1, event_cursor: 0, owned: true, paper_status: null, source: 'desktop_replay', desktop_mode: 'replay',
-  session: { session_id: 'practice1', symbol: 'NIFTY', date, start_time: '09:33:00', speed: 1, session_capital: 100000, instrument_type: 'options', strike: 24500, expiry: '2026-10-13', right: null, strike_ce: 24500, strike_pe: 24400,
-    session_type: 'sim', state: state.running ? 'running' : 'ended', stepwise: false, total_bars: null, group_id: 'g', wallet_ledger_id: 'w', lot_size: 75, practice: { category: 'Breakout', strategy: 'Opening range' } },
+  version: 1, event_cursor: 0, owned: true, paper_status: null, source: STEPWISE ? 'desktop_stepwise' : 'desktop_replay', desktop_mode: STEPWISE ? 'stepwise' : 'replay',
+  session: { session_id: 'practice1', symbol: 'NIFTY', date, start_time: RUN_START, speed: 1, session_capital: 100000, instrument_type: 'options', strike: 24500, expiry: '2026-10-13', right: null, strike_ce: 24500, strike_pe: 24400,
+    session_type: STEPWISE ? 'stepwise' : 'sim', state: state.running ? 'running' : 'ended', stepwise: STEPWISE, total_bars: STEPWISE ? 60 : null, group_id: 'g', wallet_ledger_id: 'w', lot_size: 75, practice: { category: 'Breakout', strategy: 'Opening range' } },
   current_time: at(18), current_bar_index: 1, current_price: 24500, current_price_ce: 100, current_price_pe: 80,
   contract_quotes: Object.fromEntries(state.prepared.filter(t => t.kind === 'option').map(t => { const c = contract(t); return [c.contract_key, { ...c, price: 90, timestamp: at(18), source: 'synthetic' }] })),
   contracts: state.prepared.filter(t => t.kind === 'option').map(contract), positions: { equity: flat, CE: flat, PE: flat }, positions_by_contract: {}, open_orders: [], strategies: [], trades: [],
   wallet_balance: 100000, pnl: { equity: 0, ce: 0, pe: 0, day: 0, day_pct: 0, contracts: {} }, settings,
 })
-const replay = () => ({ run_id: 'run', event_id: 0, cursor: at(18), state: state.replayState, mode: 'replay', bar_index: 1, interval_seconds: 180,
+const replay = () => ({ run_id: 'run', event_id: 0, cursor: at(18), state: state.replayState, mode: STEPWISE ? 'stepwise' : 'replay', bar_index: 1, interval_seconds: 180,
   tile_states: state.prepared.map(t => ({ tile_id: t.id, availability: 'ready', interval_minutes: 3, candle: { timestamp: start, open: 100, high: 101, low: 99, close: 100 } })) })
 
 const strategies = [{ category: 'Breakout', strategy: 'Opening range', days: 3, grades: { ideal: 1, average: 0, poor: 0, ungraded: 1, failed: 1, open: 0 }, symbols: [{ symbol: 'NIFTY', days: 3 }], negative_days: [{ symbol: 'NIFTY', days: 4 }] }]
-const plan = { symbol: 'NIFTY', date, start_time: '09:33:00', interval_minutes: 3, instrument_type: 'options', strike_ce: 24500, strike_pe: 24400, expiry: '2026-10-13',
+const plan = { symbol: 'NIFTY', date, start_time: STEPWISE ? '09:34:00' : '09:33:00', interval_minutes: 3, instrument_type: 'options', strike_ce: 24500, strike_pe: 24400, expiry: '2026-10-13',
   practice: { category: 'Breakout', strategy: 'Opening range', start_offset_min: 12 }, days_available: 3, repeated: false }
 const review = { session_id: 'practice1', category: 'Breakout', strategy: 'Opening range', symbol: 'NIFTY', date, start_time: '09:33:00', start_offset_min: 12, negative: false,
   setups: [{ side: 'buy', interval_minutes: 3, outcome: 'success', strength: 'ideal', strike_ce: 24500, strike_pe: null,
@@ -156,8 +159,15 @@ try {
   await page.getByRole('heading', { name: /Strategy \(1\)/ }).waitFor()
   await page.locator('.pr-strategies li button').click()
   await page.getByRole('checkbox', { name: 'Include no-setup days' }).waitFor()
-  assert.deepEqual(await page.getByLabel('Replay speed').locator('option').evaluateAll(o => o.map(x => x.value)), ['0.25', '0.5', '1', '1.1', '1.25', '1.5', '2', '5', '10'])
-  await page.getByLabel('Replay speed').selectOption('2')
+  const modeGroup = page.getByRole('radiogroup', { name: 'Practice mode' })
+  assert.equal(await modeGroup.getByRole('radio', { name: 'Replay' }).isChecked(), true, 'Replay is the default')
+  if (STEPWISE) {
+    await modeGroup.getByRole('radio', { name: 'Stepwise' }).check()
+    assert.equal(await page.getByLabel('Replay speed').count(), 0, 'no speed for Stepwise')
+  } else {
+    assert.deepEqual(await page.getByLabel('Replay speed').locator('option').evaluateAll(o => o.map(x => x.value)), ['0.25', '0.5', '1', '1.1', '1.25', '1.5', '2', '5', '10'])
+    await page.getByLabel('Replay speed').selectOption('2')
+  }
 
   // Start: the pick, then the workspace starts the ordinary Replay on that day with the practice marker.
   await page.getByRole('button', { name: 'Start practice' }).click()
@@ -167,18 +177,21 @@ try {
   assert.equal(calls('trading/candidate').length, 0, 'a practice start asks no candidate question and shows no prompt')
   assert.equal(dialogs.length, 0, 'no confirm dialog')
   const prepare = calls('trading/prepare-session')[0].body
-  assert.deepEqual([prepare.mode, prepare.date, prepare.reference_time], ['replay', date, '09:33:00'])
+  assert.deepEqual([prepare.mode, prepare.date, prepare.reference_time], [STEPWISE ? 'stepwise' : 'replay', date, RUN_START])
   assert.deepEqual(prepare.panes.map(p => [p.kind, p.right || '', p.strike, p.interval, p.tradingDate]), [['spot', 'CE', '', '3', date], ['option', 'CE', '24500', '3', date], ['option', 'PE', '24400', '3', date]])
   const started = calls('trading/start')[0].body
-  assert.equal(started.session_type, 'sim'); assert.equal(started.desktop_mode, 'replay'); assert.equal(started.override, false)
-  assert.deepEqual([started.symbol, started.date, started.start_time, started.speed], ['NIFTY', date, '09:33:00', 2])
+  assert.equal(started.session_type, STEPWISE ? 'stepwise' : 'sim'); assert.equal(started.desktop_mode, STEPWISE ? 'stepwise' : 'replay'); assert.equal(started.override, false)
+  assert.equal(started.stepwise, STEPWISE)
+  assert.deepEqual([started.symbol, started.date, started.start_time, started.speed], ['NIFTY', date, RUN_START, STEPWISE ? 1 : 2])
   assert.deepEqual(started.practice, { category: 'Breakout', strategy: 'Opening range', start_offset_min: 12 })
-  assert.equal(started.strategy_interval_secs, 180)
-  assert.equal(calls('replay/start')[0].body.start_time, '09:33:00')
-  assert.match(await page.getByTestId('practice-badge').innerText(), /Practice: Opening range/)
+  assert.equal(started.strategy_interval_secs, STEPWISE ? 300 : 180)
+  assert.equal(calls('replay/start')[0].body.start_time, RUN_START)
+  assert.equal(calls('replay/start')[0].body.mode, STEPWISE ? 'stepwise' : 'replay')
+  assert.match(await page.getByTestId('practice-badge').innerText(), STEPWISE ? /Practice: Opening range · Stepwise/ : /Practice: Opening range$/)
+  if (STEPWISE) assert.equal(await page.locator('.run-next').count(), 1, 'the ordinary Next bar button')
   assert.equal(await page.getByRole('button', { name: 'Review practice' }).count(), 0, 'no review while the run goes')
-  assert.equal(await page.locator('.run-controls input[type="time"]').inputValue(), '09:33')
-  assert.equal(await page.locator('.run-controls select').first().inputValue(), '2')
+  assert.equal(await page.locator('.run-controls input[type="time"]').inputValue(), RUN_START.slice(0, 5)) // the run controls show the start used
+  if (!STEPWISE) assert.equal(await page.locator('.run-controls select').first().inputValue(), '2')
 
   // A second Start while it runs is refused, with the reason, and starts nothing.
   await goToPractice()
@@ -206,5 +219,5 @@ try {
   await page.getByRole('alert').filter({ hasText: 'No day of this strategy with an Entry mark matches your choice' }).waitFor()
   assert.equal(calls('trading/start').length, 1)
   assert.deepEqual(errors, [])
-  console.log(`Desktop Practice browser check passed: ${state.calls.length} requests`)
+  console.log(`Desktop Practice browser check (${STEPWISE ? 'Stepwise' : 'Replay'}) passed: ${state.calls.length} requests`)
 } finally { await browser.close(); await new Promise(r => server.close(r)) }

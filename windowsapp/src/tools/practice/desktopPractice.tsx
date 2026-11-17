@@ -30,12 +30,12 @@ export function useDesktopPracticeHost(
       Chart: DesktopAnalysisChart as ComponentType<DiveChartProps>,
       historicalDays: settings.historicalDays,
       blockedReason: null, // the workspace screen refuses (with the reason) when a run is still going
-      modes: ['replay'], // Stepwise follows on the desktop in S21
+      modes: ['replay', 'stepwise'],
       defaultSpeed: 1,
       renderSpeed,
-      startPractice: async (plan, { speed }) => {
+      startPractice: async (plan, { mode, speed }) => {
         const config = await practiceStartConfig(plan, { getExpiry: (symbol, date) => client.getExpiry(symbol, date), getPriceAt: (symbol, date, time) => client.getPriceAt(symbol, date, time) })
-        await launch(launchFrom(Date.now() * 1000 + (++counter), plan, config, speed))
+        await launch(launchFrom(Date.now() * 1000 + (++counter), plan, config, speed, mode))
       },
       reviewSessionId: review.sessionId,
       onReviewOpened: review.onOpened,

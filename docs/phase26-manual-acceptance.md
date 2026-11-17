@@ -173,6 +173,6 @@ You can mark Deep Dive days now; practice uses the days you have marked, with th
 
 **Hardening (S18).** 14. If a day's data cannot be loaded when the replay starts, Start says so, and the next Start does not offer that day ("1 day skipped" shows). Starting while a session runs says so and skips nothing. 15. A practice run that was left running when the app or server crashed shows **In progress** in History for 12 hours, then can be reviewed.
 
-**Stepwise (S20, website; the Windows app in S21).** 16. Pattern Library > Practice: a **Mode** switch (Replay / Stepwise), remembered. Stepwise has no speed; Start opens the normal Stepwise screen with the badge "Practice: strategy · Stepwise" and **Next Bar**; the first bar is a full bar (the run starts on a bar boundary of your Stepwise setting, never before 09:15). History shows each run's mode.
+**Stepwise (S20 website, S21 Windows app).** 16. Pattern Library > Practice: a **Mode** switch (Replay / Stepwise), remembered. Stepwise has no speed; Start opens the normal Stepwise screen with the badge "Practice: strategy · Stepwise" and **Next Bar**; the first bar is a full bar (the run starts on a bar boundary of your Stepwise setting, never before 09:15). History shows each run's mode. 17. The same on the Windows app (rebuild): Tools > Pattern Library > Practice > Mode > Stepwise: the screen becomes Stepwise on that day (Start shows the snapped time), with Next bar and "Practice: strategy · Stepwise"; after Stop, Review practice.
 
 ## Report back
