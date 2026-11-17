@@ -340,3 +340,7 @@ adding workers alone duplicates feeds and loses access to in-memory sessions.
 
 `traded_patterns_service.py` turns the user's own `TradeLabels` into pattern material, with no table of its own. `GET /api/pattern/traded/summary` (labels only), `GET /api/pattern/traded?category&strategy&start_date&end_date&limit` (round trips rebuilt per session for the newest `limit` labels, one rebuild per session, unreadable sessions counted as `unavailable`) and `POST /api/pattern/traded/save` (copies a labelled trade's entry and exit into the day's pattern chart as marks, through `pattern_logger_service.save_marks_to_chart`, which the Deep Dive also uses). All read the caller's own labels only; a linked real session is counted once through `trade_label_service.canonical_labels`. Mirrored for the desktop under `/api/desktop/v1/patterns/pattern/traded...`.
 
+### Deep Dive hardening (Phase 26, S11)
+
+`deep_dive_service.stats_all` (the percentages every label form and live popup asks for) is cached per process for `STATS_ALL_TTL_SECONDS` (20 s); every write in the service (`upsert_setup`, `delete_setup`, `set_tag_values`, tag add, rename, archive, restore) clears the cache, callers receive a copy, and another process or a viewer of a shared deep dive sees a change within the TTL. A marked day must be before today in India (`Asia/Kolkata`), the calendar's own rule. The desktop's `trading/trade-labels/metadata` reads the percentages under a 2 second bound and falls back to an empty list.
+

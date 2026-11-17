@@ -2,6 +2,18 @@
 
 Sections are added as sprints land. Report back with what failed, with the strategy name and date.
 
+| Section | What | Needs |
+|---|---|---|
+| A | Desktop: Deep dive tab, marking days | desktop rebuild |
+| B | Desktop: in-depth analysis | desktop rebuild |
+| C | Desktop: results | desktop rebuild |
+| D | Website and webapp: Deep dive | website build |
+| E | Percentages in Label Trades (all hosts) | desktop rebuild |
+| F | Percentages in live label popups (**real-trading screens**) | try replay or stepwise first, real last |
+| G | Fixes after the first tries (symbols, calendar, layout) | |
+| H | From your trades | labelled trades in several sessions |
+| I | Hardening (S11) | |
+
 ## A. Desktop: Deep dive tab, marking days (S4)
 
 Needs the desktop app **rebuilt** (`windowsapp`, the Rust allowlist changed in S2) and the backend from `dev` running.
@@ -112,5 +124,14 @@ Needs the desktop rebuilt from `dev` and trades you have labelled (expected and 
 6. **Save and edit**: the saved chart opens in **Annotate** (Create on the website) with its marks; move or add a mark and save as usual.
 7. A day whose pattern chart already uses other strikes than the trade's: the save is refused with a message that names the strike; nothing is overwritten.
 8. A real session's labelled trades appear once (not twice), and with a very long history the screen stays quick (the strategy list does not wait for trades; a strategy with many trades shows the newest 50 and says so).
+
+## I. Hardening (S11)
+
+1. **Paper trading, feed row:** start a paper session. While the feed is connected there is **no** "Feed kite · connected" line above the chart, and the chart has that row's height back. Disconnect the feed or start with the broker down: the line appears ("Feed kite · reconnecting" or "unavailable") and goes away again when it reconnects. If a fallback provider is used, the line shows "(fallback from ...)" even while connected. (The desktop toolbar label follows the same rule.)
+2. **Day strip keyboard:** in the in-depth step, Tab to the day strip (one stop), then Left, Right, Home and End walk the days and the focus follows the selected day.
+3. **Past days only:** mark a day through another client (or change the system date): the server refuses today and later with "A deep dive day must be before today". Yesterday works at any hour in India.
+4. **Older backend or no connection:** point the app at a backend without the Deep Dive (or stop the backend). Deep dive and From your trades say "This server does not have this feature yet" or "Could not reach the server", the category and strategy lists still load, and "Your deep dives" says it could not be loaded instead of "Loading…".
+5. **Many days:** a deep dive with a hundred marked days still opens at once; Next, Prev, the day strip and Results stay quick.
+6. **Speed of the percentages:** open Label Trades or a live label popup twice in a row: the second time is instant. Add a tag mark in the Deep Dive and open a label form at once: the new percentage is there.
 
 ## Report back

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import PatternNameSelect from '../../analysis/PatternNameSelect'
-import { readableError } from '../../analysis/behavior/types'
+import { friendlyError } from './errors'
 import type { DiveRef, DiveSummary } from '../types'
 import { useDeepDiveHost } from './host'
 import { symbolChoices } from '../symbols'
@@ -22,11 +22,17 @@ export default function DiveHome({ loading, error, onOpen }: Props) {
   const [symbol, setSymbol] = useState('NIFTY')
   const [failure, setFailure] = useState<string | null>(null)
 
+  // The names for the start form and the list of dives load on their own: if one fails (an older server has no Deep Dive routes, a
+  // dropped connection) the other still works, and the list says so instead of waiting forever.
+  const [listFailed, setListFailed] = useState(false)
   const refresh = useCallback(async () => {
-    try {
-      const [list, c, s] = await Promise.all([api.listDives(), names.categories(), names.strategies()])
-      setDives(list); setCategories(c); setStrategies(s); setFailure(null)
-    } catch (e) { setFailure(readableError(e)) }
+    const [list, c, s] = await Promise.allSettled([api.listDives(), names.categories(), names.strategies()])
+    if (c.status === 'fulfilled') setCategories(c.value)
+    if (s.status === 'fulfilled') setStrategies(s.value)
+    setListFailed(list.status === 'rejected')
+    setDives(list.status === 'fulfilled' ? list.value : [])
+    const failed = [list, c, s].find(result => result.status === 'rejected')
+    setFailure(failed && failed.status === 'rejected' ? friendlyError(failed.reason) : null)
   }, [api, names])
   useEffect(() => { void refresh() }, [refresh])
 
@@ -52,7 +58,7 @@ export default function DiveHome({ loading, error, onOpen }: Props) {
     {shown && <p className="pl-error" role="alert">{shown}</p>}
     <section>
       <h3>Your deep dives{dives ? ` (${dives.length})` : ''}</h3>
-      {dives === null ? <p className="pl-muted">Loading…</p> : dives.length === 0 ? <p className="pl-muted">No deep dives yet. Start one above.</p> : <table className="dd-table">
+      {dives === null ? <p className="pl-muted">Loading…</p> : listFailed ? <p className="pl-muted">Your deep dives could not be loaded.</p> : dives.length === 0 ? <p className="pl-muted">No deep dives yet. Start one above.</p> : <table className="dd-table">
         <thead><tr><th>Category</th><th>Strategy</th><th>Days</th><th>Tags</th><th>Needs marking</th><th>From</th><th /></tr></thead>
         <tbody>{dives.map(dive => <tr key={`${dive.owner_id}|${dive.category}|${dive.strategy}`}>
           <td>{dive.category}</td><td>{dive.strategy}</td>

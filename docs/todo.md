@@ -24,3 +24,8 @@ Probe results are in `docs/spec-phase24.md`; Kite and Breeze are merged (#855, #
 ## Other
 8. Windows acceptance of Track P (Patterns, Chart Structures and Fine Structures on the desktop): `docs/phase25-manual-acceptance.md`.
 9. Phone app (`docs/phone-manual-acceptance.md`): the owner's try of phone swing trading, paper first, is pending.
+
+## Phase 26 (Patterns Strategy Deep Dive)
+10. **Owner acceptance of Phase 26**: `docs/phase26-manual-acceptance.md`, sections A to I (desktop rebuild needed; the website and webapp from `dev`; section F covers the real-trading label popups, try replay or stepwise first and real last).
+11. Ideas the owner may want later (not planned): tag notes per day (for example the price level of a double top); a wider side-by-side column for the percentages panel in Label Trades; deep dive days shown on the Analysis day list.
+

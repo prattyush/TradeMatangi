@@ -95,6 +95,10 @@ window.fetch = async (input: any, options: any = {}) => {
   const body = options.body ? JSON.parse(options.body) : undefined;
   w.requests.push({ path: url.pathname, query, method, body });
   const path = url.pathname;
+  // ?server=old: a backend that has not got the Deep Dive or traded-pattern routes yet. ?server=down: a connection that does not get through.
+  const isNew = path.startsWith("/api/deep-dive/") || path.startsWith("/api/pattern/traded");
+  if (params.get("server") === "old" && isNew) return json({ detail: "Not Found" }, 404);
+  if (params.get("server") === "down" && isNew) throw new TypeError("Failed to fetch");
   try {
     if (path.startsWith("/api/deep-dive/")) return json(deepDive(path.replace("/api/deep-dive/", ""), method, body, query));
     if (path === "/api/pattern/traded/summary") return json({ strategies: tradedSummary });

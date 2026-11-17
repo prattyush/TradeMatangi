@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { readableError } from '../../analysis/behavior/types'
+import { friendlyError } from './errors'
 import {
   applyTagValues, nextGapIndex, positionLabel, stepIndex, toDiveSetup, withSetups, withTags,
 } from '../model'
@@ -31,7 +31,7 @@ export default function InDepth({ dive, setDive, onGoMark, focus }: Props) {
   const [index, setIndex] = useState(() => Math.max(0, dive.setups.findIndex(s => focus && sameDay(s, focus))))
   const [save, setSave] = useState<SaveState>({ status: 'idle' })
   const [failure, setFailure] = useState<string | null>(null)
-  const queue = useMemo(() => new SaveQueue(setSave, readableError), [])
+  const queue = useMemo(() => new SaveQueue(setSave, friendlyError), [])
   const setups = dive.setups
   const canEdit = dive.can_edit
   const ref = { category: dive.category, strategy: dive.strategy }
@@ -67,7 +67,7 @@ export default function InDepth({ dive, setDive, onGoMark, focus }: Props) {
     setFailure(null)
     const run = action === 'archive' ? api.archiveTag(ref, tagId) : api.restoreTag(ref, tagId)
     run.then(updated => setDive(current => withTags(current, current.tags.map((t: DeepDiveTag) => (t.tag_id === tagId ? updated : t)))))
-      .catch(error => setFailure(readableError(error)))
+      .catch(error => setFailure(friendlyError(error)))
   }
   const retry = () => void queue.enqueue(async () => {
     await api.saveSetup(setup, fullFields(setup))
