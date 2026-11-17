@@ -15,6 +15,13 @@ describe('desktop analysis transport', () => {
     expect(validAnalysisPath('deep-dive/stats/all', 'GET')).toBe(true)
     for (const method of ['POST', 'DELETE']) expect(validAnalysisPath('deep-dive/stats/all', method)).toBe(false)
     for (const path of ['deep-dive/stats', 'deep-dive/dives', 'deep-dive/setup', 'deep-dive/tags', 'deep-dive/stats/all/x']) expect(validAnalysisPath(path, 'GET')).toBe(false)
+    // Strategy Practice: the review and the run list are read-only analysis routes; picking and the strategy list are on the patterns transport.
+    for (const path of ['deep-dive/practice/runs', 'deep-dive/practice/evaluate', 'deep-dive/practice/evaluate?session_id=abc']) {
+      expect(validAnalysisPath(path, 'GET')).toBe(true)
+      for (const method of ['POST', 'DELETE', 'PUT']) expect(validAnalysisPath(path, method)).toBe(false)
+    }
+    for (const path of ['deep-dive/practice', 'deep-dive/practice/pick', 'deep-dive/practice/strategies', 'deep-dive/practice/evaluate/x', 'deep-dive/practice/runs/x', 'deep-dive/practice/../labels']) expect(validAnalysisPath(path, 'GET')).toBe(false)
+    expect(validAnalysisPath('deep-dive/practice/pick', 'POST')).toBe(false)
     expect(validAnalysisPath('whatif/range', 'POST')).toBe(false)
     expect(validAnalysisPath('whatif', 'PUT')).toBe(false)
     for (const path of ['whatif/extra', 'whatif/', 'whatif/../labels', 'what-if']) expect(validAnalysisPath(path, 'GET')).toBe(false)

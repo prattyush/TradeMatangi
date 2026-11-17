@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react'
+import type { DiveChartProps } from '../../../shared/deepdive/ui/host'
 import { Browser } from '@capacitor/browser'
 import { AnalysisProvider, type AnalysisEnvironment } from '../../../shared/analysis/environment'
 import AnalysisPanels from '../../../shared/analysis/kline/AnalysisPanels'
 import AnalysisChart, { ComparisonChart } from '../../../shared/analysis/kline/AnalysisChart'
-import { createAnalysisApi, validAnalysisPath, type AnalysisRequest } from '../../../windowsapp/src/analysisApi'
+import { createAnalysisApi, createAnalysisPracticeApi, validAnalysisPath, type AnalysisRequest } from '../../../windowsapp/src/analysisApi'
 import { createVideoLinksApi } from '../../../windowsapp/src/tools/videoLinks'
 import { createWhatIfApi } from '../../../windowsapp/src/tools/whatIf'
 import { useServices } from '../app/AppContext'
@@ -68,6 +69,8 @@ export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
       performance: adapter.performance,
       videoLinks: { list: links.list, listMine: links.listMine, save: links.save, remove: links.remove, open: video => { void openVideo(video) } },
       whatIf,
+      // Strategy Practice: the review of a practice run (the phone cannot start one; it has no order screens).
+      practice: { api: createAnalysisPracticeApi(request), Chart: AnalysisChart as unknown as ComponentType<DiveChartProps>, historicalDays: 2 },
       chartPicking: true,
       active: true,
       desktop: false,

@@ -1123,7 +1123,7 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
         "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" |
-        "deep-dive/stats/all" => true,
+        "deep-dive/stats/all" | "deep-dive/practice/runs" | "deep-dive/practice/evaluate" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -2699,6 +2699,18 @@ mod tests {
         for path in ["deep-dive/stats", "deep-dive/dives", "deep-dive/dive", "deep-dive/setup", "deep-dive/tags", "deep-dive/stats/all/x", "deep-dive/../labels"] {
             assert!(!valid_analysis_path(path, "GET"), "{path}");
         }
+    }
+
+    #[test]
+    fn practice_review_and_runs_are_read_only_analysis_routes() {
+        for path in ["deep-dive/practice/runs", "deep-dive/practice/evaluate", "deep-dive/practice/evaluate?session_id=abc"] {
+            assert!(valid_analysis_path(path, "GET"), "{path}");
+            for method in ["POST", "DELETE", "PUT"] { assert!(!valid_analysis_path(path, method), "{method} {path}"); }
+        }
+        for path in ["deep-dive/practice", "deep-dive/practice/pick", "deep-dive/practice/strategies", "deep-dive/practice/evaluate/x", "deep-dive/practice/runs/x", "deep-dive/practice/../labels"] {
+            assert!(!valid_analysis_path(path, "GET"), "{path}");
+        }
+        assert!(!valid_analysis_path("deep-dive/practice/pick", "POST"));
     }
 
     #[test]

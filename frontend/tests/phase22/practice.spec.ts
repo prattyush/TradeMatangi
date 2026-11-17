@@ -66,6 +66,7 @@ for (const renderer of ["lightweight", "kline"] as const) {
     const rows = page.locator(".pr-history tbody tr");
     await expect(rows).toHaveCount(3);
     await expect(rows.nth(2)).toContainText("No-setup day: you stayed out, the right call");
+    await expect(page.locator(".pr-summary")).toHaveText("2 reviewed · entered early 0, late 1, on time 0 · kept 50% on average · no-setup days: stayed out 1 of 1");
     await expect(rows.nth(0)).toContainText("In progress");
     await expect(rows.nth(0).getByRole("button", { name: "Review" })).toBeDisabled();
     await expect(rows.nth(1)).toContainText("6 min late · kept 50%");

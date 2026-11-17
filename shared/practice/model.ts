@@ -1,7 +1,7 @@
 /** Pure Strategy Practice logic shared by every host: wording of the review, grade filters and the chart marks of your trades. */
 import type { PatternAnnotation } from '../analysis/api'
 import { clock } from '../traded/model'
-import { GRADES, type Grade, type PracticePick, type PracticeStrategy, type ReviewSetup, type ReviewTrade, type RunSummary, type TheoreticalPair } from './types'
+import { GRADES, type Grade, type PracticePick, type PracticeRun, type PracticeStrategy, type ReviewSetup, type ReviewTrade, type RunSummary, type TheoreticalPair } from './types'
 
 export const gradeLabel = (grade: Grade) => ({ ideal: 'Ideal', average: 'Average', poor: 'Poor', ungraded: 'Success (not graded)', failed: 'Failed', open: 'No outcome' }[grade])
 
@@ -49,6 +49,56 @@ export function captureSentence(trade: Pick<ReviewTrade, 'capture_pct' | 'theore
 export function negativeVerdict(result: Pick<RunSummary, 'traded' | 'correct' | 'points'>): string {
   if (!result.traded) return 'No-setup day: you stayed out, the right call'
   return `No-setup day: you traded${result.points != null ? ` (${pointsText(result.points)})` : ''}, no trade was wanted`
+}
+
+export interface HistorySummary {
+  /** Runs that ended and were reviewed (their result is known). */
+  reviewed: number
+  /** Reviewed runs on a day with a recorded setup in which you traded, and how many of them were entered early, late or on the candle. */
+  traded: number
+  early: number
+  late: number
+  onTime: number
+  /** The average capture % over the runs where it could be worked out, or null. */
+  averageCapture: number | null
+  /** No-setup days: how many were practised and in how many you stayed out. */
+  noSetupDays: number
+  stayedOut: number
+}
+
+/** Simple totals over your reviewed practice runs, for the History screen. Runs not yet reviewed are left out. */
+export function historySummary(runs: ReadonlyArray<Pick<PracticeRun, 'result'>>): HistorySummary {
+  const summary: HistorySummary = { reviewed: 0, traded: 0, early: 0, late: 0, onTime: 0, averageCapture: null, noSetupDays: 0, stayedOut: 0 }
+  const captures: number[] = []
+  for (const { result } of runs) {
+    if (!result) continue
+    summary.reviewed += 1
+    if (result.negative) {
+      summary.noSetupDays += 1
+      if (result.correct) summary.stayedOut += 1
+      continue
+    }
+    if (!result.traded) continue
+    summary.traded += 1
+    if (result.entry_delta_min != null) {
+      if (result.entry_delta_min < 0) summary.early += 1
+      else if (result.entry_delta_min > 0) summary.late += 1
+      else summary.onTime += 1
+    }
+    if (result.capture_pct != null) captures.push(result.capture_pct)
+  }
+  if (captures.length) summary.averageCapture = Math.round((captures.reduce((a, b) => a + b, 0) / captures.length) * 10) / 10
+  return summary
+}
+
+/** The History line: "5 reviewed · entered early 1, late 3, on time 1 · kept 62% on average · no-setup days: stayed out 2 of 3". Empty when nothing is reviewed. */
+export function historyLine(summary: HistorySummary): string {
+  if (summary.reviewed === 0) return ''
+  const parts = [`${summary.reviewed} reviewed`]
+  if (summary.traded > 0) parts.push(`entered early ${summary.early}, late ${summary.late}, on time ${summary.onTime}`)
+  if (summary.averageCapture !== null) parts.push(`kept ${captureText(summary.averageCapture)} on average`)
+  if (summary.noSetupDays > 0) parts.push(`no-setup days: stayed out ${summary.stayedOut} of ${summary.noSetupDays}`)
+  return parts.join(' · ')
 }
 
 /** The best priced pair of a setup for one instrument, or null. */

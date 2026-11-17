@@ -441,3 +441,11 @@ TypeScript check (no emit):
 ```bash
 cd frontend && node node_modules/typescript/bin/tsc --noEmit
 ```
+
+## Phase 26: Strategy Practice in Analysis (S17)
+
+- **Badge, and a group of its own.** A practice run has `session_type: 'sim'`, so `groupSessions` now puts the practice marker in the group key: a practice run never merges into an ordinary replay of the same day (and two runs of one strategy on one day stay together). A practice run with **no trade** is listed too (staying out of a no-setup day is a result). The card shows **Practice: strategy** (website, `TradeAnalysis`), the desktop navigator's day button shows it (`SessionDayButton`), the phone row has a **Practice** badge.
+- **Filter:** website modal "Practice: Include / Exclude / Only", the desktop session header the same, the phone Filters sheet "Practice runs" (applied on the client; the server has no parameter). The **header totals** (Days, Win Rate, Total Trades, Total P&L; the desktop navigator's "groups · P&L") **leave practice runs out**, as the Performance dashboard does, unless only practice runs are shown.
+- **Practice review** from a card: `AnalysisEnvironment.practice` (`{api, Chart, historicalDays}`; absent = no button) supplies the read-only API and a chart; the shared `AnalysisPracticeReview` (`shared/practice/ui`) shows the same review as the Pattern Library. Website: button **🎯 Practice review** on the card, a full-window dialog (the Lightweight chart in Lightweight mode, KLine otherwise); desktop: the same on the Sessions card (`DesktopAnalysis` builds `practice` over the analysis transport, `createAnalysisPracticeApi`); phone: a **Practice review** item in the session's View menu and a full-screen overlay (`phone-practice`, charts stacked). The review is refused with the server's sentence while the run is not ended.
+- **History** (Pattern Library > Practice > History) gains a summary line from `historySummary`: "6 reviewed · entered early 1, late 1, on time 1 · kept 60% on average · no-setup days: stayed out 1 of 2".
+- Checks: `frontend/tests/phase22/analysis-practice.spec.ts` (website, both renderers), `windowsapp/src/practice.test.ts`, `mobile` `filters.test.ts` and the landscape UI suite.

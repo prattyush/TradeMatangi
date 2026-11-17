@@ -183,6 +183,7 @@ input[type='date'] {
 .badge-paper { background: #0f3a5f; color: #a5d6ff; }
 .badge-stepwise { background: #3b2f63; color: #d2c3ff; }
 .badge-swing { background: #4d3b0b; color: #f2cc60; }
+.badge-practice { background: #0d2238; color: #79c0ff; }
 
 /* Popover menu (a button that opens a short list over the content) and the segmented toggle. */
 .popover-menu { position: relative; display: inline-flex; }

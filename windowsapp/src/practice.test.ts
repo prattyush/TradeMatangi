@@ -160,3 +160,44 @@ describe('the instrument settings of a practice start', () => {
     expect(l.getExpiry).not.toHaveBeenCalled()
   })
 })
+
+describe('the History summary', () => {
+  const run = (result: import('../../shared/practice/types').RunSummary | null) => ({ result })
+  it('totals reviewed runs, entry timing, capture and no-setup days, leaving unreviewed runs out', async () => {
+    const { historySummary, historyLine } = await import('../../shared/practice/model')
+    const summary = historySummary([
+      run({ traded: true, entry_delta_min: -3, capture_pct: 80 }), run({ traded: true, entry_delta_min: 6, capture_pct: 40 }), run({ traded: true, entry_delta_min: 0, capture_pct: null }),
+      run({ traded: false }), run(null),
+      run({ traded: false, negative: true, correct: true }), run({ traded: true, negative: true, correct: false, points: -2 }),
+    ])
+    expect(summary).toEqual({ reviewed: 6, traded: 3, early: 1, late: 1, onTime: 1, averageCapture: 60, noSetupDays: 2, stayedOut: 1 })
+    expect(historyLine(summary)).toBe('6 reviewed · entered early 1, late 1, on time 1 · kept 60% on average · no-setup days: stayed out 1 of 2')
+  })
+  it('says nothing when nothing is reviewed, and leaves out what does not apply', async () => {
+    const { historySummary, historyLine } = await import('../../shared/practice/model')
+    expect(historyLine(historySummary([]))).toBe('')
+    expect(historyLine(historySummary([run(null)]))).toBe('')
+    expect(historyLine(historySummary([run({ traded: false })]))).toBe('1 reviewed')
+  })
+})
+
+describe('practice runs in the Analysis session list', () => {
+  const session = (id: string, extra: Record<string, unknown> = {}) => ({ session_id: id, user_id: 'u', symbol: 'NIFTY', date: '2026-10-16', instrument_type: 'options', session_type: 'sim',
+    session_capital: 100000, net_pnl: 100, trade_count: 2, round_trip_count: 1, winning_round_trip_count: 1, total_commission: 5, ...extra }) as never
+  const practice = { category: 'Breakout', strategy: 'Opening range' }
+  it('groups a practice run apart from an ordinary replay of the same day, and lists a run with no trade', async () => {
+    const { groupSessions } = await import('../../shared/analysis/TradeAnalysis')
+    const groups = groupSessions([session('a'), session('b', { practice }), session('c', { practice, date: '2026-10-14', trade_count: 0, round_trip_count: 0 }), session('d', { trade_count: 0 })])
+    expect(groups.map(g => [g.date, g.practice?.strategy ?? null, g.sessions.length])).toEqual([['2026-10-16', null, 1], ['2026-10-16', 'Opening range', 1], ['2026-10-14', 'Opening range', 1]])
+    // two runs of one strategy on one day stay together
+    expect(groupSessions([session('p1', { practice }), session('p2', { practice })])[0].sessions).toHaveLength(2)
+  }, 30000) // the first import of the Analysis screen is slow
+  it('reads the review through the analysis allowlist only', async () => {
+    const { createAnalysisPracticeApi } = await import('./analysisApi')
+    const calls: string[] = []
+    const api = createAnalysisPracticeApi((async (path: string, method: string) => { calls.push(`${method} ${path}`); return { runs: [] } }) as never)
+    await api.runs(); await api.evaluate('s 1')
+    expect(calls).toEqual(['GET deep-dive/practice/runs', 'GET deep-dive/practice/evaluate?session_id=s%201'])
+    expect(Object.keys(api).sort()).toEqual(['evaluate', 'runs'])
+  })
+})
