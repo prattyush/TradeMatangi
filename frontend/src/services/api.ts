@@ -11,6 +11,7 @@ import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
 import { createDeepDiveClient } from '../../../shared/deepdive/client'
 import { createTradedClient } from '../../../shared/traded/client'
+import { createPracticeClient } from '../../../shared/practice/client'
 import type { StatsAllEntry } from '../../../shared/deepdive/types'
 
 export class ApiError extends Error {
@@ -49,6 +50,8 @@ async function deepDiveRequest<T>(path: string, method: 'GET' | 'POST' | 'PUT' |
 export const deepDiveApi = createDeepDiveClient(deepDiveRequest)
 /** The user's labelled trades as pattern material (Phase 26, S10): the same `pattern/traded...` paths as the desktop. */
 export const tradedApi = createTradedClient(deepDiveRequest)
+/** Strategy Practice (Phase 26, S15): the same `deep-dive/practice/...` paths as the desktop. */
+export const practiceApi = createPracticeClient(deepDiveRequest)
 
 /** Saved YouTube links of one of the user's own sessions. A 404 (not the owner, or no links yet) is thrown with "404" in the message. */
 export async function getVideoLinks(sessionId: string): Promise<import('../../../shared/analysis/videoLinks').SavedLink[]> {
