@@ -239,6 +239,10 @@ Three tools under the desktop **Tools** view (`windowsapp/src/tools/ToolsView.ts
 - **Toolbar:** "Practice: strategy" while it runs (from `session.practice`, never the recorded side or marks); after Stop, **Review practice** takes you to the Tools view, Pattern Library > Practice, straight into that run's review (`practiceReviewId`).
 - Browser check: `scripts/desktop-practice-check.mjs` (the whole path on the built app with a faked native layer and server).
 
+## Phase 26: Mark days fills the window (2026-11-17)
+
+In **Mark days** the row of the calendar, the list of marked days and the day's chart is sized to the bottom of the window (`useFillWindow`, as in the in-depth step), and the chart box inside it has its own explicit height (`FilledChart`): with many days marked (21 in the owner's report) the chart ran past the window and its time axis fell out of view on the KLine chart. The calendar and the list of days beside the chart scroll on their own (`.dd-mark-left`), the page does not scroll, and the chart always ends inside the window. A narrow window (under 1000px) is left to the stylesheet. Check: `frontend/tests/phase22/deep-dive-markdays-axis.spec.ts` (21 days, three window sizes, both renderers).
+
 ## Phase 26: Strategy Practice screens (S15)
 
 - **Shared module** `shared/practice/` (host-injected like `shared/deepdive`): `types.ts`, `client.ts` (`createPracticeClient(request)` over the `deep-dive/practice/...` paths), `model.ts` (grade filters, wording of the review, your trades as gold marks), `startConfig.ts` (the instrument settings of a practice replay), `ui/` (`Practice` container with **Start practice** and **History** tabs, `PracticeStart`, `PracticeHistory`, `PracticeReview`, `host.tsx`, `practice.css`). Tests: `windowsapp/src/practice.test.ts`.

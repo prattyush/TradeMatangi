@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { friendlyError } from './errors'
 import { lastPickableDay, monthOf, todayIso, type MonthRef } from '../calendar'
 import { dayMarksByDate, formatDay, removalImpact, sideLabel, toDiveSetup, withSetups } from '../model'
 import type { Dive, DiveSetup, Side } from '../types'
 import DiveCalendar from './DiveCalendar'
 import { useDeepDiveHost } from './host'
+import { useFillWindow } from './useFillWindow'
 import { symbolChoices } from '../symbols'
 
 interface Props {
@@ -25,6 +26,10 @@ export default function DateMarking({ dive, setDive, symbol, onSymbol }: Props) 
   const [month, setMonth] = useState<MonthRef>(() => monthOf(latest ?? lastPickableDay(today)))
   const [selected, setSelected] = useState<string | null>(latest)
   const [busy, setBusy] = useState<string | null>(null)
+  // The calendar and the chart run to the bottom of the window; the calendar and the list of days beside the chart scroll on their own
+  // when they are taller, so the chart is always inside the window.
+  const row = useRef<HTMLDivElement>(null)
+  useFillWindow(row, { minHeight: 480 })
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<DiveSetup | null>(null)
   const ref = { category: dive.category, strategy: dive.strategy }
@@ -56,7 +61,7 @@ export default function DateMarking({ dive, setDive, symbol, onSymbol }: Props) 
   const impact = pending ? removalImpact(pending) : null
   const sides = (date: string) => (['buy', 'sell'] as const).filter(side => marks.get(date)?.[side]).map(sideLabel).join(' + ')
 
-  return <div className="dd-mark">
+  return <div className="dd-mark" ref={row}>
     <div className="dd-mark-left">
       <div className="pl-bar">
         <label>Symbol <select value={symbol} onChange={e => onSymbol(e.target.value)} aria-label="Symbol">
@@ -85,8 +90,20 @@ export default function DateMarking({ dive, setDive, symbol, onSymbol }: Props) 
     <div className="dd-mark-right">
       {selected ? <>
         <p className="pl-muted">{symbol} · {formatDay(selected)}{sides(selected) ? ` · marked ${sides(selected)}` : ' · not marked'}</p>
-        <div className="dd-chart"><Chart key={`${symbol}-${selected}`} symbol={symbol} date={selected} title={`${symbol} · ${formatDay(selected)}`} historicalDays={settings.historicalDays} /></div>
+        <FilledChart><Chart key={`${symbol}-${selected}`} symbol={symbol} date={selected} title={`${symbol} · ${formatDay(selected)}`} historicalDays={settings.historicalDays} /></FilledChart>
       </> : <p className="pl-muted dd-empty">Select a day to see its chart.</p>}
     </div>
   </div>
 }
+
+/**
+ * The day's chart, running from where it starts to the bottom of the window. The KLine chart does not fit a box that only a flex
+ * rule sizes (with many marked days beside it the box ran past the window and its time axis fell out of view), so it is given an
+ * explicit height, as in the in-depth step; a narrow window is left to the stylesheet.
+ */
+function FilledChart({ children }: { children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null)
+  useFillWindow(box, { minHeight: 360 })
+  return <div className="dd-chart" ref={box}>{children}</div>
+}
+
