@@ -2273,7 +2273,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             Sign out
           </button>
         </div>
-        <div style={{ flex: 1, overflow: 'hidden' }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <PatternLibrary practice={{ startPractice, blockedReason: practiceBlockedReason, reviewSessionId: practiceReviewId, onReviewOpened: () => setPracticeReviewId(null) }} />
         </div>
       </div>

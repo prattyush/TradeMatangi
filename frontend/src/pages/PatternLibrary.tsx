@@ -90,8 +90,10 @@ function getUniquePatterns(annotations: PatternAnnotation[]): { identity: string
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
+// The page fills the box its parent gives it. It used to be `100vh` itself, which inside the app (a header above it) made it taller than
+// the window by the header's height, so the bottom of every tab (a chart's time axis, the end of a list) was clipped.
 const PAGE: CSSProperties = {
-  display: 'flex', flexDirection: 'column', height: '100vh',
+  display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, height: '100%',
   background: '#0d1117', color: '#e6edf3', fontFamily: 'monospace', overflow: 'hidden',
 }
 const HEADER: CSSProperties = {
@@ -1352,7 +1354,7 @@ export default function PatternLibrary({ practice }: { practice?: WebsitePractic
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={PAGE}>
+    <div style={PAGE} data-testid="pattern-library">
       {/* Header */}
       <div style={HEADER}>
         <span style={{ fontSize: 14, fontWeight: 700, marginRight: 4 }}>Pattern Library</span>
