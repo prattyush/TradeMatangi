@@ -187,4 +187,10 @@ const practiceHost = params.get("practice") === "1" ? {
   blockedReason: params.get("blocked") === "1" ? "A session is running. Stop it before you start a practice run." : null,
   reviewSessionId: params.get("review"), onReviewOpened: () => { w.reviewOpened = true; },
 } : undefined;
-createRoot(document.getElementById("test-root")!).render(<PatternLibrary practice={practiceHost} />);
+// The frame App.tsx puts around the Pattern Library page: the window height, a 38px header, and a clipped body. The page must fit the body,
+// not the window, or its bottom (a chart's time axis) is cut off: a test without this header cannot see that.
+createRoot(document.getElementById("test-root")!).render(
+  <div style={{ display: "flex", flexDirection: "column", height: "var(--app-height, 100vh)", overflow: "hidden" }}>
+    <div style={{ padding: "8px 16px", height: 38, boxSizing: "border-box", background: "#161b22", borderBottom: "1px solid #30363d", flexShrink: 0 }}>TradeMatangi</div>
+    <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}><PatternLibrary practice={practiceHost} /></div>
+  </div>);
