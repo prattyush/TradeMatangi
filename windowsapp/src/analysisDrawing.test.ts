@@ -29,7 +29,7 @@ describe('KLine drawing model', () => {
   it('maps catalogue tools to klinecharts overlay names', () => {
     expect(overlayName('Trend')).toBe('segment')
     expect(overlayName('Horizontal')).toBe('horizontalStraightLine')
-    expect(overlayName('Fib Retracement')).toBe('fibonacciLine')
+    expect(overlayName('Fib Retracement')).toBe('tmFibSegment')
     expect(overlayName('rect')).toBe('rect')
   })
   it('round-trips points between stored seconds and chart milliseconds', () => {

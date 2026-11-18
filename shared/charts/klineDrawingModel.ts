@@ -3,6 +3,9 @@
  * The stored shape is library-neutral (unix-second timestamps + prices) and is
  * the same one `KLineChart.tsx` reads/writes through `/api/desktop/v1/drawings`.
  */
+// Pure (no klinecharts import: it needs a browser); the segment fib overlay is registered by `registerFibSegmentOverlay` where a chart is created.
+import { FIB_SEGMENT_OVERLAY } from "./klineFibSegment-name";
+
 export interface PersistedDrawing {
   tool: string;
   points: Array<{ timestamp: number; price: number }>;
@@ -69,7 +72,7 @@ export const overlayName = (tool: string) =>
     : tool === "Horizontal"
       ? "horizontalStraightLine"
       : tool === "Fib Retracement"
-        ? "fibonacciLine"
+        ? FIB_SEGMENT_OVERLAY
         : tool;
 
 export const drawingPoints = (drawing: PersistedDrawing) =>
