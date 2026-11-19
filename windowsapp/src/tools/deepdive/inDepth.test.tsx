@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { withTags, withSetups, toDiveSetup, strikeLabel } from '../../../../shared/deepdive/model'
 import type { DeepDiveSetup, DeepDiveTag, Dive } from '../../../../shared/deepdive/types'
-import { fullFields, markCount, needsStrikes, optionEligible, strikeForSide, strikeModeFor, toolsFor } from '../../../../shared/deepdive/ui/inDepthModel'
+import { previewStrikeSettings, PREVIEW_STRIKE_CAP, MARK_VIEWS, fullFields, markCount, needsStrikes, optionEligible, strikeForSide, strikeModeFor, toolsFor } from '../../../../shared/deepdive/ui/inDepthModel'
 import { SaveQueue, type SaveState } from '../../../../shared/deepdive/ui/saveQueue'
 import DayStrip from '../../../../shared/deepdive/ui/DayStrip'
 import GapsPanel from '../../../../shared/deepdive/ui/GapsPanel'
@@ -56,6 +56,14 @@ describe('in-depth helpers', () => {
     expect(strikeModeFor('NIFTY', { mode: 'threshold', ceCap: 60, peCap: 45 })).toBe('max_price')
     expect(strikeModeFor('NIFTY', { mode: 'threshold', ceCap: 0, peCap: 45 })).toBe('otm')
     expect(strikeModeFor('RELIANCE', { mode: 'threshold', ceCap: 60, peCap: 45 })).toBe('otm')
+  })
+  it('previews the CE and PE of a Mark days day with the Max Price pick at 09:30 and a cap of 75, whatever the account setting is', () => {
+    expect(PREVIEW_STRIKE_CAP).toBe(75)
+    expect(previewStrikeSettings).toEqual({ mode: 'threshold', ceCap: 75, peCap: 75 })
+    expect(strikeModeFor('NIFTY', previewStrikeSettings)).toBe('max_price')
+    expect(strikeModeFor('BSESEN', previewStrikeSettings)).toBe('max_price')
+    expect(strikeModeFor('RELIND', previewStrikeSettings)).toBe('otm') // stocks keep an ATM strike
+    expect(MARK_VIEWS.map(v => v.view)).toEqual(['underlying', 'CE', 'PE']) // the underlying is the default, first
   })
   it('counts marks per chart and lists what a retry must save', () => {
     const day = { ...raw('2026-10-06', 'buy'), outcome: 'success' as const, notes: 'n', annotations: [

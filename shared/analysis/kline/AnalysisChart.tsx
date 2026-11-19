@@ -3,7 +3,7 @@ import { CandleInterval } from '../CandleInterval'
 import { contractTabs } from './analysisContracts'
 import { snapshotCandles, snapshotBarTime, resolveSnapshotExecutions } from './analysisSnapshot'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { init, dispose, registerOverlay, type Chart, type KLineData } from 'klinecharts'
+import { init, dispose, registerOverlay, type Chart, type KLineData, type OverlayFigure } from 'klinecharts'
 import type { AnalysisTrade, OHLCCandle, PatternAnnotation, TopPatterns } from '../api'
 import { useAnalysisApi, useAnalysisEnvironment } from '../environment'
 import { buildMarkers } from '../patternMarkers'
@@ -12,6 +12,7 @@ import { analysisDrawingInstrument } from '../../charts/klineDrawingModel'
 import { useKLineDrawings } from '../../charts/useKLineDrawings'
 import { ensureKLineExtensions, useKLineIndicators } from '../../charts/useKLineIndicators'
 import { registerFibSegmentOverlay } from '../../charts/klineFibSegment'
+import { annotationFigures, type AnnotationMark } from './annotationFigures'
 import { KLineIndicatorMenu, KLineToolsRail, useToolsRailVisible } from '../../charts/KLineToolsPanel'
 
 interface Props {
@@ -67,7 +68,7 @@ function registerAnalysisOverlays() {
     ] },
   })
   registerOverlay({ name:'analysisAnnotation', totalStep:1, needDefaultPointFigure:false, needDefaultXAxisFigure:false, needDefaultYAxisFigure:false,
-    createPointFigures:({coordinates,overlay})=>{ const p=coordinates[0]; if(!p) return []; const data=overlay.extendData as {color:string;text:string}; return [{type:'text',attrs:{x:p.x,y:p.y,text:data.text,align:'center',baseline:'bottom'},styles:{color:data.color,size:11},ignoreEvent:true}] },
+    createPointFigures:({coordinates,overlay})=>{ const p=coordinates[0]; if(!p) return []; return annotationFigures(p,overlay.extendData as AnnotationMark) as unknown as OverlayFigure[] },
   })
   registerOverlay({name:'analysisLevel',totalStep:1,needDefaultPointFigure:false,needDefaultXAxisFigure:false,needDefaultYAxisFigure:false,
     createPointFigures:({coordinates,bounding,overlay})=>{const point=coordinates[0];if(!point)return [];const level=overlay.extendData as {text:string};return [
@@ -332,7 +333,13 @@ export default function DesktopAnalysisChart(props: Props) {
     }
     const annotations=(props.annotations??[]).filter(a=>props.right?a.instrument===props.right:a.instrument==='underlying')
 
-    annotations.sort((a,b)=>a.time-b.time).forEach(a=>{const style=buildMarkers([a],props.activeStrategy??null,props.activeCategory??null,props.topPatterns,props.riskRewardRatios)[0];const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:Math.floor(a.time/(intervalMinutes*60))*(intervalMinutes*60)*1000,value:a.price}],extendData:{color:style?.color??'#fbbf24',text:`${a.type==='entry'?'↑':'↓'} ${style?.text??a.text}`}});if(typeof id==='string')overlays.current.push(id)})
+    const candleAt=new Map(candles.map(c=>[c.time,c]))
+    // An Entry's arrow and text hang below the candle's low: leave room under the lowest candle so they are not cut off at the edge of the plot.
+    chart.overrideYAxis({paneId:'candle_pane',gap:{top:0.2,bottom:annotations.length?0.2:0.1}})
+    annotations.sort((a,b)=>a.time-b.time).forEach(a=>{const style=buildMarkers([a],props.activeStrategy??null,props.activeCategory??null,props.topPatterns,props.riskRewardRatios)[0];const slot=Math.floor(a.time/(intervalMinutes*60))*(intervalMinutes*60);const candle=candleAt.get(slot);const position=style?.position??(a.type==='entry'?'belowBar':'aboveBar');
+      // Like the Lightweight chart: an arrow just outside the marked candle (below its low for an entry, above its high for an exit) with the text beyond it, no box.
+      const value=candle?(position==='belowBar'?candle.low:candle.high):a.price
+      const id=chart.createOverlay({name:'analysisAnnotation',lock:true,points:[{timestamp:slot*1000,value}],extendData:{color:style?.color??'#fbbf24',text:style?.text??a.text,position,shape:style?.shape??(position==='belowBar'?'arrowUp':'arrowDown')}});if(typeof id==='string')overlays.current.push(id)})
     const levels=[...(props.openOrders??[]).map(order=>({price:order.trigger_price||order.limit_price,text:`${order.side} ${order.order_type} ${order.quantity}`})), ...(props.position?[{price:props.position.avg_entry_price,text:`Captured ${props.position.side} ${props.position.quantity}`}]:[]), ...(props.barTime!=null&&props.currentPrice!=null?[{price:props.currentPrice,text:'Captured current price'}]:[])]
     for(const order of levels){const price=order.price;if(!price||!candles.length)continue;const id=chart.createOverlay({name:'analysisLevel',lock:true,points:[{timestamp:candles[candles.length-1].time*1000,value:price}],extendData:{text:order.text}});if(typeof id==='string')overlays.current.push(id)}
   },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.riskRewardRatios,props.openOrders,props.position,props.currentPrice,intervalMinutes])

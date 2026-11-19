@@ -78,6 +78,7 @@ function deepDive(path: string, method: string, body: any, query: Record<string,
 
 // Phase 26, S10: the strategies labelled on trades and the trades behind one (entry 09:21, exit 09:48 on the 3-minute chart clock).
 w.tradedSaves = [] as any[];
+w.strikeFinds = [] as any[];
 const tradeBase = Date.parse("2026-10-16T09:00:00Z") / 1000;
 const tradedSummary = [
   { category: "Breakout", strategy: "Opening range", trades: 2, expected: 1, actual: 1, last_date: "2026-10-16", sessions: 2 },
@@ -175,6 +176,7 @@ window.fetch = async (input: any, options: any = {}) => {
     if (path === "/api/pattern/ohlc/equity") return json({ symbol: query.symbol, candles });
     if (path === "/api/pattern/ohlc/options") return json({ symbol: query.symbol, strike: Number(query.strike), candles });
     if (path === "/api/data/price-at") return json({ symbol: query.symbol, date: query.date, time: query.time, price: 24512 });
+    if (path === "/api/data/options/find-strike-by-price") { w.strikeFinds.push(query); return json({ strike: query.right === "CE" ? 24600 : 24400, price: 70, symbol: query.symbol, date: query.date, right: query.right }); }
     if (path === "/api/data/expiry") return json({ symbol: query.symbol, date: query.date, expiry: "2026-10-20" });
     if (path === "/api/data/historical") return json({ symbol: query.symbol, dates: [], candles: candles.map((c) => ({ ...c, time: c.time - 86400 })) });
     if (path === "/api/data/pre-session") return json({ candles });

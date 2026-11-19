@@ -7,6 +7,8 @@ import DiveCalendar from './DiveCalendar'
 import { useDeepDiveHost } from './host'
 import { useFillWindow } from './useFillWindow'
 import { symbolChoices } from '../symbols'
+import { MARK_VIEWS, optionEligible, type MarkView } from './inDepthModel'
+import { usePreviewStrikes } from './usePreviewStrikes'
 
 interface Props {
   dive: Dive
@@ -30,6 +32,7 @@ export default function DateMarking({ dive, setDive, symbol, onSymbol }: Props) 
   // when they are taller, so the chart is always inside the window.
   const row = useRef<HTMLDivElement>(null)
   useFillWindow(row, { minHeight: 480 })
+  const [view, setView] = useState<MarkView>('underlying')
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<DiveSetup | null>(null)
   const ref = { category: dive.category, strategy: dive.strategy }
@@ -90,10 +93,28 @@ export default function DateMarking({ dive, setDive, symbol, onSymbol }: Props) 
     <div className="dd-mark-right">
       {selected ? <>
         <p className="pl-muted">{symbol} · {formatDay(selected)}{sides(selected) ? ` · marked ${sides(selected)}` : ' · not marked'}</p>
-        <FilledChart><Chart key={`${symbol}-${selected}`} symbol={symbol} date={selected} title={`${symbol} · ${formatDay(selected)}`} historicalDays={settings.historicalDays} /></FilledChart>
+        {optionEligible(symbol) && <div className="pl-bar dd-view" role="tablist" aria-label="Chart to look at">
+          {MARK_VIEWS.map(choice => <button key={choice.view} role="tab" aria-selected={view === choice.view} aria-pressed={view === choice.view}
+            title={choice.view === 'underlying' ? 'The underlying chart of the day' : `The ${choice.view} of the day (strike from the 09:30 price, premium at most 75), only to get an idea of the option chart`}
+            onClick={() => setView(choice.view)}>{choice.label}</button>)}
+        </div>}
+        <FilledChart>{view === 'underlying' || !optionEligible(symbol)
+          ? <Chart key={`${symbol}-${selected}`} symbol={symbol} date={selected} title={`${symbol} · ${formatDay(selected)}`} historicalDays={settings.historicalDays} />
+          : <OptionPreview symbol={symbol} date={selected} right={view} />}</FilledChart>
       </> : <p className="pl-muted dd-empty">Select a day to see its chart.</p>}
     </div>
   </div>
+}
+
+/** The CE or PE of a day on Mark days: the strike of the 09:30 pick (premium at most 75), shown only to get an idea of the option chart. */
+function OptionPreview({ symbol, date, right }: { symbol: string; date: string; right: 'CE' | 'PE' }) {
+  const { settings, Chart } = useDeepDiveHost()
+  const preview = usePreviewStrikes(symbol, date)
+  if (preview.state === 'error') return <p className="pl-error" role="alert">Could not pick the {right} strike: {preview.error}</p>
+  if (preview.state !== 'ready') return <p className="pl-muted dd-empty">Picking the {right} strike…</p>
+  const strike = right === 'CE' ? preview.ce : preview.pe
+  return <Chart key={`${symbol}-${date}-${right}-${strike}`} symbol={symbol} date={date} title={`${symbol} ${right} ${strike} · ${formatDay(date)}`}
+    strike={strike} right={right} expiry={preview.expiry} historicalDays={settings.historicalDays} />
 }
 
 /**
