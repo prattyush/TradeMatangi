@@ -44,6 +44,8 @@ import {
 import { orderLineLabel, orderPrice } from "./orderLineLabel";
 import { TradingOverlayRegistry } from "./tradingOverlays";
 import { drawingTools, indicatorLabel, indicatorUnavailable, overlayIndicators } from "./catalogue";
+import { overlayName } from "./klineDrawingModel";
+import { registerFibSegmentOverlay } from "./klineFibSegment";
 
 interface ChartSettings {
   background: string;
@@ -139,6 +141,7 @@ let extensionsRegistered = false;
 const ensureExtensions = () => {
   if (extensionsRegistered) return;
   registerExtensions();
+  registerFibSegmentOverlay();
   registerOverlay({
     name: "desktopTradeMarker",
     totalStep: 1,
@@ -269,14 +272,6 @@ type DrawingRequest = (
   method: "GET" | "POST" | "PUT" | "DELETE",
   body?: Record<string, unknown>,
 ) => Promise<unknown>;
-const overlayName = (tool: string) =>
-  tool === "Trend"
-    ? "segment"
-    : tool === "Horizontal"
-      ? "horizontalStraightLine"
-      : tool === "Fib Retracement"
-        ? "fibonacciLine"
-        : tool;
 const drawingPoints = (drawing: PersistedDrawing) =>
   drawing.points.map((point) => ({
     timestamp: point.timestamp * 1000,
