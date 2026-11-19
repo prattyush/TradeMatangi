@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import type { Chart } from "klinecharts";
+import { textPromptAnchor, type TextPromptState } from "./ChartTextPrompt";
 import { beginChartActivity } from "./chartActivity";
 import { announceDrawingChange, watchDrawingChanges } from "./drawingEvents";
 import { canonicalDrawingKey, drawingIdentity } from "./drawingIdentity";
@@ -9,6 +10,7 @@ import {
   overlayName,
   overlayPointsToStored,
   overlayStyles,
+  textExtendData,
   toolStyle,
   type DrawingMode,
   type DrawingRecord,
@@ -43,6 +45,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
   const modeRef = useRef<DrawingMode>("once");
   const [notice, setNotice] = useState("");
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [textPrompt, setTextPrompt] = useState<TextPromptState | null>(null);
   const [style, setStyle] = useState<DrawingStyleSettings>(defaultDrawingStyle);
   const styleRef = useRef(style);
   styleRef.current = style;
@@ -146,6 +149,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
     },
     onPressedMoveEnd: saveMoved,
     onSelected: (event: any) => setSelected(event.overlay.id),
+    onDoubleClick: (event: any) => editText(event.overlay.id),
     onRemoved: (event: any) => setDrawings((current) => current.filter((drawing) => drawing.id !== event.overlay.id)),
   };
 
@@ -161,6 +165,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
       lock: Boolean(record.drawing.locked),
       visible: record.drawing.visible !== false,
       styles: overlayStyles(record.drawing.style, styleRef.current),
+      extendData: record.drawing.tool === "Text" ? textExtendData(record.drawing, styleRef.current) : undefined,
       ...handlers,
     } as any);
     if (typeof id !== "string") return;
@@ -258,6 +263,52 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
     }
   };
 
+  const saveNew = (id: string, drawing: PersistedDrawing) =>
+    save(id, "drawings", "POST", drawing).then((record) => {
+      if (!record) return;
+      setDrawings((current) =>
+        current.map((item) =>
+          item.id === id ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing, dirty: false } : item,
+        ),
+      );
+    });
+
+  /** Ask for the text of a Text drawing: a new one is saved (or dropped when left empty), an existing one is changed. */
+  const askText = (id: string, drawing: PersistedDrawing, point: { timestamp: number; price: number }, initial: string, creating = true) => {
+    const close = () => setTextPrompt(null);
+    const drop = () => {
+      close();
+      chartRef.current?.removeOverlay({ id });
+      setDrawings((current) => current.filter((item) => item.id !== id));
+      setSelected((current) => (current === id ? null : current));
+    };
+    setTextPrompt({
+      ...textPromptAnchor(chartRef.current, point),
+      initial,
+      onCancel: creating ? drop : close,
+      onSubmit: (text) => {
+        if (!text) return creating ? drop() : close();
+        close();
+        const next: PersistedDrawing = { ...drawing, text };
+        chartRef.current?.overrideOverlay({ id, extendData: textExtendData(next, styleRef.current) } as any);
+        if (creating) {
+          setDrawings((items) => items.map((item) => (item.id === id ? { ...item, drawing: next, dirty: true } : item)));
+          void saveNew(id, next);
+          if (modeRef.current === "repeat") window.setTimeout(() => startTool("Text"), 0);
+        } else if (text !== initial) {
+          setSelected(id);
+          updateDrawing(id, (item) => ({ ...item, drawing: next }));
+        }
+      },
+    });
+  };
+  /** Double click on a Text drawing: change its text. */
+  const editText = (id: string) => {
+    const item = drawingsRef.current.find((row) => row.id === id);
+    if (!item || item.drawing.tool !== "Text" || item.locked || !item.drawing.points.length) return;
+    askText(id, item.drawing, item.drawing.points[0], item.drawing.text ?? "", false);
+  };
+
   const startTool = (tool: string) => {
     const chart = chartRef.current;
     if (!chart || !identityRef.current) return;
@@ -266,6 +317,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
       name: overlayName(tool),
       paneId: "candle_pane",
       styles: overlayStyles(look, styleRef.current),
+      extendData: tool === "Text" ? { text: "", color: look.color } : undefined,
       ...handlers,
       onDrawStart: () => {
         gesture.current = true;
@@ -275,18 +327,13 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
         const points = overlayPointsToStored(event.overlay.points);
         const drawing: PersistedDrawing = { tool, points, style: look, visible: true, locked: false };
         setDrawings((items) => items.map((item) => (item.id === event.overlay.id ? { ...item, drawing, dirty: true } : item)));
-        if (points.length && typeof event.overlay.id === "string")
-          void save(event.overlay.id, "drawings", "POST", drawing).then((record) => {
-            if (!record) return;
-            setDrawings((current) =>
-              current.map((item) =>
-                item.id === event.overlay.id
-                  ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing, dirty: false }
-                  : item,
-              ),
-            );
-          });
         setActiveTool(null);
+        if (tool === "Text") {
+          // The text is asked for beside the clicked point; the drawing is saved once it has one.
+          if (points.length && typeof event.overlay.id === "string") askText(event.overlay.id, drawing, points[0], "");
+          return;
+        }
+        if (points.length && typeof event.overlay.id === "string") void saveNew(event.overlay.id, drawing);
         if (modeRef.current === "repeat") window.setTimeout(() => startTool(tool), 0);
       },
     } as any);
@@ -300,7 +347,10 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
   };
 
   const updateSelected = (update: (drawing: LocalDrawing) => LocalDrawing) => {
-    const drawing = drawingsRef.current.find((item) => item.id === selected);
+    if (selected !== null) updateDrawing(selected, update);
+  };
+  const updateDrawing = (id: string, update: (drawing: LocalDrawing) => LocalDrawing) => {
+    const drawing = drawingsRef.current.find((item) => item.id === id);
     if (!drawing) return;
     if (saves.current.has(drawing.id)) {
       setNotice("This drawing is saving; try again when it finishes.");
@@ -361,6 +411,8 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
     selected: selectedDrawing,
     count: drawings.filter((item) => item.backendId).length,
     notice,
+    /** Set while a Text drawing's text is being asked for; render `<ChartTextPrompt {...textPrompt} />`. */
+    textPrompt,
     toggleLock: () => updateSelected((item) => ({ ...item, locked: !item.locked })),
     toggleHide: () => updateSelected((item) => ({ ...item, hidden: !item.hidden })),
     deleteSelected: () => {

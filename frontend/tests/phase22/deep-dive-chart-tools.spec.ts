@@ -45,8 +45,8 @@ test("Deep Dive Lightweight chart: Indicators (EMA only) and Draw tools, without
   // Draw: the usual tools.
   await page.getByTitle("Drawing tools").first().click();
   const items = page.getByRole("menuitem");
-  await expect(items).toHaveCount(7);
-  for (const label of ["Horizontal Line", "Trend Line", "Fib Retracement", "Rectangle", "Buy Marker", "Sell Marker", "Risk:Reward"]) await expect(items.filter({ hasText: label })).toHaveCount(1);
+  await expect(items).toHaveCount(8);
+  for (const label of ["Horizontal Line", "Trend Line", "Fib Retracement", "Rectangle", "Text", "Buy Marker", "Sell Marker", "Risk:Reward"]) await expect(items.filter({ hasText: label })).toHaveCount(1);
 
   // While a drawing tool is active a click on the chart draws, and is never also an Entry / Exit mark.
   await items.filter({ hasText: "Horizontal Line" }).click();

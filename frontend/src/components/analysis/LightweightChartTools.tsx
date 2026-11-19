@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
+import ChartTextPrompt from '../../../../shared/charts/ChartTextPrompt'
 import { rendererAccountKey } from '../../services/websiteChartPreferences'
 import { attachVolumeStudies, type VolumeStudies } from '../../indicators/volumeStudies'
 import { VWAP_COLOR, type VolumeCandle } from '../../indicators/vwap'
@@ -68,6 +69,8 @@ export function useLightweightTools(storageKey: string | null) {
     setVolumeData: (candles: ReadonlyArray<VolumeCandle>) => studies.current?.setData(candles),
     setMode: (mode: LwDrawMode) => controller.current?.setMode(mode),
     clearLast: () => controller.current?.clearLast(),
+    submitText: (text: string) => controller.current?.submitText(text),
+    cancelText: () => controller.current?.cancelText(),
   }
 }
 export type LightweightTools = ReturnType<typeof useLightweightTools>
@@ -93,7 +96,7 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
     return () => document.removeEventListener('mousedown', close)
   }, [open])
   const { mode, step, count } = tools.state
-  const hint = mode === 'none' ? '' : mode === 'hline' || mode === 'buymarker' || mode === 'sellmarker' ? 'click chart'
+  const hint = mode === 'none' ? '' : mode === 'hline' || mode === 'text' || mode === 'buymarker' || mode === 'sellmarker' ? 'click chart'
     : step === 0 ? 'click 1st point' : 'click 2nd point'
   return (
     <span ref={root} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -139,6 +142,7 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
         )}
       </span>
       {hint && <span style={{ fontSize: 10, color: '#f0883e' }}>{hint}</span>}
+      {tools.state.pendingText && <ChartTextPrompt x={tools.state.pendingText.x} y={tools.state.pendingText.y} initial="" onSubmit={tools.submitText} onCancel={tools.cancelText} />}
       {count > 0 && <button type="button" style={buttonStyle(false)} title="Remove the last drawing" onClick={tools.clearLast}>Clear</button>}
     </span>
   )

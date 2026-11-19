@@ -5,6 +5,7 @@
  */
 // Pure (no klinecharts import: it needs a browser); the segment fib overlay is registered by `registerFibSegmentOverlay` where a chart is created.
 import { FIB_SEGMENT_OVERLAY } from "./klineFibSegment-name";
+import { TEXT_OVERLAY } from "./klineText-name";
 
 export interface PersistedDrawing {
   tool: string;
@@ -15,6 +16,8 @@ export interface PersistedDrawing {
     fillColor?: string;
     fillOpacity?: number;
   };
+  /** The label of a Text drawing (one point); stored with the drawing like any other field. */
+  text?: string;
   visible?: boolean;
   locked?: boolean;
 }
@@ -73,7 +76,15 @@ export const overlayName = (tool: string) =>
       ? "horizontalStraightLine"
       : tool === "Fib Retracement"
         ? FIB_SEGMENT_OVERLAY
-        : tool;
+        : tool === "Text"
+          ? TEXT_OVERLAY
+          : tool;
+
+/** `extendData` of the Text overlay for a saved drawing: its text and colour (the chart's drawing line colour when none was saved). */
+export const textExtendData = (drawing: PersistedDrawing, settings: DrawingStyleSettings) => ({
+  text: drawing.text ?? "",
+  color: drawing.style?.color ?? settings.drawingLineColor,
+});
 
 export const drawingPoints = (drawing: PersistedDrawing) =>
   drawing.points.map((point) => ({

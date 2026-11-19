@@ -3,6 +3,7 @@ export const drawingTools = [
   { label: "Trend line", icon: "╱", tool: "Trend" },
   { label: "Ray", icon: "↗", tool: "ray" },
   { label: "Arrow", icon: "➜", tool: "arrow" },
+  { label: "Text", icon: "T", tool: "Text" },
   { label: "Rectangle", icon: "▭", tool: "rect" },
   { label: "Brush", icon: "✎", tool: "brush" },
   { label: "Fibonacci retracement", icon: "Φ", tool: "Fib Retracement" },
