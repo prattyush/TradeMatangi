@@ -66,17 +66,19 @@ export default function DayWorkspace(props: Props) {
   return <div className="dd-day" ref={area}>
     <DayIntervalBridge interval={setup.interval_minutes} onUserChange={canEdit ? minutes => change({ interval_minutes: minutes }, { interval_minutes: minutes }) : undefined} />
     <div className="dd-day-main">
-      {canEdit && <div className="pl-bar">
-        <span className="pl-muted">Mark:</span>
-        {tools.map(t => <button key={t.key} aria-pressed={tool?.key === t.key} className={`pl-tool ${t.type}`} onClick={() => setToolKey(t.key)}>{t.label}</button>)}
-        <button onClick={undo} disabled={!setup.annotations.length}>Undo</button>
-        <button onClick={clear} disabled={!setup.annotations.length}>Clear marks</button>
-        <span className="pl-muted">{setup.annotations.length} marks · candle {setup.interval_minutes}m (set on a chart)</span>
-      </div>}
-      {optionEligible(setup.symbol) && <div className="pl-bar dd-layout" role="group" aria-label="Chart layout">
-        <span className="pl-muted">Charts:</span>
-        <button aria-pressed={layout === 'stacked'} onClick={() => setLayout('stacked')} title="The underlying above the option chart">Stacked</button>
-        <button aria-pressed={layout === 'side'} onClick={() => setLayout('side')} title="The underlying and the option chart next to each other">Side by side</button>
+      {(canEdit || optionEligible(setup.symbol)) && <div className="pl-bar">
+        {canEdit && <>
+          <span className="pl-muted">Mark:</span>
+          {tools.map(t => <button key={t.key} aria-pressed={tool?.key === t.key} className={`pl-tool ${t.type}`} onClick={() => setToolKey(t.key)}>{t.label}</button>)}
+          <button onClick={undo} disabled={!setup.annotations.length}>Undo</button>
+          <button onClick={clear} disabled={!setup.annotations.length}>Clear marks</button>
+          <span className="pl-muted">{setup.annotations.length} marks · candle {setup.interval_minutes}m (set on a chart)</span>
+        </>}
+        {optionEligible(setup.symbol) && <span className="dd-layout" role="group" aria-label="Chart layout">
+          <span className="pl-muted">Charts:</span>
+          <button aria-pressed={layout === 'stacked'} onClick={() => setLayout('stacked')} title="The underlying above the option chart">Stacked</button>
+          <button aria-pressed={layout === 'side'} onClick={() => setLayout('side')} title="The underlying and the option chart next to each other">Side by side</button>
+        </span>}
       </div>}
       <div className="dd-charts" data-layout={layout}>
         <ChartFrame className="dd-chartbox" label={setup.symbol} isMaximized={maximized === 'underlying'} isHidden={maximized === 'option'} onToggle={() => toggle('underlying')}>
