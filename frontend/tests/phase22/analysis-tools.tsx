@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { init } from "klinecharts";
 import { createRoot } from "react-dom/client";
 import { AnalysisProvider } from "../../../shared/analysis/environment";
 import KLineAnalysisChart from "../../../shared/analysis/kline/AnalysisChart";
@@ -89,3 +90,9 @@ function App() {
   );
 }
 createRoot(document.getElementById("test-root")!).render(<App />);
+
+// The KLine charts on the page (klinecharts returns the existing instance for an element it already drives).
+w.charts = () => [...document.querySelectorAll("[k-line-chart-id]")].map((element) => {
+  element.id = element.getAttribute("k-line-chart-id") ?? "";
+  return init(element as HTMLElement);
+});

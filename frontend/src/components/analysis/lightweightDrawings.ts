@@ -10,6 +10,7 @@ import type {
   Time,
 } from 'lightweight-charts'
 import { attachRectangle, type RectanglePrimitive } from '../../indicators/rectanglePrimitive'
+import { attachText, TEXT_DRAWING_COLOR, type TextDrawingData, type TextPrimitive } from '../../indicators/textPrimitive'
 
 /**
  * Drawing tools for the Lightweight Analysis/Patterns charts: the same seven
@@ -17,19 +18,20 @@ import { attachRectangle, type RectanglePrimitive } from '../../indicators/recta
  * real-trading chart stays untouched. Drawings are kept in localStorage only
  * (KLine drawings are the ones saved to the backend).
  */
-export type LwDrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'rect' | 'buymarker' | 'sellmarker' | 'rrindicator'
+export type LwDrawMode = 'none' | 'hline' | 'trendline' | 'fibretracement' | 'rect' | 'text' | 'buymarker' | 'sellmarker' | 'rrindicator'
 
 export const LW_DRAW_ITEMS: { mode: Exclude<LwDrawMode, 'none'>; label: string }[] = [
   { mode: 'hline', label: '─ Horizontal Line' },
   { mode: 'trendline', label: '↗ Trend Line' },
   { mode: 'fibretracement', label: '◫ Fib Retracement' },
   { mode: 'rect', label: '▭ Rectangle' },
+  { mode: 'text', label: 'T Text' },
   { mode: 'buymarker', label: '▲ Buy Marker' },
   { mode: 'sellmarker', label: '▼ Sell Marker' },
   { mode: 'rrindicator', label: '⚡ Risk:Reward' },
 ]
 export const LW_DRAW_LABEL: Partial<Record<LwDrawMode, string>> = {
-  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', rect: 'Rectangle',
+  hline: 'H-Line', trendline: 'Trend', fibretracement: 'Fib', rect: 'Rectangle', text: 'Text',
   buymarker: 'Buy Mark', sellmarker: 'Sell Mark', rrindicator: 'R:R',
 }
 const FIB_LEVELS = [
@@ -45,13 +47,15 @@ type Drawing =
   | { type: 'hline'; ref: IPriceLine }
   | { type: 'trendline' | 'fibretracement' | 'rrindicator'; refs: ISeriesApi<'Line'>[] }
   | { type: 'rect'; ref: RectanglePrimitive }
+  | { type: 'text'; ref: TextPrimitive }
   | { type: 'buymarker' | 'sellmarker'; ref: ISeriesApi<'Line'> }
 type SavedLine = { data: LineData<Time>[]; options?: LineSeriesPartialOptions; markers?: SeriesMarker<Time>[] }
 // Same persisted shape as Chart.tsx so the two stay interchangeable.
 export type SavedDrawing =
   | { type: 'hline'; price: number; options?: Partial<PriceLineOptions> }
   | { type: 'rect'; p1: { time: number; price: number }; p2: { time: number; price: number } }
-  | { type: Exclude<LwDrawMode, 'none' | 'hline' | 'rect'>; lines: LineData<Time>[][]; series?: SavedLine[] }
+  | ({ type: 'text' } & TextDrawingData)
+  | { type: Exclude<LwDrawMode, 'none' | 'hline' | 'rect' | 'text'>; lines: LineData<Time>[][]; series?: SavedLine[] }
 
 const saveLine = (ref: ISeriesApi<'Line'>): SavedLine => {
   const o = ref.options()
@@ -66,8 +70,10 @@ const saveLine = (ref: ISeriesApi<'Line'>): SavedLine => {
   }
 }
 
-export interface LwDrawingSnapshot { mode: LwDrawMode; step: number; count: number }
-export const emptyLwSnapshot: LwDrawingSnapshot = { mode: 'none', step: 0, count: 0 }
+/** A Text drawing waiting for its text: the clicked point, and where (viewport pixels) to put the prompt. */
+export interface LwPendingText { time: number; price: number; x: number; y: number }
+export interface LwDrawingSnapshot { mode: LwDrawMode; step: number; count: number; pendingText: LwPendingText | null }
+export const emptyLwSnapshot: LwDrawingSnapshot = { mode: 'none', step: 0, count: 0, pendingText: null }
 
 export function lightweightDrawingKey(account: string, symbol: string, right?: string, strike?: number, expiry?: string) {
   return `analysis-lw-drawings:${account}:${symbol}:${right ?? ''}:${strike ?? ''}:${expiry ?? ''}`
@@ -77,6 +83,7 @@ export class LightweightDrawingController {
   private drawings: Drawing[] = []
   private points: { time: number; price: number }[] = []
   private mode: LwDrawMode = 'none'
+  private pendingText: LwPendingText | null = null
   private modeChangedAt = 0
   private listeners = new Set<() => void>()
   private disposed = false
@@ -88,7 +95,7 @@ export class LightweightDrawingController {
   }
 
   snapshot(): LwDrawingSnapshot {
-    return { mode: this.mode, step: this.points.length, count: this.drawings.length }
+    return { mode: this.mode, step: this.points.length, count: this.drawings.length, pendingText: this.pendingText }
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener)
@@ -100,6 +107,7 @@ export class LightweightDrawingController {
   setMode(next: LwDrawMode) {
     this.mode = next === this.mode ? 'none' : next
     this.points = []
+    this.pendingText = null
     this.modeChangedAt = Date.now()
     this.notify()
   }
@@ -109,6 +117,7 @@ export class LightweightDrawingController {
     if (drawing) this.remove(drawing)
     this.mode = 'none'
     this.points = []
+    this.pendingText = null
     this.persist()
     this.notify()
   }
@@ -120,6 +129,7 @@ export class LightweightDrawingController {
     this.storageKey = key
     this.mode = 'none'
     this.points = []
+    this.pendingText = null
     this.restore()
     this.notify()
   }
@@ -133,7 +143,7 @@ export class LightweightDrawingController {
   private remove(drawing: Drawing) {
     try {
       if (drawing.type === 'hline') this.series.removePriceLine(drawing.ref)
-      else if (drawing.type === 'rect') this.series.detachPrimitive(drawing.ref)
+      else if (drawing.type === 'rect' || drawing.type === 'text') this.series.detachPrimitive(drawing.ref)
       else if ('refs' in drawing) drawing.refs.forEach(ref => this.chart.removeSeries(ref))
       else this.chart.removeSeries(drawing.ref)
     } catch { /* already removed */ }
@@ -148,6 +158,7 @@ export class LightweightDrawingController {
     const saved: SavedDrawing[] = this.drawings.map(d => {
       if (d.type === 'hline') return { type: d.type, price: d.ref.options().price, options: d.ref.options() }
       if (d.type === 'rect') return { type: 'rect', ...d.ref.toJSON() }
+      if (d.type === 'text') return { type: 'text', ...d.ref.toJSON() }
       const series = ('refs' in d ? d.refs : [d.ref]).map(saveLine)
       return { type: d.type, lines: series.map(s => s.data), series }
     })
@@ -166,6 +177,10 @@ export class LightweightDrawingController {
         }
         if (d.type === 'rect') {
           if (d.p1 && d.p2) this.drawings.push({ type: 'rect', ref: attachRectangle(this.series, d.p1, d.p2) })
+          continue
+        }
+        if (d.type === 'text') {
+          if (typeof d.text === 'string' && d.text) this.drawings.push({ type: 'text', ref: attachText(this.series, { time: d.time, price: d.price, text: d.text, color: d.color ?? TEXT_DRAWING_COLOR }) })
           continue
         }
         // The parallel channel was replaced by the rectangle tool; drop legacy entries.
@@ -190,6 +205,18 @@ export class LightweightDrawingController {
     } catch { /* Ignore invalid old local drawings. */ }
   }
 
+  /** The text typed for a pending Text drawing (an empty text drops it). */
+  submitText(text: string) {
+    const pending = this.pendingText
+    this.pendingText = null
+    const clean = text.trim().slice(0, 80)
+    if (pending && clean && !this.disposed) {
+      try { this.finish({ type: 'text', ref: attachText(this.series, { time: pending.time, price: pending.price, text: clean, color: TEXT_DRAWING_COLOR }) }); return } catch { /* chart disposed */ }
+    }
+    this.notify()
+  }
+  cancelText() { this.pendingText = null; this.notify() }
+
   private finish(drawing: Drawing) {
     this.drawings.push(drawing)
     this.points = []
@@ -212,6 +239,13 @@ export class LightweightDrawingController {
       if (mode === 'hline') {
         const ref = this.series.createPriceLine({ price, color: '#e6edf3', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: price.toFixed(0) })
         this.finish({ type: 'hline', ref })
+      } else if (mode === 'text') {
+        // The text is asked for beside the clicked point; the drawing is made once it has one.
+        const rect = this.chart.chartElement().getBoundingClientRect()
+        this.pendingText = { time, price, x: rect.left + param.point.x, y: rect.top + param.point.y }
+        this.mode = 'none'
+        this.points = []
+        this.notify()
       } else if (mode === 'buymarker' || mode === 'sellmarker') {
         const buy = mode === 'buymarker'
         const ref = this.chart.addLineSeries({ lineVisible: false, crosshairMarkerVisible: false, ...LINE })

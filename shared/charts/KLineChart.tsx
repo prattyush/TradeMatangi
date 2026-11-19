@@ -44,8 +44,10 @@ import {
 import { orderLineLabel, orderPrice } from "./orderLineLabel";
 import { TradingOverlayRegistry } from "./tradingOverlays";
 import { drawingTools, indicatorLabel, indicatorUnavailable, overlayIndicators } from "./catalogue";
-import { overlayName } from "./klineDrawingModel";
+import { overlayName, textExtendData } from "./klineDrawingModel";
 import { registerFibSegmentOverlay } from "./klineFibSegment";
+import { registerTextOverlay } from "./klineText";
+import ChartTextPrompt, { textPromptAnchor, type TextPromptState } from "./ChartTextPrompt";
 
 interface ChartSettings {
   background: string;
@@ -142,6 +144,7 @@ const ensureExtensions = () => {
   if (extensionsRegistered) return;
   registerExtensions();
   registerFibSegmentOverlay();
+  registerTextOverlay();
   registerOverlay({
     name: "desktopTradeMarker",
     totalStep: 1,
@@ -245,6 +248,8 @@ interface PersistedDrawing {
     fillColor?: string;
     fillOpacity?: number;
   };
+  /** The label of a Text drawing. */
+  text?: string;
   visible?: boolean;
   locked?: boolean;
 }
@@ -558,6 +563,7 @@ export function KLineChart({
   timeRangeCallbackRef.current = onTimeRangeChange;
   const initialTimeRangeRef = useRef(initialTimeRange);
   const [geometryVersion, setGeometryVersion] = useState(0);
+  const [textPrompt, setTextPrompt] = useState<TextPromptState | null>(null);
   const viewportResetRef = useRef(viewportResetKey);
   const menuGesture = useChartMenuGesture();
   const candlesRef = useRef(candles);
@@ -1469,6 +1475,8 @@ export function KLineChart({
       id: record.drawing_id,
       name: overlayName(record.drawing.tool),
       paneId: "candle_pane",
+      extendData: record.drawing.tool === "Text" ? textExtendData(record.drawing, settings) : undefined,
+      onDoubleClick: (event: any) => editText(event.overlay.id),
       points: drawingPoints(record.drawing),
       lock: Boolean(record.drawing.locked),
       visible: record.drawing.visible !== false,
@@ -1704,6 +1712,60 @@ export function KLineChart({
       deletePendingRef.current.delete(id);
     }
   };
+  const saveNewDrawing = (id: string, drawing: PersistedDrawing) =>
+    saveDrawing(id, "drawings", "POST", drawing).then((record) => {
+      if (!record) return;
+      setDrawings((current) =>
+        current.map((item) =>
+          item.id === id
+            ? { ...item, backendId: record.drawing_id, revision: record.revision, drawing: record.drawing, dirty: false }
+            : item,
+        ),
+      );
+    });
+  /** Ask for the text of a Text drawing: a new one is saved (or dropped when left empty), an existing one is changed. */
+  const askText = (
+    id: string,
+    drawing: PersistedDrawing,
+    point: { timestamp: number; price: number },
+    initial: string,
+    creating: boolean,
+    commandId = 0,
+  ) => {
+    const close = () => setTextPrompt(null);
+    const drop = () => {
+      close();
+      chartRef.current?.removeOverlay({ id });
+      drawingOverlayIdsRef.current.delete(id);
+      setDrawings((current) => current.filter((item) => item.id !== id));
+      setSelected((current) => (current === id ? null : current));
+    };
+    setTextPrompt({
+      ...textPromptAnchor(chartRef.current, point),
+      initial,
+      onCancel: creating ? drop : close,
+      onSubmit: (text) => {
+        if (!text) return creating ? drop() : close();
+        close();
+        const next: PersistedDrawing = { ...drawing, text };
+        chartRef.current?.overrideOverlay({ id, extendData: textExtendData(next, settings) } as any);
+        if (creating) {
+          setDrawings((items) => items.map((item) => (item.id === id ? { ...item, drawing: next, dirty: true } : item)));
+          void saveNewDrawing(id, next);
+          if (drawingModeRef.current === "repeat") window.setTimeout(() => addDrawing("Text", commandId), 0);
+        } else if (text !== initial) {
+          setSelected(id);
+          updateDrawing(id, (item) => ({ ...item, drawing: next }));
+        }
+      },
+    });
+  };
+  /** Double click on a Text drawing: change its text. */
+  const editText = (id: string) => {
+    const item = drawingsRef.current.find((row) => row.id === id);
+    if (!item || item.drawing.tool !== "Text" || item.locked || !item.drawing.points.length) return;
+    askText(id, item.drawing, item.drawing.points[0], item.drawing.text ?? "", false);
+  };
   const addDrawing = (nextTool: string, commandId: number) => {
     const name = overlayName(nextTool);
     const lineColor =
@@ -1725,6 +1787,8 @@ export function KLineChart({
     const id = chartRef.current?.createOverlay({
       name,
       paneId: "candle_pane",
+      extendData: nextTool === "Text" ? { text: "", color: lineColor } : undefined,
+      onDoubleClick: (event: any) => editText(event.overlay.id),
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
       styles: {
@@ -1771,25 +1835,15 @@ export function KLineChart({
               : item,
           ),
         );
+        if (nextTool === "Text") {
+          // The text is asked for beside the clicked point; the drawing is saved once it has one.
+          onDrawingComplete(commandId, nextTool);
+          if (points.length && typeof event.overlay.id === "string")
+            askText(event.overlay.id, drawing, points[0], "", true, commandId);
+          return;
+        }
         if (points.length && typeof event.overlay.id === "string")
-          void saveDrawing(event.overlay.id, "drawings", "POST", drawing).then(
-            (record) => {
-              if (!record) return;
-              setDrawings((current) =>
-                current.map((item) =>
-                  item.id === event.overlay.id
-                    ? {
-                        ...item,
-                        backendId: record.drawing_id,
-                        revision: record.revision,
-                        drawing: record.drawing,
-                        dirty: false,
-                      }
-                    : item,
-                ),
-              );
-            },
-          );
+          void saveNewDrawing(event.overlay.id, drawing);
         onDrawingComplete(commandId, nextTool);
         if (drawingModeRef.current === "repeat")
           window.setTimeout(() => addDrawing(nextTool, commandId), 0);
@@ -1827,7 +1881,10 @@ export function KLineChart({
     setSelected(id);
   };
   const updateSelected = (update: (drawing: LocalDrawing) => LocalDrawing) => {
-    const drawing = drawingsRef.current.find((item) => item.id === selected);
+    if (selected !== null) updateDrawing(selected, update);
+  };
+  const updateDrawing = (id: string, update: (drawing: LocalDrawing) => LocalDrawing) => {
+    const drawing = drawingsRef.current.find((item) => item.id === id);
     if (!drawing) return;
     if (drawingSavesRef.current.has(drawing.id)) {
       setDrawingNotice("This drawing is saving; try again when it finishes.");
@@ -3068,6 +3125,7 @@ export function KLineChart({
             )}
           </div>
         )}
+        {textPrompt && <ChartTextPrompt {...textPrompt} />}
         {drawingNotice && (
           <div className="tile-notice" role="status">
             {drawingNotice}

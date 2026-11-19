@@ -14,7 +14,7 @@ test("KLine Analysis: left rail draws, saves to the shared instrument key and re
   await open(page, "kline");
   const rail = page.locator(".kline-tools-rail");
   await expect(rail).toBeVisible();
-  await expect(rail.getByRole("button")).toHaveCount(14 + 4); // 14 tools + repeat/lock/hide/delete
+  await expect(rail.getByRole("button")).toHaveCount(15 + 4); // 15 tools + repeat/lock/hide/delete
   await page.waitForSelector(".analysis-kline canvas");
   await expect(rail).toHaveAttribute("data-drawing-count", "0");
 
@@ -74,7 +74,7 @@ test("Lightweight Analysis: Chart.tsx tools, local persistence, maximize keeps d
 
   await page.getByRole("button", { name: "Draw ▾" }).click();
   await expect(page.getByRole("menuitem")).toHaveText([
-    "─ Horizontal Line", "↗ Trend Line", "◫ Fib Retracement", "▭ Rectangle", "▲ Buy Marker", "▼ Sell Marker", "⚡ Risk:Reward",
+    "─ Horizontal Line", "↗ Trend Line", "◫ Fib Retracement", "▭ Rectangle", "T Text", "▲ Buy Marker", "▼ Sell Marker", "⚡ Risk:Reward",
   ]);
   await page.getByRole("menuitem", { name: "─ Horizontal Line" }).click();
   await page.waitForTimeout(200); // the click that picked the tool must not draw
@@ -200,5 +200,89 @@ test("Lightweight Analysis: VWAP and Volume are offered only when the candles ha
   await page.getByTitle("Maximize").click();
   await page.getByRole("button", { name: "Indicators ▾" }).click();
   await expect(page.getByLabel("VWAP", { exact: true })).toBeChecked();
+  expect(errors).toEqual([]);
+});
+
+test("KLine Analysis: a Text drawing asks for its text, is saved with it, restores after reload and its text can be changed", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page, "kline");
+  const rail = page.locator(".kline-tools-rail");
+  await page.waitForSelector(".analysis-kline canvas");
+  const textOverlays = () => page.evaluate(() => (window as any).charts?.()?.flatMap((c: any) => c.getOverlays?.() ?? []).filter((o: any) => o.name === "tmText").map((o: any) => o.extendData));
+
+  // Empty text drops the drawing: nothing is saved.
+  await rail.getByRole("button", { name: "Text", exact: true }).click();
+  const p = await chartPoint(page, ".analysis-kline", -60, -20);
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.click(p.x, p.y);
+  const prompt = page.getByRole("dialog", { name: "Chart text" });
+  await expect(prompt).toBeVisible();
+  await prompt.getByRole("button", { name: "Cancel" }).click();
+  await expect(prompt).toHaveCount(0);
+  await expect(rail).toHaveAttribute("data-drawing-count", "0");
+  expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method === "POST"))).toHaveLength(0);
+
+  // Text: typed, saved with the drawing, shown on the chart.
+  await rail.getByRole("button", { name: "Text", exact: true }).click();
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.click(p.x, p.y);
+  await prompt.getByLabel("Text to show on the chart").fill("Breakout retest");
+  await page.keyboard.press("Enter");
+  await expect(prompt).toHaveCount(0);
+  await expect(rail).toHaveAttribute("data-drawing-count", "1");
+  const posts = await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method === "POST"));
+  expect(posts).toHaveLength(1);
+  expect(posts[0].body.drawing.tool).toBe("Text");
+  expect(posts[0].body.drawing.text).toBe("Breakout retest");
+  expect(posts[0].body.drawing.points).toHaveLength(1);
+
+  // Saved in the backend: it comes back after a reload, with its text.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "1");
+  await page.waitForTimeout(500);
+  expect(await textOverlays()).toEqual([expect.objectContaining({ text: "Breakout retest" })]);
+
+  // A double click on the text changes it (one PUT with the new text).
+  await page.locator(".analysis-kline canvas").first().waitFor();
+  const box = (await page.locator(".analysis-kline").first().boundingBox())!;
+  const at = await page.evaluate(() => {
+    const chart = (window as any).charts().find((c: any) => c.getOverlays().some((o: any) => o.name === "tmText"));
+    const overlay = chart.getOverlays().find((o: any) => o.name === "tmText");
+    return chart.convertToPixel({ timestamp: overlay.points[0].timestamp, value: overlay.points[0].value }, { paneId: "candle_pane" });
+  });
+  await page.mouse.dblclick(box.x + at.x + 30, box.y + at.y);
+  await expect(prompt).toBeVisible();
+  await expect(prompt.getByLabel("Text to show on the chart")).toHaveValue("Breakout retest");
+  await prompt.getByLabel("Text to show on the chart").fill("Failed breakout");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => (window as any).drawingLog.some((r: any) => r.method === "PUT" && r.body.drawing.text === "Failed breakout"));
+  expect(errors).toEqual([]);
+});
+
+test("Lightweight Analysis: Text asks for its text, draws it, persists locally and goes with Clear", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page, "lightweight");
+  await page.waitForSelector("canvas");
+  await page.getByRole("button", { name: "Draw ▾" }).click();
+  await page.getByRole("menuitem", { name: "T Text" }).click();
+  await page.waitForTimeout(250);
+  const p = await chartPoint(page, "canvas", 0, 40);
+  await page.mouse.click(p.x, p.y);
+  const prompt = page.getByRole("dialog", { name: "Chart text" });
+  await expect(prompt).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0); // nothing is drawn until it has text
+  await prompt.getByLabel("Text to show on the chart").fill("Support");
+  await prompt.getByRole("button", { name: "OK" }).click();
+  await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
+  const key = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("analysis-lw-drawings:")));
+  const saved = JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key));
+  expect(saved).toEqual([expect.objectContaining({ type: "text", text: "Support" })]);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("canvas");
+  await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
+  await page.getByRole("button", { name: "Clear" }).click();
+  expect(JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key))).toHaveLength(0);
   expect(errors).toEqual([]);
 });
