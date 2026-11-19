@@ -59,6 +59,7 @@ test("Deep Dive Lightweight chart: Indicators (EMA only) and Draw tools, without
   expect(await marks(page)).toBe(0);
   // A tool draws once and switches itself off: the next click is a mark again.
   await expect(page.getByTitle("Drawing tools").first()).not.toContainText("H-Line");
+  await page.getByRole("button", { name: /Entry UL/ }).click(); // no marker is selected to begin with
   // Move the pointer over the chart and press, as a person does (an instant teleport-and-click is not seen by the chart).
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 8 });
   await page.mouse.move(box.x + box.width / 3, box.y + box.height / 3, { steps: 8 });

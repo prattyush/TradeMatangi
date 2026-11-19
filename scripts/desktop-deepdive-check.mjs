@@ -288,6 +288,15 @@ try {
 
   // Mark a candle on the underlying chart (pick mode) and see it saved.
   const box = await page.locator('.dd-chartbox canvas').first().boundingBox()
+  // No marker is selected to begin with: a chart click marks nothing; a marker is selected, and clicked again to put it down.
+  await page.getByText('no marker selected').waitFor()
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+  await page.waitForTimeout(500)
+  assert.equal(store.setups.reduce((n, s) => n + s.annotations.length, 0), 0, 'no marker selected: the click marks nothing')
+  const entryUl = page.getByRole('button', { name: /Entry UL/ })
+  await entryUl.click(); assert.equal(await entryUl.getAttribute('aria-pressed'), 'true')
+  await entryUl.click(); assert.equal(await entryUl.getAttribute('aria-pressed'), 'false')
+  await entryUl.click()
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
   await page.waitForFunction(() => /1 marks/.test(document.body.textContent))
   await page.waitForFunction(() => document.querySelector('.dd-save')?.textContent?.includes('Saved'))

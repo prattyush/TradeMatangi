@@ -133,7 +133,28 @@ for (const renderer of ["lightweight", "kline"] as const) {
     await page.locator(".dd-taglist li", { hasText: "Second leg" }).getByRole("button", { name: "Valid", exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll(".dd-chip.complete").length === 1);
     const box = await page.locator(".dd-chartbox canvas").first().boundingBox();
-    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    // Move the pointer over the chart and press, as a person does (an instant teleport-and-click is not seen by the Lightweight chart).
+    const pressChart = async () => {
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2, { steps: 8 });
+      await page.mouse.move(box!.x + box!.width / 3, box!.y + box!.height / 3, { steps: 8 });
+      await page.waitForTimeout(200);
+      await page.mouse.down(); await page.waitForTimeout(60); await page.mouse.up();
+    };
+    // No marker is selected to begin with: a click on the chart marks nothing, and a selected marker is put down by clicking it again.
+    await expect(page.getByText("no marker selected")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Entry UL/ })).toHaveAttribute("aria-pressed", "false");
+    await pressChart();
+    await page.waitForTimeout(400);
+    expect((await store(page)).setups.reduce((n: number, s: any) => n + s.annotations.length, 0)).toBe(0);
+    await page.getByRole("button", { name: /Entry UL/ }).click();
+    await expect(page.getByRole("button", { name: /Entry UL/ })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: /Entry UL/ }).click();
+    await expect(page.getByRole("button", { name: /Entry UL/ })).toHaveAttribute("aria-pressed", "false");
+    await pressChart();
+    await page.waitForTimeout(400);
+    expect((await store(page)).setups.reduce((n: number, s: any) => n + s.annotations.length, 0)).toBe(0);
+    await page.getByRole("button", { name: /Entry UL/ }).click();
+    await pressChart();
     await page.waitForFunction(() => /1 marks/.test(document.body.textContent ?? ""));
     await page.waitForFunction(() => document.querySelector(".dd-save")?.textContent?.includes("Saved"));
     expect((await store(page)).setups.reduce((n: number, s: any) => n + s.annotations.length, 0)).toBe(1);
