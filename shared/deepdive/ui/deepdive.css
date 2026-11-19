@@ -132,3 +132,4 @@
 .dd-layout button[aria-pressed="true"], .dd-view button[aria-pressed="true"] { background: #1f6feb; border-color: #58a6ff; color: #fff; }
 @media (max-width: 1000px) { .dd-charts[data-layout="side"] { flex-direction: column; } }
 
+.dd-layout { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }

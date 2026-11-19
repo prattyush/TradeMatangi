@@ -52,7 +52,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active,
   const [message, setMessage] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null)
 
   const [annotations, setAnnotations] = useState<PatternAnnotation[]>([])
-  const [toolKey, setToolKey] = useState<string>('entry-CE')
+  const [toolKey, setToolKey] = useState<string | null>(null)
   const [strategies, setStrategies] = useState<string[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [strategy, setStrategy] = useState('')
@@ -140,10 +140,12 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active,
   const noPractice = useCallback(async () => { throw new Error('Practice can only start from the desktop workspace.') }, [])
   const practiceHost = useDesktopPracticeHost(client, settings, onStartPractice ?? noPractice, { sessionId: practiceReviewId, onOpened: onPracticeReviewOpened ?? (() => undefined) })
 
-  const tool = TOOL_OPTIONS.find(t => t.key === toolKey)!
+  // No marker is selected to begin with; clicking the selected one again puts it down. With none, a chart click marks nothing.
+  const tool = TOOL_OPTIONS.find(t => t.key === toolKey)
   const effectiveStrategy = strategy || newStrategy.trim()
   const effectiveCategory = category || newCategory.trim()
   const pick = useCallback((point: { time: number; price: number }) => {
+    if (!tool) return
     if (!effectiveCategory) { setMessage({ kind: 'error', text: 'Select or type a category before marking.' }); return }
     if (!effectiveStrategy) { setMessage({ kind: 'error', text: 'Select or type a strategy before marking.' }); return }
     setMessage(null)
@@ -257,10 +259,10 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active,
           <div className="pl-bar">
             <span className="pl-muted">Mark:</span>
             {TOOL_OPTIONS.filter(t => t.instrument === 'underlying' || hasRight(t.instrument)).map(t =>
-              <button key={t.key} aria-pressed={toolKey === t.key} className={`pl-tool ${t.type}`} onClick={() => setToolKey(t.key)}>{t.label}</button>)}
+              <button key={t.key} aria-pressed={toolKey === t.key} className={`pl-tool ${t.type}`} onClick={() => setToolKey(k => k === t.key ? null : t.key)} title={toolKey === t.key ? 'Click again to stop marking' : undefined}>{t.label}</button>)}
             <button onClick={() => setAnnotations(a => a.slice(0, -1))} disabled={!annotations.length}>Undo</button>
             <button onClick={() => setAnnotations([])} disabled={!annotations.length}>Clear marks</button>
-            <span className="pl-muted">{annotations.length} marks · candle {interval}m (set on a chart)</span>
+            <span className="pl-muted">{tool ? '' : 'no marker selected · '}{annotations.length} marks · candle {interval}m (set on a chart)</span>
             <button className="pl-save" onClick={() => void save()}>{chartId ? 'Update' : 'Save'}</button>
           </div>
           <div className="pl-charts" style={{ gridTemplateColumns: maximizedPane == null ? `repeat(${panes.length}, minmax(0, 1fr))` : '1fr' }}>
@@ -275,7 +277,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active,
                 historicalDays={settings.historicalDays}
                 annotations={annotations.filter(a => a.instrument === pane.instrument)} activeStrategy={effectiveStrategy || null} activeCategory={effectiveCategory || null}
                 topPatterns={topPatterns} riskRewardRatios={riskReward}
-                pickMode={tool.instrument === pane.instrument} onPick={pick} pickHint={`${tool.label} — click a candle (click the same candle again to remove)`}
+                pickMode={tool?.instrument === pane.instrument} onPick={pick} pickHint={`${tool?.label ?? ''} — click a candle (click the same candle again to remove)`}
               />
             </div>)}
           </div>

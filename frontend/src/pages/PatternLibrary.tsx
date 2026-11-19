@@ -749,7 +749,7 @@ export default function PatternLibrary({ practice }: { practice?: WebsitePractic
 
   // Annotations
   const [annotations, setAnnotations] = useState<PatternAnnotation[]>([])
-  const [activeToolKey, setActiveToolKey] = useState<string>('entry-CE')
+  const [activeToolKey, setActiveToolKey] = useState<string | null>(null) // no marker selected: a chart click marks nothing; the selected one is clicked again to put it down
 
   // Top Patterns
   const [topPatterns, setTopPatterns] = useState<TopPatterns>({})
@@ -977,12 +977,12 @@ export default function PatternLibrary({ practice }: { practice?: WebsitePractic
 
   const handleBarClick = useCallback((time: number, price: number) => {
     if (!chartLoaded) return
+    const tool = TOOL_OPTIONS.find(t => t.key === activeToolKey)
+    if (!tool) return
     const strategy = activeStrategy || newStrategyName.trim()
     const category = activeCategory || newCategoryName.trim()
     if (!category) { flashError('Please select or type a category name before annotating.'); return }
     if (!strategy) { flashError('Please select or type a strategy name before annotating.'); return }
-    const tool = TOOL_OPTIONS.find(t => t.key === activeToolKey)
-    if (!tool) return
     const id = crypto.randomUUID()
     const ann: PatternAnnotation = {
       id, time, price, type: tool.type, instrument: tool.instrument,
@@ -1469,7 +1469,8 @@ export default function PatternLibrary({ practice }: { practice?: WebsitePractic
           {TOOL_OPTIONS.map(t => (
             <button key={t.key}
               style={{ ...toolBtn(activeToolKey === t.key), borderLeft: `3px solid ${colorDot(t.key)}` }}
-              onClick={() => setActiveToolKey(t.key)}>
+              onClick={() => setActiveToolKey(k => k === t.key ? null : t.key)}
+              title={activeToolKey === t.key ? 'Click again to stop marking' : undefined}>
               {t.label}
             </button>
           ))}
