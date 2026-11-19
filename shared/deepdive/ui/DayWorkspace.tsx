@@ -6,6 +6,7 @@ import DayIntervalBridge from './DayIntervalBridge'
 import { useDeepDiveHost } from './host'
 import TagPanel from './TagPanel'
 import { markCount, optionEligible, strikeForSide, strikeModeFor, toolsFor } from './inDepthModel'
+import { useChartLayout } from './useChartLayout'
 import { useDayStrikes } from './useDayStrikes'
 import { useFillWindow } from './useFillWindow'
 import ChartFrame, { useMaximizedChart } from './ChartFrame'
@@ -60,6 +61,7 @@ export default function DayWorkspace(props: Props) {
   const area = useRef<HTMLDivElement>(null)
   const { maximized, toggle } = useMaximizedChart<'underlying' | 'option'>('in-depth', optionEligible(setup.symbol) ? ['underlying', 'option'] : ['underlying'])
   useFillWindow(area, { minHeight: 640 })
+  const [layout, setLayout] = useChartLayout()
 
   return <div className="dd-day" ref={area}>
     <DayIntervalBridge interval={setup.interval_minutes} onUserChange={canEdit ? minutes => change({ interval_minutes: minutes }, { interval_minutes: minutes }) : undefined} />
@@ -71,7 +73,12 @@ export default function DayWorkspace(props: Props) {
         <button onClick={clear} disabled={!setup.annotations.length}>Clear marks</button>
         <span className="pl-muted">{setup.annotations.length} marks · candle {setup.interval_minutes}m (set on a chart)</span>
       </div>}
-      <div className="dd-charts">
+      {optionEligible(setup.symbol) && <div className="pl-bar dd-layout" role="group" aria-label="Chart layout">
+        <span className="pl-muted">Charts:</span>
+        <button aria-pressed={layout === 'stacked'} onClick={() => setLayout('stacked')} title="The underlying above the option chart">Stacked</button>
+        <button aria-pressed={layout === 'side'} onClick={() => setLayout('side')} title="The underlying and the option chart next to each other">Side by side</button>
+      </div>}
+      <div className="dd-charts" data-layout={layout}>
         <ChartFrame className="dd-chartbox" label={setup.symbol} isMaximized={maximized === 'underlying'} isHidden={maximized === 'option'} onToggle={() => toggle('underlying')}>
           <Chart key={`${setup.symbol}-${setup.date}-ul`} symbol={setup.symbol} date={setup.date}
             title={`${setup.symbol} · ${formatDay(setup.date)} · ${markCount(setup, 'underlying')} marks`} historicalDays={settings.historicalDays}
