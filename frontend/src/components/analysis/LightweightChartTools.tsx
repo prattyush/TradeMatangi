@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { IChartApi, ISeriesApi } from 'lightweight-charts'
 import ChartTextPrompt from '../../../../shared/charts/ChartTextPrompt'
 import { rendererAccountKey } from '../../services/websiteChartPreferences'
@@ -71,6 +72,9 @@ export function useLightweightTools(storageKey: string | null) {
     clearLast: () => controller.current?.clearLast(),
     submitText: (text: string) => controller.current?.submitText(text),
     cancelText: () => controller.current?.cancelText(),
+    deleteSelected: () => controller.current?.deleteSelected(),
+    hitsDrawing: (point: { x: number; y: number }) => controller.current?.hitsDrawing(point) ?? false,
+    editSelectedText: () => controller.current?.editSelectedText(),
   }
 }
 export type LightweightTools = ReturnType<typeof useLightweightTools>
@@ -142,8 +146,28 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
         )}
       </span>
       {hint && <span style={{ fontSize: 10, color: '#f0883e' }}>{hint}</span>}
-      {tools.state.pendingText && <ChartTextPrompt x={tools.state.pendingText.x} y={tools.state.pendingText.y} initial="" onSubmit={tools.submitText} onCancel={tools.cancelText} />}
+      {tools.state.pendingText && <ChartTextPrompt x={tools.state.pendingText.x} y={tools.state.pendingText.y} initial={tools.state.pendingText.initial ?? ""} onSubmit={tools.submitText} onCancel={tools.cancelText} />}
+      {tools.state.selection && <SelectionActions tools={tools} />}
       {count > 0 && <button type="button" style={buttonStyle(false)} title="Remove the last drawing" onClick={tools.clearLast}>Clear</button>}
     </span>
+  )
+}
+
+/** The actions of the picked drawing, beside the click: change its text (a Text), delete it. It is drawn into `document.body`. */
+function SelectionActions({ tools }: { tools: LightweightTools }) {
+  const selection = tools.state.selection
+  if (!selection) return null
+  const width = selection.canEditText ? 230 : 150
+  return createPortal(
+    <div
+      role="toolbar" aria-label={`${selection.label} selected`}
+      onMouseDown={(event) => event.stopPropagation()}
+      style={{ position: 'fixed', left: Math.max(8, Math.min(selection.x + 10, window.innerWidth - width - 8)), top: Math.max(8, selection.y + 14), zIndex: 2000, display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: '#161b22', border: '1px solid #f0883e', borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.45)', fontSize: 11, color: '#e6edf3' }}
+    >
+      <span>{selection.label}</span>
+      {selection.canEditText && <button type="button" style={buttonStyle(false)} onClick={tools.editSelectedText}>Edit text</button>}
+      <button type="button" style={buttonStyle(false)} onClick={tools.deleteSelected}>Delete</button>
+    </div>,
+    document.body,
   )
 }

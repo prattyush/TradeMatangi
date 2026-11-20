@@ -19,6 +19,7 @@ export class RectanglePrimitive implements ISeriesPrimitive<Time>, ISeriesPrimit
   private attachment: SeriesAttachedParameter<Time> | null = null
   private style: RectStyle = getRectStyle()
   private unsubscribe: (() => void) | null = null
+  private selected = false
   private readonly paneViewList: ISeriesPrimitivePaneView[] = [{ zOrder: () => 'bottom', renderer: () => this }]
   private readonly priceViews: ISeriesPrimitiveAxisView[]
   private readonly timeViews: ISeriesPrimitiveAxisView[]
@@ -50,6 +51,9 @@ export class RectanglePrimitive implements ISeriesPrimitive<Time>, ISeriesPrimit
   timeAxisViews(): readonly ISeriesPrimitiveAxisView[] { return this.timeViews }
 
   toJSON(): { p1: RectPoint; p2: RectPoint } { return { p1: this.p1, p2: this.p2 } }
+
+  /** Outline the rectangle while it is the selected drawing (Analysis chart tools). */
+  setSelected(on: boolean): void { this.selected = on; this.attachment?.requestUpdate() }
 
   /** x coordinate for a time; null `timeToCoordinate` (time absent from the loaded
    *  data, e.g. a corner past the last candle) is resolved against the series bars. */
@@ -85,6 +89,11 @@ export class RectanglePrimitive implements ISeriesPrimitive<Time>, ISeriesPrimit
       context.strokeStyle = hexToRgba(fillColor, Math.min(1, opacity + 0.5))
       context.lineWidth = 1
       context.strokeRect(left + 0.5, top + 0.5, Math.max(0, width - 1), Math.max(0, height - 1))
+      if (this.selected) {
+        context.strokeStyle = '#f0883e'
+        context.lineWidth = 2
+        context.strokeRect(left, top, width, height)
+      }
       context.restore()
     })
   }

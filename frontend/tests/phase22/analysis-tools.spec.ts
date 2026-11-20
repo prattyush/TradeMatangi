@@ -286,3 +286,101 @@ test("Lightweight Analysis: Text asks for its text, draws it, persists locally a
   expect(JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key))).toHaveLength(0);
   expect(errors).toEqual([]);
 });
+
+test("Lightweight Analysis: a drawing is picked with a click, deleted on its own, and a Text's text can be changed", async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page, "lightweight");
+  await page.waitForSelector("canvas");
+  const saved = async () => {
+    const key = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("analysis-lw-drawings:")));
+    return key ? JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key)) : [];
+  };
+  const tool = async (item: string) => {
+    await page.getByRole("button", { name: "Draw ▾" }).click();
+    await page.getByRole("menuitem", { name: item }).click();
+    await page.waitForTimeout(250);
+  };
+  const c = await chartPoint(page, "canvas");
+  const at = (dx: number, dy: number) => ({ x: c.x + dx, y: c.y + dy });
+  // Move over the chart and press, as a person does (an instant teleport-and-click is not always seen by the chart).
+  const click = async (dx: number, dy: number) => {
+    const p = at(dx, dy);
+    await page.mouse.move(p.x - 3, p.y - 3, { steps: 6 });
+    await page.waitForTimeout(150);
+    await page.mouse.move(p.x, p.y, { steps: 3 });
+    await page.waitForTimeout(150);
+    await page.mouse.down(); await page.waitForTimeout(40); await page.mouse.up();
+  };
+  const popup = (label: string) => page.getByRole("toolbar", { name: `${label} selected` });
+
+  await tool("─ Horizontal Line"); await click(0, 110);
+  await tool("↗ Trend Line"); await click(-220, -110); await page.waitForTimeout(550); await click(-60, -30);
+  await tool("▭ Rectangle"); await click(60, -130); await page.waitForTimeout(550); await click(230, -70);
+  await tool("T Text"); await click(-120, 40);
+  await page.getByLabel("Text to show on the chart").fill("Support");
+  await page.keyboard.press("Enter");
+  expect((await saved()).map((d: any) => d.type)).toEqual(["hline", "trendline", "rect", "text"]);
+
+  // A click on empty chart picks nothing.
+  await click(200, 160);
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+
+  // Pick the trend line by a click on its middle: it is outlined and offers Delete only (no Edit text).
+  await click(-140, -70);
+  await expect(popup("Trend line")).toBeVisible();
+  await expect(popup("Trend line").getByRole("button", { name: "Edit text" })).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("picked.png") });
+  await popup("Trend line").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+  expect((await saved()).map((d: any) => d.type)).toEqual(["hline", "rect", "text"]);
+
+  // The horizontal line is picked anywhere along its height; Delete key removes it.
+  await click(150, 110);
+  await expect(popup("Horizontal line")).toBeVisible();
+  await page.keyboard.press("Delete");
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+  expect((await saved()).map((d: any) => d.type)).toEqual(["rect", "text"]);
+
+  // The rectangle is picked inside it; Escape drops the pick and nothing is deleted. The saved line width is never the thick one.
+  await click(145, -100);
+  await expect(popup("Rectangle")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+  expect((await saved()).map((d: any) => d.type)).toEqual(["rect", "text"]);
+
+  // Text: pick it, Edit text changes it; the text is kept in the same place.
+  await click(-100, 40);
+  await expect(popup("Text")).toBeVisible();
+  await popup("Text").getByRole("button", { name: "Edit text" }).click();
+  const prompt = page.getByRole("dialog", { name: "Chart text" });
+  await expect(prompt.getByLabel("Text to show on the chart")).toHaveValue("Support");
+  const before = (await saved()).find((d: any) => d.type === "text");
+  await prompt.getByLabel("Text to show on the chart").fill("Resistance");
+  await page.keyboard.press("Enter");
+  const after = (await saved()).find((d: any) => d.type === "text");
+  expect(after.text).toBe("Resistance");
+  expect([after.time, after.price]).toEqual([before.time, before.price]);
+  expect(await saved()).toHaveLength(2);
+
+  // A double click on the Text opens its text box (Lightweight has no double click event of its own); Cancel leaves the text as it was.
+  const q = at(-100, 40);
+  await page.mouse.move(q.x - 3, q.y - 3, { steps: 4 });
+  await page.waitForTimeout(150);
+  await page.mouse.move(q.x, q.y, { steps: 3 });
+  await page.waitForTimeout(150);
+  await page.mouse.dblclick(q.x, q.y);
+  await expect(prompt).toBeVisible();
+  await expect(prompt.getByLabel("Text to show on the chart")).toHaveValue("Resistance");
+  await prompt.getByRole("button", { name: "Cancel" }).click();
+  expect((await saved()).find((d: any) => d.type === "text").text).toBe("Resistance");
+
+  // Delete the text, then the rectangle: nothing is left, and the Clear button goes.
+  await click(-100, 40);
+  await popup("Text").getByRole("button", { name: "Delete" }).click();
+  await click(145, -100);
+  await popup("Rectangle").getByRole("button", { name: "Delete" }).click();
+  expect(await saved()).toEqual([]);
+  await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

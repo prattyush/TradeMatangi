@@ -42,8 +42,8 @@ export default function DeepDiveLightChart({ symbol, date, title, strike, right,
   const tools = useLightweightTools(`${lightweightDrawingKey(rendererAccountKey(), symbol, right, strike, expiry)}:deepdive:${date}`)
   const attachTools = useRef(tools.attach)
   attachTools.current = tools.attach
-  const pick = useRef({ pickMode, onPick, drawing: false })
-  pick.current = { pickMode, onPick, drawing: tools.state.mode !== 'none' }
+  const pick = useRef({ pickMode, onPick, drawing: false, hitsDrawing: tools.hitsDrawing })
+  pick.current = { pickMode, onPick, drawing: tools.state.mode !== 'none', hitsDrawing: tools.hitsDrawing }
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ready'; empty: boolean } | { status: 'error'; message: string }>({ status: 'loading' })
 
   useEffect(() => {
@@ -63,6 +63,7 @@ export default function DeepDiveLightChart({ symbol, date, title, strike, right,
     // Registered before the drawing tools' own click handler, so the click that finishes a drawing is never also a mark.
     chart.subscribeClick(param => {
       if (pick.current.drawing || !pick.current.pickMode || !param.point || !param.time || !candleSeries.current) return
+      if (pick.current.hitsDrawing(param.point)) return // a click on a drawing picks the drawing, it is not also a mark
       const price = candleSeries.current.coordinateToPrice(param.point.y)
       if (price === null) return
       pick.current.onPick?.({ time: param.time as number, price })

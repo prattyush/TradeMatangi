@@ -6,6 +6,16 @@ type RenderTarget = Parameters<ISeriesPrimitivePaneRenderer['draw']>[0]
 
 export interface TextDrawingData { time: number; price: number; text: string; color: string }
 export const TEXT_DRAWING_COLOR = '#facc15'
+const FONT = 'bold 13px sans-serif'
+
+let measuring: CanvasRenderingContext2D | null = null
+/** Width (px) of a text drawing's text, for picking it with a click. */
+export function textWidth(text: string): number {
+  if (!measuring) measuring = document.createElement('canvas').getContext('2d')
+  if (!measuring) return text.length * 7.5
+  measuring.font = FONT
+  return measuring.measureText(text).width
+}
 
 /**
  * A text label placed at a clicked time and price (the Text drawing of the Lightweight Analysis, Patterns and Deep Dive charts).
@@ -14,6 +24,7 @@ export const TEXT_DRAWING_COLOR = '#facc15'
  */
 export class TextPrimitive implements ISeriesPrimitive<Time>, ISeriesPrimitivePaneRenderer {
   private attachment: SeriesAttachedParameter<Time> | null = null
+  private selected = false
   private readonly paneViewList: ISeriesPrimitivePaneView[] = [{ zOrder: () => 'top', renderer: () => this }]
 
   constructor(readonly data: TextDrawingData) {}
@@ -24,6 +35,9 @@ export class TextPrimitive implements ISeriesPrimitive<Time>, ISeriesPrimitivePa
   paneViews(): readonly ISeriesPrimitivePaneView[] { return this.paneViewList }
   toJSON(): TextDrawingData { return this.data }
 
+  /** Outline the text while it is the selected drawing. */
+  setSelected(on: boolean): void { this.selected = on; this.attachment?.requestUpdate() }
+
   draw(target: RenderTarget): void {
     const attachment = this.attachment
     if (!attachment) return
@@ -32,7 +46,7 @@ export class TextPrimitive implements ISeriesPrimitive<Time>, ISeriesPrimitivePa
     if (x === null || y === null) return
     target.useMediaCoordinateSpace(({ context }) => {
       context.save()
-      context.font = 'bold 13px sans-serif'
+      context.font = FONT
       context.textAlign = 'left'
       context.textBaseline = 'middle'
       context.lineJoin = 'round'
@@ -41,6 +55,11 @@ export class TextPrimitive implements ISeriesPrimitive<Time>, ISeriesPrimitivePa
       context.strokeText(this.data.text, x + 6, y)
       context.fillStyle = this.data.color
       context.fillText(this.data.text, x + 6, y)
+      if (this.selected) {
+        context.strokeStyle = '#f0883e'
+        context.lineWidth = 1
+        context.strokeRect(x + 3, y - 10, context.measureText(this.data.text).width + 6, 20)
+      }
       context.restore()
     })
   }
