@@ -5,7 +5,8 @@ import {
   formatDay, formatPct, gaps, isComplete, nextGapIndex, orderSetups, positionLabel, removalImpact, restNotValid, setupSideOfTrade, SIDE_MEANING, sortTagStats,
   stepIndex, successLine, tagLine, tagState, tagValueOf, thinNote, toggleTag, unmarkedDaysForTag, unmarkedTagIds, validateTagName,
 } from '../../shared/deepdive/model'
-import type { DeepDiveSetup, DeepDiveTag, StatsAllEntry, StatsBlock, TagStat } from '../../shared/deepdive/types'
+import { comparableDives, dayKey, dayOptionLabel, daysNewestFirst, diveKey, legOrUnderlying, legsFor, sideLeg } from '../../shared/deepdive/ui/compareModel'
+import type { DeepDiveSetup, DeepDiveTag, DiveSummary, StatsAllEntry, StatsBlock, TagStat } from '../../shared/deepdive/types'
 import { createPatternsClient } from './patternsClient'
 import { validPatternsPath } from './patternsApi'
 
@@ -420,5 +421,34 @@ describe('group: two tags together', () => {
   it('accepts the compact days the live popup receives (no symbol)', () => {
     const compact = [{ date: '2026-10-01', side: 'buy' as const, tag_values: { a: true, b: true } }]
     expect(computeGroupStats(compact, A, B).counts.both.n).toBe(1)
+  })
+})
+
+describe('compare: what a pane offers', () => {
+  const summary = (category: string, strategy: string, days: number, can_edit = true): DiveSummary => ({ category, strategy, owner_id: can_edit ? 'me' : 'other', can_edit, days, buy_days: days, sell_days: 0, tags: 0, incomplete_days: 0 })
+
+  it('offers only strategies with marked days, in name order, own before shared', () => {
+    const list = comparableDives([summary('Reversal', 'Trap', 2), summary('Breakout', 'ORB', 0), summary('Breakout', 'Retest', 1), summary('Breakout', 'Retest', 3, false)])
+    expect(list.map(d => `${d.category}/${d.strategy}/${d.can_edit}`)).toEqual(['Breakout/Retest/true', 'Breakout/Retest/false', 'Reversal/Trap/true'])
+    expect(comparableDives([summary('A', 'B', 0)])).toEqual([])
+  })
+
+  it('lists days newest first and keeps Buy before Sell on one date', () => {
+    const days = daysNewestFirst([setup('2026-10-06', 'buy'), setup('2026-10-08', 'sell'), setup('2026-10-08', 'buy')])
+    expect(days.map(d => `${d.date} ${d.side}`)).toEqual(['2026-10-08 sell', '2026-10-08 buy', '2026-10-06 buy'])
+  })
+
+  it('gives every Pattern symbol the CE and PE charts and falls back to the underlying otherwise', () => {
+    expect(legsFor('NIFTY')).toEqual(['underlying', 'CE', 'PE'])
+    expect(legsFor('NOTASYMBOL')).toEqual(['underlying'])
+    expect(legOrUnderlying('CE', 'NIFTY')).toBe('CE')
+    expect(legOrUnderlying('PE', 'NOTASYMBOL')).toBe('underlying')
+  })
+
+  it('keys a day and a deep dive uniquely and says which leg a side is traded on', () => {
+    expect(dayKey(setup('2026-10-06', 'buy'))).toBe('2026-10-06|NIFTY|buy')
+    expect(diveKey(summary('Breakout', 'ORB', 1))).toBe('me|Breakout|ORB')
+    expect(sideLeg({ side: 'buy' })).toBe('CE'); expect(sideLeg({ side: 'sell' })).toBe('PE')
+    expect(dayOptionLabel({ ...setup('2026-10-06', 'buy'), annotations: [] }, formatDay)).toBe('6 Oct 2026 · Buy · NIFTY · 0 marks')
   })
 })

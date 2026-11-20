@@ -133,3 +133,13 @@
 @media (max-width: 1000px) { .dd-charts[data-layout="side"] { flex-direction: column; } }
 
 .dd-layout { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+
+/* Compare: two marked days side by side (view only). */
+.dd-compare { display: flex; gap: 10px; min-height: 0; }
+.dd-compare-pane { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.dd-compare-pane[hidden] { display: none; }
+.dd-compare-bar { flex-wrap: wrap; row-gap: 4px; }
+.dd-compare-bar select { max-width: 260px; }
+.dd-compare-box { flex: 1 1 0; min-height: 320px; }
+.dd-compare-note { margin: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1000px) { .dd-compare { flex-direction: column; } .dd-compare-box { flex: none; height: 340px; } }

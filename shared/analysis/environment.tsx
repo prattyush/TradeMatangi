@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react'
 import type { OHLCCandle } from './api'
 import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
@@ -85,6 +85,18 @@ export function AnalysisProvider({ value, children }: { value: AnalysisEnvironme
   const parent = useContext(Context)
   const [intervalMinutes, setIntervalMinutes] = useState(3)
   return <Context.Provider value={{...value, intervalMinutes: parent?.intervalMinutes ?? intervalMinutes, setIntervalMinutes: parent?.setIntervalMinutes ?? setIntervalMinutes}}>{children}</Context.Provider>
+}
+/**
+ * A chart (or a pair of charts) with a candle interval of its own. Every Analysis chart reads the interval from the environment, which
+ * is one shared setting; inside this scope the interval is local, starting at `initial` (re-applied when it changes), and a change
+ * the user makes on a chart stays in the scope. Used by Compare, where two panes show different days with their own intervals.
+ */
+export function AnalysisIntervalScope({ initial, children }: { initial: number; children: ReactNode }) {
+  const env = useAnalysisEnvironment()
+  const [minutes, setMinutes] = useState(initial)
+  useEffect(() => { setMinutes(initial) }, [initial])
+  const value = useMemo(() => ({ ...env, intervalMinutes: minutes, setIntervalMinutes: setMinutes }), [env, minutes])
+  return <Context.Provider value={value}>{children}</Context.Provider>
 }
 export function useAnalysisEnvironment(): AnalysisEnvironment {
   const value = useContext(Context)

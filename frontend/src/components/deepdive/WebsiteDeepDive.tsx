@@ -4,6 +4,7 @@ import { withWebsiteAnalysis } from '../../services/analysisEnvironment'
 import { useAnalysisChartRenderer } from '../../hooks/useAnalysisChartRenderer'
 import { useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import DeepDive from '../../../../shared/deepdive/ui/DeepDive'
+import Compare from '../../../../shared/deepdive/ui/Compare'
 import type { DeepDiveHost, DiveChartProps } from '../../../../shared/deepdive/ui/host'
 import { resolveStrikes, type StrikeLookup } from '../../../../shared/deepdive/strikes'
 import { loadHistoricalDays, loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../SettingsModal'
@@ -17,7 +18,7 @@ const lookup: StrikeLookup = {
   findStrikeByPrice: (symbol, date, expiry, right, maxPrice, referenceTime) => api.findStrikeByPrice(symbol, date, expiry, right, maxPrice, referenceTime, 'replay', 'minute'),
 }
 
-function Page({ headerSlot = null }: { headerSlot?: HTMLElement | null }) {
+function Page({ headerSlot = null, compare = false }: { headerSlot?: HTMLElement | null; compare?: boolean }) {
   const env = useAnalysisEnvironment()
   const renderer = useAnalysisChartRenderer()
   const mode = loadMaxPriceMode(), ceCap = loadMaxPriceThresholdCE(), peCap = loadMaxPriceThresholdPE(), historicalDays = loadHistoricalDays()
@@ -36,8 +37,11 @@ function Page({ headerSlot = null }: { headerSlot?: HTMLElement | null }) {
     Chart: (renderer === 'kline' && env.charts?.AnalysisChart ? env.charts.AnalysisChart : DeepDiveLightChart) as DeepDiveHost['Chart'] & ((props: DiveChartProps) => unknown),
     headerSlot,
   }), [renderer, env.charts, mode, ceCap, peCap, historicalDays, headerSlot])
-  return <div className="dd-web"><DeepDive host={host} /></div>
+  return <div className="dd-web">{compare ? <Compare host={host} /> : <DeepDive host={host} />}</div>
 }
 
 /** The Deep Dive on the website and webapp: the Pattern Library's third mode, on whichever chart renderer Analysis & Patterns uses. */
 export default withWebsiteAnalysis(Page)
+
+/** The Pattern Library's Compare mode: two marked days side by side, on the same host and chart renderer. */
+export const WebsiteCompare = withWebsiteAnalysis(() => <Page compare />)
