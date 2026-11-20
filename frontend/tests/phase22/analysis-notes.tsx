@@ -67,6 +67,17 @@ function notes(path: string, options: any, url: URL) {
   }
   return json({ detail: "unhandled" }, 404);
 }
+// The day score: `?score=` picks what the server says (scored, estimated limit with partial candles, pending labels, none stored).
+const scoreMode = params.get("score") ?? "scored";
+w.scoreReads = [] as any[]; w.scoreRanges = [] as string[];
+const item = (key: string, title: string, points: number, detail: string, count: number | null = null) => ({ key, title, points, detail, count });
+const dayScore = () => scoreMode === "pending" ? { date: "2026-10-16", status: "pending_labels", score: null, closed: 4, labelled: 3, sessions: 1 }
+  : { date: "2026-10-16", status: "scored", score: scoreMode === "estimated" ? 41 : 72, closed: 4, labelled: 4, sessions: 1, base: 60, capital: 100000,
+    limit_pct: scoreMode === "estimated" ? 12 : 10, limit_source: scoreMode === "estimated" ? "estimated" : "saved",
+    drawdown: { worst: -6200, worst_pct: 6.2, limit_ratio: 0.52, at: 1, missing_contracts: scoreMode === "estimated" ? 1 : 0, open_cycles: 0, partial: scoreMode === "estimated" },
+    items: [item("drawdown", "Drawdown against the guardrail limit", -8, "The day's total P&L reached -6.2% of capital"), item("repeat_entry", "Repeat entries after a loss", 0, "None", 0),
+      item("add_to_loser", "Adding to a loser", 0, "None", 0), item("clean_day", "Closed P&L never negative", 15, "The running closed P&L never went below zero over 4 trades"),
+      item("big_loss_wipes_gains", "One loss wiped out three or more wins", scoreMode === "estimated" ? -22 : 0, "None", 0)] };
 const original = window.fetch.bind(window);
 window.fetch = async (input: any, options: any = {}) => {
   const url = new URL(typeof input === "string" ? input : input.url, location.origin);
@@ -83,6 +94,8 @@ window.fetch = async (input: any, options: any = {}) => {
   if (path === "/api/analysis/labels") return json([]);
   if (path === "/api/whatif" || path === "/api/whatif/range") return json({ scenarios: [] });
   if (path.startsWith("/api/day-notes")) return notes(path, options, url);
+  if (path === "/api/analysis/day-scores") { w.scoreRanges.push(url.search); return json({ scores: scoreMode === "none" ? [] : [{ date: "2026-10-16", score: 68, limit_source: "saved", partial: false, computed_at: "t" }], pending: 0 }); }
+  if (path === "/api/analysis/day-score") { w.scoreReads.push(url.searchParams.get("date")); return json(dayScore()); }
   return json({});
 };
 createRoot(document.getElementById("test-root")!).render(

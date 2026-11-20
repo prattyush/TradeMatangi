@@ -16,6 +16,9 @@ import EventSnapshotViewer from './EventSnapshotViewer'
 import TradeLabeling from './TradeLabeling'
 import { CardMaximizeContext } from './labeling/useRoundTripView'
 import DayNotes from './notes/DayNotes'
+import DayScoreBadge from './dayScore/DayScoreBadge'
+import { useDayScore } from './dayScore/useDayScore'
+import type { ScoreRow } from './dayScore/types'
 import './maximize.css'
 import TradeWalkthrough from './walkthrough/TradeWalkthrough'
 import TradeWhatIf from './whatif/TradeWhatIf'
@@ -149,7 +152,7 @@ function TradeTable({ trades }: { trades: AnalysisTrade[] }) {
 
 // ── Group card ────────────────────────────────────────────────────────────────
 
-export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false,onSwingDraftStateChange }: {onSwingDraftStateChange?:(state:{dirty:boolean;saving:boolean})=>void; group: SessionGroup; historicalDays?: number; initiallyExpanded?: boolean }) {
+export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false,onSwingDraftStateChange, storedScore }: {onSwingDraftStateChange?:(state:{dirty:boolean;saving:boolean})=>void; group: SessionGroup; historicalDays?: number; initiallyExpanded?: boolean; /** The stored score of this date from the list (no computing), shown until the card reads the full one. */ storedScore?: ScoreRow }) {
   const api = useAnalysisApi()
   const environment = useAnalysisEnvironment()
 
@@ -206,6 +209,8 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   }, [group.totalCommission])
 
   const allTrades = group.sessions.flatMap(s => details.get(s.session_id)?.trades ?? [])
+  // The day's score: read when the card is open and again when the tab changes (a label saved in Label Trades is in it by then). Intraday days only.
+  const dayScore = useDayScore(group.date, expanded && group.trading_style !== 'swing' && !group.sessions.some(s => s.shared), `${activeTab}:${environment.dataRevision ?? 0}`)
   // Stable inputs for Trade Walkthrough (it recomputes its story when these change).
   const dayCycles = useMemo(() => [...details.values()].flatMap(d => d.cycles ?? []), [details])
   const sessionTypes = useMemo(() => new Map(group.sessions.map(s => [s.session_id, s.session_type])), [group.sessions])
@@ -240,6 +245,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
             {sessionTypeLabel}{group.practice && <span data-testid="practice-badge" title="A practice run: kept out of the Performance totals" style={{ marginLeft: 6, padding: '0 6px', borderRadius: 8, background: '#0d2238', border: '1px solid #1f6feb', color: '#79c0ff', fontSize: 10, fontWeight: 600 }}>Practice: {group.practice.strategy}</span>}{group.trading_style==='swing'?' · Swing':''}{group.sessions[0]?.shared ? ` · Shared by ${group.sessions[0].owner_email ?? group.sessions[0].user_id}` : ''}{multiSession ? ` · ${group.sessions.length} sessions` : ''}
           </div>
           {group.trading_style !== 'swing' && <LabelProgressBadge sessionIds={group.sessions.map(s => s.session_id)} />}
+          {group.trading_style !== 'swing' && !group.sessions.some(s => s.shared) && <DayScoreBadge score={dayScore.score?.status === 'scored' ? dayScore.score : dayScore.score ? null : storedScore} />}
         </div>
 
         <div style={{ minWidth: 80 }}>
@@ -504,7 +510,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
               />
             </>
           ) : activeTab === 'notes' ? (
-            <DayNotes date={group.date} />
+            <DayNotes date={group.date} score={dayScore.score} scoreLoading={dayScore.loading} scoreError={dayScore.error} />
           ) : activeTab === 'whatif' ? (
             <TradeWhatIf
               readOnly={group.sessions.some(s => s.shared)}
@@ -612,6 +618,17 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
 
   useEffect(() => { void handleSearch(); return () => { searchGeneration.current++ } }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Stored day scores for the badges (one cheap read; nothing is computed here: a card computes its own day when it is opened).
+  const [storedScores, setStoredScores] = useState<Map<string, ScoreRow>>(new Map())
+  const scoreSource = environment.dayScore
+  useEffect(() => {
+    if (!scoreSource || sessions.length === 0) { setStoredScores(new Map()); return }
+    let live = true
+    scoreSource.range(startDate || undefined, endDate || undefined, false)
+      .then(result => { if (live) setStoredScores(new Map(result.scores.map(row => [row.date, row]))) })
+      .catch(() => { if (live) setStoredScores(new Map()) })
+    return () => { live = false }
+  }, [scoreSource, sessions, startDate, endDate])
   const groups = groupSessions(sessions.filter(s => practiceFilter === 'include' || (practiceFilter === 'only' ? Boolean(s.practice) : !s.practice)))
   // The totals leave practice runs out (as the Performance dashboard does), unless only practice runs are shown.
   const counted = practiceFilter === 'only' ? groups : groups.filter(g => !g.practice)
@@ -779,7 +796,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
           )}
 
           {groups.map(g => (
-            <GroupCard key={`${g.key}:${draftReset}`} onSwingDraftStateChange={state=>{if(state.dirty||state.saving)swingDrafts.current.set(g.key,state);else swingDrafts.current.delete(g.key)}} group={g} historicalDays={historicalDays} />
+            <GroupCard key={`${g.key}:${draftReset}`} storedScore={storedScores.get(g.date)} onSwingDraftStateChange={state=>{if(state.dirty||state.saving)swingDrafts.current.set(g.key,state);else swingDrafts.current.delete(g.key)}} group={g} historicalDays={historicalDays} />
           ))}
         </div>
       </div>

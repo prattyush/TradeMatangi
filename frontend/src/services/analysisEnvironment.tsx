@@ -19,6 +19,7 @@ import { rendererAccountKey } from './websiteChartPreferences'
 import DeepDiveLightChart from '../components/deepdive/DeepDiveLightChart'
 import { loadHistoricalDays } from '../components/SettingsModal'
 import { createDayNotesSource } from '../../../shared/analysis/notes/source'
+import { createDayScoreSource } from '../../../shared/analysis/dayScore/source'
 const swingRequest:SwingRequest=async<T,>(path:string,method:string,body?:Record<string,unknown>)=>{const response=await fetch(`${BACKEND_URL}/api/swing/portfolios/${path}`,{method,headers:{..._authHeaders(),'Content-Type':'application/json'},body:method==='GET'?undefined:JSON.stringify(body)});if(!response.ok)throw new Error('Swing history could not load');return response.json() as Promise<T>}
 const lightweightCharts = {
   SwingChart, AnalysisChart: WebsiteAnalysisChart, OptionsChart: WebsiteOptionsChart, AnalysisChartPanel: WebsiteAnalysisChartPanel,
@@ -28,15 +29,20 @@ const lightweightCharts = {
 const videoLinks = { list: getVideoLinks, save: saveVideoLink, remove: removeVideoLink, open: (video: { url: string }) => { window.open(video.url, '_blank', 'noopener,noreferrer') } }
 const whatIf = { list: getWhatIfScenarios, range: getWhatIfRange, save: saveWhatIfScenario, remove: removeWhatIfScenario }
 // Day notes and carried-over TODOs: the same source the desktop uses, over the website's authenticated fetch.
-const dayNotes = createDayNotesSource(async <T,>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown) => {
-  const response = await fetch(`${BACKEND_URL}/api/${path}`, { method, headers: { ..._authHeaders(), 'Content-Type': 'application/json' }, body: method === 'POST' ? JSON.stringify(body) : undefined })
+const notesRequest = async <T,>(path: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown): Promise<T> => {
+  // The notes live at /api/day-notes; the day score is one of the analysis routes (/api/analysis/day-score), as on the desktop's analysis transport.
+  const route = path.startsWith('day-score') ? `analysis/${path}` : path
+  const response = await fetch(`${BACKEND_URL}/api/${route}`, { method, headers: { ..._authHeaders(), 'Content-Type': 'application/json' }, body: method === 'POST' ? JSON.stringify(body) : undefined })
   if (!response.ok) {
     const detail = (await response.json().catch(() => null))?.detail
     throw new Error(typeof detail === 'string' ? detail : `Notes request failed: ${response.status}`)
   }
   return response.json() as Promise<T>
-})
-const base = { swingRequest, api, performance, videoLinks, whatIf, dayNotes, reportError: flashError }
+}
+const dayNotes = createDayNotesSource(notesRequest)
+// The day score is read over the same transport (two read-only routes under /api/analysis).
+const dayScore = createDayScoreSource(notesRequest)
+const base = { swingRequest, api, performance, videoLinks, whatIf, dayNotes, dayScore, reportError: flashError }
 // Strategy Practice: the review of a practice run on the same chart the Pattern Library's Practice tab uses for each renderer.
 const practiceFor = (Chart: ComponentType<any>) => ({ api: practiceApi, Chart, historicalDays: loadHistoricalDays() })
 // The Lightweight charts save their drawings to the database through the same service and instrument identity as KLine, so both share them.

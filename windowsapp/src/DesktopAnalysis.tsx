@@ -14,6 +14,7 @@ import { analysisRequest, createAnalysisApi, type AnalysisRequest } from './anal
 import { createVideoLinksApi } from './tools/videoLinks'
 import { createWhatIfApi } from './tools/whatIf'
 import { createDayNotesSource } from '../../shared/analysis/notes/source'
+import { createDayScoreSource } from '../../shared/analysis/dayScore/source'
 import ExecutionInspector from './ExecutionInspector'
 import { createAnalysisPracticeApi } from './analysisApi'
 import type { ComponentType } from 'react'
@@ -45,11 +46,14 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return createWhatIfApi(analysisRequest(baseUrl, token, native, onUnauthorized))
   }, [baseUrl, token, onUnauthorized])
   // Day notes and carried-over TODOs (owner only), through the same analysis transport.
-  const dayNotes = useMemo(() => {
+  const notesRequest = useMemo(() => {
     const native: AnalysisRequest | undefined = '__TAURI_INTERNALS__' in window
       ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
-    return createDayNotesSource(analysisRequest(baseUrl, token, native, onUnauthorized))
+    return analysisRequest(baseUrl, token, native, onUnauthorized)
   }, [baseUrl, token, onUnauthorized])
+  const dayNotes = useMemo(() => createDayNotesSource(notesRequest), [notesRequest])
+  // The day score: two read-only routes on the same transport.
+  const dayScore = useMemo(() => createDayScoreSource(notesRequest), [notesRequest])
   const drawingRequest=useCallback(async<T,>(path:string,method:'GET'|'POST'|'PUT'|'PATCH'|'DELETE',body:Record<string,unknown>={})=>{if('__TAURI_INTERNALS__' in window)return invoke<T>('desktop_drawing_request',{baseUrl,path,method,body});const response=await fetch(`${baseUrl.replace(/\/$/,'')}/api/desktop/v1/${path}`,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:method==='GET'?undefined:JSON.stringify(body)});if(!response.ok)throw new Error('Swing analytics could not read this portfolio');return response.json() as Promise<T>},[baseUrl,token])
   // Same catalogue kind/exchange the Day tiles use, so Analysis drawings share their instrument key.
   const catalogue=useRef<Promise<Array<{symbol:string;exchange:string;chart_type?:string}>>|null>(null)
@@ -122,7 +126,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return { api: createAnalysisPracticeApi(analysisRequest(baseUrl, token, native, onUnauthorized)), Chart: DesktopAnalysisChart as unknown as ComponentType<DiveChartProps>, historicalDays }
   }, [baseUrl, token, onUnauthorized, historicalDays])
   const environment: AnalysisEnvironment = useMemo(() => ({
-    practice, swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, whatIf, dayNotes, chartPicking: true, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
+    practice, swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, whatIf, dayNotes, dayScore, chartPicking: true, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
     onDataChanged: () => setDataRevision(n => n + 1),
     onLabelSavingChange: saving => { labelSaving.current = saving; if(!saving)setNavigationMessage('') },
     charts: { SwingChart:swingRenderer,AnalysisChartPanel: AnalysisPanels, LabelCharts: AnalysisPanels, AnalysisChart: DesktopAnalysisChart, OptionsChart: DesktopAnalysisChart, SnapshotChart: DesktopAnalysisChart, SnapshotOptionsChart: DesktopAnalysisChart, TradesChart: ComparisonChart, PatternChart: ComparisonChart },
@@ -130,7 +134,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     onDirtyChange: value => { dirty.current = value },
     confirmDiscard: () => { if(labelSaving.current){setNavigationMessage('Labels are saving. Wait for the result before changing sessions.');return false}; if (!dirty.current || window.confirm('Discard unsaved labels?')) { dirty.current = false; return true }; return false },
     onSelectionContextChange: () => setTrade(null),
-  }), [adapter, practice, videoLinks, whatIf, dayNotes, active, dataRevision,historicalDays,labelView,pnlDisplayMode,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
+  }), [adapter, practice, videoLinks, whatIf, dayNotes, dayScore, active, dataRevision,historicalDays,labelView,pnlDisplayMode,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
   const navigationReady = useRef(onNavigationReady);
   navigationReady.current = onNavigationReady;
   const guard = useRef(environment.confirmDiscard);

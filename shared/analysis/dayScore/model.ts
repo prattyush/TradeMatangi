@@ -1,0 +1,40 @@
+/** Pure helpers for showing a day score: its colour band, its wording and the trend series. */
+import type { DayScore, ScoreItem, ScoreRow } from './types'
+
+export type ScoreBand = 'good' | 'fair' | 'poor'
+
+/** 75 and above is a good day, 50 to 74 fair, below 50 poor. */
+export const scoreBand = (score: number): ScoreBand => (score >= 75 ? 'good' : score >= 50 ? 'fair' : 'poor')
+
+export const signedPoints = (points: number) => (points > 0 ? `+${points}` : points < 0 ? `−${Math.abs(points)}` : '0')
+
+/** What to say when a day has no score yet. */
+export function pendingText(score: Pick<DayScore, 'status' | 'closed' | 'labelled'>): string {
+  if (score.status === 'no_trades') return 'No closed trades on this day, so there is nothing to score.'
+  if (score.status === 'pending_labels') {
+    const left = score.closed - score.labelled
+    return `Label ${left === 1 ? 'the last closed trade' : `the ${left} closed trades that have no label`} (${score.labelled} of ${score.closed} labelled) to get the day's score.`
+  }
+  return ''
+}
+
+/** A short note about how far the score can be trusted, or null when nothing needs saying. */
+export function trustNote(score: Pick<DayScore, 'limit_source' | 'limit_pct' | 'drawdown'>): string | null {
+  const notes: string[] = []
+  if (score.limit_source === 'estimated') notes.push(`the guardrail limit is estimated at ${score.limit_pct ?? 12}% (the session did not save one)`)
+  if (score.drawdown?.partial) notes.push('candles were missing for some contracts, so the drawdown may be larger than shown')
+  return notes.length ? notes.join('; ') : null
+}
+
+/** The badge text and hover for a day card. */
+export function badgeFor(score: Pick<DayScore, 'score' | 'limit_source' | 'drawdown'> | Pick<ScoreRow, 'score' | 'limit_source' | 'partial'>): { text: string; title: string } {
+  const partial = 'partial' in score ? score.partial : !!score.drawdown?.partial
+  const flags = [score.limit_source === 'estimated' ? 'limit estimated' : '', partial ? 'partial candles' : ''].filter(Boolean)
+  return { text: `Score ${score.score}`, title: `Day score ${score.score} of 100${flags.length ? ` (${flags.join(', ')})` : ''}` }
+}
+
+/** Items that cost points first, then bonuses, then the neutral ones: what to look at first. */
+export const itemsByImpact = (items: readonly ScoreItem[]): ScoreItem[] => [...items].sort((a, b) => a.points - b.points)
+
+/** Trend values by date for the Stats chart; days without a stored score are absent. */
+export const scoreByDate = (rows: readonly ScoreRow[]): Map<string, number> => new Map(rows.map(row => [row.date, row.score]))

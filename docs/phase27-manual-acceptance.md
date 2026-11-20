@@ -55,8 +55,16 @@ Status: built (S5), waiting for your try. Website, webapp and Windows app (needs
 10. A day shared with you does not show the Notes tab.
 
 ## F. Day score and system habits (S6, S7)
-Status: the backend is built (S6, real-trading path: dev only), the screens are S7. Needs a Windows rebuild (new analysis routes).
-S6, before any screen exists (use the website's address bar while signed in, or the browser's Network tab once S7 is in):
+Status: built (S6 backend, real-trading path: dev only; S7 screens). Needs a Windows rebuild (new analysis routes). The phone shows the System habits but no chip or breakdown.
+S7, the screens (website, webapp, Windows app):
+- Analysis, a day whose trades are all labelled: a chip **Score nn** next to the "n/n labelled" badge (green 75+, amber 50 to 74, red below), on the card and, once any card has scored the day, in the list.
+- Open the day, Notes tab: **Day score** first: the score, "A plain day 60", each rule with its points and what was found, the lowest point of the day against the limit, and a yellow note if the limit is estimated or candles were missing.
+- A day with a trade not yet labelled: no chip; the Notes tab says how many trades still need a label. Label them in Label Trades, go back: the score is there.
+- Habits (Stats): a **System** filter beside Entry and Exit with the three calculated habits, each with the usual Costly / Rewarding verdict, deep dive and compare. They cannot be archived (Manage questions does not list them).
+- Stats > Behavior > Day P&L path: the metric **Day score (0 to 100)** plots your scored days over the range; it may take a moment the first time (it scores up to 31 new days per round, then say "more days still to score"; choose the metric again to continue).
+- Tell me if a day's score or one of the three system habits does not match what you remember: the weights are a first guess and are all in `CONFIG` in `day_score_service.py`.
+
+S6, the backend and the guardrail snapshot (use the website's address bar while signed in, or the browser's Network tab):
 1. Start a **replay** session (Day, any date), trade a little, Stop. In DynamoDB the session's `Sessions` row has `guardrail_limit_snapshot` with your Guardrail BAN % and whether the ban was on. Then paper, then one real session: the same.
 2. Change the BAN % in Settings, then resume a paper or real session from before: the row still has the old value (the limit does not follow settings).
 3. A session from before this change has no such field; the score uses a fixed 12 % and says `limit_source: estimated`.
