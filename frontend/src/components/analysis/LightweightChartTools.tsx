@@ -6,8 +6,8 @@ import { rendererAccountKey } from '../../services/websiteChartPreferences'
 import { attachVolumeStudies, type VolumeStudies } from '../../indicators/volumeStudies'
 import { VWAP_COLOR, type VolumeCandle } from '../../indicators/vwap'
 import {
-  LW_DRAW_ITEMS, LW_DRAW_LABEL, LightweightDrawingController, emptyLwSnapshot,
-  type LwDrawMode, type LwDrawingSnapshot,
+  LW_DRAW_ITEMS, LW_DRAW_LABEL, LightweightDrawingController, emptyLwSnapshot, lightweightStoreKey,
+  type LwDrawMode, type LwDrawingSnapshot, type LwStore,
 } from './lightweightDrawings'
 
 /** A boolean indicator preference shared by every Lightweight Analysis chart (localStorage per account, synced by an event). */
@@ -30,13 +30,14 @@ function useFlagPreference(name: string, defaultValue: boolean) {
 /**
  * Drawing + indicator state for one Lightweight Analysis chart.
  * Call `attach(chart, series)` right after creating the chart and call the returned
- * function before `chart.remove()`; drawings are restored from `storageKey` on attach,
+ * function before `chart.remove()`; drawings are loaded from the database on attach
+ * (`store`: the drawings service and the instrument; null keeps them on the chart only),
  * so recreating the chart (e.g. maximize) keeps them.
  */
-export function useLightweightTools(storageKey: string | null) {
+export function useLightweightTools(store: LwStore | null) {
   const controller = useRef<LightweightDrawingController | null>(null)
-  const key = useRef(storageKey)
-  key.current = storageKey
+  const latest = useRef(store)
+  latest.current = store
   const [state, setState] = useState<LwDrawingSnapshot>(emptyLwSnapshot)
   // EMA 9/21 is on by default (it was always on); VWAP and Volume are opt-in.
   const [showEma, setShowEma] = useFlagPreference('analysis-lw-ema', true)
@@ -48,7 +49,7 @@ export function useLightweightTools(storageKey: string | null) {
   const visible = useRef({ vwap: showVwap, volume: showVolume })
   visible.current = { vwap: showVwap, volume: showVolume }
   const attach = useCallback((chart: IChartApi, series: ISeriesApi<'Candlestick'>) => {
-    const ctl = new LightweightDrawingController(chart, series, key.current)
+    const ctl = new LightweightDrawingController(chart, series, latest.current)
     controller.current = ctl
     const off = ctl.subscribe(() => setState(ctl.snapshot()))
     setState(ctl.snapshot())
@@ -61,7 +62,9 @@ export function useLightweightTools(storageKey: string | null) {
       if (studies.current === volume) studies.current = null
     }
   }, [])
-  useEffect(() => { controller.current?.setStorageKey(storageKey) }, [storageKey])
+  // A change of instrument (another contract tab); a new request function alone does not reload.
+  const storeKey = lightweightStoreKey(store)
+  useEffect(() => { controller.current?.setStore(latest.current) }, [storeKey])
   useEffect(() => { studies.current?.setVisible({ vwap: showVwap, volume: showVolume }) }, [showVwap, showVolume])
   return {
     attach, state, showEma, setShowEma,
@@ -146,6 +149,7 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
         )}
       </span>
       {hint && <span style={{ fontSize: 10, color: '#f0883e' }}>{hint}</span>}
+      {tools.state.notice && <span role="alert" style={{ fontSize: 10, color: '#f85149' }} title={tools.state.notice}>⚠ {tools.state.notice.length > 60 ? `${tools.state.notice.slice(0, 57)}…` : tools.state.notice}</span>}
       {tools.state.pendingText && <ChartTextPrompt x={tools.state.pendingText.x} y={tools.state.pendingText.y} initial={tools.state.pendingText.initial ?? ""} onSubmit={tools.submitText} onCancel={tools.cancelText} />}
       {tools.state.selection && <SelectionActions tools={tools} />}
       {count > 0 && <button type="button" style={buttonStyle(false)} title="Remove the last drawing" onClick={tools.clearLast}>Clear</button>}

@@ -11,9 +11,8 @@ import {
 } from 'lightweight-charts'
 import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import type { AnalysisTrade, OHLCCandle } from '../../../../shared/analysis/api'
-import { rendererAccountKey } from '../../services/websiteChartPreferences'
 import { LightweightChartTools, useLightweightTools, type LightweightTools } from './LightweightChartTools'
-import { lightweightDrawingKey } from './lightweightDrawings'
+import { useLightweightStore } from './useLightweightStore'
 import { toVolumeCandles } from '../../indicators/volumeStudies'
 function effectiveSideForChart(trade: AnalysisTrade): 'BUY' | 'SELL' {
   if (!trade.right) return trade.side
@@ -116,7 +115,7 @@ export function WebsiteAnalysisChart({
   const tradeMarkerPoolRef = useRef<ISeriesApi<'Line'>[]>([])
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const tools = useLightweightTools(lightweightDrawingKey(rendererAccountKey(), symbol))
+  const tools = useLightweightTools(useLightweightStore({ symbol }))
   const [candles, setCandles] = useState<CandlestickData[]>([])
   const [markerFilter, setMarkerFilter] = useState<'all' | 'CE' | 'PE'>('all')
 
@@ -379,7 +378,7 @@ export function WebsiteOptionsChart({
   const tradeMarkerPoolRef = useRef<ISeriesApi<'Line'>[]>([])
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const tools = useLightweightTools(lightweightDrawingKey(rendererAccountKey(), symbol, right, strike, expiry))
+  const tools = useLightweightTools(useLightweightStore({ symbol, right, strike, expiry }))
 
   useEffect(() => {
     if (!containerRef.current) return

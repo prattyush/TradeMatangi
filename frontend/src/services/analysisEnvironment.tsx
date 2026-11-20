@@ -29,7 +29,8 @@ const whatIf = { list: getWhatIfScenarios, range: getWhatIfRange, save: saveWhat
 const base = { swingRequest, api, performance, videoLinks, whatIf, reportError: flashError }
 // Strategy Practice: the review of a practice run on the same chart the Pattern Library's Practice tab uses for each renderer.
 const practiceFor = (Chart: ComponentType<any>) => ({ api: practiceApi, Chart, historicalDays: loadHistoricalDays() })
-const lightweightEnvironment = { ...base, charts: lightweightCharts, practice: practiceFor(DeepDiveLightChart) }
+// The Lightweight charts save their drawings to the database through the same service and instrument identity as KLine, so both share them.
+const lightweightEnvironment = { ...base, charts: lightweightCharts, practice: practiceFor(DeepDiveLightChart), drawingRequest: desktopDrawingRequest, resolveSymbolInstrument }
 export function withWebsiteAnalysis<T extends ComponentType<any>>(Component: T) {
   return function WebsiteAnalysis(props: ComponentProps<T>) {
     // Analysis & Patterns use their own renderer setting, independent of the trading chart.
