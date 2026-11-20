@@ -26,7 +26,11 @@ Probe results are in `docs/spec-phase24.md`; Kite and Breeze are merged (#855, #
 9. Phone app (`docs/phone-manual-acceptance.md`): the owner's try of phone swing trading, paper first, is pending.
 
 ## Phase 26 (Patterns Strategy Deep Dive)
-10. **Owner acceptance of Phase 26**: `docs/phase26-manual-acceptance.md`, sections A to I (desktop rebuild needed; the website and webapp from `dev`; section F covers the real-trading label popups, try replay or stepwise first and real last).
+10. **Owner acceptance of Phase 26**: `docs/phase26-manual-acceptance.md`, sections A to M and items 18 to 36 (desktop rebuild needed, new phone APK; the website and webapp from `dev`; section F covers the real-trading label popups, try replay or stepwise first and real last).
 11a. **Strategy Practice** (Phase 26, S12 to S18): built. The owner's acceptance is section M of `docs/phase26-manual-acceptance.md` (rebuild the Windows app, install the new phone APK). Stepwise is built as a second practice mode (S19 to S21). Ideas for later, not planned: practice from days shared with you; per-strategy trend charts of capture % and entry timing.
 11. Ideas the owner may want later (not planned): tag notes per day (for example the price level of a double top); a wider side-by-side column for the percentages panel in Label Trades; deep dive days shown on the Analysis day list.
 
+
+## Phase 27 (Deep Dive and Analysis upgrades)
+12. **Build Phase 27** from `docs/spec-phase27-implementation-plan.md`: S1 Lightweight drawings on `Chart.tsx` (first; a defect of the last release), S2 Analysis Maximize, S3 Group tab, S4 Compare tab, S5 Notes and TODOs, S6 and S7 day score. Owner acceptance: `docs/phase27-manual-acceptance.md` (a section is added per merged sprint). S1, the live popup Group view and the guardrail snapshot touch real-trading screens or paths: dev only until the owner's real-session try.
+13. Phase 26 "Other minor features" item 2 is still blank in `docs/spec-phase26.md`; it stays unbuilt unless the owner says what it is.
