@@ -42,7 +42,17 @@ Status: built (S4), waiting for your try. Website, webapp and Windows app (needs
 7. A strategy shared with you can be compared too (it is marked "(shared)").
 
 ## E. Notes and TODOs (S5)
-Status: not built yet.
+Status: built (S5), waiting for your try. Website, webapp and Windows app (needs a Windows rebuild: new analysis routes). The phone has no Notes tab yet.
+1. Analysis, open a day: a fifth tab **Notes** after What If.
+2. Write in the four boxes and wait a second: "Saved" appears. Reload Analysis and open the same day: the note is there. Clear all four boxes: the note is removed.
+3. Type in a box and switch to Trades at once: come back, the text was kept.
+4. Add a TODO. Open **the next trading day** (or any later one): the TODO is there, marked "from <date>", at the top.
+5. Mark it **Working on it** on the next day, then **Improved** on a later one. On days after that it is gone; on the day it was closed it still shows as Improved; on the day it was Working it still shows as Working (reviewing an old day shows it as it stood then).
+6. **Review**: the totals match, the week table counts written and closed per week, and each TODO's history reads "14 Oct: Open → 16 Oct: Working on it → ...".
+7. Label Trades on a day that has open TODOs: a banner above the form lists them (read only). Change a status in Notes and the banner follows when you reopen the tab.
+8. Delete a TODO: it asks, then it is gone from the day and the review.
+9. Delete a session from Sessions: the day's note and TODOs stay (they belong to the date, not the session).
+10. A day shared with you does not show the Notes tab.
 
 ## F. Day score and system habits (S6, S7)
 Status: not built yet.

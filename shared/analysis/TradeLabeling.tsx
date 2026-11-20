@@ -5,6 +5,7 @@ import type { StatsAllEntry } from '../deepdive/types'
 import BehaviorManagerModal from './behavior/BehaviorManagerModal'
 import { questionIdsByTrip } from './behavior/model'
 import { readableError } from './behavior/types'
+import OpenTodosBanner from './notes/OpenTodosBanner'
 import RoundTripSplitLayout from './labeling/RoundTripSplitLayout'
 import { invalidateLabelProgress } from './labeling/dayProgress'
 import { useCardMaximized, useRoundTripView } from './labeling/useRoundTripView'
@@ -330,5 +331,5 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
 
   if (loading) return <p role="status">Loading round trips and saved labels…</p>
   if (loadError) return <p role="alert">{loadError}<button onClick={() => setRetry(n => n + 1)}>Retry labels</button></p>
-  return content
+  return <><OpenTodosBanner date={date} />{content}</>
 }

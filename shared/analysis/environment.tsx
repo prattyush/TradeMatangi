@@ -5,6 +5,7 @@ import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesD
 import type { HabitLedger } from './habits/types'
 import type { VideoLinksSource } from './videoLinks'
 import type { WhatIfSource } from './whatif/scenarios'
+import type { DayNotesSource } from './notes/types'
 import type { StatsAllEntry } from '../deepdive/types'
 import type { DiveChartProps } from '../deepdive/ui/host'
 import type { PracticeApi } from '../practice/types'
@@ -36,6 +37,8 @@ export interface AnalysisEnvironment {
   chartPicking?: boolean
   /** Saved What If scenarios (owner only). Absent => What If is a playground that is lost on refresh. */
   whatIf?: WhatIfSource
+  /** Day notes and carried-over TODOs (Phase 27). Without it the Notes tab is not offered. */
+  dayNotes?: DayNotesSource
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
     getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>

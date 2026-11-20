@@ -11,6 +11,14 @@ describe('desktop analysis transport', () => {
     // What If: saved scenarios (the exact path, plus a read-only date-range list).
     for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath('whatif', method)).toBe(true)
     expect(validAnalysisPath('whatif/range?start=2026-11-01', 'GET')).toBe(true)
+    // Phase 27: day notes and TODOs, exact paths; writes are POST (and DELETE on the TODO list), never PUT.
+    expect(validAnalysisPath('day-notes?date=2026-11-19', 'GET')).toBe(true)
+    expect(validAnalysisPath('day-notes', 'POST')).toBe(true)
+    for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath('day-notes/todos', method)).toBe(true)
+    expect(validAnalysisPath('day-notes/todos?todo_id=abc&date=2026-11-19', 'DELETE')).toBe(true)
+    expect(validAnalysisPath('day-notes/todos/status', 'POST')).toBe(true)
+    for (const [path, method] of [['day-notes', 'DELETE'], ['day-notes', 'PUT'], ['day-notes/todos/status', 'GET'], ['day-notes/todos/status', 'DELETE'], ['day-notes/todos', 'PUT']]) expect(validAnalysisPath(path, method)).toBe(false)
+    for (const path of ['day-notes/', 'day-notes/extra', 'day-notes/todos/x', 'day-notes/../labels', 'day-notes%2Ftodos', 'daynotes']) for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath(path, method)).toBe(false)
     // Phase 26: the Deep Dive percentages for the label forms are one read-only route.
     expect(validAnalysisPath('deep-dive/stats/all', 'GET')).toBe(true)
     for (const method of ['POST', 'DELETE']) expect(validAnalysisPath('deep-dive/stats/all', method)).toBe(false)

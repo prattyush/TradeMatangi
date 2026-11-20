@@ -15,6 +15,7 @@ import { SessionSummary, SessionDetail, AnalysisTrade, EventSnapshot } from './a
 import EventSnapshotViewer from './EventSnapshotViewer'
 import TradeLabeling from './TradeLabeling'
 import { CardMaximizeContext } from './labeling/useRoundTripView'
+import DayNotes from './notes/DayNotes'
 import './maximize.css'
 import TradeWalkthrough from './walkthrough/TradeWalkthrough'
 import TradeWhatIf from './whatif/TradeWhatIf'
@@ -158,7 +159,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const [loading, setLoading] = useState(false)
   const [viewingSnapshots, setViewingSnapshots] = useState<{ session: SessionSummary; snapshots: EventSnapshot[]; sessionIds: string[] } | null>(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'trades' | 'labels' | 'walkthrough' | 'whatif'>('trades')
+  const [activeTab, setActiveTab] = useState<'trades' | 'labels' | 'walkthrough' | 'whatif' | 'notes'>('trades')
   const [detailError, setDetailError] = useState('')
   const [hasPattern, setHasPattern] = useState(false)
   const [showComparison, setShowComparison] = useState(false)
@@ -439,6 +440,20 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 borderRadius: '4px 4px 0 0',
               }}
             >What If</button>
+            {environment.dayNotes && !group.sessions.some(s => s.shared) && (
+              <button
+                onClick={() => { if (environment.confirmDiscard?.() !== false) setActiveTab('notes') }}
+                style={{
+                  padding: '6px 16px', border: 'none',
+                  borderBottom: activeTab === 'notes' ? '2px solid #58a6ff' : '2px solid transparent',
+                  background: activeTab === 'notes' ? '#1c2333' : 'transparent',
+                  color: activeTab === 'notes' ? '#58a6ff' : '#8b949e',
+                  cursor: 'pointer', fontSize: 13,
+                  fontWeight: activeTab === 'notes' ? 600 : 400,
+                  borderRadius: '4px 4px 0 0',
+                }}
+              >Notes</button>
+            )}
             <button type="button" className="analysis-card-maximize" onClick={() => setMaximized(value => !value)} aria-pressed={maximized}
               aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): back to the day list' : 'Maximize: this day fills the window, all four tabs'}
               style={{ marginLeft: 'auto', background: '#21262d', border: '1px solid #30363d', color: '#c9d1d9', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer' }}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
@@ -488,6 +503,8 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 historicalDays={historicalDays}
               />
             </>
+          ) : activeTab === 'notes' ? (
+            <DayNotes date={group.date} />
           ) : activeTab === 'whatif' ? (
             <TradeWhatIf
               readOnly={group.sessions.some(s => s.shared)}
