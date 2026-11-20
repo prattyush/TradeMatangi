@@ -4,9 +4,8 @@ import api, { type OHLCCandle } from '../../services/api'
 import { buildMarkers } from '../../../../shared/analysis/patternMarkers'
 import { useAnalysisEnvironment } from '../../../../shared/analysis/environment'
 import type { DiveChartProps } from '../../../../shared/deepdive/ui/host'
-import { rendererAccountKey } from '../../services/websiteChartPreferences'
 import { LightweightChartTools, useLightweightTools } from '../analysis/LightweightChartTools'
-import { lightweightDrawingKey } from '../analysis/lightweightDrawings'
+import { useLightweightStore } from '../analysis/useLightweightStore'
 
 const INTERVALS = [1, 2, 3, 5, 15, 30]
 
@@ -38,8 +37,8 @@ export default function DeepDiveLightChart({ symbol, date, title, strike, right,
   const candleSeries = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const ema9 = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21 = useRef<ISeriesApi<'Line'> | null>(null)
-  // Drawings are kept per account, instrument and day, so each Deep Dive day starts clean and keeps what was drawn on it.
-  const tools = useLightweightTools(`${lightweightDrawingKey(rendererAccountKey(), symbol, right, strike, expiry)}:deepdive:${date}`)
+  // Drawings are saved per instrument, as on the KLine chart (the time of a drawing places it on its day), and shared with it.
+  const tools = useLightweightTools(useLightweightStore({ symbol, right, strike, expiry }))
   const attachTools = useRef(tools.attach)
   attachTools.current = tools.attach
   const pick = useRef({ pickMode, onPick, drawing: false, hitsDrawing: tools.hitsDrawing })

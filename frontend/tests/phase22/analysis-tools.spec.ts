@@ -8,6 +8,11 @@ const chartPoint = async (page: Page, selector: string, dx = 0, dy = 0) => {
   return { x: box.x + box.width / 2 + dx, y: box.y + box.height / 2 + dy };
 };
 
+// What the (mocked) drawings service holds: the saved records, shared by both renderers (it survives a reload in sessionStorage).
+const serverDrawings = async (page: Page) => (JSON.parse(await page.evaluate(() => sessionStorage.getItem("drawing-store") ?? "[]")) as any[]).map((row) => row.drawing);
+const serverTools = async (page: Page) => (await serverDrawings(page)).map((d) => d.tool);
+const TOOL_KIND: Record<string, string> = { Horizontal: "hline", Trend: "trendline", "Fib Retracement": "fibretracement", rect: "rect", Text: "text", "Buy Marker": "buymarker", "Sell Marker": "sellmarker", "Risk Reward": "rrindicator" };
+
 test("KLine Analysis: left rail draws, saves to the shared instrument key and restores after reload", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -65,7 +70,7 @@ test("KLine Analysis: indicators persist and the rail can be hidden for every ch
   expect(indicators).toEqual(["EMA", "VWAP"]);
 });
 
-test("Lightweight Analysis: Chart.tsx tools, local persistence, maximize keeps drawings, EMA toggle", async ({ page }) => {
+test("Lightweight Analysis: Chart.tsx tools, saved to the database, maximize keeps drawings, EMA toggle", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await open(page, "lightweight");
@@ -82,9 +87,11 @@ test("Lightweight Analysis: Chart.tsx tools, local persistence, maximize keeps d
   const p = await chartPoint(page, "canvas", 0, 40);
   await page.mouse.click(p.x, p.y);
   await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
-  const key = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("analysis-lw-drawings:")));
-  expect(key).toBe("analysis-lw-drawings::owner:NIFTY:::");
-  expect(JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key))).toHaveLength(1);
+  // Saved to the database through the drawings service, under the instrument the KLine charts use for NIFTY.
+  await expect.poll(() => serverTools(page)).toEqual(["Horizontal"]);
+  const post = await page.evaluate(() => (window as any).drawingLog.find((r: any) => r.method === "POST"));
+  expect(post.body.instrument).toEqual({ exchange: "NSE", kind: "index", symbol: "NIFTY" });
+  expect(post.body.drawing.points).toHaveLength(1);
 
   // Maximize recreates the chart; the drawing must come back.
   await page.getByTitle("Maximize").click();
@@ -99,11 +106,11 @@ test("Lightweight Analysis: Chart.tsx tools, local persistence, maximize keeps d
 
   await page.getByRole("button", { name: "Clear" }).click();
   await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
-  expect(JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key))).toHaveLength(0);
+  await expect.poll(() => serverTools(page)).toEqual([]);
   expect(errors).toEqual([]);
 });
 
-test("Lightweight Analysis: Rectangle draws in two clicks, persists locally and survives reload and Clear", async ({ page }) => {
+test("Lightweight Analysis: Rectangle draws in two clicks, is saved and survives reload and Clear", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await open(page, "lightweight");
@@ -119,11 +126,10 @@ test("Lightweight Analysis: Rectangle draws in two clicks, persists locally and 
   await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
   await page.mouse.click(b.x, b.y);
   await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
-  const key = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("analysis-lw-drawings:")));
-  const saved = JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key));
-  expect(saved).toHaveLength(1);
-  expect(saved[0].type).toBe("rect");
-  expect(saved[0].p1.time).toBeLessThan(saved[0].p2.time);
+  await expect.poll(() => serverTools(page)).toEqual(["rect"]);
+  const [saved] = await serverDrawings(page);
+  expect(saved.points).toHaveLength(2);
+  expect(saved.points[0].timestamp).toBeLessThan(saved.points[1].timestamp);
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector("canvas");
@@ -131,7 +137,7 @@ test("Lightweight Analysis: Rectangle draws in two clicks, persists locally and 
 
   await page.getByRole("button", { name: "Clear" }).click();
   await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
-  expect(JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key))).toHaveLength(0);
+  await expect.poll(() => serverTools(page)).toEqual([]);
   expect(errors).toEqual([]);
 });
 
@@ -260,7 +266,7 @@ test("KLine Analysis: a Text drawing asks for its text, is saved with it, restor
   expect(errors).toEqual([]);
 });
 
-test("Lightweight Analysis: Text asks for its text, draws it, persists locally and goes with Clear", async ({ page }) => {
+test("Lightweight Analysis: Text asks for its text, draws it, saves it and goes with Clear", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await open(page, "lightweight");
@@ -276,14 +282,12 @@ test("Lightweight Analysis: Text asks for its text, draws it, persists locally a
   await prompt.getByLabel("Text to show on the chart").fill("Support");
   await prompt.getByRole("button", { name: "OK" }).click();
   await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
-  const key = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("analysis-lw-drawings:")));
-  const saved = JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key));
-  expect(saved).toEqual([expect.objectContaining({ type: "text", text: "Support" })]);
+  await expect.poll(() => serverDrawings(page)).toEqual([expect.objectContaining({ tool: "Text", text: "Support" })]);
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForSelector("canvas");
   await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
   await page.getByRole("button", { name: "Clear" }).click();
-  expect(JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key))).toHaveLength(0);
+  await expect.poll(() => serverTools(page)).toEqual([]);
   expect(errors).toEqual([]);
 });
 
@@ -292,9 +296,10 @@ test("Lightweight Analysis: a drawing is picked with a click, deleted on its own
   page.on("pageerror", (error) => errors.push(error.message));
   await open(page, "lightweight");
   await page.waitForSelector("canvas");
+  // The saved drawings in the shape this test reads (a short wait lets a save in flight land first).
   const saved = async () => {
-    const key = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("analysis-lw-drawings:")));
-    return key ? JSON.parse(await page.evaluate((k) => localStorage.getItem(k!)!, key)) : [];
+    await page.waitForTimeout(300);
+    return (await serverDrawings(page)).map((d) => ({ type: TOOL_KIND[d.tool], text: d.text, time: d.points[0].timestamp, price: d.points[0].price }));
   };
   const tool = async (item: string) => {
     await page.getByRole("button", { name: "Draw ▾" }).click();
@@ -441,5 +446,121 @@ test("KLine Analysis: Risk Reward (stop, then entry) and Buy / Sell markers are 
   await page.keyboard.press("Control+z");
   await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "2");
   expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method === "DELETE"))).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
+// Move over the chart and press, as a person does (an instant teleport-and-click is not always seen by the chart).
+const press = async (page: Page, x: number, y: number) => {
+  await page.mouse.move(x - 3, y - 3, { steps: 6 });
+  await page.waitForTimeout(150);
+  await page.mouse.move(x, y, { steps: 3 });
+  await page.waitForTimeout(150);
+  await page.mouse.down(); await page.waitForTimeout(40); await page.mouse.up();
+  await page.waitForTimeout(250);
+};
+
+test("Lightweight and KLine share the saved drawings: made in one, shown in the other, a delete in either stays deleted", async ({ page }, info) => {
+  test.setTimeout(120_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page, "lightweight");
+  await page.waitForSelector("canvas");
+  const c = await chartPoint(page, "canvas");
+  const tool = async (item: string) => {
+    await page.getByRole("button", { name: "Draw ▾" }).click();
+    await page.getByRole("menuitem", { name: item }).click();
+    await page.waitForTimeout(250);
+  };
+  const two = async (item: string, a: [number, number], b: [number, number]) => {
+    await tool(item);
+    await press(page, c.x + a[0], c.y + a[1]);
+    await page.waitForTimeout(550); // keep the two clicks from reading as a double-click
+    await press(page, c.x + b[0], c.y + b[1]);
+  };
+  // One of each common tool, made on the Lightweight chart.
+  await tool("─ Horizontal Line"); await press(page, c.x + 100, c.y + 130);
+  await two("↗ Trend Line", [-250, -100], [-120, -40]);
+  await two("◫ Fib Retracement", [-60, -120], [60, 20]);
+  await two("▭ Rectangle", [120, -130], [250, -60]);
+  await tool("T Text"); await press(page, c.x - 150, c.y + 90);
+  await page.getByLabel("Text to show on the chart").fill("Shared");
+  await page.keyboard.press("Enter");
+  await tool("▲ Buy Marker"); await press(page, c.x - 20, c.y + 120);
+  await tool("▼ Sell Marker"); await press(page, c.x + 200, c.y + 60);
+  await two("⚡ Risk:Reward", [-300, 60], [-200, -10]); // the stop first (lower), then the entry
+  await expect.poll(() => serverTools(page)).toEqual(["Horizontal", "Trend", "Fib Retracement", "rect", "Text", "Buy Marker", "Sell Marker", "Risk Reward"]);
+  const rr = (await serverDrawings(page)).find((d) => d.tool === "Risk Reward");
+  expect(rr.points[0].price).toBeLessThan(rr.points[1].price); // saved stop first
+
+  // KLine shows all of them, each by its own overlay.
+  await open(page, "kline");
+  await page.waitForSelector(".analysis-kline canvas");
+  await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "8");
+  await page.waitForTimeout(400);
+  const overlayNames = () => page.evaluate(() => (window as any).charts().flatMap((ch: any) => ch.getOverlays()).map((o: any) => o.name));
+  expect((await overlayNames()).sort()).toEqual(["horizontalStraightLine", "rect", "segment", "tmBuyMarker", "tmFibSegment", "tmRiskReward", "tmSellMarker", "tmText"]);
+  await page.screenshot({ path: info.outputPath("shared-kline.png") });
+
+  // Delete the trend line in KLine (select it, Delete): it is gone from the database...
+  const trendMid = await page.evaluate(() => {
+    const chart = (window as any).charts()[0];
+    const o = chart.getOverlays().find((x: any) => x.name === "segment");
+    const [p, q] = chart.convertToPixel(o.points.map((pt: any) => ({ timestamp: pt.timestamp, value: pt.value })), { paneId: "candle_pane" });
+    const box = chart.getDom("candle_pane", "main").getBoundingClientRect();
+    return { x: box.left + (p.x + q.x) / 2, y: box.top + (p.y + q.y) / 2 };
+  });
+  await press(page, trendMid.x, trendMid.y);
+  await page.keyboard.press("Delete");
+  await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "7");
+  await expect.poll(() => serverTools(page)).not.toContain("Trend");
+
+  // ...and stays deleted when the Lightweight chart opens: seven drawings, no trend line to pick where it was.
+  await open(page, "lightweight");
+  await page.waitForSelector("canvas");
+  await page.waitForTimeout(600);
+  await press(page, c.x - 185, c.y - 70);
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+  expect(await serverTools(page)).toHaveLength(7);
+
+  // Delete the rectangle in Lightweight (pick, Delete): gone from KLine too.
+  await press(page, c.x + 185, c.y - 95);
+  await expect(page.getByRole("toolbar", { name: "Rectangle selected" })).toBeVisible();
+  await page.getByRole("toolbar", { name: "Rectangle selected" }).getByRole("button", { name: "Delete" }).click();
+  await expect.poll(() => serverTools(page)).not.toContain("rect");
+  await open(page, "kline");
+  await page.waitForSelector(".analysis-kline canvas");
+  await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "6");
+  await page.waitForTimeout(400);
+  expect(await overlayNames()).not.toContain("rect");
+  expect(await overlayNames()).not.toContain("segment");
+  expect(errors).toEqual([]);
+});
+
+test("Lightweight: drawings kept in the browser before are copied to the database once", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const key = "analysis-lw-drawings::owner:NIFTY:::";
+  const t0 = Date.parse("2026-10-16T09:15:00Z") / 1000 + 20 * 180;
+  const legacy = [
+    { type: "hline", price: 101 },
+    { type: "rect", p1: { time: t0, price: 99 }, p2: { time: t0 + 900, price: 104 } },
+    { type: "text", time: t0, price: 103, text: "Old note", color: "#facc15" },
+    { type: "trendline", lines: [[{ time: t0, value: 98 }, { time: t0 + 1200, value: 102 }]] },
+  ];
+  await page.addInitScript(([k, value]) => { localStorage.setItem(k as string, value as string); }, [key, JSON.stringify(legacy)]);
+  await open(page, "lightweight");
+  await page.waitForSelector("canvas");
+  await expect.poll(() => serverTools(page)).toEqual(["Horizontal", "rect", "Text", "Trend"]);
+  expect(await page.evaluate((k) => localStorage.getItem(`analysis-lw-migrated:${k}`), key)).toBe("1");
+  expect((await serverDrawings(page)).find((d) => d.tool === "Text").text).toBe("Old note");
+  await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
+
+  // Opening again copies nothing more.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("canvas");
+  await page.waitForTimeout(800);
+  expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method === "POST"))).toHaveLength(0);
+  expect(await serverTools(page)).toHaveLength(4);
+  await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
   expect(errors).toEqual([]);
 });

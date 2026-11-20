@@ -89,6 +89,8 @@ export function useAnalysisEnvironment(): AnalysisEnvironment {
   if (!value) throw new Error('Analysis must have an authenticated provider')
   return value
 }
+/** The environment, or null outside an Analysis provider (a chart that can run without one). */
+export function useOptionalAnalysisEnvironment(): AnalysisEnvironment | null { return useContext(Context) }
 export function useAnalysisApi() { return useAnalysisEnvironment().api }
 
 export function useAnalysisError(error: string | null | undefined, source: string) {

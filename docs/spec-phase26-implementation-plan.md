@@ -331,7 +331,7 @@ Small follow-ups inside Phase 26 (no new sprints numbered; each was one PR into 
 | #897 | KLine **Fib Retracement** as line segments (`tmFibSegment`, `klineFibSegment.ts`), on every KLine chart; saved drawings keep the tool name so older drawings follow |
 | #898 | In-depth **Stacked / Side by side** switch (`useChartLayout`); Mark days **Underlying / CE / PE** (`usePreviewStrikes`, `PREVIEW_STRIKE_CAP` 75, 09:30 Max Price, preview only); KLine pattern marks as an arrow plus plain text (`annotationFigures.ts`, 20% bottom gap when marks exist) |
 | #899 | The Charts switch moved into the Mark row; **no marker selected** to begin with, click again to put it down (Deep Dive in-depth, website and Windows Pattern Library) |
-| #900 | **Text drawing**: KLine saved through the drawings API (`text` field, `tmText` overlay, `ChartTextPrompt`, double click edits), Lightweight in localStorage (`TextPrimitive`) |
+| #900 | **Text drawing**: KLine saved through the drawings API (`text` field, `tmText` overlay, `ChartTextPrompt`, double click edits), Lightweight (`TextPrimitive`; saved to the database since PR 2 of the shared drawings) |
 
 **Tests:** website Playwright `deep-dive-views`, `deep-dive-markdays-axis`, `kline-fib-segment`, `deep-dive-kline-marks`, `kline-text-drawing`, `analysis-tools` (Text), `deep-dive` (no marker selected); desktop vitest `annotationFigures`, `analysisDrawing`, `inDepth`; backend `test_desktop_persistence.py` (text field); desktop `desktop-deepdive-check.mjs`. Known pre-existing failures, not from this work: the `analysis-tools` KLine "restores after reload" test fails intermittently in the full website suite (also on unmodified `dev`), and `desktop-analysis-check.mjs` fails in its Python fixture (`performance_service.build_cycles`).
 **Next PR (2026-11-20):** Lightweight drawings can be picked with a click, deleted on their own and a Text's text changed (`lightweightHit.ts`, controller selection; not moved). **Not done:** Text and picking on the Lightweight live-trading chart (`Chart.tsx`); saving Lightweight drawings to the database (the owner's next step).
@@ -342,5 +342,5 @@ Plan: the Lightweight pattern charts save their drawings to the database through
 | PR | Scope |
 |---|---|
 | 1 | KLine **Risk : Reward** (stop first, then entry; 1 : 1, 1.5, 2) and **Buy / Sell markers** (`klineRiskReward.ts`, `klineMarker.ts`, `klineDrawingModel.ts` helpers, catalogue, both chart hosts): **built** (this PR) |
-| 2 | Lightweight drawings saved to the database and shared with KLine: mapping, controller with the drawings service, sync on change, one-time copy of the local drawings, website environment |
+| 2 | Lightweight drawings saved to the database and shared with KLine: mapping (`lightweightPersist.ts`), controller with the drawings service and sync on change, one-time copy of the local drawings, website environment: **built** |
 | 3 | Phone: saved drawings read-only (`drawingsReadOnly`, drawing service in the phone environment; a new APK) |
