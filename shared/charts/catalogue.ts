@@ -14,6 +14,9 @@ export const drawingTools = [
   { label: "Gann box", icon: "▦", tool: "gannBox" },
   { label: "Long position", icon: "L", tool: "longPosition" },
   { label: "Short position", icon: "S", tool: "shortPosition" },
+  { label: "Risk : Reward (stop, then entry)", icon: "RR", tool: "Risk Reward" },
+  { label: "Buy marker", icon: "▲", tool: "Buy Marker" },
+  { label: "Sell marker", icon: "▼", tool: "Sell Marker" },
 ];
 
 export const allIndicators = [

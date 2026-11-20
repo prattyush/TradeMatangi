@@ -44,9 +44,11 @@ import {
 import { orderLineLabel, orderPrice } from "./orderLineLabel";
 import { TradingOverlayRegistry } from "./tradingOverlays";
 import { drawingTools, indicatorLabel, indicatorUnavailable, overlayIndicators } from "./catalogue";
-import { overlayName, textExtendData } from "./klineDrawingModel";
+import { drawingExtendData, newDrawingFields, overlayName, textExtendData } from "./klineDrawingModel";
 import { registerFibSegmentOverlay } from "./klineFibSegment";
 import { registerTextOverlay } from "./klineText";
+import { registerRiskRewardOverlay } from "./klineRiskReward";
+import { registerMarkerOverlays } from "./klineMarker";
 import ChartTextPrompt, { textPromptAnchor, type TextPromptState } from "./ChartTextPrompt";
 
 interface ChartSettings {
@@ -145,6 +147,8 @@ const ensureExtensions = () => {
   registerExtensions();
   registerFibSegmentOverlay();
   registerTextOverlay();
+  registerRiskRewardOverlay();
+  registerMarkerOverlays();
   registerOverlay({
     name: "desktopTradeMarker",
     totalStep: 1,
@@ -1475,7 +1479,7 @@ export function KLineChart({
       id: record.drawing_id,
       name: overlayName(record.drawing.tool),
       paneId: "candle_pane",
-      extendData: record.drawing.tool === "Text" ? textExtendData(record.drawing, settings) : undefined,
+      extendData: drawingExtendData(record.drawing, settings),
       onDoubleClick: (event: any) => editText(event.overlay.id),
       points: drawingPoints(record.drawing),
       lock: Boolean(record.drawing.locked),
@@ -1787,7 +1791,7 @@ export function KLineChart({
     const id = chartRef.current?.createOverlay({
       name,
       paneId: "candle_pane",
-      extendData: nextTool === "Text" ? { text: "", color: lineColor } : undefined,
+      extendData: nextTool === "Text" ? { text: "", color: lineColor } : drawingExtendData({ tool: nextTool }, settings),
       onDoubleClick: (event: any) => editText(event.overlay.id),
       // Use a high-contrast explicit line instead of depending on a theme's
       // drawing defaults, which made newly-created overlays hard to see.
@@ -1818,6 +1822,7 @@ export function KLineChart({
         }));
         const drawing = {
           tool: nextTool,
+          ...newDrawingFields(nextTool),
           points,
           style: {
             color: lineColor,
