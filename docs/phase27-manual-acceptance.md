@@ -32,7 +32,14 @@ Status: built (S3), waiting for your try. Website, webapp and Windows app (a Win
 7. Saving a label with the Group view open changes nothing in what is saved.
 
 ## D. Compare tab (S4)
-Status: not built yet.
+Status: built (S4), waiting for your try. Website, webapp and Windows app (needs a Windows rebuild for the shared code).
+1. Pattern Library: a **Compare** tab beside Deep dive. With no marked days anywhere it says "Nothing to compare yet".
+2. Two panes. Pick a different strategy in each, and a marked day in each (newest first). The day's chart shows with its marks.
+3. Switch pane A to CE and pane B to PE (for example a Buy day on CE and a Sell day on PE): each uses the strike saved with that day. A day with no saved strike shows a preview strike and the note says so.
+4. Change the candle interval on one chart: the other pane keeps its own, and the chart in Analysis or in Deep dive is not changed.
+5. Maximize one pane: the other hides; Restore brings both back. Try it on both chart renderers (Settings, Analysis and Patterns chart).
+6. Nothing is saved: open the same strategy in Deep dive afterwards, its days are unchanged.
+7. A strategy shared with you can be compared too (it is marked "(shared)").
 
 ## E. Notes and TODOs (S5)
 Status: not built yet.

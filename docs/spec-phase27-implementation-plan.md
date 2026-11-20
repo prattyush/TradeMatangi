@@ -67,7 +67,7 @@ Approved 2026-11-20. Source of truth for sprint order; update the status column 
 | S1 | A. Lightweight drawings on `Chart.tsx` (Browse, Day, Swing, live) | yes (dev only) | built, in PR (see "S1 as built") |
 | S2 | B3. Analysis Maximize | no | built, in PR (see "S2 as built") |
 | S3 | B1. Group tab in Results, then the live popup | popup: yes (dev only) | built, in PR (see "S3 as built") |
-| S4 | B2. Compare tab | no | planned |
+| S4 | B2. Compare tab | no | built, in PR (see "S4 as built") |
 | S5 | B5. Notes and TODOs | no | planned |
 | S6 | B4. Day score backend and the guardrail snapshot | snapshot: yes (dev only) | planned |
 | S7 | B4. Score UI, system habits, Stats trend | no | planned |
@@ -102,4 +102,12 @@ Order: S1 first (a visible defect of the last release); S2 to S4 are independent
 - **Backend:** `deep_dive_service.stats_all` entries gain `days` (`group_days`: `{date, side, tag_values}`, newest first, capped at `GROUP_DAYS_LIMIT = 400`). Additive: an older client ignores it, a newer client with an older server shows no Group button. The 20 second cache and the cache drop on every write are unchanged, and so is the desktop's 2 second bound; no route, allowlist, label payload or save path changed.
 - **Tests:** `windowsapp/src/deepDive.test.ts` (8 hand-computed cases: cells, conditional rates, swap, side, rounding, empty), backend `test_deep_dive.py` (days payload, cap), website Playwright `deep-dive-group.spec.ts` (Results and the popup panel, older server). Backend deep dive / desktop trading subset 264 passed; desktop vitest 1834; `tsc` clean for the website, desktop and phone.
 - **Not covered:** `scripts/website-live-deepdive-check.mjs` and `scripts/desktop-live-label-check.mjs` (they cannot run in this environment), a real popup in a replay, paper or real session. By hand: section C of `docs/phase27-manual-acceptance.md`.
+
+## S4 as built (2026-11-20): Compare tab
+
+- **Screens:** new `shared/deepdive/ui/Compare.tsx` (`Compare({ host })`, the panes, per-pane Maximize through the existing `ChartFrame`), `compareModel.ts` (pure: comparable dives, days newest first, legs, labels), `useViewStrikes.ts` (saved strikes, else the Mark days preview pick; never saves), CSS in `deepdive.css`. Hosts: desktop `tools/PatternLibrary.tsx` (a **Compare** tab on the same `deepDiveHost`), website `pages/PatternLibrary.tsx` (a `compare` mode) with `WebsiteCompare` in `components/deepdive/WebsiteDeepDive.tsx` (same renderer choice, KLine or Lightweight, as Deep dive).
+- **Decision, changed from the plan:** the plan added an optional `intervalMinutes` prop to `DiveChartProps`, honoured by both chart components. Every Analysis chart already reads the interval from the environment, so instead a new `AnalysisIntervalScope` (`shared/analysis/environment.tsx`) gives a pane its own interval state (starting at the day's saved interval): no chart code changed, KLine and Lightweight both follow. `DayIntervalBridge` is not mounted in Compare, so nothing is saved.
+- **No backend, allowlist or Rust change:** Compare reads `deep-dive/dives` and `deep-dive/dive`, which the Deep dive already uses on both transports.
+- **Tests:** `windowsapp/src/deepDive.test.ts` (4 model tests), website Playwright `deep-dive-compare.spec.ts` (stub host: days, legs, saved or preview strikes, per-pane interval, Maximize, no writes, empty state; and the real Lightweight and KLine charts through the Pattern Library page). Website suite 106 passed, desktop vitest 1838, `tsc` clean for the website, desktop and phone.
+- **Not covered:** `scripts/desktop-deepdive-check.mjs` (cannot run here), the Windows app and the webapp's own suite. By hand: section D of `docs/phase27-manual-acceptance.md`.
 
