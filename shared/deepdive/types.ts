@@ -85,6 +85,34 @@ export interface StatsBlock {
   strength?: StrengthCounts
 }
 
+/** One marked day as the group view needs it: which side it was and the tags marked on it. The live popups get these from `stats/all`. */
+export interface GroupDay { date: string; side: Side; symbol?: string; tag_values: Record<string, TagValue> }
+
+/** A tag chosen for the group view. */
+export interface GroupTag { tag_id: string; name: string }
+
+/** A count out of the days where both tags are marked, with its percentage. */
+export interface GroupShare { n: number; of: number; pct: number | null; few_days: boolean }
+
+/** The four ways two tags can fall on a day where both are marked. */
+export type GroupCell = 'both' | 'a_only' | 'b_only' | 'neither'
+
+/**
+ * Two tags together, over the days where BOTH are marked (a day where either is not marked yet is "not counted").
+ * `both` is AND true; `b_given_a` reads "of the days A was valid, B was valid on this many".
+ */
+export interface GroupStats<D extends GroupDay = GroupDay> {
+  a: GroupTag
+  b: GroupTag
+  counted: number
+  not_counted: number
+  cells: Record<GroupCell, D[]>
+  counts: Record<GroupCell, GroupShare>
+  b_given_a: GroupShare
+  b_given_not_a: GroupShare
+  a_given_b: GroupShare
+}
+
 export interface StrengthCounts { ideal: number; average: number; poor: number; ungraded: number }
 
 /** A day's entry and exit as read from its chart marks. `clock` is the IST time of the candle the mark sits on. */
@@ -100,6 +128,8 @@ export interface StatsAllEntry extends DiveRef {
   all: StatsBlock
   buy: StatsBlock
   sell: StatsBlock
+  /** The marked days with their tag values, newest first and capped, for the group view in the label forms (absent from an older server). */
+  days?: GroupDay[]
 }
 
 /** Only the fields present change; `null` clears outcome, strikes and strike mode. */

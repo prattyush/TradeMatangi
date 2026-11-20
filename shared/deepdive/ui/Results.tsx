@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
 import { friendlyError } from './errors'
-import { computeStats, formatDay, formatPct, nLabel, SIDE_MEANING, sideLabel, outcomeText, setupTimings, sortTagStats, strengthLine, successLine, tagDots, thinNote } from '../model'
+import { activeTags, computeStats, formatDay, formatPct, nLabel, SIDE_MEANING, sideLabel, outcomeText, setupTimings, sortTagStats, strengthLine, successLine, tagDots, thinNote } from '../model'
 import type { Dive, DiveSetup, Side } from '../types'
 import { useDeepDiveHost } from './host'
+import GroupView from './GroupView'
 
 interface Props {
   dive: Dive
   onOpenDay: (day: DiveSetup) => void
 }
 
-type SideFilter = 'all' | Side
+type SideFilter = 'all' | Side | 'group'
 const dayId = (day: DiveSetup) => `${day.date}|${day.symbol}|${day.side}`
 
 /**
@@ -24,9 +25,11 @@ export default function Results({ dive, onOpenDay }: Props) {
   const [order, setOrder] = useState<'tags' | 'frequent'>('tags')
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const stats = useMemo(() => computeStats(dive.setups, dive.tags, side === 'all' ? null : side), [dive.setups, dive.tags, side])
+  const grouped = side === 'group'
+  // Group is a view of its own (two tags together); the summary, tag list and day table below it show everything.
+  const stats = useMemo(() => computeStats(dive.setups, dive.tags, side === 'all' || grouped ? null : side), [dive.setups, dive.tags, side, grouped])
   const rows = order === 'frequent' ? sortTagStats(stats.tags) : stats.tags
-  const days = useMemo(() => dive.setups.filter(day => side === 'all' || day.side === side), [dive.setups, side])
+  const days = useMemo(() => dive.setups.filter(day => side === 'all' || grouped || day.side === side), [dive.setups, side, grouped])
   const withMarks = days.filter(day => day.annotations.length > 0)
   const counts = { all: dive.setups.length, buy: dive.setups.filter(d => d.side === 'buy').length, sell: dive.setups.filter(d => d.side === 'sell').length }
 
@@ -61,6 +64,8 @@ export default function Results({ dive, onOpenDay }: Props) {
           title={choice === 'all' ? 'Buy and Sell setups together' : choice === 'buy' ? 'Buy setups: long / bullish' : 'Sell setups: short / bearish'}>
           {choice === 'all' ? 'All' : sideLabel(choice)} ({counts[choice]})
         </button>)}
+        <button aria-pressed={grouped} className="dd-filter group" onClick={() => setSide('group')}
+          title="Two tags together: how often the second happened when the first did (days where both are marked)">Group</button>
       </div>
       <label className="pl-muted">Order <select value={order} onChange={e => setOrder(e.target.value as 'tags' | 'frequent')}>
         <option value="tags">Tag order</option><option value="frequent">Most frequent first</option></select></label>
@@ -77,6 +82,11 @@ export default function Results({ dive, onOpenDay }: Props) {
       {strengthLine(stats) && <span title="How the successful days were graded">{strengthLine(stats)}</span>}
       {thinNote(stats.with_outcome) && stats.with_outcome > 0 && <span className="dd-thin">{thinNote(stats.with_outcome)}</span>}
     </div>
+
+    {grouped && <>
+      <h4>Two tags together</h4>
+      <GroupView days={dive.setups} tags={activeTags(dive.tags)} onOpenDay={day => onOpenDay(day as DiveSetup)} />
+    </>}
 
     <h4>How often each tag was valid</h4>
     {rows.length === 0 ? <p className="pl-muted">No tags yet. Add tags in the in-depth step to see how often each one shows up.</p> : <ul className="dd-freq">

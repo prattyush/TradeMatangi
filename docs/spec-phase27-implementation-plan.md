@@ -66,7 +66,7 @@ Approved 2026-11-20. Source of truth for sprint order; update the status column 
 | S0 | Docs (this plan, the spec decisions, acceptance skeleton, CLAUDE.md row, todo, Phase 26 corrections) | no | done (2026-11-20, straight to `dev`) |
 | S1 | A. Lightweight drawings on `Chart.tsx` (Browse, Day, Swing, live) | yes (dev only) | built, in PR (see "S1 as built") |
 | S2 | B3. Analysis Maximize | no | built, in PR (see "S2 as built") |
-| S3 | B1. Group tab in Results, then the live popup | popup: yes (dev only) | planned |
+| S3 | B1. Group tab in Results, then the live popup | popup: yes (dev only) | built, in PR (see "S3 as built") |
 | S4 | B2. Compare tab | no | planned |
 | S5 | B5. Notes and TODOs | no | planned |
 | S6 | B4. Day score backend and the guardrail snapshot | snapshot: yes (dev only) | planned |
@@ -94,4 +94,12 @@ Order: S1 first (a visible defect of the last release); S2 to S4 are independent
 - **Decisions:** the container is fixed at `inset: 0` on the website and webapp and `inset: 42px 0 0` on the Windows app (its navigation bar stays). Esc is a window handler that the KLine per-chart maximize overrides first (it already stops the event). The button keeps the labels "Maximize" and "Restore", so the older scripts that click them keep working. A tab opened without a card (phone overlays) has no button. The day list is not unmounted, so filters and scroll are kept on Restore.
 - **Tests:** website Playwright `frontend/tests/phase22/analysis-maximize.spec.ts` (both renderers: one button, the card fills the window on every tab, Esc and Restore return); the whole website suite passes (100). `tsc` clean for the website, desktop and phone.
 - **Not covered:** `scripts/desktop-analysis-workflows.mjs` and `scripts/website-label-trades-check.mjs` cannot run in this environment (they fail the same way on unchanged `dev`); the latter was updated to give the tab a stand-in card. The Windows app and the webapp's own suite were not run. By hand: section B of `docs/phase27-manual-acceptance.md`.
+
+## S3 as built (2026-11-20): Group (two tags together)
+
+- **Pure model:** `computeGroupStats(days, tagA, tagB, side)` in `shared/deepdive/model.ts` (types `GroupDay`, `GroupStats`, `GroupShare`, `GroupCell` in `types.ts`; `groupCellLabel`, `shareLine`). It takes any day with `date`, `side` and `tag_values`, so Results (full setups) and the popup (compact days) run the same arithmetic. One-decimal rounding is `roundTenth` (ties to even, like the server).
+- **Screens:** new `shared/deepdive/ui/GroupView.tsx` (+ `groupView.css`): pickers, swap, own side switch, the conditional lines, the four-cell table, not-counted days; `compact` drops the day lists and the side switch. `Results.tsx` gets a **Group** button (the summary, tag bars and day table stay below it, unfiltered); `StatsPanel.tsx` gets a Group button when `entry.days` exists and the dive has two tags.
+- **Backend:** `deep_dive_service.stats_all` entries gain `days` (`group_days`: `{date, side, tag_values}`, newest first, capped at `GROUP_DAYS_LIMIT = 400`). Additive: an older client ignores it, a newer client with an older server shows no Group button. The 20 second cache and the cache drop on every write are unchanged, and so is the desktop's 2 second bound; no route, allowlist, label payload or save path changed.
+- **Tests:** `windowsapp/src/deepDive.test.ts` (8 hand-computed cases: cells, conditional rates, swap, side, rounding, empty), backend `test_deep_dive.py` (days payload, cap), website Playwright `deep-dive-group.spec.ts` (Results and the popup panel, older server). Backend deep dive / desktop trading subset 264 passed; desktop vitest 1834; `tsc` clean for the website, desktop and phone.
+- **Not covered:** `scripts/website-live-deepdive-check.mjs` and `scripts/desktop-live-label-check.mjs` (they cannot run in this environment), a real popup in a replay, paper or real session. By hand: section C of `docs/phase27-manual-acceptance.md`.
 
