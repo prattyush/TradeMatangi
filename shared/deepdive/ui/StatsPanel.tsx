@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { blockFor, defaultSideForTrade, findStats, formatPct, nLabel, SIDE_MEANING, sideLabel, sortTagStats, strengthLine, successLine, thinNote } from '../model'
 import type { Side, StatsAllEntry } from '../types'
+import GroupView from './GroupView'
 import './statsPanel.css'
 
 interface Props {
@@ -21,10 +22,14 @@ interface Props {
 export default function StatsPanel({ entries, category, strategy, trade, limit = 6 }: Props) {
   const entry = findStats(entries, category, strategy)
   const own = defaultSideForTrade(trade)
-  const [side, setSide] = useState<Side | 'all'>(own)
+  const [side, setSide] = useState<Side | 'all' | 'group'>(own)
   useEffect(() => { setSide(own) }, [own, category, strategy])
   if (!entry) return null
-  const block = blockFor(entry, side)
+  // Group (two tags together) needs the per-day list, which an older server does not send, and two tags to pair.
+  const canGroup = !!entry.days && entry.all.tags.length >= 2
+  const grouped = side === 'group' && canGroup
+  const shown: Side | 'all' = side === 'group' ? 'all' : side
+  const block = blockFor(entry, shown)
   const rows = sortTagStats(block.tags)
   const counts = { all: entry.all.days, buy: entry.buy.days, sell: entry.sell.days }
   return <div className="dd-stats" role="region" aria-label="Deep dive frequencies">
@@ -37,8 +42,9 @@ export default function StatsPanel({ entries, category, strategy, trade, limit =
       {(['all', 'buy', 'sell'] as const).map(choice => <button key={choice} type="button" aria-pressed={side === choice} className={choice}
         title={choice === 'all' ? 'Buy and Sell setups together' : choice === 'buy' ? 'Buy setups: long / bullish' : 'Sell setups: short / bearish'}
         onClick={() => setSide(choice)}>{choice === 'all' ? 'All' : sideLabel(choice)} ({counts[choice]})</button>)}
+      {canGroup && <button type="button" aria-pressed={grouped} className="group" title="Two tags together: how often the second happened when the first did" onClick={() => setSide('group')}>Group</button>}
     </div>
-    {block.days === 0 ? <p className="dd-stats-note">No {side === 'all' ? '' : `${sideLabel(side)} `}days in this deep dive.</p> : <>
+    {grouped ? <GroupView key={`${entry.category}|${entry.strategy}`} compact days={entry.days!} tags={entry.all.tags} initialSide={own === 'all' ? null : own} /> : block.days === 0 ? <p className="dd-stats-note">No {shown === 'all' ? '' : `${sideLabel(shown)} `}days in this deep dive.</p> : <>
       {rows.length === 0 ? <p className="dd-stats-note">This deep dive has no tags yet.</p> : <ul>
         {rows.slice(0, limit).map(row => <li key={row.tag_id}>
           <span className="dd-stats-name">{row.name}</span>

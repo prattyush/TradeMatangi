@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDeepDiveClient } from '../../shared/deepdive/client'
 import {
-  activeTags, applyTagValues, blockFor, dayMarks, dayMarksByDate, defaultSideForTrade, findStats,
+  activeTags, applyTagValues, blockFor, computeGroupStats, groupCellLabel, shareLine, dayMarks, dayMarksByDate, defaultSideForTrade, findStats,
   formatDay, formatPct, gaps, isComplete, nextGapIndex, orderSetups, positionLabel, removalImpact, restNotValid, setupSideOfTrade, SIDE_MEANING, sortTagStats,
   stepIndex, successLine, tagLine, tagState, tagValueOf, thinNote, toggleTag, unmarkedDaysForTag, unmarkedTagIds, validateTagName,
 } from '../../shared/deepdive/model'
@@ -355,5 +355,70 @@ describe('strength of a successful day and the times read from the marks', () =>
     const option = setupTimings([mark('entry', '09:48', 'PE'), mark('exit', '10:00', 'PE')])
     expect([option.entry?.instrument, option.entry?.clock, option.exit?.clock]).toEqual(['PE', '09:48', '10:00'])
     expect(setupTimings([])).toEqual({ entry: null, exit: null, marks: [] })
+  })
+})
+
+describe('group: two tags together', () => {
+  // A = "second leg", B = "exhaustive bar". Days 6 and 7 each leave one tag unmarked.
+  const A = { tag_id: 'a', name: 'Second leg' }, B = { tag_id: 'b', name: 'Exhaustive bar' }
+  const days = [
+    setup('2026-10-01', 'buy', { a: true, b: true }), setup('2026-10-02', 'buy', { a: true, b: true }), setup('2026-10-03', 'buy', { a: true, b: false }),
+    setup('2026-10-04', 'sell', { a: false, b: true }), setup('2026-10-05', 'sell', { a: false, b: false }), setup('2026-10-06', 'sell', { a: false }),
+    setup('2026-10-07', 'buy', { b: true }), setup('2026-10-08', 'buy', { a: true, b: true }),
+  ]
+
+  it('counts only days where both tags are marked, in four cells', () => {
+    const stats = computeGroupStats(days, A, B)
+    expect(stats.counted).toBe(6)
+    expect(stats.not_counted).toBe(2)
+    expect(stats.cells.both.map(d => d.date)).toEqual(['2026-10-01', '2026-10-02', '2026-10-08'])
+    expect(stats.cells.a_only.map(d => d.date)).toEqual(['2026-10-03'])
+    expect(stats.cells.b_only.map(d => d.date)).toEqual(['2026-10-04'])
+    expect(stats.cells.neither.map(d => d.date)).toEqual(['2026-10-05'])
+    expect(stats.counts.both).toEqual({ n: 3, of: 6, pct: 50, few_days: false })
+    expect(stats.counts.a_only.pct).toBe(16.7)
+  })
+
+  it('works out the conditional rates by hand', () => {
+    const stats = computeGroupStats(days, A, B)
+    // A was valid on 4 counted days (1, 2, 3, 8); B was valid on 3 of them.
+    expect(stats.b_given_a).toEqual({ n: 3, of: 4, pct: 75, few_days: true })
+    // A was not valid on 2 counted days (4, 5); B was valid on 1.
+    expect(stats.b_given_not_a).toEqual({ n: 1, of: 2, pct: 50, few_days: true })
+    // B was valid on 4 counted days (1, 2, 4, 8); A was valid on 3 of them.
+    expect(stats.a_given_b).toEqual({ n: 3, of: 4, pct: 75, few_days: true })
+    expect(shareLine(stats.b_given_a)).toBe('75% (3 of 4)')
+  })
+
+  it('swapping A and B swaps the conditional rates and the one-sided cells', () => {
+    const stats = computeGroupStats(days, B, A)
+    expect(stats.b_given_a).toEqual(computeGroupStats(days, A, B).a_given_b)
+    expect(stats.cells.a_only.map(d => d.date)).toEqual(['2026-10-04'])
+  })
+
+  it('filters by side', () => {
+    const buy = computeGroupStats(days, A, B, 'buy')
+    expect(buy.counted).toBe(4); expect(buy.not_counted).toBe(1)
+    expect(buy.counts.both.n).toBe(3); expect(buy.counts.a_only.n).toBe(1)
+    const sell = computeGroupStats(days, A, B, 'sell')
+    expect(sell.counted).toBe(2); expect(sell.not_counted).toBe(1)
+    expect(sell.b_given_a).toEqual({ n: 0, of: 0, pct: null, few_days: true })
+    expect(shareLine(sell.b_given_a)).toBe('No days')
+  })
+
+  it('rounds like the other percentages (ties to even, one decimal)', () => {
+    const many = Array.from({ length: 16 }, (_, i) => setup(`2026-11-${String(i + 1).padStart(2, '0')}`, 'buy', { a: true, b: i === 0 }))
+    expect(computeGroupStats(many, A, B).counts.both.pct).toBe(6.2) // 1 of 16 = 6.25 -> 6.2, as the server rounds
+  })
+
+  it('reads a cell in plain words and handles no days', () => {
+    expect(groupCellLabel('a_only', 'Second leg', 'Exhaustive bar')).toBe('Second leg valid, Exhaustive bar not valid')
+    const none = computeGroupStats([], A, B)
+    expect(none.counted).toBe(0); expect(none.counts.both.pct).toBeNull()
+  })
+
+  it('accepts the compact days the live popup receives (no symbol)', () => {
+    const compact = [{ date: '2026-10-01', side: 'buy' as const, tag_values: { a: true, b: true } }]
+    expect(computeGroupStats(compact, A, B).counts.both.n).toBe(1)
   })
 })

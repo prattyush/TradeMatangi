@@ -21,8 +21,15 @@ Status: built (S2), waiting for your try. Website, webapp and Windows app (a Win
 5. A chart's own Maximize (KLine) still works inside the maximized card.
 6. Phone: Label trades, Walkthrough and What If look as before (no Maximize button).
 
-## C. Group tab (S3)
-Status: not built yet.
+## C. Group tab (S3; the live popups are real-trading screens: dev only)
+Status: built (S3), waiting for your try. Website, webapp and Windows app (a Windows rebuild picks up shared code).
+1. Pattern Library > Deep dive > a strategy with at least two tags, marked on several days > Results: a **Group** button beside All / Buy / Sell.
+2. Group: pick tag A and tag B. Check the numbers on a few days by hand: only days where both tags are marked count; "n not counted" lists the others and says which tag is missing.
+3. "When A was valid, B was valid x% (n of m)" matches a count of the days where A is Valid. Swap A and B and the conditional lines swap.
+4. Click a cell (for example "both valid"): its days are listed; click a day and it opens in the in-depth step.
+5. The Group side buttons (All / Buy / Sell) change the counts. A strategy with fewer than two tags says "Group needs two tags".
+6. Label a trade in Label Trades (Analysis): pick the expected category and strategy of that deep dive; the panel has a **Group** button, on the position's own side. Same on the live popup in a **replay** session first, then paper, then one real session (the popup is the real-trading screen).
+7. Saving a label with the Group view open changes nothing in what is saved.
 
 ## D. Compare tab (S4)
 Status: not built yet.

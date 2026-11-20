@@ -1,7 +1,7 @@
 /** Pure Deep Dive logic shared by every host: day marks, tag gaps, navigation and the percentage wording. */
 import type { PatternAnnotation } from '../analysis/api'
 import type {
-  DeepDiveSetup, DeepDiveTag, Dive, DiveSetup, MarkTime, SetupRef, SetupTimings, Side, StatsAllEntry, StatsBlock, Strength, TagState, TagStat, TagValue,
+  DeepDiveSetup, DeepDiveTag, Dive, DiveSetup, GroupCell, GroupDay, GroupShare, GroupStats, GroupTag, MarkTime, SetupRef, SetupTimings, Side, StatsAllEntry, StatsBlock, Strength, TagState, TagStat, TagValue,
 } from './types'
 
 export const SIDES: Side[] = ['buy', 'sell']
@@ -221,6 +221,45 @@ export function computeStats(setups: readonly DeepDiveSetup[], tags: readonly De
     strength: { ...graded, ungraded: success - graded.ideal - graded.average - graded.poor },
   }
 }
+
+const share = (n: number, of: number): GroupShare => ({ n, of, pct: of ? roundTenth((100 * n) / of) : null, few_days: of < FEW_DAYS })
+
+export const GROUP_CELLS: readonly GroupCell[] = ['both', 'a_only', 'b_only', 'neither']
+
+/**
+ * Two tags together (the Group view). Only days where BOTH tags are marked count; the rest are `not_counted`. Per counted day
+ * the tags fall in one of four cells (A valid and B valid = AND true; A only; B only; neither), and the conditional rates read
+ * "of the days A was valid, B was valid on n" and "of the days A was not valid, B was valid on n" (and B to A). Percentages
+ * use the same one-decimal rounding as `computeStats`. `side` null counts both sides.
+ */
+export function computeGroupStats<D extends GroupDay>(days: readonly D[], a: GroupTag, b: GroupTag, side: Side | null = null): GroupStats<D> {
+  const inSide = days.filter(day => side === null || day.side === side)
+  const cells: Record<GroupCell, D[]> = { both: [], a_only: [], b_only: [], neither: [] }
+  let counted = 0
+  for (const day of inSide) {
+    if (!(a.tag_id in day.tag_values) || !(b.tag_id in day.tag_values)) continue
+    counted += 1
+    const va = day.tag_values[a.tag_id], vb = day.tag_values[b.tag_id]
+    cells[va ? (vb ? 'both' : 'a_only') : (vb ? 'b_only' : 'neither')].push(day)
+  }
+  const aValid = cells.both.length + cells.a_only.length
+  const bValid = cells.both.length + cells.b_only.length
+  return {
+    a, b, counted, not_counted: inSide.length - counted, cells,
+    counts: { both: share(cells.both.length, counted), a_only: share(cells.a_only.length, counted), b_only: share(cells.b_only.length, counted), neither: share(cells.neither.length, counted) },
+    b_given_a: share(cells.both.length, aValid),
+    b_given_not_a: share(cells.b_only.length, counted - aValid),
+    a_given_b: share(cells.both.length, bValid),
+  }
+}
+
+/** The plain sentence for a cell, with the tag names. */
+export function groupCellLabel(cell: GroupCell, a: string, b: string): string {
+  return cell === 'both' ? `${a} and ${b} (both valid)` : cell === 'a_only' ? `${a} valid, ${b} not valid` : cell === 'b_only' ? `${a} not valid, ${b} valid` : `Neither ${a} nor ${b} (both not valid)`
+}
+
+/** `70% (7 of 10)` with the thin-sample note left to the caller. */
+export const shareLine = (value: GroupShare) => value.of ? `${formatPct(value.pct)} (${value.n} of ${value.of})` : 'No days'
 
 /** One dot per active tag for a day's row: its name and state, in tag order. */
 export const tagDots = (setup: Pick<DeepDiveSetup, 'tag_values'>, tags: readonly DeepDiveTag[]) =>
