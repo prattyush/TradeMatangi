@@ -65,6 +65,12 @@ export function fromPersisted(drawing: PersistedDrawing): LwFromRecord | null {
 export const specSignature = (spec: LwSpec) =>
   `${LW_TOOL[spec.kind]}|${spec.pts.map(p => `${Math.round(p.time)}:${p.price}`).join(',')}|${spec.kind === 'text' ? spec.text ?? '' : ''}`
 
+/**
+ * A browser-only drawings key that belongs to `base`: the key itself, a Deep Dive per-day key (`base:deepdive:...`) or, for the Browse and
+ * Swing charts that kept their drawings per candle interval, `base:<minutes>` (Browse) or `base:3m`, `base:1h`, `base:1D` (Swing).
+ */
+export const isLegacyKeyOf = (base: string, key: string) =>
+  key === base || key.startsWith(`${base}:deepdive:`) || (key.startsWith(`${base}:`) && /^\d+[mhD]?$/.test(key.slice(base.length + 1)))
 interface LegacyLine { time: number; value: number }
 const legacyLines = (d: any): LegacyLine[][] =>
   (Array.isArray(d?.series) ? d.series.map((s: any) => s?.data) : Array.isArray(d?.lines) ? d.lines : [])

@@ -64,7 +64,7 @@ Approved 2026-11-20. Source of truth for sprint order; update the status column 
 | Sprint | Scope | Real-trading touch | Status |
 |---|---|---|---|
 | S0 | Docs (this plan, the spec decisions, acceptance skeleton, CLAUDE.md row, todo, Phase 26 corrections) | no | done (2026-11-20, straight to `dev`) |
-| S1 | A. Lightweight drawings on `Chart.tsx` (Browse, Day, Swing, live) | yes (dev only) | next |
+| S1 | A. Lightweight drawings on `Chart.tsx` (Browse, Day, Swing, live) | yes (dev only) | built, in PR (see "S1 as built") |
 | S2 | B3. Analysis Maximize | no | planned |
 | S3 | B1. Group tab in Results, then the live popup | popup: yes (dev only) | planned |
 | S4 | B2. Compare tab | no | planned |
@@ -80,3 +80,10 @@ Order: S1 first (a visible defect of the last release); S2 to S4 are independent
 - Website: `cd frontend && node node_modules/typescript/bin/tsc --noEmit`; Playwright `npm run test:charts`; `bash scripts/build-frontend-with-webapp.sh` then `cd webapp && npm test`. Phone: `cd mobile && npm run typecheck && npm test`.
 - By hand: `docs/phase27-manual-acceptance.md`.
 - `bash scripts/check-preprod-synced.sh` before any promotion. Nothing from this phase that touches real-trading screens goes to `preprod` without the owner's real-session try.
+
+## S1 as built (2026-11-20): Lightweight trading charts share the database drawings
+
+- **Files:** new `frontend/src/components/chartDrawingInstrument.ts` (the one identity, used by `WebsiteKLineChart.tsx` and the store hook), `useChartDrawingStore.ts`; `TradingChartHost.tsx` passes `persistDrawings` and `drawingStore`; `Chart.tsx` attaches the shared controller when `persistDrawings` (its inline drawing code, `localStorage` save and loader are skipped; the candle update path is untouched); `analysis/LightweightChartTools.tsx` gains `useLightweightDrawing` (split out of `useLightweightTools`) and `LightweightDrawControls`; `lightweightDrawings.ts` / `lightweightPersist.ts`: `legacyScope` on the store and `isLegacyKeyOf` (interval-suffixed old keys).
+- **Decisions:** Text and picking a single drawing come with the shared controller (the old inline tools had neither); a Swing chart writes unscoped records (shared with Day and with the KLine swing chart) and still reads its old private-scope records; the old browser-only drawings of every interval of Browse and Swing are copied up once; the Day chart's in-memory handoff is dropped (the database is the handoff). If the symbol's kind cannot be looked up the chart still draws, on the chart only, and shows a notice when a save fails.
+- **Tests:** `node --test` (18 in `frontend/src/components`), `windowsapp/src/lightweightDrawingIdentity.test.ts` (3), website Playwright: the cross-renderer test replaced the old "Lightweight drawings stay in the browser" test (which asserted the opposite), the seven per-tool tests wait for the tool click guard, plus two Swing tests; the whole website suite (98) passes; `tsc --noEmit` clean for the website and the desktop app.
+- **Not covered:** the webapp's own suite, and a real Browse, Day (replay, paper, real) and Swing session. By hand: `docs/phase27-manual-acceptance.md` section A.
