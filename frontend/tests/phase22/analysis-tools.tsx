@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { init } from "klinecharts";
 import { createRoot } from "react-dom/client";
 import { AnalysisProvider } from "../../../shared/analysis/environment";
 import KLineAnalysisChart from "../../../shared/analysis/kline/AnalysisChart";
@@ -58,6 +59,8 @@ const environment: any = {
   drawingRequest,
   resolveSymbolInstrument: async () => ({ kind: "index", exchange: "NSE" }),
   accountKey: "test",
+  // `?readonly=1`: saved drawings are shown but there are no tools to make or change them (the phone).
+  drawingsReadOnly: new URLSearchParams(location.search).get("readonly") === "1",
   reportError: (error: string) => w.errors.push(error),
   intervalMinutes: 3,
 };
@@ -89,3 +92,9 @@ function App() {
   );
 }
 createRoot(document.getElementById("test-root")!).render(<App />);
+
+// The KLine charts on the page (klinecharts returns the existing instance for an element it already drives).
+w.charts = () => [...document.querySelectorAll("[k-line-chart-id]")].map((element) => {
+  element.id = element.getAttribute("k-line-chart-id") ?? "";
+  return init(element as HTMLElement);
+});

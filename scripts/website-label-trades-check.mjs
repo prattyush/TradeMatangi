@@ -14,6 +14,7 @@ await mkdir(artifacts, { recursive: true })
 await build({ stdin: { contents: `
 import React from 'react';import {createRoot} from 'react-dom/client';
 import TradeLabeling from '${root}/frontend/src/components/TradeLabeling';
+import {CardMaximizeContext} from '${root}/shared/analysis/labeling/useRoundTripView';
 import api from '${root}/frontend/src/services/api';
 import {init} from 'klinecharts';
 window.getAnalysisChart=dom=>{dom.id=dom.getAttribute('k-line-chart-id');return init(dom)};
@@ -44,7 +45,9 @@ api.getBehaviorMarks=async()=>marks.map(copy);
 api.saveBehaviorMarks=async(sid,idx,answers)=>{window.markSaves.push({sid,idx,answers});for(const [q,v] of Object.entries(answers)){marks=marks.filter(m=>!(m.round_trip_index===idx&&m.question_id===q));if(v)marks.push({round_trip_index:idx,question_id:q,kind:questions.find(x=>x.question_id===q).kind})}return marks.filter(m=>m.round_trip_index===idx)};
 api.updateUserSettings=async s=>{window.settings.push(s);return s};
 const app=createRoot(document.getElementById('root'));
-app.render(<React.StrictMode><TradeLabeling symbol="NIFTY" date="2026-10-07" sessionIds={['s1']} allTrades={trades} historicalDays={2}/></React.StrictMode>);
+// The day card (GroupCard) owns the one Maximize button and provides its state to the tab; this stand-in does the same.
+function Card(){const [max,setMax]=React.useState(false);return <CardMaximizeContext.Provider value={max}><button onClick={()=>setMax(!max)}>{max?'Restore':'Maximize'}</button><TradeLabeling symbol="NIFTY" date="2026-10-07" sessionIds={['s1']} allTrades={trades} historicalDays={2}/></CardMaximizeContext.Provider>}
+app.render(<React.StrictMode><Card/></React.StrictMode>);
 `, resolveDir: root + '/frontend', loader: 'tsx' }, bundle: true, jsx: 'automatic', outfile: dir + '/app.js', define: { 'import.meta.env': '{}' }, nodePaths: [root + '/frontend/node_modules'], alias: { react: root + '/frontend/node_modules/react', 'react-dom': root + '/frontend/node_modules/react-dom' }, loader: { '.css': 'css' }, logLevel: 'silent' })
 await writeFile(dir + '/index.html', '<html><head><link rel="stylesheet" href="/app.css"></head><body style="background:#0d1117;margin:0"><div id="root" style="width:min(1200px,100vw);min-height:700px"></div><script type="module" src="/app.js"></script></body></html>')
 const server = createServer(async (req, res) => { try { res.setHeader('Content-Type', req.url.endsWith('.js') ? 'text/javascript' : req.url.endsWith('.css') ? 'text/css' : 'text/html'); res.end(await readFile(dir + (req.url === '/' ? '/index.html' : req.url))) } catch { res.statusCode = 404; res.end() } })

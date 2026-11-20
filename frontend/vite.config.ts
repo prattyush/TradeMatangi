@@ -23,6 +23,8 @@ export default defineConfig({
     },
   },
   plugins: [react()],
+  // The Games workers (puzzle generators) load their word lists with import(): that needs the ES module format, not the default IIFE.
+  worker: { format: "es" },
   preview: {
     host: true,
     allowedHosts: ["tradematangi.co.in"],

@@ -1,3 +1,4 @@
+import { feedNotice } from '../../shared/liveFeedNotice'
 import { shouldResetLabelTracking } from './hooks/roundTripIndexer'
 import { AppWindowControls } from '../../shared/AppWindowControls'
 import { InstallAppControl } from '../../webapp/src/InstallApp'
@@ -11,6 +12,8 @@ import TradingChartHost from './components/TradingChartHost'
 import { useTradingDisplaySettings } from './hooks/useTradingDisplaySettings'
 import { useCandleAlert, type CandleAlertClock } from '../../shared/useCandleAlert'
 import { headerAlertColor, maxSizeAlertActive, type SizedPosition } from '../../shared/maxSizeAlert'
+import { effectiveDisplayMode } from '../../shared/pnlMilestone'
+import { useRiskSwitch } from '../../shared/useRiskSwitch'
 import { browserSwingSubscribe } from "../../shared/swingStream";
 import KotakTOTPModal from './components/KotakTOTPModal'
 import SwingChart from './components/SwingChart'
@@ -33,7 +36,12 @@ import React from 'react'
 import { BROWSE_HEADER_SLOT } from './components/browse/browseSlot'
 // Browse (read-only charts, a symbol per pane) is the landing view when no session is running; loaded on first use.
 const BrowseWorkspace = lazy(() => import('./components/browse/BrowseWorkspace'))
+// Games (Phase 25): a lazy overlay like Browse; nothing loads until it is opened.
+const GamesWorkspace = lazy(() => import('./components/games/GamesWorkspace'))
 import PatternLibrary from './pages/PatternLibrary'
+import type { PracticeMode, PracticePlan } from '../../shared/practice/types'
+import { practiceStartConfig } from '../../shared/practice/startConfig'
+import { snapStartTime } from '../../shared/practice/model'
 import ChartStructures from './pages/ChartStructures'
 import type { ChartVisibleRange, PaneType } from './components/Chart'
 import ChartContextMenu, { ContextMenuAction } from './components/ChartContextMenu'
@@ -324,11 +332,16 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   const [showBrowse, setShowBrowse] = useState(() => {
     try { return !JSON.parse(localStorage.getItem(`tradematangi_workspace_${authUser.userId}`) ?? '{}')?.sessionId } catch { return true }
   })
+  // Games overlay (opened from the header). Opening Analysis closes it; opening Browse closes it.
+  const [showGames, setShowGames] = useState(false)
+  useEffect(() => { if (showAnalysis) setShowGames(false) }, [showAnalysis])
   // Starting or attaching a session always leaves Browse for the trading screen.
   useEffect(() => { if (sim.sessionState !== 'idle' && sim.sessionState !== 'ended') setShowBrowse(false) }, [sim.sessionState])
 
   // ── Pattern Library page ─────────────────────────────────────────────────────
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
+  // Strategy Practice: the run whose review the Pattern Library's Practice tab should open (set by the Review button after Stop).
+  const [practiceReviewId, setPracticeReviewId] = useState<string | null>(null)
   const [showChartStructures, setShowChartStructures] = useState(false)
   const [sessionControlsVisible, setSessionControlsVisible] = useState(true)
   const [addingSession, setAddingSession] = useState(false)
@@ -546,9 +559,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
 
   // ── Per-user chart/alert preferences: target P&L lines, candle sound, MAX SIZE alert ──
   const tradingDisplay = useTradingDisplaySettings()
-  const pnlDisplay = tradingDisplay.pnl
-  const pnlPctMode = pnlDisplay.mode === 'percent'
-  const milestonesMode = pnlDisplay.mode === 'milestones'
+  const configuredPnlDisplay = tradingDisplay.pnl
   const candleAlertClock = useMemo<CandleAlertClock>(() => {
     if (!sim.sessionId || (sim.sessionState !== 'running' && sim.sessionState !== 'paused')) return { kind: 'off' }
     if (sim.sessionType === 'sim') return { kind: 'market', time: sim.latestEquityTick?.time }
@@ -565,7 +576,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
     return [sized(sim.positionCE, true), sized(sim.positionPE, true)]
   }, [sim.sessionInstrumentType, sim.sessionType, sim.position, sim.positionCE, sim.positionPE, sim.contractPositions, openOptionContracts])
   const maxSizeAlert = sim.sessionState === 'running' && maxSizeAlertActive(tradingDisplay.maxSize, maxSizePositions, sim.sessionCapital, sim.sessionInstrumentType)
-  const headerAlert = headerAlertColor({ redAlert: guardRailAlertActive, banActive: guardrailPopup?.type === 'BAN', maxSizeAlert })
+  const baseHeaderAlert = headerAlertColor({ redAlert: guardRailAlertActive, banActive: guardrailPopup?.type === 'BAN', maxSizeAlert })
   const [layoutPreset, setLayoutPreset] = useState<LayoutPreset>(2)
   const [activePaneId, setActivePaneId] = useState<number | null>(1)
   useEffect(() => {
@@ -1363,15 +1374,17 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   // Derive open legs directly from live position state (always up-to-date).
   // Each open leg becomes an entry form in PendingLabelPanel.
   const openLegs = (() => {
-    const legs: { right: string | null; rtIndex: number; label: string }[] = []
+    const legs: { right: string | null; rtIndex: number; label: string; action: 'BUY' | 'SELL' }[] = []
+    // The side of the order that opened the leg (a long position was bought, a short one sold): the label popup reads the position's direction from it.
+    const opened = (side: string) => (side === 'SHORT' ? 'SELL' : 'BUY') as 'BUY' | 'SELL'
     if (sim.position.side !== 'FLAT' && sim.position.quantity > 0) {
-      legs.push({ right: null, rtIndex: sim.getOpenRtIndex(null), label: openLegLabels['EQ'] })
+      legs.push({ right: null, rtIndex: sim.getOpenRtIndex(null), label: openLegLabels['EQ'], action: opened(sim.position.side) })
     }
     if (sim.positionCE.side !== 'FLAT' && sim.positionCE.quantity > 0) {
-      legs.push({ right: 'CE', rtIndex: sim.getOpenRtIndex('CE'), label: openLegLabels['CE'] ?? `${sim.symbol} CE` })
+      legs.push({ right: 'CE', rtIndex: sim.getOpenRtIndex('CE'), label: openLegLabels['CE'] ?? `${sim.symbol} CE`, action: opened(sim.positionCE.side) })
     }
     if (sim.positionPE.side !== 'FLAT' && sim.positionPE.quantity > 0) {
-      legs.push({ right: 'PE', rtIndex: sim.getOpenRtIndex('PE'), label: openLegLabels['PE'] ?? `${sim.symbol} PE` })
+      legs.push({ right: 'PE', rtIndex: sim.getOpenRtIndex('PE'), label: openLegLabels['PE'] ?? `${sim.symbol} PE`, action: opened(sim.positionPE.side) })
     }
     return legs
   })()
@@ -1632,6 +1645,32 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
     if (autoStartSnapshots) startSnapshots()
   }, [sim.startSession, sim.groupId, sim.group?.speed, addingSession, brokeragePerOrder, stratIntervalSecs, autoStartSnapshots, startSnapshots])
 
+  // ── Strategy Practice (Phase 26): a replay on a day marked in a Deep Dive, started from the Pattern Library's Practice tab ──
+  // The day, start minute and strikes come from the server's pick; the trading screen is the ordinary replay screen.
+  const startPractice = useCallback(async (plan: PracticePlan, { mode, speed }: { mode: PracticeMode; speed: number }) => {
+    const sessionType = mode === 'stepwise' ? 'stepwise' : 'sim'
+    const c = await practiceStartConfig(plan, {
+      getExpiry: (symbol, date) => api.getExpiry(symbol, date),
+      getPriceAt: (symbol, date, time) => api.getPriceAt(symbol, date, time, 'replay'),
+    })
+    let config: InstrumentConfig
+    if (c.instrument_type === 'options' && c.expiry && c.strike_ce != null && c.strike_pe != null) {
+      handleOptionsReady({ strike: c.strike_ce, ceStrike: c.strike_ce, peStrike: c.strike_pe, expiry: c.expiry, atmStrike: c.strike_ce, underlyingPrice: c.underlyingPrice })
+      config = { symbol: c.symbol, date: c.date, instrument_type: 'options', strike: c.strike_ce, expiry: c.expiry, strike_ce: c.strike_ce, strike_pe: c.strike_pe, session_type: sessionType }
+    } else {
+      handleOptionsReady(null)
+      config = { symbol: c.symbol, date: c.date, instrument_type: 'equity', session_type: sessionType }
+    }
+    // No override: earlier replays of the day are never deleted, and a practice run is kept apart from them.
+    // A Stepwise run advances by whole bars (the user's own Stepwise bar), so it starts on a bar boundary: the first bar is a full one.
+    // The server snaps it the same way and records the start it used.
+    const startTime = mode === 'stepwise' ? snapStartTime(plan.start_time, stratIntervalSecs) : plan.start_time
+    await handleStart(startTime, mode === 'stepwise' ? 1 : speed, { ...config, practice: plan.practice })
+    setShowPatternLibrary(false)
+  }, [handleStart, handleOptionsReady, stratIntervalSecs])
+  const practiceBlockedReason = sim.sessionState !== 'idle' && sim.sessionState !== 'ended'
+    ? 'A session is running. Stop it before you start a practice run.' : null
+
   // ── Price pick: chart clicked in pick mode ───────────────────────────────────
   const handleChartPriceSelect = useCallback((price: number, sourcePane: PaneConfig) => {
     if (!Number.isFinite(price) || price <= 0 || !panes.some(p=>p.id===sourcePane.id && matchesChartContract(sourcePane,p))) return
@@ -1855,6 +1894,19 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   const netDayPnl = sim.dayPnl - sim.trades.reduce((s, t) => s + (t.commission ?? 0), 0)
   // Total day P&L includes realized P&L from previous sessions for same user+symbol+date+type
   const totalDayPnl = netDayPnl + sim.prevDayPnl
+
+  // Risk switch (Milestones only): once the day loss is half way to Max loss the whole screen shows P&L % and the header turns red.
+  const riskSwitch = useRiskSwitch({
+    enabled: configuredPnlDisplay.mode === 'milestones' && sim.sessionState !== 'idle',
+    dayPnl: totalDayPnl, capital: sim.sessionCapital, maxLossPct: configuredPnlDisplay.maxLossPct,
+  })
+  const pnlDisplay = useMemo(
+    () => (riskSwitch ? { ...configuredPnlDisplay, mode: effectiveDisplayMode(configuredPnlDisplay.mode, true) } : configuredPnlDisplay),
+    [configuredPnlDisplay, riskSwitch],
+  )
+  const pnlPctMode = pnlDisplay.mode === 'percent'
+  const milestonesMode = pnlDisplay.mode === 'milestones'
+  const headerAlert = riskSwitch ? 'red' : baseHeaderAlert
 
   // ── Trades filtered per pane for markers ─────────────────────────────────────
   const paneTradingData = useMemo(() => new Map(panes.map(pane => [pane.id, {
@@ -2221,8 +2273,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             Sign out
           </button>
         </div>
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <PatternLibrary />
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <PatternLibrary practice={{ startPractice, blockedReason: practiceBlockedReason, reviewSessionId: practiceReviewId, onReviewOpened: () => setPracticeReviewId(null) }} />
         </div>
       </div>
     )
@@ -2251,6 +2303,18 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           </button>
         )}
         <NotificationHeadline onOpenHistory={onOpenMessages} />
+        {sim.practice && sim.sessionState !== 'idle' && (
+          <div data-testid="practice-badge" style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d2238', border: '1px solid #1f6feb', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#79c0ff' }}
+            title="A practice run: its trades are kept apart from your normal replays and Performance totals">
+            <span>Practice: {sim.practice.strategy}{sim.stepwise ? ' · Stepwise' : ''}</span>
+            {sim.sessionState === 'ended' && sim.sessionId && (
+              <button onClick={() => { setPracticeReviewId(sim.sessionId); setShowPatternLibrary(true) }}
+                style={{ background: '#1f6feb', border: 'none', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}>
+                Review practice
+              </button>
+            )}
+          </div>
+        )}
         {sim.sessionState !== 'idle' && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
@@ -2271,9 +2335,11 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             )}
           </div>
         )}
-        <NavIconButton icon={showBrowse ? 'trading' : 'browse'} active={showBrowse} onClick={() => setShowBrowse(value => !value)}
+        <NavIconButton icon={showBrowse ? 'trading' : 'browse'} active={showBrowse} onClick={() => { setShowGames(false); setShowBrowse(value => !value) }}
           label={showBrowse ? 'Back to Trading' : 'Browse — read-only charts: any symbol, any day, side by side'} />
         <span id={BROWSE_HEADER_SLOT} style={{ display: 'inline-flex' }} />
+        <NavIconButton icon="games" active={showGames} onClick={() => { setShowBrowse(false); setShowGames(value => !value) }}
+          label={showGames ? 'Close Games' : 'Games — practice tools for speed, memory, attention and trading skills'} />
         <NavIconButton icon="swing" onClick={() => setShowSwing(true)} label="Swing portfolio — hold positions across days" />
         {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
@@ -2501,6 +2567,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       {/* Browse: read-only charts, a symbol and a day per pane (the landing view when no session is running) */}
       {/* (Not mounted while Analysis is open on top of it: one set of charts on screen at a time.) */}
       {showBrowse && !showAnalysis && <Suspense fallback={null}><BrowseWorkspace userId={authUser.userId} /></Suspense>}
+      {/* Games: a fixed overlay like Browse. The trading layout below stays mounted while a session runs. */}
+      {showGames && !showAnalysis && <Suspense fallback={null}><GamesWorkspace sessionKind={idle ? 'none' : sim.sessionType === 'real' ? 'real' : sim.sessionType === 'paper' ? 'paper' : 'sim'} /></Suspense>}
 
       {/* Trade Analysis modal */}
       {showAnalysis && (
@@ -2652,7 +2720,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
       )}
 
       {/* Broker error banner (paper trading) */}
-      {liveFeed && sim.sessionType !== 'real' && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>Feed {liveFeed.actual_provider ?? liveFeed.selected_provider} · {liveFeed.connection}{liveFeed.actual_provider && liveFeed.actual_provider !== liveFeed.selected_provider ? ` (fallback from ${liveFeed.selected_provider})` : ''}</div>}
+      {/* Only when the feed needs attention (connecting, reconnecting, unavailable, or a fallback provider): a healthy feed takes no row from the chart. */}
+      {sim.sessionType !== 'real' && feedNotice(liveFeed) && <div role="status" style={{ fontSize: 11, color: '#8b949e', padding: '3px 12px' }}>{feedNotice(liveFeed)}</div>}
       {/* Main content */}
       <div ref={mainContentRef} style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {/* Chart column */}
@@ -2660,7 +2729,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 12px' }}
         >
           {/* While Browse covers an idle trading screen its charts are not mounted, so they download nothing in the background. */}
-          {showBrowse && idle ? null : renderLayout()}
+          {(showBrowse || showGames) && idle ? null : renderLayout()}
         </div>
 
         {/* Right sidebar — collapsible */}

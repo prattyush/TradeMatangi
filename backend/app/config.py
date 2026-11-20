@@ -14,6 +14,15 @@ _paths = _cfg["paths"] if _cfg.has_section("paths") else {}
 OHLCDATA_DIR = Path(_paths.get("ohlcdata", str(DATA_DIR / "ohlcdata")))
 LOG_DIR = Path(_paths.get("logs", str(DATA_DIR / "logs")))
 
+# Games (Phase 25): the index of cached second-level days that /games/availability serves, built by
+# scripts/build-games-index.py, and the longest 1-second window /games/window will return.
+GAMES_INDEX_PATH = Path(os.getenv("GAMES_INDEX_PATH", str(DATA_DIR / "games-index.json")))
+GAMES_MAX_WINDOW_SECONDS = int(os.getenv("GAMES_MAX_WINDOW_SECONDS", "900"))
+
+# Kite live stream mode. "quote" carries the day's traded volume (needed for live volume and VWAP); "ltp" is the old
+# price-only mode, kept as a switch back if the heavier packets ever cause trouble. Indices carry no volume in either.
+KITE_STREAM_MODE = os.getenv("KITE_STREAM_MODE", "quote").strip().lower()
+
 PORT = int(os.getenv("PORT", "8700"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
 

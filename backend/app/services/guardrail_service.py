@@ -57,6 +57,19 @@ def _emit_guardrail_event(session: "SimulationSession", guardrail_type: str, rea
 
 # ── Initialisation ────────────────────────────────────────────────────────────
 
+def guardrail_limit_snapshot(user_id: str) -> dict | None:
+    """The capital-loss limit as it is when a session is created: ``{"ban_capital_pct", "ban_enabled"}``, or None when the settings
+    cannot be read (the day score then uses its fixed fallback). Saved once on the Sessions row so a later change of the setting does not
+    move the limit a past day is scored against. Never raises: creating a session must not depend on it."""
+    try:
+        from app.services.user_settings_service import get_settings
+        settings = get_settings(user_id)
+        return {"ban_capital_pct": float(settings.get("guardrail_ban_capital_pct", 10.0)), "ban_enabled": bool(settings.get("guardrail_ban_enabled", False))}
+    except Exception:
+        logger.warning("Could not read the guardrail limit to save with the session")
+        return None
+
+
 def initialize_guardrails(session: "SimulationSession", user_id: str) -> None:
     """Snapshot guardrail settings from UserSettings onto the session at creation time."""
     try:
@@ -518,7 +531,12 @@ def cap_entry_quantity(
 # ── Minimum gap between entries ───────────────────────────────────────────────
 
 def _last_entry_fill_time(session_id: str) -> int | None:
-    """Timestamp of the latest fill that opened, added to or flipped a position."""
+    """Timestamp of the latest fill that opened, added to or flipped a position, or None when the gap does not apply.
+
+    The gap is about trading again too soon while a position is still on, so it **resets when the whole book is flat**:
+    once every contract (CE and PE, every strike and expiry) is closed, the next entry is allowed at once. With a CE and a
+    PE open, both must be closed before the timer resets; closing one of them does not.
+    """
     from app.services.trading import get_trades
     net: dict[tuple, int] = {}
     last: int | None = None
@@ -530,6 +548,8 @@ def _last_entry_fill_time(session_id: str) -> int | None:
         net[key] = after
         if abs(after) > abs(before) or (before != 0 and (before > 0) != (after > 0) and after != 0):
             last = trade.timestamp if last is None else max(last, trade.timestamp)
+        if not any(net.values()):
+            last = None  # everything is closed: the gap starts over with the next entry
     return last
 
 

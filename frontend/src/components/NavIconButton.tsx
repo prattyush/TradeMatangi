@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 
 /** Header navigation as icon buttons: one 30x30 box, one 18px line-icon style, a tooltip that shows at once. */
-export type NavIconName = 'browse' | 'trading' | 'swing' | 'analysis' | 'patterns' | 'structures'
+export type NavIconName = 'browse' | 'trading' | 'swing' | 'analysis' | 'patterns' | 'structures' | 'games'
 
 const ICONS: Record<NavIconName, ReactNode> = {
   // candlesticks: a chart to look at
@@ -16,6 +16,8 @@ const ICONS: Record<NavIconName, ReactNode> = {
   patterns: <><path d="M12 6c-2-1.5-5-2-8-2v14c3 0 6 .5 8 2 2-1.5 5-2 8-2V4c-3 0-6 .5-8 2zM12 6v14" /></>,
   // a stepped line: market structure (highs and lows)
   structures: <><path d="M3 18l5-7 4 4 4-9 5 6" /><path d="M3 21h18" /></>,
+  // a game controller: practice games
+  games: <><path d="M6 8h12a3 3 0 0 1 3 3v3a3 3 0 0 1-5 2l-1-1H9l-1 1a3 3 0 0 1-5-2v-3a3 3 0 0 1 3-3z" /><path d="M8 10.5v3M6.5 12h3M15.5 11.5h.01M17.5 13.5h.01" /></>,
 }
 
 export default function NavIconButton({ icon, label, onClick, active = false }: {

@@ -11,7 +11,7 @@ from app.request_logging import RequestLoggingMiddleware
 
 from app.routers import browse, swing
 from app.config import LOG_DIR
-from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings, performance, desktop_analysis, desktop_patterns, behavior, video_links, whatif
+from app.routers import data, simulation, trading, stream, orders, wallet, auth, analysis, strategies, users, admin, kotak, breeze, guardrails, internal, pattern_logger, snapshots, chart_structures, labels, fine_structures, desktop, desktop_persistence, desktop_live, desktop_replay, desktop_trading, desktop_settings, performance, desktop_analysis, desktop_patterns, desktop_games, behavior, video_links, whatif, deep_dive, day_notes, day_score
 
 
 def _configure_logging() -> None:
@@ -163,6 +163,7 @@ app.include_router(wallet.router)
 app.include_router(analysis.router)
 app.include_router(desktop_analysis.router)
 app.include_router(desktop_patterns.router)
+app.include_router(desktop_games.router)
 app.include_router(strategies.router)
 app.include_router(users.router)
 app.include_router(admin.router)
@@ -173,12 +174,15 @@ app.include_router(breeze.router)
 app.include_router(guardrails.router)
 app.include_router(internal.router)
 app.include_router(pattern_logger.router)
+app.include_router(deep_dive.router)
 app.include_router(snapshots.router)
 app.include_router(chart_structures.router)
 app.include_router(labels.router)
 app.include_router(behavior.router)
 app.include_router(video_links.router)
 app.include_router(whatif.router)
+app.include_router(day_notes.router)
+app.include_router(day_score.router)
 app.include_router(fine_structures.router)
 
 

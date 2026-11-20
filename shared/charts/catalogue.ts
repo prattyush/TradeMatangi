@@ -3,6 +3,7 @@ export const drawingTools = [
   { label: "Trend line", icon: "╱", tool: "Trend" },
   { label: "Ray", icon: "↗", tool: "ray" },
   { label: "Arrow", icon: "➜", tool: "arrow" },
+  { label: "Text", icon: "T", tool: "Text" },
   { label: "Rectangle", icon: "▭", tool: "rect" },
   { label: "Brush", icon: "✎", tool: "brush" },
   { label: "Fibonacci retracement", icon: "Φ", tool: "Fib Retracement" },
@@ -13,6 +14,9 @@ export const drawingTools = [
   { label: "Gann box", icon: "▦", tool: "gannBox" },
   { label: "Long position", icon: "L", tool: "longPosition" },
   { label: "Short position", icon: "S", tool: "shortPosition" },
+  { label: "Risk : Reward (stop, then entry)", icon: "RR", tool: "Risk Reward" },
+  { label: "Buy marker", icon: "▲", tool: "Buy Marker" },
+  { label: "Sell marker", icon: "▼", tool: "Sell Marker" },
 ];
 
 export const allIndicators = [

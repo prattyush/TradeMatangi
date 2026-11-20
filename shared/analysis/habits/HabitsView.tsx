@@ -22,7 +22,7 @@ interface Props {
   onOpenTrade?: (identity: { session_id: string; cycle_id: string }) => void
 }
 
-type Kind = 'all' | 'entry' | 'exit'
+type Kind = 'all' | 'entry' | 'exit' | 'system'
 type Section = 'Scorecard' | 'Trends' | 'Compare' | 'Deep dive'
 const plural = (count: number, noun: string) => (count === 1 ? noun : `${noun}s`)
 
@@ -87,7 +87,7 @@ export default function HabitsView({ filters, refresh, onOpenTrade }: Props) {
           <button type="button" className="hb-manage" onClick={() => setManaging(true)}>Manage questions</button>
         </div>
         <div className="hb-controls">
-          <Segmented label="Habit type" value={kind} onChange={setKind} options={[['all', 'All'], ['entry', 'Entry'], ['exit', 'Exit']]} />
+          <Segmented label="Habit type" value={kind} onChange={setKind} options={[['all', 'All'], ['entry', 'Entry'], ['exit', 'Exit'], ['system', 'System']]} />
           <Segmented label="Average" value={mode} onChange={setMode} options={[['mean', 'Mean'], ['median', 'Median']]} />
           <Segmented label="Unit" value={unit} onChange={setUnit} options={[['pct', '% of capital'], ['money', '₹']]} />
           {(section === 'Trends' || section === 'Compare') && <Segmented label="Across" value={axis} onChange={setAxis} options={[['session', 'Sessions (order run)'], ['date', 'Market dates']]} />}

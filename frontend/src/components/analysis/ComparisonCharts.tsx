@@ -6,10 +6,9 @@ import { useAnalysisApi, useAnalysisEnvironment } from '../../../../shared/analy
 import type { AnalysisTrade, OHLCCandle, PatternAnnotation, TopPatterns } from '../../../../shared/analysis/api'
 import type { StrikeTab, InstFilter } from '../../../../shared/analysis/chartProps'
 import { buildMarkers } from '../../services/patternMarkers'
-import { rendererAccountKey } from '../../services/websiteChartPreferences'
 import { LightweightChartTools, useLightweightTools } from './LightweightChartTools'
 import { toVolumeCandles } from '../../indicators/volumeStudies'
-import { lightweightDrawingKey } from './lightweightDrawings'
+import { useLightweightStore } from './useLightweightStore'
 function nextEMA(p: number, c: number, k: number) { return c * k + p * (1 - k) }
 function computeEMA(cl: number[], n: number): (number | null)[] {
   const r: (number | null)[] = []; const k = 2 / (n + 1); let e: number | null = null; let w = 0, s = 0
@@ -37,7 +36,7 @@ export function WebsiteTradesChart({symbol,date,trades,getMarkerText,strikeTabs,
   const [cc,sc] = useState<CandlestickData[]>([]); const [mf,smf] = useState<'all'|'CE'|'PE'>('all'); const [activeStrike, setActiveStrike] = useState<string>('')
 
   const activeTab = !activeStrike ? null : strikeTabs.find(s => s.key === activeStrike) ?? null
-  const tools = useLightweightTools(activeTab ? lightweightDrawingKey(rendererAccountKey(), symbol, activeTab.right, activeTab.strike, activeTab.expiry) : lightweightDrawingKey(rendererAccountKey(), symbol))
+  const tools = useLightweightTools(useLightweightStore({ symbol, right: activeTab?.right, strike: activeTab?.strike, expiry: activeTab?.expiry }))
 
   useEffect(()=>{const el=cr.current;if(!el)return;const c=createChart(el,{width:el.clientWidth||500,height:(el.parentElement?.clientHeight||400)-50,layout:{background:{color:'#0d1117'},textColor:'#e6edf3'},grid:{vertLines:{color:'#1e2732'},horzLines:{color:'#1e2732'}},timeScale:{timeVisible:true,secondsVisible:false,borderColor:'#30363d'},crosshair:{mode:0}});ch.current=c;const cs=c.addCandlestickSeries({upColor:'#26a641',downColor:'#f85149',borderVisible:false,wickUpColor:'#26a641',wickDownColor:'#f85149'});sr.current=cs;const detach=tools.attach(c,cs);e9r.current=c.addLineSeries({color:'#f0883e',lineWidth:1,lastValueVisible:false,priceLineVisible:false});e21r.current=c.addLineSeries({color:'#79c0ff',lineWidth:1,lastValueVisible:false,priceLineVisible:false});const ro=new ResizeObserver(e=>{c.applyOptions({width:e[0].contentRect.width})});ro.observe(el);return()=>{ro.disconnect();detach();c.remove()}},[])
 
@@ -82,7 +81,7 @@ export function WebsitePatternChart({symbol,date,annotations,topPatterns,activeS
   },[patternStrike,annotations])
 
   const activeTab = activeStrike === 'CE' || activeStrike === 'PE' ? patternTabs.find(t=>t.right===activeStrike)??null : null
-  const tools = useLightweightTools(activeTab ? lightweightDrawingKey(rendererAccountKey(), symbol, activeTab.right, activeTab.strike, activeTab.expiry) : lightweightDrawingKey(rendererAccountKey(), symbol))
+  const tools = useLightweightTools(useLightweightStore({ symbol, right: activeTab?.right, strike: activeTab?.strike, expiry: activeTab?.expiry }))
 
   const ftr=useMemo(()=>{
     if(activeTab) return annotations.filter(a=>a.instrument===activeTab.right)

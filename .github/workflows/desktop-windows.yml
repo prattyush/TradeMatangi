@@ -37,6 +37,14 @@ jobs:
           path: ~\AppData\Local\tauri
           key: tauri-tools-${{ runner.os }}-nsis-3.11
       - run: npm ci
+      # Unit tests: the desktop app and the shared code it uses (vitest), then the Rust allowlists and host logic.
+      # `cargo test` needs the built web assets (tauri embeds ../dist), so build them first.
+      - name: Desktop unit tests
+        run: npm test
+      - name: Build web assets
+        run: npm run build
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

@@ -11,6 +11,31 @@ describe('desktop analysis transport', () => {
     // What If: saved scenarios (the exact path, plus a read-only date-range list).
     for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath('whatif', method)).toBe(true)
     expect(validAnalysisPath('whatif/range?start=2026-11-01', 'GET')).toBe(true)
+    // Phase 27: day notes and TODOs, exact paths; writes are POST (and DELETE on the TODO list), never PUT.
+    expect(validAnalysisPath('day-notes?date=2026-11-19', 'GET')).toBe(true)
+    expect(validAnalysisPath('day-notes', 'POST')).toBe(true)
+    for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath('day-notes/todos', method)).toBe(true)
+    expect(validAnalysisPath('day-notes/todos?todo_id=abc&date=2026-11-19', 'DELETE')).toBe(true)
+    expect(validAnalysisPath('day-notes/todos/status', 'POST')).toBe(true)
+    for (const [path, method] of [['day-notes', 'DELETE'], ['day-notes', 'PUT'], ['day-notes/todos/status', 'GET'], ['day-notes/todos/status', 'DELETE'], ['day-notes/todos', 'PUT']]) expect(validAnalysisPath(path, method)).toBe(false)
+    for (const path of ['day-notes/', 'day-notes/extra', 'day-notes/todos/x', 'day-notes/../labels', 'day-notes%2Ftodos', 'daynotes']) for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath(path, method)).toBe(false)
+    // Phase 27: the day score is read only (a single day and a range).
+    for (const path of ['day-score?date=2026-11-19', 'day-scores?start=2026-11-01&end=2026-11-30&compute=true', 'day-score', 'day-scores']) {
+      expect(validAnalysisPath(path, 'GET')).toBe(true)
+      for (const method of ['POST', 'DELETE', 'PUT']) expect(validAnalysisPath(path, method)).toBe(false)
+    }
+    for (const path of ['day-score/', 'day-score/x', 'day-scores/x', 'day-score/../labels', 'dayscore']) expect(validAnalysisPath(path, 'GET')).toBe(false)
+    // Phase 26: the Deep Dive percentages for the label forms are one read-only route.
+    expect(validAnalysisPath('deep-dive/stats/all', 'GET')).toBe(true)
+    for (const method of ['POST', 'DELETE']) expect(validAnalysisPath('deep-dive/stats/all', method)).toBe(false)
+    for (const path of ['deep-dive/stats', 'deep-dive/dives', 'deep-dive/setup', 'deep-dive/tags', 'deep-dive/stats/all/x']) expect(validAnalysisPath(path, 'GET')).toBe(false)
+    // Strategy Practice: the review and the run list are read-only analysis routes; picking and the strategy list are on the patterns transport.
+    for (const path of ['deep-dive/practice/runs', 'deep-dive/practice/evaluate', 'deep-dive/practice/evaluate?session_id=abc']) {
+      expect(validAnalysisPath(path, 'GET')).toBe(true)
+      for (const method of ['POST', 'DELETE', 'PUT']) expect(validAnalysisPath(path, method)).toBe(false)
+    }
+    for (const path of ['deep-dive/practice', 'deep-dive/practice/pick', 'deep-dive/practice/strategies', 'deep-dive/practice/evaluate/x', 'deep-dive/practice/runs/x', 'deep-dive/practice/../labels']) expect(validAnalysisPath(path, 'GET')).toBe(false)
+    expect(validAnalysisPath('deep-dive/practice/pick', 'POST')).toBe(false)
     expect(validAnalysisPath('whatif/range', 'POST')).toBe(false)
     expect(validAnalysisPath('whatif', 'PUT')).toBe(false)
     for (const path of ['whatif/extra', 'whatif/', 'whatif/../labels', 'what-if']) expect(validAnalysisPath(path, 'GET')).toBe(false)

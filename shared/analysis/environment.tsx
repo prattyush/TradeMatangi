@@ -1,10 +1,15 @@
-import { createContext, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react'
 import type { OHLCCandle } from './api'
 import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
 import type { HabitLedger } from './habits/types'
 import type { VideoLinksSource } from './videoLinks'
 import type { WhatIfSource } from './whatif/scenarios'
+import type { DayNotesSource } from './notes/types'
+import type { DayScoreSource } from './dayScore/types'
+import type { StatsAllEntry } from '../deepdive/types'
+import type { DiveChartProps } from '../deepdive/ui/host'
+import type { PracticeApi } from '../practice/types'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -13,6 +18,8 @@ export type AnalysisApi = Pick<typeof websiteApi,
   'getExpiry' | 'getSnapshots' | 'deleteSnapshots' | 'patternListStrategies' |
   'patternListCategories' | 'patternAddStrategy' | 'patternAddCategory' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'> & {
   getSnapshotCandle?: (sessionId: string, eventId: string, instrument: 'underlying' | 'CE' | 'PE', signal?: AbortSignal) => Promise<{candle: OHLCCandle | null}>
+  /** Phase 26: the Deep Dive percentages of every strategy that has marked days, for the label forms. Absent (an older server or host) => no panel. */
+  getDeepDiveStats?: () => Promise<StatsAllEntry[]>
 }
 export interface AnalysisEnvironment {
   swingRequest?: import('../SwingPortfolioPanel').SwingRequest
@@ -20,6 +27,8 @@ export interface AnalysisEnvironment {
   drawingRequest?: (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<unknown>
   /** Catalogue kind/exchange of an underlying, so Analysis drawings share the trading chart's instrument key. */
   resolveSymbolInstrument?: (symbol: string) => Promise<{ kind: string; exchange: string } | undefined>
+  /** The charts show saved drawings but offer no tools to make or change them (the phone). */
+  drawingsReadOnly?: boolean
   /** Scopes locally-stored chart preferences (indicators) to the signed-in account. */
   accountKey?: string
   api: AnalysisApi
@@ -29,6 +38,10 @@ export interface AnalysisEnvironment {
   chartPicking?: boolean
   /** Saved What If scenarios (owner only). Absent => What If is a playground that is lost on refresh. */
   whatIf?: WhatIfSource
+  /** Day notes and carried-over TODOs (Phase 27). Without it the Notes tab is not offered. */
+  dayNotes?: DayNotesSource
+  /** The day score (Phase 27). Without it no score is shown. */
+  dayScore?: DayScoreSource
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
     getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>
@@ -43,6 +56,11 @@ export interface AnalysisEnvironment {
   // Each adapter implements the existing chart's public props. The heterogeneous
   // snapshot/pattern inputs are normalized inside the desktop renderer boundary.
   charts?: Record<string, ComponentType<any>>
+  /**
+   * Strategy Practice (Phase 26): what the review of a practice run needs (its read-only API and a chart that draws marks). Absent where
+   * the host cannot show it, and the Practice review button is then not offered.
+   */
+  practice?: { api: Pick<PracticeApi, 'runs' | 'evaluate'>; Chart: ComponentType<DiveChartProps>; historicalDays?: number }
   reportError?: (error: string, source: string) => void
   active?: boolean
   desktop?: boolean
@@ -74,11 +92,25 @@ export function AnalysisProvider({ value, children }: { value: AnalysisEnvironme
   const [intervalMinutes, setIntervalMinutes] = useState(3)
   return <Context.Provider value={{...value, intervalMinutes: parent?.intervalMinutes ?? intervalMinutes, setIntervalMinutes: parent?.setIntervalMinutes ?? setIntervalMinutes}}>{children}</Context.Provider>
 }
+/**
+ * A chart (or a pair of charts) with a candle interval of its own. Every Analysis chart reads the interval from the environment, which
+ * is one shared setting; inside this scope the interval is local, starting at `initial` (re-applied when it changes), and a change
+ * the user makes on a chart stays in the scope. Used by Compare, where two panes show different days with their own intervals.
+ */
+export function AnalysisIntervalScope({ initial, children }: { initial: number; children: ReactNode }) {
+  const env = useAnalysisEnvironment()
+  const [minutes, setMinutes] = useState(initial)
+  useEffect(() => { setMinutes(initial) }, [initial])
+  const value = useMemo(() => ({ ...env, intervalMinutes: minutes, setIntervalMinutes: setMinutes }), [env, minutes])
+  return <Context.Provider value={value}>{children}</Context.Provider>
+}
 export function useAnalysisEnvironment(): AnalysisEnvironment {
   const value = useContext(Context)
   if (!value) throw new Error('Analysis must have an authenticated provider')
   return value
 }
+/** The environment, or null outside an Analysis provider (a chart that can run without one). */
+export function useOptionalAnalysisEnvironment(): AnalysisEnvironment | null { return useContext(Context) }
 export function useAnalysisApi() { return useAnalysisEnvironment().api }
 
 export function useAnalysisError(error: string | null | undefined, source: string) {

@@ -29,6 +29,11 @@ def cycle(index=0, session="s1", state="closed", entries=None, **extra):
     return base
 
 
+def own(result):
+    """The user's own questions in a ledger (the calculated system habits are always listed after them)."""
+    return [q for q in result["questions"] if not q.get("system")]
+
+
 def test_bars_held_counts_candles_touched():
     assert ledger.bars_held(0, 100, 180) == 1            # entered and exited inside one candle
     assert ledger.bars_held(170, 190, 180) == 2          # crossed one boundary
@@ -82,7 +87,7 @@ def test_join_attaches_habits_to_closed_trades_only():
         "closed_trades": 2, "marked_trades": 2, "marks": 3, "unmatched_marks": 0, "open_marked_trades": 1,
         "trades_without_capital": 0, "trades_without_bars": 0, "truncated": False,
     }
-    assert result["questions"] == [{"question_id": "qa"}]
+    assert own(result) == [{"question_id": "qa"}]
 
 
 def test_marks_without_a_trade_are_counted_not_dropped_silently():
@@ -173,7 +178,7 @@ def test_ledger_matches_marks_to_the_cycle_index_and_reconciles_with_the_stats_s
     assert [t["habits"] for t in result["trades"] if t["session_id"] == "s1"] == [[qa], sorted([qa, qb])]
     assert [t["habits"] for t in result["trades"] if t["session_id"] == "s2"] == [[qb], []]
     assert result["coverage"] == {**result["coverage"], "closed_trades": 4, "marked_trades": 3, "marks": 4, "unmatched_marks": 0}
-    assert {q["question_id"] for q in result["questions"]} == {qa, qb}
+    assert {q["question_id"] for q in own(result)} == {qa, qb}
     # Reconciliation: the ledger is exactly the closed trades the Stats overview counts.
     cycles = perf.load_cycles(USER, **{**criteria, "include_shared": False})
     summary = perf.report(cycles)["summary"]
@@ -298,7 +303,7 @@ def test_archived_questions_stay_in_the_ledger(db):
     bsvc.archive_question(USER, qa)
     result = ledger.load_ledger(USER, {})
     assert result["trades"][0]["habits"] == [qa]
-    assert [(q["question_id"], q["status"]) for q in result["questions"]] == [(qa, "archived")]
+    assert [(q["question_id"], q["status"]) for q in own(result)] == [(qa, "archived")]
 
 
 # ── HTTP + desktop proxy ─────────────────────────────────────────────────────
@@ -340,7 +345,7 @@ def test_swing_scope_returns_an_empty_ledger_without_reading_cycles(db, monkeypa
     qa = question("entry", "Chased")
     monkeypatch.setattr(perf, "load_cycles", lambda *a, **k: (_ for _ in ()).throw(AssertionError("swing books must not be read")))
     result = ledger.load_ledger(USER, {"trading_style": "swing"})
-    assert result["trades"] == [] and [q["question_id"] for q in result["questions"]] == [qa]
+    assert result["trades"] == [] and [q["question_id"] for q in own(result)] == [qa]
     assert result["coverage"]["closed_trades"] == 0
 
 
@@ -431,3 +436,41 @@ def test_a_large_ledger_is_gzipped_only_when_asked_and_small_ones_never(db, monk
     state["data"] = small
     tiny = client.get("/api/behavior/habit-ledger", headers={"X-User-Id": USER, "Accept-Encoding": "gzip"})
     assert "content-encoding" not in tiny.headers and len(tiny.json()["trades"]) == 3
+
+
+# ── System habits (Phase 27, S7) ─────────────────────────────────────────────
+
+def test_the_ledger_lists_the_three_system_habits_after_the_users_own_questions():
+    result = ledger.build_ledger([cycle(0)], [], {}, [{"question_id": "qa", "kind": "entry"}])
+    assert [q["question_id"] for q in result["questions"]] == ["qa", "sys:repeat_entry", "sys:add_to_loser", "sys:big_loss_wipes_gains"]
+    system = [q for q in result["questions"] if q.get("system")]
+    assert len(system) == 3 and all(q["kind"] == "system" and q["status"] == "active" for q in system)
+
+
+def test_system_habits_are_flagged_on_the_trades_that_showed_them_next_to_the_marks():
+    # Two losing trades on one contract, the second entered a minute after the first closed (inside three 3-minute bars).
+    losing = dict(net_pnl=-50.0, pnl_pct=-0.5, matches=[], right="CE", strike=24500, expiry="2026-10-08", exchange="NFO", symbol="NIFTY")
+    first = cycle(0, entry_time=1_000, exit_time=1_100, **losing)
+    second = cycle(1, entry_time=1_160, exit_time=1_300, **losing)
+    third = cycle(2, entry_time=9_000, exit_time=9_100, net_pnl=40.0)
+    result = ledger.build_ledger([first, second, third], [mark("s1", 1, "qa")], {}, [])
+    habits = {t["cycle_id"]: t["habits"] for t in result["trades"]}
+    assert habits == {"s1-0": [], "s1-1": ["qa", "sys:repeat_entry"], "s1-2": []}
+    assert result["coverage"]["marked_trades"] == 1, "the system habits are not marks"
+
+
+def test_system_habits_look_at_the_whole_date_across_sessions():
+    # A loss in one session and a repeat loss on the same contract in another session of the same date.
+    losing = dict(net_pnl=-50.0, pnl_pct=-0.5, matches=[], right="CE", strike=24500, expiry="2026-10-08", exchange="NFO", symbol="NIFTY")
+    a = cycle(0, session="s1", entry_time=1_000, exit_time=1_100, **losing)
+    b = cycle(0, session="s2", entry_time=1_150, exit_time=1_300, **losing)
+    result = ledger.build_ledger([a, b], [], {}, [])
+    assert {t["cycle_id"]: t["habits"] for t in result["trades"]} == {"s1-0": [], "s2-0": ["sys:repeat_entry"]}
+
+
+def test_a_cycle_that_cannot_be_read_never_breaks_the_ledger():
+    broken = cycle(0)
+    del broken["entries"][0]["entry_method"]
+    del broken["net_pnl"]
+    result = ledger.build_ledger([broken, cycle(1)], [], {}, [])
+    assert len(result["trades"]) == 2

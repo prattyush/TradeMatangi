@@ -55,7 +55,7 @@ window.fetch = async (input: any, options: any = {}) => {
   if (path === "/api/data/price-at") return json({ symbol: query.symbol, date: query.date, time: query.time, price: 24512 });
   if (path === "/api/data/expiry") return json({ symbol: query.symbol, date: query.date, expiry: "2026-10-20" });
   if (path === "/api/data/options/find-strike-by-price") {
-    if (w.failFindStrike) return json({ detail: "No observed premium at or below the cap within 30 strikes" }, 404);
+    if (w.failFindStrike) return json({ detail: "No observed premium at or below the cap within 50 strikes" }, 404);
     return json({ strike: query.right === "CE" ? 24650 : 24350, price: 50, symbol: query.symbol, date: query.date, right: query.right });
   }
   return json({});

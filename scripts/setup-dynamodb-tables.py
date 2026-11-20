@@ -425,11 +425,11 @@ TABLES = [
         "TableName": "BehaviorQuestions",
         "KeySchema": [
             {"AttributeName": "user_id", "KeyType": "HASH"},
-            {"AttributeName": "question_id", "KeyType": "RANGE"},
+            {"AttributeName": "tag_id", "KeyType": "RANGE"},
         ],
         "AttributeDefinitions": [
             {"AttributeName": "user_id", "AttributeType": "S"},
-            {"AttributeName": "question_id", "AttributeType": "S"},
+            {"AttributeName": "tag_id", "AttributeType": "S"},
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
@@ -454,6 +454,31 @@ TABLES = [
                 ],
                 "Projection": {"ProjectionType": "ALL"},
             }
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    # ── Phase 26 Patterns Strategy Deep Dive ─────────────────────────────────
+    {
+        "TableName": "DeepDiveSetups",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "setup_key", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "setup_key", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
+        "TableName": "DeepDiveTags",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "tag_key", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "tag_key", "AttributeType": "S"},
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
@@ -495,6 +520,56 @@ TABLES = [
         ],
         "BillingMode": "PAY_PER_REQUEST",
     },
+    # ── Phase 27 day notes and TODOs: one note per market date, one item per TODO (kept when a session is deleted) ─
+    {
+        "TableName": "DayNotes",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "date", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "date", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
+        "TableName": "DayScores",  # Phase 27: the stored score of a trading day (payload JSON + score), recomputed when trades or labels change
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "date", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "date", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
+        "TableName": "DayTodos",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "todo_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "todo_id", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
+    {
+        # Phase 25 Games progress: profile, game#<id>, day#<date> (TTL on expires_at), month#<YYYY-MM>.
+        "TableName": "GameProfiles",
+        "KeySchema": [
+            {"AttributeName": "user_id", "KeyType": "HASH"},
+            {"AttributeName": "record_id", "KeyType": "RANGE"},
+        ],
+        "AttributeDefinitions": [
+            {"AttributeName": "user_id", "AttributeType": "S"},
+            {"AttributeName": "record_id", "AttributeType": "S"},
+        ],
+        "BillingMode": "PAY_PER_REQUEST",
+    },
 ]
 
 
@@ -508,6 +583,14 @@ def create_tables():
         try:
             dynamodb.create_table(**table_def)
             print(f"  [created] {name}")
+            if name == "GameProfiles":
+                # Day records expire after about 200 days. DynamoDB Local accepts the call but does not
+                # enforce expiry; real AWS does.
+                try:
+                    dynamodb.update_time_to_live(TableName=name, TimeToLiveSpecification={"Enabled": True, "AttributeName": "expires_at"})
+                    print(f"  [ttl]    {name}.expires_at")
+                except ClientError as e:
+                    print(f"  [warn]   {name} TTL not enabled: {e.response['Error']['Message']}")
         except ClientError as e:
             print(f"  [error]  {name}: {e.response['Error']['Message']}")
 

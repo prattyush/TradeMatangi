@@ -584,6 +584,27 @@ def list_exit_tags(user_id: str) -> list[str]:
         raise RuntimeError("Saved exit tags could not be read; retry later") from exc
 
 
+def canonical_labels(labels: list[dict]) -> list[dict]:
+    """The user's labels with a linked real session counted once, from its owner session (the broker book is the truth)."""
+    from app.services.real_broker_state import link_for
+    canonical, owners = [], set()
+    for label in labels:
+        if label.get("session_type") != "real":
+            canonical.append(label)
+            continue
+        link = link_for(label["session_id"])
+        if not link:
+            canonical.append(label)
+            continue
+        from app.services.db import get_dynamodb_resource
+        manifest = get_dynamodb_resource().Table("Sessions").get_item(Key={"session_id": link["projection_id"]}, ConsistentRead=True).get("Item", {})
+        owner = manifest.get("owner_session_id")
+        if owner and owner not in owners:
+            owners.add(owner)
+            canonical.extend(get_labels_for_session(owner))
+    return canonical
+
+
 def get_stats(
     user_id: str,
     symbol: str | None = None,
@@ -615,22 +636,7 @@ def get_stats(
             )
 
         labels = resp.get("Items", [])
-        from app.services.real_broker_state import link_for
-        canonical, owners = [], set()
-        for label in labels:
-            if label.get("session_type") != "real":
-                canonical.append(label)
-                continue
-            link = link_for(label["session_id"])
-            if not link:
-                canonical.append(label)
-                continue
-            from app.services.db import get_dynamodb_resource
-            manifest = get_dynamodb_resource().Table("Sessions").get_item(Key={"session_id": link["projection_id"]}, ConsistentRead=True).get("Item", {})
-            owner = manifest.get("owner_session_id")
-            if owner and owner not in owners:
-                owners.add(owner)
-                canonical.extend(get_labels_for_session(owner))
+        canonical = canonical_labels(labels)
         labels = _current_real_day_label_percentages(canonical)
 
         if symbol:

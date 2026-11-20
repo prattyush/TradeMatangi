@@ -38,7 +38,8 @@ export function SessionsScreen() {
     })
   }, [api, JSON.stringify(filters)])
 
-  const groups = useMemo(() => (sessions.data ? groupSessions(sessions.data) : []), [sessions.data])
+  // Practice runs are listed with the others unless filtered; the server's totals leave them out.
+  const groups = useMemo(() => (sessions.data ? groupSessions(sessions.data.filter(session => !filters.practice || (filters.practice === 'only' ? Boolean(session.practice) : !session.practice))) : []), [sessions.data, filters.practice])
   const symbols = useMemo(() => [...new Set((sessions.data ?? []).map(session => session.symbol))].sort(), [sessions.data])
   const current = groups.find(group => group.key === selected) ?? null
   useEffect(() => { if (selected && sessions.data && !current) setSelected(null) }, [selected, sessions.data, current])

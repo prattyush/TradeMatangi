@@ -201,7 +201,7 @@ test('Max price can go back to a manual strike', async ({ page }) => {
 })
 
 test('Max price says why no strike was found and offers a manual strike', async ({ page }) => {
-  const state = await openBrowse(page, s => { s.maxPriceFail = 'No observed premium at or below the cap within 30 strikes' })
+  const state = await openBrowse(page, s => { s.maxPriceFail = 'No observed premium at or below the cap within 50 strikes' })
   await page.getByRole('button', { name: 'CE', exact: true }).click()
   await openMax(page)
   await page.getByRole('dialog', { name: 'CE max price' }).getByLabel('Premium cap (₹)').fill('1')
@@ -211,7 +211,7 @@ test('Max price says why no strike was found and offers a manual strike', async 
   state.maxPriceFail = undefined
   await page.getByRole('button', { name: 'Try again' }).click()
   await expect(chart(page)).toBeVisible()
-  state.maxPriceFail = 'No observed premium at or below the cap within 30 strikes'
+  state.maxPriceFail = 'No observed premium at or below the cap within 50 strikes'
   await page.getByRole('button', { name: 'Previous day' }).click()
   await page.getByRole('button', { name: 'Manual strike' }).click()
   await expect(chart(page)).toBeVisible()
@@ -251,6 +251,25 @@ test('leaving the tab and coming back finds the same chart', async ({ page }) =>
   await rail(page).getByRole('button', { name: 'Stats' }).click()
   await rail(page).getByRole('button', { name: 'Browse' }).click()
   await expect(page.getByRole('button', { name: 'Symbol: RELIND' })).toBeVisible()
+})
+
+test('Browse shows the drawings saved elsewhere, read-only: it reads the instrument\'s drawings and never writes', async ({ page }) => {
+  const state = await openBrowse(page, s => {
+    s.drawings = [
+      { drawing_id: 'd1', revision: 1, drawing: { tool: 'Horizontal', points: [{ timestamp: 1_762_826_100, price: 24500 }], visible: true, locked: false } },
+      { drawing_id: 'd2', revision: 1, drawing: { tool: 'Text', text: 'Saved on the website', points: [{ timestamp: 1_762_826_100, price: 24520 }], visible: true, locked: false } },
+    ]
+  })
+  await expect(chart(page)).toBeVisible()
+  await expect.poll(() => state.requests.filter(r => r.path === '/api/desktop/v1/drawings')).toHaveLength(1)
+  // The same instrument identity the website and the desktop save NIFTY under (the catalogue's kind and exchange).
+  const asked = JSON.parse(state.requests.find(r => r.path === '/api/desktop/v1/drawings')!.query.get('instrument')!)
+  expect(asked).toEqual({ exchange: 'NSE', kind: 'index', symbol: 'NIFTY' })
+  await expect(page.getByRole('button', { name: /drawing tools/i })).toHaveCount(0)
+  await expect(page.getByRole('complementary', { name: 'Drawing tools' })).toHaveCount(0)
+  await page.keyboard.press('Delete')
+  await page.keyboard.press('Control+z')
+  expect(state.requests.filter(r => r.path.startsWith('/api/desktop/') && r.method !== 'GET')).toHaveLength(0)
 })
 
 test('Browse only reads: no write request and no order or drawing controls', async ({ page }) => {

@@ -1,7 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalysisProvider } from '../../../shared/analysis/environment'
 import DesktopAnalysisChart from '../AnalysisChart'
 import { usePatternsRuntime } from './usePatternsRuntime'
+import DeepDive from '../../../shared/deepdive/ui/DeepDive'
+import Compare from '../../../shared/deepdive/ui/Compare'
+import { useDesktopDeepDiveHost } from './deepdive/desktopHost'
+import { PATTERN_SYMBOLS } from '../../../shared/deepdive/symbols'
+import TradedPatterns from '../../../shared/traded/ui/TradedPatterns'
+import Practice from '../../../shared/practice/ui/Practice'
+import { useDesktopPracticeHost } from './practice/desktopPractice'
+import type { PracticeLaunch } from './practice/launch'
+import type { TradedHost } from '../../../shared/traded/ui/host'
+import type { DiveChartProps } from '../../../shared/deepdive/ui/host'
 import { IntervalBridge } from './IntervalBridge'
 import type { PatternAnnotation, PatternChartMeta } from '../../../shared/analysis/api'
 import { cleanTopPatterns } from '../../../shared/analysis/patternMarkers'
@@ -9,7 +19,14 @@ import '../../../shared/analysis/kline/desktopAnalysis.css'
 import './patternTools.css'
 import { RANKS, TOOL_OPTIONS, buildSaveBody, defaultPatternDate, resolveStrikes, riskRewardKey, savedStrikePair, setRank, setRiskReward, strikesOf, toggleAnnotation, uniquePatterns, type ExtraPane, type OptionStrikes } from './patternLibraryModel'
 
-interface Props { baseUrl: string; token: string; onUnauthorized: () => void; active: boolean }
+interface Props {
+  baseUrl: string; token: string; onUnauthorized: () => void; active: boolean
+  /** Strategy Practice: starts a replay on a workspace screen (rejects with a sentence when it cannot). */
+  onStartPractice?: (launch: PracticeLaunch) => Promise<void>
+  /** A practice run whose review should open now (the workspace's Review button after Stop). */
+  practiceReviewId?: string | null
+  onPracticeReviewOpened?: () => void
+}
 interface Loaded { symbol: string; date: string; instrumentType: 'equity' | 'options'; strikes: { ce: number; pe: number } | null; expiry: string | null }
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -19,10 +36,14 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * note an R:R per pattern, add or remove strike panes, draw on the charts, save per day and browse the saved charts.
  * Built on the Analysis KLine chart (it already draws the saved markers and can pick a point).
  */
-export default function PatternLibrary({ baseUrl, token, onUnauthorized, active }: Props) {
+export default function PatternLibrary({ baseUrl, token, onUnauthorized, active, onStartPractice, practiceReviewId = null, onPracticeReviewOpened }: Props) {
   const { client, environment, settings } = usePatternsRuntime(baseUrl, token, onUnauthorized, active)
+  // The Deep Dive puts its own header controls in this row (a portal into the slot below), so the charts get the height.
+  const [deepDiveSlot, setDeepDiveSlot] = useState<HTMLElement | null>(null)
+  const deepDiveHost = useDesktopDeepDiveHost(client, settings, deepDiveSlot)
 
-  const [view, setView] = useState<'create' | 'view'>('create')
+  const [view, setView] = useState<'create' | 'view' | 'deepdive' | 'compare' | 'traded' | 'practice'>(practiceReviewId ? 'practice' : 'create')
+  useEffect(() => { if (practiceReviewId) setView('practice') }, [practiceReviewId])
   const [symbol, setSymbol] = useState('NIFTY')
   const [date, setDate] = useState(() => defaultPatternDate())
   const [instrumentType, setInstrumentType] = useState<'equity' | 'options'>('equity')
@@ -32,7 +53,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
   const [message, setMessage] = useState<{ kind: 'error' | 'ok'; text: string } | null>(null)
 
   const [annotations, setAnnotations] = useState<PatternAnnotation[]>([])
-  const [toolKey, setToolKey] = useState<string>('entry-CE')
+  const [toolKey, setToolKey] = useState<string | null>(null)
   const [strategies, setStrategies] = useState<string[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [strategy, setStrategy] = useState('')
@@ -111,10 +132,21 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
     } catch (error) { fail(error) } finally { setLoading(false) }
   }, [client, fail])
 
-  const tool = TOOL_OPTIONS.find(t => t.key === toolKey)!
+  // "From your trades" (Phase 26, S10): the labelled trades as pattern material. Edit opens the saved chart in Annotate.
+  const tradedHost = useMemo<TradedHost>(() => ({
+    api: client.traded, Chart: DesktopAnalysisChart as unknown as TradedHost['Chart'] & ((props: DiveChartProps) => unknown),
+    historicalDays: settings.historicalDays, onEdit: async chartId => { await openSaved({ chart_id: chartId } as PatternChartMeta) },
+  }), [client, settings.historicalDays, openSaved])
+
+  const noPractice = useCallback(async () => { throw new Error('Practice can only start from the desktop workspace.') }, [])
+  const practiceHost = useDesktopPracticeHost(client, settings, onStartPractice ?? noPractice, { sessionId: practiceReviewId, onOpened: onPracticeReviewOpened ?? (() => undefined) })
+
+  // No marker is selected to begin with; clicking the selected one again puts it down. With none, a chart click marks nothing.
+  const tool = TOOL_OPTIONS.find(t => t.key === toolKey)
   const effectiveStrategy = strategy || newStrategy.trim()
   const effectiveCategory = category || newCategory.trim()
   const pick = useCallback((point: { time: number; price: number }) => {
+    if (!tool) return
     if (!effectiveCategory) { setMessage({ kind: 'error', text: 'Select or type a category before marking.' }); return }
     if (!effectiveStrategy) { setMessage({ kind: 'error', text: 'Select or type a strategy before marking.' }); return }
     setMessage(null)
@@ -184,12 +216,17 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
         <div className="pl-tabs" role="tablist">
           <button role="tab" aria-selected={view === 'create'} onClick={() => setView('create')}>Annotate</button>
           <button role="tab" aria-selected={view === 'view'} onClick={() => setView('view')}>Saved charts ({gallery.length})</button>
+          <button role="tab" aria-selected={view === 'deepdive'} onClick={() => setView('deepdive')}>Deep dive</button>
+          <button role="tab" aria-selected={view === 'compare'} onClick={() => setView('compare')}>Compare</button>
+          <button role="tab" aria-selected={view === 'traded'} onClick={() => setView('traded')}>From your trades</button>
+          {onStartPractice && <button role="tab" aria-selected={view === 'practice'} onClick={() => setView('practice')}>Practice</button>}
         </div>
+        {view === 'deepdive' && <span ref={setDeepDiveSlot} className="pl-head-slot" />}
       </header>
       {view === 'create' && <>
         <div className="pl-bar">
           <label>Symbol <input list="pl-symbols" value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase())} size={10} /></label>
-          <datalist id="pl-symbols"><option value="NIFTY" /><option value="BSESEN" /></datalist>
+          <datalist id="pl-symbols">{PATTERN_SYMBOLS.map(item => <option key={item.symbol} value={item.symbol}>{item.name}</option>)}</datalist>
           <label>Date <input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
           <label>Instrument <select value={instrumentType} onChange={e => setInstrumentType(e.target.value as 'equity' | 'options')}><option value="equity">Underlying only</option><option value="options">Underlying + CE/PE</option></select></label>
           {instrumentType === 'options' && <label title={settings.mode === 'threshold' ? 'Max Price from Settings' : 'OTM offset in strikes'}>
@@ -224,10 +261,10 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
           <div className="pl-bar">
             <span className="pl-muted">Mark:</span>
             {TOOL_OPTIONS.filter(t => t.instrument === 'underlying' || hasRight(t.instrument)).map(t =>
-              <button key={t.key} aria-pressed={toolKey === t.key} className={`pl-tool ${t.type}`} onClick={() => setToolKey(t.key)}>{t.label}</button>)}
+              <button key={t.key} aria-pressed={toolKey === t.key} className={`pl-tool ${t.type}`} onClick={() => setToolKey(k => k === t.key ? null : t.key)} title={toolKey === t.key ? 'Click again to stop marking' : undefined}>{t.label}</button>)}
             <button onClick={() => setAnnotations(a => a.slice(0, -1))} disabled={!annotations.length}>Undo</button>
             <button onClick={() => setAnnotations([])} disabled={!annotations.length}>Clear marks</button>
-            <span className="pl-muted">{annotations.length} marks · candle {interval}m (set on a chart)</span>
+            <span className="pl-muted">{tool ? '' : 'no marker selected · '}{annotations.length} marks · candle {interval}m (set on a chart)</span>
             <button className="pl-save" onClick={() => void save()}>{chartId ? 'Update' : 'Save'}</button>
           </div>
           <div className="pl-charts" style={{ gridTemplateColumns: maximizedPane == null ? `repeat(${panes.length}, minmax(0, 1fr))` : '1fr' }}>
@@ -242,13 +279,17 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active 
                 historicalDays={settings.historicalDays}
                 annotations={annotations.filter(a => a.instrument === pane.instrument)} activeStrategy={effectiveStrategy || null} activeCategory={effectiveCategory || null}
                 topPatterns={topPatterns} riskRewardRatios={riskReward}
-                pickMode={tool.instrument === pane.instrument} onPick={pick} pickHint={`${tool.label} — click a candle (click the same candle again to remove)`}
+                pickMode={tool?.instrument === pane.instrument} onPick={pick} pickHint={`${tool?.label ?? ''} — click a candle (click the same candle again to remove)`}
               />
             </div>)}
           </div>
           <label className="pl-notes">Notes <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What made this setup work or fail?" /></label>
         </>}
       </>}
+      {view === 'deepdive' && <DeepDive host={deepDiveHost} />}
+      {view === 'compare' && <Compare host={deepDiveHost} />}
+      {view === 'traded' && <TradedPatterns host={tradedHost} />}
+      {view === 'practice' && onStartPractice && <Practice host={practiceHost} />}
       {view === 'view' && <div className="pl-gallery">
         <div className="pl-bar">
           <label>Strategy <select value={filterStrategy} onChange={e => setFilterStrategy(e.target.value)}><option value="">All</option>{strategies.map(s => <option key={s}>{s}</option>)}</select></label>

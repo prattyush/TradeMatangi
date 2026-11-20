@@ -288,7 +288,8 @@ async def get_trades_by_context(
             instrument_type=instrument_type,
             session_type=session_type,
         )
-        session_ids = [s.get("session_id") for s in sessions if s.get("session_id")]
+        # A practice run is not part of the day's history, and never shows on a normal replay of that day.
+        session_ids = [s.get("session_id") for s in sessions if s.get("session_id") and not s.get("practice")]
         all_trades: list[dict] = []
         for sid in session_ids:
             all_trades.extend(get_trades_for_session(sid))

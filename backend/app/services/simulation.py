@@ -254,6 +254,7 @@ class SimulationSession:
     session_type: str = "sim"           # "sim", "paper", "real", or "stepwise"
     group_id: str | None = None
     session_alias: str | None = None
+    practice: dict | None = None  # Strategy Practice marker (server-side only: holds the recorded marks)
     wallet_ledger_id: str = ""
     stepwise: bool = False              # advance one bar per next-bar signal
     step_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -303,6 +304,9 @@ class SimulationSession:
     guardrail_ban_capital_pct: float = 10.0   # x% capital loss triggers BAN
     guardrail_ban_loss_trade_pct: float = 60.0 # y% of trades in loss triggers BAN
     guardrail_ban_enabled: bool = False
+    # Phase 27: the capital-loss limit the session was created with, kept on the Sessions row for the day score. It is written once at create
+    # and read back on resume; it never follows later changes of the setting (`guardrail_ban_capital_pct` above is re-read on resume).
+    guardrail_limit_snapshot: dict | None = None
     guardrail_maxsize_enabled: bool = False
     guardrail_maxsize_mode: str = "percentage"
     guardrail_maxsize_pct: float = 20.0
@@ -336,6 +340,20 @@ def _count_total_bars(symbol: str, date: str, start_time: str, interval_secs: in
     except Exception as exc:
         logger.warning("Could not count bars for %s %s: %s", symbol, date, exc)
     return len(slots)
+
+
+def limit_snapshot_from_record(record: dict) -> dict | None:
+    """The guardrail limit a Sessions row was created with, as plain numbers, or None for a row without one (an older session).
+
+    Read back on resume so the next write of the row keeps it: the limit never follows a later change of the setting.
+    """
+    saved = record.get("guardrail_limit_snapshot")
+    try:
+        if isinstance(saved, dict) and saved.get("ban_capital_pct") is not None:
+            return {"ban_capital_pct": float(saved["ban_capital_pct"]), "ban_enabled": bool(saved.get("ban_enabled"))}
+    except (TypeError, ValueError):
+        pass
+    return None
 
 
 def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -> None:
@@ -394,6 +412,8 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             item["group_id"] = session.group_id
         if session.session_alias:
             item["session_alias"] = session.session_alias
+        if getattr(session, "practice", None):
+            item["practice"] = json.dumps(session.practice)  # a JSON string: the recorded marks hold floats
         if session.wallet_ledger_id:
             item["wallet_ledger_id"] = session.wallet_ledger_id
         if getattr(session, "desktop_contracts", None):
@@ -418,6 +438,8 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
         desktop_origin = getattr(session, "desktop_origin", None)
         if desktop_origin:
             item["desktop_origin"] = desktop_origin
+        if getattr(session, "guardrail_limit_snapshot", None):
+            item["guardrail_limit_snapshot"] = dict(session.guardrail_limit_snapshot)
         if session.session_type == "real" and getattr(session, "real_day_allocation_pct", None) is not None:
             item["real_day_allocation_pct"] = Decimal(str(session.real_day_allocation_pct))
         if desktop_origin == "desktop_paper" or (session.session_type == "real" and session.trading_style != "swing"):
@@ -496,6 +518,7 @@ def create_session(
     stepwise: bool = False,
     group_id: str | None = None,
     session_alias: str | None = None,
+    practice: dict | None = None,
     wallet_ledger_id: str | None = None,
     starting_capital: float | None = None,
     execution_broker: str = "KotakNeo",
@@ -530,6 +553,7 @@ def create_session(
         stepwise=stepwise,
         group_id=group_id,
         session_alias=session_alias.strip() if session_alias else None,
+        practice=practice,
         wallet_ledger_id=ledger_id,
         execution_broker=execution_broker, broker_account_id=broker_account_id,
         trading_style=trading_style, portfolio_id=portfolio_id,
@@ -550,10 +574,23 @@ def create_session(
             from app.services.real_session_slots import DAY_LOCAL_AUTHORITY_SECONDS
             session.real_engine_valid_until = time.monotonic() + DAY_LOCAL_AUTHORITY_SECONDS
     _sessions[session_id] = session
+    from app.services.guardrail_service import guardrail_limit_snapshot
+    session.guardrail_limit_snapshot = guardrail_limit_snapshot(user_id)
     _upsert_session_to_db(session, strict=session_type == "real")
     from app.services.guardrail_service import initialize_guardrails
     initialize_guardrails(session, user_id)
     return session
+
+
+def load_practice(record: dict) -> dict | None:
+    """The practice marker of a Sessions record (stored as a JSON string), or None."""
+    raw = record.get("practice")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def find_session_by_context(
@@ -580,6 +617,7 @@ def find_session_by_context(
             if it.get("symbol") == symbol
             and it.get("date") == date
             and it.get("session_type") == session_type
+            and not it.get("practice")  # a practice run is never the "same session" as a normal replay, nor removed by its override
             and it.get("trading_style", "intraday") != "swing"
             and (
                 instrument_type is None
@@ -622,6 +660,7 @@ def find_all_sessions_by_context(
             if it.get("symbol") == symbol
             and it.get("date") == date
             and it.get("session_type") == session_type
+            and not it.get("practice")  # a practice run is never the "same session" as a normal replay, nor removed by its override
             and it.get("trading_style", "intraday") != "swing"
             and (
                 instrument_type is None
@@ -727,6 +766,7 @@ def rebuild_session_from_db(
         created_at=created_at,
         group_id=db_record.get("group_id"),
         session_alias=db_record.get("session_alias"),
+        practice=load_practice(db_record),
         wallet_ledger_id=ledger_id,
         resumed_from_db=True,
         execution_broker=db_record.get("execution_broker", "KotakNeo"),
@@ -781,6 +821,7 @@ def rebuild_session_from_db(
     if saved_last_price_pe is not None:
         session.last_price_pe = float(saved_last_price_pe)
     session.real_day_allocation_pct = float(db_record["real_day_allocation_pct"]) if db_record.get("real_day_allocation_pct") is not None else None
+    session.guardrail_limit_snapshot = limit_snapshot_from_record(db_record)
     session.broker_projection_id = db_record.get("broker_projection_id")
     session.broker_projection_owner = db_record.get("broker_projection_owner", session.session_id)
     session.resume_event.set()

@@ -3,6 +3,12 @@
  * The stored shape is library-neutral (unix-second timestamps + prices) and is
  * the same one `KLineChart.tsx` reads/writes through `/api/desktop/v1/drawings`.
  */
+// Pure (no klinecharts import: it needs a browser); the segment fib overlay is registered by `registerFibSegmentOverlay` where a chart is created.
+import { FIB_SEGMENT_OVERLAY } from "./klineFibSegment-name";
+import { TEXT_OVERLAY } from "./klineText-name";
+import { RISK_REWARD_OVERLAY } from "./klineRiskRewardModel";
+import { BUY_MARKER_OVERLAY, SELL_MARKER_OVERLAY, isMarkerTool, markerDefaults } from "./klineMarker-name";
+
 export interface PersistedDrawing {
   tool: string;
   points: Array<{ timestamp: number; price: number }>;
@@ -12,6 +18,8 @@ export interface PersistedDrawing {
     fillColor?: string;
     fillOpacity?: number;
   };
+  /** The label of a Text drawing (one point); stored with the drawing like any other field. */
+  text?: string;
   visible?: boolean;
   locked?: boolean;
 }
@@ -69,8 +77,42 @@ export const overlayName = (tool: string) =>
     : tool === "Horizontal"
       ? "horizontalStraightLine"
       : tool === "Fib Retracement"
-        ? "fibonacciLine"
-        : tool;
+        ? FIB_SEGMENT_OVERLAY
+        : tool === "Text"
+          ? TEXT_OVERLAY
+          : tool === "Risk Reward"
+            ? RISK_REWARD_OVERLAY
+            : tool === "Buy Marker"
+              ? BUY_MARKER_OVERLAY
+              : tool === "Sell Marker"
+                ? SELL_MARKER_OVERLAY
+                : tool;
+
+/** `extendData` of the Text overlay for a saved drawing: its text and colour (the chart's drawing line colour when none was saved). */
+export const textExtendData = (drawing: PersistedDrawing, settings: DrawingStyleSettings) => ({
+  text: drawing.text ?? "",
+  color: drawing.style?.color ?? settings.drawingLineColor,
+});
+
+/** `extendData` of a Buy / Sell marker for a saved drawing: its text (a default when none was saved); the colour is always the marker's own (blue Buy, orange Sell), whatever line colour the drawing was made with. */
+export const markerExtendData = (drawing: Pick<PersistedDrawing, "tool" | "text">) => {
+  const defaults = markerDefaults(drawing.tool);
+  return { text: drawing.text ?? defaults.text, color: defaults.color };
+};
+
+/**
+ * `extendData` for any overlay whose look needs it: the text of a Text drawing and the text and colour of a marker.
+ * For a drawing that is still being placed, pass its tool with no text.
+ */
+export const drawingExtendData = (drawing: Pick<PersistedDrawing, "tool" | "text" | "style">, settings: DrawingStyleSettings) =>
+  drawing.tool === "Text"
+    ? textExtendData(drawing as PersistedDrawing, settings)
+    : isMarkerTool(drawing.tool)
+      ? markerExtendData(drawing)
+      : undefined;
+
+/** Fields a drawing of this tool starts with when it is placed: a marker keeps its default text, so the saved record has it. */
+export const newDrawingFields = (tool: string): { text?: string } => (isMarkerTool(tool) ? { text: markerDefaults(tool).text } : {});
 
 export const drawingPoints = (drawing: PersistedDrawing) =>
   drawing.points.map((point) => ({

@@ -1,0 +1,145 @@
+/* Deep Dive (Phase 26) */
+.dd { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow: auto; }
+.dd h3, .dd h4 { margin: 0; }
+/* The Deep Dive's header controls. In the host's header row (a portal) the group dissolves into that row; otherwise it is a row of its own. */
+.dd-head-group { align-items: center; }
+.dd-head-group.in-header { display: contents; }
+.dd-head-title { font-size: 14px; font-weight: 700; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-head-group button { padding: 3px 9px; }
+.dd-head-group .dd-save { margin-left: auto; }
+.dd-start { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: #161b22; border: 1px solid #21262d; border-radius: 8px; }
+.dd-start p { margin: 0; }
+.dd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dd-table th, .dd-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #293142; }
+.dd-table th { color: #94a3b8; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.dd-warn { color: #fbbf24; font-weight: 600; }
+.dd-mark { display: flex; gap: 14px; flex: 1; min-height: 420px; }
+.dd-mark-left { flex: 0 0 340px; display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; overflow-y: auto; }
+.dd-mark-right { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.dd-chart { flex: 1 1 auto; min-height: 360px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
+.dd-chart > * { flex: 1; min-height: 0; }
+.dd-empty { margin: auto; }
+.dd-legend { margin: 0; }
+.dd-cal { display: flex; flex-direction: column; gap: 6px; }
+.dd-cal-head { display: flex; align-items: center; gap: 8px; }
+.dd-cal-head strong { flex: 1; text-align: center; font-size: 14px; }
+.dd-cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.dd-cal-dow { text-align: center; font-size: 10px; color: #94a3b8; text-transform: uppercase; }
+.dd-cal-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0; border: 1px solid transparent; border-radius: 6px; min-height: 48px; }
+/* Cells of the neighbouring months keep their grid slot (display:none would slide the whole month left) and only disappear. */
+.dd-cal-cell[hidden] { display: flex; visibility: hidden; }
+.dd-cal-cell.off { opacity: .35; }
+.dd-cal-cell.marked { background: #172033; border-color: #2c3b57; }
+.dd-cal-cell.selected { border-color: #60a5fa; }
+.dd-cal-day { background: none; border: none; color: #e5e7eb; font-size: 13px; padding: 0 6px; cursor: pointer; }
+.dd-cal-day:disabled { cursor: default; color: #94a3b8; }
+.dd-cal-sides { display: flex; gap: 3px; }
+.dd-side { padding: 0 5px; font-size: 11px; line-height: 17px; min-width: 20px; border-radius: 4px; }
+.dd-side.buy[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-side.sell[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-side-tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
+.dd-side-tag.buy { background: #14532d; color: #bbf7d0; }
+.dd-side-tag.sell { background: #7f1d1d; color: #fecaca; }
+.dd-days { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.dd-days li { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; font-size: 13px; }
+.dd-days li.active { background: #172033; }
+.dd-day-link { background: none; border: none; color: #93c5fd; cursor: pointer; padding: 0; text-align: left; flex: 1; }
+.dd-x { padding: 0 6px; line-height: 18px; }
+.dd-confirm { background: #2a1a0a; border: 1px solid #f0883e; border-radius: 6px; padding: 8px 10px; }
+.dd-confirm p { margin: 0 0 6px; font-size: 13px; }
+
+/* Deep Dive: in-depth step */
+.dd-depth { display: flex; flex-direction: column; gap: 8px; }
+.dd-save { margin-left: auto; font-size: 12px; color: #94a3b8; display: inline-flex; gap: 8px; align-items: center; }
+.dd-save.saved { color: #34d399; }
+.dd-strip { display: flex; flex-wrap: wrap; gap: 4px; }
+.dd-chip { padding: 2px 8px; font-size: 12px; border-radius: 12px; border: 1px solid #30363d; background: #0d1117; }
+.dd-chip.complete { border-color: #166534; color: #bbf7d0; }
+.dd-chip.incomplete { border-color: #b45309; color: #fde68a; }
+.dd-chip[aria-selected="true"] { background: #1e3a8a; border-color: #60a5fa; color: #fff; }
+.dd-chip b { margin-left: 2px; }
+.dd-chip.buy b { color: #4ade80; } .dd-chip.sell b { color: #f87171; }
+.dd-gapsbox { background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 6px 10px; }
+.dd-gapsbox summary { cursor: pointer; font-size: 13px; color: #fbbf24; }
+.dd-gaps h4 { display: none; }
+.dd-gaps ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.dd-gaps li { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.dd-gaps li button { background: none; border: none; color: #93c5fd; cursor: pointer; padding: 0; }
+.dd-day { display: flex; gap: 12px; }
+.dd-day-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.dd-day-side { flex: 0 0 340px; display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow-y: auto; }
+/* The day area is sized by useFillWindow to run to the bottom of the window. Inside it the underlying chart sits above the option
+   chart and together they take all the height left between the mark tools and the strike line, half each. On a short window each
+   keeps a height at which its time axis is not clipped, and the page scrolls instead. */
+.dd-charts { display: flex; flex-direction: column; gap: 8px; flex: 1 1 0; min-height: 0; }
+.dd-chartbox { flex: 1 1 0; min-width: 0; min-height: 260px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
+@media (max-width: 1000px) { .dd-day { flex-direction: column; } .dd-charts { flex: none; } .dd-chartbox { flex: none; height: 340px; } }
+.dd-chartbox > :not(.dd-frame-bar) { flex: 1; min-height: 0; }
+/* The thin bar above a chart with its name and Maximize / Restore; a chart hidden by the other's maximize keeps its place in memory. */
+.dd-frame-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 6px; background: #161b22; border-bottom: 1px solid #21262d; font-size: 11px; color: #8b949e; }
+.dd-frame-bar button { padding: 0 8px; line-height: 18px; font-size: 11px; }
+.dd-chartbox[hidden], .td-chartbox[hidden] { display: none; }
+.dd-outcome h4, .dd-tags h4 { margin: 0 0 4px; font-size: 13px; color: #cbd5e1; }
+.dd-success[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-grade-ideal[aria-pressed="true"] { background: #14532d; border-color: #86efac; }
+.dd-grade-average[aria-pressed="true"] { background: #4d5a1c; border-color: #bef264; }
+.dd-grade-poor[aria-pressed="true"] { background: #7c5a10; border-color: #fcd34d; }
+.dd-times { margin: 4px 0 0; font-size: 12px; }
+.dd-clock { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dd-failed[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-tags { display: flex; flex-direction: column; gap: 8px; }
+.dd-banner { margin: 0; padding: 4px 8px; background: #2a1a0a; border: 1px solid #b45309; border-radius: 6px; color: #fde68a; font-size: 13px; }
+.dd-taglist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dd-taglist li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; border-radius: 6px; background: #0d1117; border: 1px solid #21262d; }
+.dd-taglist li.unmarked { border-color: #b45309; }
+.dd-tagname { font-size: 13px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.dd-tagrename { flex: 1; min-width: 0; }
+.dd-tagbtns { display: flex; gap: 4px; }
+.dd-tagbtns .valid[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-tagbtns .not-valid[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-archived summary { cursor: pointer; font-size: 12px; color: #94a3b8; }
+.dd-archived li { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 2px 0; }
+.dd-empty-state { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.dd-foot { margin: 0; }
+
+/* Deep Dive: results */
+.dd-results { display: flex; flex-direction: column; gap: 10px; }
+.dd-results h4 { margin: 6px 0 0; font-size: 13px; color: #cbd5e1; }
+.dd-filter[aria-pressed="true"] { background: #2563eb; border-color: #60a5fa; }
+.dd-filter.buy[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dd-filter.sell[aria-pressed="true"] { background: #991b1b; border-color: #f87171; }
+.dd-summary { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; padding: 8px 12px; background: #161b22; border: 1px solid #21262d; border-radius: 8px; }
+.dd-thin { font-size: 11px; color: #fbbf24; }
+.dd-freq { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dd-freq li { display: grid; grid-template-columns: minmax(140px, 260px) minmax(120px, 1fr) 110px 150px auto; gap: 10px; align-items: center; font-size: 13px; }
+.dd-freq-name { overflow-wrap: anywhere; }
+.dd-bar { display: block; height: 10px; background: #21262d; border-radius: 5px; overflow: hidden; }
+.dd-bar > span { display: block; height: 100%; background: #2563eb; }
+.dd-bar > span.thin { background: repeating-linear-gradient(45deg, #2563eb, #2563eb 6px, #1e40af 6px, #1e40af 12px); }
+.dd-freq-pct { font-weight: 600; }
+.dd-dots { display: inline-flex; gap: 3px; }
+.dd-dot { width: 10px; height: 10px; border-radius: 50%; background: #3b4659; display: inline-block; }
+.dd-dot.valid { background: #22c55e; }
+.dd-dot.not_valid { background: #ef4444; }
+.dd-ok { color: #4ade80; } .dd-bad { color: #f87171; }
+.dd-notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #94a3b8; }
+.dd-days-table td { vertical-align: middle; }
+.dd-meaning { margin: 0; }
+
+/* In-depth: the two charts next to each other instead of stacked (the Charts: switch above them). */
+.dd-charts[data-layout="side"] { flex-direction: row; }
+.dd-charts[data-layout="side"] .dd-chartbox { min-width: 0; min-height: 400px; }
+.dd-layout button[aria-pressed="true"], .dd-view button[aria-pressed="true"] { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+@media (max-width: 1000px) { .dd-charts[data-layout="side"] { flex-direction: column; } }
+
+.dd-layout { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+
+/* Compare: two marked days side by side (view only). */
+.dd-compare { display: flex; gap: 10px; min-height: 0; }
+.dd-compare-pane { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.dd-compare-pane[hidden] { display: none; }
+.dd-compare-bar { flex-wrap: wrap; row-gap: 4px; }
+.dd-compare-bar select { max-width: 260px; }
+.dd-compare-box { flex: 1 1 0; min-height: 320px; }
+.dd-compare-note { margin: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1000px) { .dd-compare { flex-direction: column; } .dd-compare-box { flex: none; height: 340px; } }

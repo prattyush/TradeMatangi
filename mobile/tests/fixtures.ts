@@ -23,6 +23,8 @@ export interface MockServer {
   /** Browse: make the catalogue answer 404 (older server), or report options unavailable on the day. */
   catalogueOld?: boolean
   optionsUnavailable?: string
+  /** The drawings saved on the server (the phone only reads them). */
+  drawings?: unknown[]
   /** Browse Max Price (`prepare-session`): fail with this reason, or answer 404 like an older server. */
   maxPriceFail?: string
   maxPriceOld?: boolean
@@ -99,6 +101,8 @@ export async function mockServer(page: Page, hosts: string[] = ['tradematangi.co
         if (state.oldServer) return answer(route, 404, { detail: 'Not Found' })
         return answer(route, 200, { api_version: 'v1', features: ['catalogue', 'historical-candles'], trading_capabilities: ['trade-labels', 'behavior-labels'] })
       }
+      if (url.pathname === '/api/desktop/v1/drawings' && request.method() === 'GET') return answer(route, 200, { version: 1, drawings: state.drawings ?? [] })
+      if (url.pathname === '/api/desktop/v1/chart-settings' && request.method() === 'GET') return answer(route, 200, { version: 1, settings: {} })
       if (url.pathname === '/api/desktop/v1/catalogue') return state.catalogueOld ? answer(route, 404, { detail: 'Not Found' }) : answer(route, 200, { version: 1, instruments: INSTRUMENTS })
       if (url.pathname === '/api/desktop/v1/option-metadata') {
         const available = !state.optionsUnavailable

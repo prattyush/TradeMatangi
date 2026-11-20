@@ -1,0 +1,14 @@
+/* The Group view: two tags together (Results and the label popups). */
+.dd-group { display: flex; flex-direction: column; gap: 8px; }
+.dd-group-pickers { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.dd-group-pick select { max-width: 220px; }
+.dd-group-swap { padding: 0 8px; }
+.dd-group-sides { display: inline-flex; gap: 4px; }
+.dd-group-conditional { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.dd-group-table td { padding: 3px 10px 3px 0; }
+.dd-group-n { text-align: right; font-variant-numeric: tabular-nums; color: #8b949e; }
+.dd-group-pct { font-weight: 600; white-space: nowrap; }
+.dd-group-days { list-style: none; margin: 0; padding: 6px 10px; border: 1px solid #21262d; border-radius: 6px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.dd-group.compact { gap: 4px; font-size: 12px; }
+.dd-group.compact .dd-group-table td { padding: 1px 8px 1px 0; }
+.dd-group.compact select { font-size: 11px; max-width: 150px; }

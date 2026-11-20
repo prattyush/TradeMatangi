@@ -10,11 +10,14 @@ export default function DesktopAnalysisSessions({initialPortfolioId}:{initialPor
   const today = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata'}).format(new Date())
   const [filters,setFilters]=useState({tradingStyle:initialPortfolioId?'swing':'',portfolioId:initialPortfolioId??'',symbol:'',instrumentType:'',sessionType:'',startDate:new Date(Date.parse(today+'T00:00:00Z')-29*86400000).toISOString().slice(0,10),endDate:today})
   const [sessions,setSessions]=useState<SessionSummary[]>([])
+  // Strategy Practice runs: listed with the others, left out, or the only ones; never part of the totals unless only they are shown.
+  const [practice,setPractice]=useState<'include'|'exclude'|'only'>('include')
   const [selected,setSelected]=useState('')
   const [error,setError]=useState('');const [loading,setLoading]=useState(false)
   const [refresh,setRefresh]=useState(0);const [width,setWidth]=useState(300);const [collapsed,setCollapsed]=useState(window.innerWidth<1100)
   const request=useRef(0);const root=useRef<HTMLDivElement>(null)
-  const groups=useMemo(()=>groupSessions(sessions),[sessions])
+  const groups=useMemo(()=>groupSessions(sessions.filter(s=>practice==='include'||(practice==='only'?Boolean(s.practice):!s.practice))),[sessions,practice])
+  const counted=practice==='only'?groups:groups.filter(g=>!g.practice)
   const current=groups.find(g=>g.key===selected) ?? groups[0]
   useEffect(()=>{
     let cancelled=false;const revision=++request.current
@@ -31,9 +34,10 @@ export default function DesktopAnalysisSessions({initialPortfolioId}:{initialPor
       <label>Instrument<select aria-label="Analysis instrument" value={filters.instrumentType} onChange={e=>field('instrumentType',e.target.value)}><option value="">All instruments</option><option value="equity">Equity</option><option value="options">Options</option></select></label>
       <label>Mode<select aria-label="Analysis mode" value={filters.sessionType} onChange={e=>field('sessionType',e.target.value)}><option value="">All modes</option><option value="paper">Paper</option><option value="real">Real</option><option value="sim">Replay</option><option value="stepwise">Stepwise</option></select></label>
       <label>From<input aria-label="Analysis from date" type="date" value={filters.startDate} onChange={e=>field('startDate',e.target.value)}/></label><label>Through<input aria-label="Analysis through date" type="date" value={filters.endDate} onChange={e=>field('endDate',e.target.value)}/></label>
+      <label>Practice<select aria-label="Analysis practice runs" value={practice} onChange={e=>navigate(()=>setPractice(e.target.value as 'include'|'exclude'|'only'))}><option value="include">Include</option><option value="exclude">Exclude</option><option value="only">Only</option></select></label>
       <button disabled={loading} onClick={()=>navigate(()=>setRefresh(n=>n+1))}>Refresh</button>
     </header>
-    <aside className="analysis-session-navigator" aria-label="Session navigator"><p>{groups.length} groups · <b className={`day-pnl ${dayTone(groups.reduce((sum,g)=>sum+g.totalPnl,0))}`}>{signedMoney(groups.reduce((sum,g)=>sum+g.totalPnl,0))}</b></p>{groups.map(group=><SessionDayButton key={group.key} group={group} badge={group.trading_style!=='swing'?<LabelProgressBadge sessionIds={group.sessions.map(s=>s.session_id)}/>:undefined} pressed={current?.key===group.key} onSelect={()=>navigate(()=>{setSelected(group.key);if(window.innerWidth<1100)setCollapsed(true)})}/>)}</aside>
+    <aside className="analysis-session-navigator" aria-label="Session navigator"><p title={counted.length<groups.length?`${groups.length-counted.length} practice run(s) not counted`:undefined}>{groups.length} groups · <b className={`day-pnl ${dayTone(counted.reduce((sum,g)=>sum+g.totalPnl,0))}`}>{signedMoney(counted.reduce((sum,g)=>sum+g.totalPnl,0))}</b></p>{groups.map(group=><SessionDayButton key={group.key} group={group} badge={group.trading_style!=='swing'?<LabelProgressBadge sessionIds={group.sessions.map(s=>s.session_id)}/>:undefined} pressed={current?.key===group.key} onSelect={()=>navigate(()=>{setSelected(group.key);if(window.innerWidth<1100)setCollapsed(true)})}/>)}</aside>
     <div className="analysis-navigator-separator" role="separator" aria-label="Resize session navigator" aria-orientation="vertical" aria-valuemin={240} aria-valuemax={480} aria-valuenow={width} tabIndex={0} onKeyDown={e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();setWidth(n=>Math.max(240,Math.min(480,n+(e.key==='ArrowLeft'?-20:20))))}}} onPointerDown={e=>e.currentTarget.setPointerCapture(e.pointerId)} onPointerMove={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId)){const box=root.current?.getBoundingClientRect();if(box)setWidth(Math.max(240,Math.min(480,e.clientX-box.left)))}}}/>
     <div className="analysis-selected-session" aria-label="Selected session">
       {loading&&<p role="status">Reading sessions…</p>}{error&&<p role="alert">{error}<button onClick={()=>setRefresh(n=>n+1)}>Retry</button></p>}

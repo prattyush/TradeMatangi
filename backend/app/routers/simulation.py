@@ -48,6 +48,7 @@ def _session_response(session, group=None) -> SimulationStartResponse:
         group_state=group.get("state") if group else None,
         group_current_time=group.get("current_time") if group else None,
         session_alias=session.session_alias, wallet_ledger_id=session.wallet_ledger_id,
+        practice=({"category": session.practice["category"], "strategy": session.practice["strategy"]} if getattr(session, "practice", None) else None),
         lot_size=LOT_SIZES.get(session.symbol, 1) if session.instrument_type == "options" else 1,
     )
 
@@ -419,6 +420,24 @@ async def _start_simulation_impl(
 ):
     internal_session_type = req.session_type
     is_stepwise = (req.session_type == "stepwise")
+    practice_marker = None
+    if req.practice:
+        # Strategy Practice is a replay or a stepwise run: the marker (with the recorded marks, kept server-side) is built from the user's
+        # own Deep Dive day. Paper and real sessions never carry one.
+        if internal_session_type not in ("sim", "stepwise"):
+            raise HTTPException(400, "Strategy Practice runs as a replay or stepwise session")
+        from app.services import strategy_practice_service
+        if internal_session_type == "stepwise":
+            # Stepwise advances by whole bars: start on a bar boundary so the first bar is a full one (the marker records this start).
+            try:
+                req.start_time = strategy_practice_service.snap_start(req.start_time, req.strategy_interval_secs)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+        try:
+            practice_marker = await asyncio.to_thread(
+                strategy_practice_service.build_marker, user_id, req.practice.model_dump(), req.symbol, req.date, req.start_time)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
     is_paper = (req.session_type == "paper")
     is_real = (req.session_type == "real")
     # Real trades and P&L cannot be reset by restarting the website. Ignore a
@@ -705,6 +724,7 @@ async def _start_simulation_impl(
         stepwise=is_stepwise,
         group_id=group["group_id"],
         session_alias=req.session_alias,
+        practice=practice_marker,
         starting_capital=funds if is_real else None,
         **({"execution_broker": "KotakNeo" if chosen_broker == "kotak" else "Kite", "broker_account_id": broker_account, "session_id": real_sessions.prepared_identity()} if is_real else {}),
         wallet_ledger_id=(f"paper:{req.date}" if internal_session_type == "paper" else real_ledger if internal_session_type == "real" else f"sim:{req.date}"),

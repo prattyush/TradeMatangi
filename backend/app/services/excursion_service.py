@@ -47,61 +47,71 @@ def match_excursion(match, frame, direction, provider, interval_seconds):
     )
 
 
+def load_contract_frame(cycle):
+    """The cached candles of a cycle's exact contract as ``(frame, provider, resolution_seconds)``, or ``(None, None, 1)``.
+
+    Only cached files are read (never a download or a broker call); a bar counts only when ``observed`` is true and its prices are
+    sane. The provider order follows the session type, as `enrich_cycle` always did.
+    """
+    from app.services.historical_data_service import _path, get_policy, is_today
+
+    policy = get_policy()
+    providers = (
+        ["breeze"]
+        if cycle["mode"] in ("sim", "stepwise")
+        else (
+            [policy.source]
+            if is_today(cycle["date"])
+            else ["breeze", policy.source]
+        )
+    )
+    if cycle["mode"] in ("paper", "real") and policy.allow_fallback:
+        providers += ["kite", "breeze"]
+    frame = None
+    provider = None
+    resolution = 1
+    for source in dict.fromkeys(providers):
+        path = _path(
+            source,
+            cycle["symbol"],
+            cycle["date"],
+            cycle["strike"],
+            cycle["expiry"],
+            cycle["right"],
+        )
+        if not path.exists():
+            continue
+        candidate = pd.read_parquet(path)
+        if candidate.empty:
+            continue
+        if candidate.index.tzinfo is None:
+            candidate.index = candidate.index.tz_localize("UTC")
+        else:
+            candidate.index = candidate.index.tz_convert("UTC")
+        if "observed" not in candidate:
+            if source == "breeze":
+                continue
+            candidate["observed"] = True
+        candidate["observed"] = (
+            candidate["observed"].fillna(False).astype(bool)
+            & (candidate["low"] > 0)
+            & (candidate["high"] >= candidate["low"])
+        )
+        frame = candidate.sort_index()
+        provider = source
+        from app.services.data_loader import has_native_second_cadence
+
+        resolution = (
+            1 if source == "breeze" and has_native_second_cadence(candidate) else 60
+        )
+        break
+    return frame, provider, resolution
+
+
 def enrich_cycle(cycle):
     with _workers:
         item = deepcopy(cycle)
-        from app.services.historical_data_service import _path, get_policy, is_today
-
-        policy = get_policy()
-        providers = (
-            ["breeze"]
-            if cycle["mode"] in ("sim", "stepwise")
-            else (
-                [policy.source]
-                if is_today(cycle["date"])
-                else ["breeze", policy.source]
-            )
-        )
-        if cycle["mode"] in ("paper", "real") and policy.allow_fallback:
-            providers += ["kite", "breeze"]
-        frame = None
-        provider = None
-        resolution = 1
-        for source in dict.fromkeys(providers):
-            path = _path(
-                source,
-                cycle["symbol"],
-                cycle["date"],
-                cycle["strike"],
-                cycle["expiry"],
-                cycle["right"],
-            )
-            if not path.exists():
-                continue
-            candidate = pd.read_parquet(path)
-            if candidate.empty:
-                continue
-            if candidate.index.tzinfo is None:
-                candidate.index = candidate.index.tz_localize("UTC")
-            else:
-                candidate.index = candidate.index.tz_convert("UTC")
-            if "observed" not in candidate:
-                if source == "breeze":
-                    continue
-                candidate["observed"] = True
-            candidate["observed"] = (
-                candidate["observed"].fillna(False).astype(bool)
-                & (candidate["low"] > 0)
-                & (candidate["high"] >= candidate["low"])
-            )
-            frame = candidate.sort_index()
-            provider = source
-            from app.services.data_loader import has_native_second_cadence
-
-            resolution = (
-                1 if source == "breeze" and has_native_second_cadence(candidate) else 60
-            )
-            break
+        frame, provider, resolution = load_contract_frame(cycle)
         if frame is None:
             for m in item["matches"]:
                 m["excursion"] = dict(

@@ -1,8 +1,12 @@
 import { createDesktopBehaviorApi } from './behaviorApi'
 import { DEFAULT_MAX_LOSS_PCT, DEFAULT_MAX_WIN_PCT, pnlMilestone } from '../../shared/pnlMilestone'
+import { useRiskSwitch } from '../../shared/useRiskSwitch'
 import BehaviorManagerModal from '../../shared/analysis/behavior/BehaviorManagerModal'
 import BehaviorPicker from '../../shared/analysis/behavior/BehaviorPicker'
 import { useBehaviorData } from '../../shared/analysis/behavior/useBehaviorData'
+import StatsPanel from '../../shared/deepdive/ui/StatsPanel'
+import { feedNotice } from '../../shared/liveFeedNotice'
+import type { StatsAllEntry } from '../../shared/deepdive/types'
 import { readableError, type BehaviorApi } from '../../shared/analysis/behavior/types'
 import { allIndicators, drawingTools, indicatorLabel } from '../../shared/charts/catalogue'
 import { useCandleAlert, type CandleAlertClock } from '../../shared/useCandleAlert'
@@ -38,6 +42,8 @@ import { bounded, createWindowCloser, controlledScreens, SAVE_TIMEOUT_MS, journa
 import { StepInput } from './StepInput'
 import { availableExitQuantity, isStopOrder, orderBusy, orderPosition } from './orderEditing'
 import { retainedPanes, compactLayout, type PreparedSession } from './sessionPreparation'
+import { practiceTiles, type PracticeLaunch } from './tools/practice/launch'
+import { snapStartTime } from '../../shared/practice/model'
 import { FloatingOrderWindow, type FloatingOrderDraft } from './FloatingOrderWindow'
 import { ticketSizingPayload, ticketSizingLabel, switchTicketSizing, ticketQuantityTiers, TICKET_SIZING_CHOICES } from './ticketSizing'
 import { entryUnavailableReason, equityEntryEnabled, entryQuantity, instrumentLotSize, validateEntryStop } from './tradingInstrument'
@@ -88,7 +94,7 @@ interface DesktopStreamSnapshot<T> { key: string; last_event_id: number; latest_
 interface DesktopRoundTrip { index: number; right: string | null; strike?: number | null; expiry?: string | null; entry_trades: Array<Record<string, unknown>>; exit_trades: Array<Record<string, unknown>>; pnl: number }
 interface DesktopTradeLabel { round_trip_index: number; expected_category: string; expected_strategy: string; actual_category: string; actual_strategy: string; entry_tag: string; exit_tag: string }
 interface DesktopTradeLabelState { completed: DesktopRoundTrip[]; open: DesktopRoundTrip[]; labels: DesktopTradeLabel[] }
-interface DesktopLabelMetadata { categories: string[]; strategies: string[]; entry_tags: string[]; exit_tags: string[] }
+interface DesktopLabelMetadata { categories: string[]; strategies: string[]; entry_tags: string[]; exit_tags: string[]; /** Phase 26: the user's Deep Dive percentages, shown beside the Expected Pattern; absent on an older server. */ deep_dive?: StatsAllEntry[] }
 type DesktopLabelMetadataStatus = 'idle' | 'loading' | 'ready' | 'error'
 const emptyLabelMetadata: DesktopLabelMetadata = { categories: [], strategies: [], entry_tags: [], exit_tags: [] }
 interface DesktopTradingCandidate { status: 'none' | 'active' | 'checkpoint' | 'existing' | 'stopped' | 'remote'; active?: DesktopTradingSnapshot | null; stopped?: DesktopTradingSnapshot | null; checkpoint?: { current_time: number; current_bar_index: number; desktop_mode?: string } | null; existing_session_id?: string | null }
@@ -352,6 +358,7 @@ function DesktopLabelPopup({ mode, roundTrip, existing, metadata, metadataStatus
         {metadataStatus === 'ready' && !metadata.categories.length && !metadata.strategies.length && <div className="label-metadata-status">No saved Pattern Library categories or strategies are available for this account yet.</div>}
         <label>Category<select value={category} onChange={event => setCategory(event.target.value)}><option value="">Category</option>{metadata.categories.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
         <label>Strategy<select value={strategy} onChange={event => setStrategy(event.target.value)}><option value="">Strategy</option>{metadata.strategies.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+        {isEntry && category && strategy && <StatsPanel entries={metadata.deep_dive ?? []} category={category} strategy={strategy} trade={{ right: roundTrip.right, action: String(roundTrip.entry_trades[0]?.side ?? '') }} />}
         <label>{isEntry ? 'Entry tag' : 'Exit tag'}<input list={`desktop-label-tags-${mode}-${roundTrip.index}`} value={tag} onChange={event => setTag(event.target.value)} placeholder="AS_PER_PATTERN" /></label>
         <datalist id={`desktop-label-tags-${mode}-${roundTrip.index}`}>{(isEntry ? metadata.entry_tags : metadata.exit_tags).map(value => <option key={value} value={value} />)}</datalist>
         {behavior.status === 'ready' && <BehaviorPicker kind={mode} questions={behavior.questions} initial={behavior.markedFor(roundTrip.index)} onAnswersChange={setBehaviors} onManage={() => setManaging(true)} />}
@@ -533,6 +540,11 @@ interface ScreenControllerProps {
   connection: Connection; setConnection: Dispatch<SetStateAction<Connection>>
   browserToken: string; setBrowserToken: Dispatch<SetStateAction<string>>
   serverUrl: string; setServerUrl: Dispatch<SetStateAction<string>>
+  /** Strategy Practice: a launch from Pattern Library > Practice for this (the visible) screen, and how to report the outcome. */
+  practiceRequest: { launch: PracticeLaunch } | null
+  onPracticeSettled: (launchId: number, failure?: string) => void
+  /** Opens the review of a finished practice run in the Pattern Library. */
+  onReviewPractice: (sessionId: string) => void
 }
 
 export default function App() {
@@ -544,6 +556,9 @@ export default function App() {
   useEffect(()=>{if(assignedId||!('__TAURI_INTERNALS__' in window))return;let cancelled=false;const listener=listen<{portfolioId:string}>('desktop-swing-analysis',event=>{if(!cancelled&&[...navigationGuards.current.values()].every(guard=>guard())){setAnalysisPortfolio(event.payload.portfolioId);setAnalysisVisited(true);setMainTab('Analysis')}});return()=>{cancelled=true;void listener.then(stop=>stop())}},[])
   const [analysisVisited, setAnalysisVisited] = useState(false)
   const [toolsVisited, setToolsVisited] = useState(false)
+  // Strategy Practice: a launch waits here until the visible screen has started (or refused) it; the Tools view's Start awaits it.
+  const [practiceRequest, setPracticeRequest] = useState<{ launch: PracticeLaunch; screenId: string; resolve: () => void; reject: (error: Error) => void } | null>(null)
+  const [practiceReviewId, setPracticeReviewId] = useState<string | null>(null)
   const [analysisContextDays,setAnalysisContextDays] = useState(2)
   const [screens, setScreens] = useState<Screen[]>([newScreen(1)])
   const setDayScreens=useCallback((update:Screen[]|((previous:Screen[])=>Screen[]))=>setScreens(previous=>updateDayScreens(previous,update)),[])
@@ -648,6 +663,16 @@ export default function App() {
     }).catch(() => undefined);
     return () => { disposed = true; setNotificationAccount(null); };
   }, [connection, serverUrl, browserToken, assignedId, swingRequest]);
+  // Games (Phase 25): shown only when the backend advertises the `games` feature, so an older server hides the button.
+  const [gamesAvailable, setGamesAvailable] = useState(false)
+  useEffect(() => {
+    if (connection !== 'connected' || assignedId || !('__TAURI_INTERNALS__' in window)) { setGamesAvailable(false); return }
+    let disposed = false
+    void invoke<{ features?: string[] }>('desktop_drawing_request', { baseUrl: serverUrl, path: 'capabilities', method: 'GET', body: {} })
+      .then(value => { if (!disposed) setGamesAvailable(Boolean(value.features?.includes('games'))) })
+      .catch(() => { if (!disposed) setGamesAvailable(false) })
+    return () => { disposed = true }
+  }, [connection, serverUrl, browserToken, assignedId])
   const swingSymbols = useCallback(async () => {
     const response = await fetch(`${serverUrl.replace(/\/$/, '')}/api/data/symbols`)
     if (!response.ok) throw new Error('Cannot load symbols')
@@ -733,6 +758,25 @@ export default function App() {
     if (connection === 'authentication_required') { setMainTab('Workspace'); setAnalysisVisited(false) }
   }, [connection, serverUrl, browserToken])
   const visibleId = screens.some(screen => screen.id === selectedId && screen.saved?.workspace_kind!=='swing') ? selectedId : screens.find(screen=>screen.saved?.workspace_kind!=='swing')?.id ?? ''
+  const visibleIdRef = useRef(visibleId)
+  visibleIdRef.current = visibleId
+  // Strategy Practice: the Tools view asks the visible workspace screen to start a Replay; this resolves when it has started (the
+  // view then switches to the workspace) and rejects with the screen's own sentence when it could not.
+  const practiceRequestRef = useRef<typeof practiceRequest>(null)
+  const launchPractice = useCallback((launch: PracticeLaunch) => new Promise<void>((resolve, reject) => {
+    const request = { launch, screenId: visibleIdRef.current, resolve, reject }
+    practiceRequestRef.current = request
+    setPracticeRequest(request)
+  }), [])
+  const settlePractice = useCallback((launchId: number, failure?: string) => {
+    const current = practiceRequestRef.current
+    if (!current || current.launch.id !== launchId) return
+    practiceRequestRef.current = null
+    setPracticeRequest(null)
+    if (failure) current.reject(new Error(failure))
+    else { current.resolve(); setMainTab('Workspace') }
+  }, [])
+  const reviewPractice = useCallback((sessionId: string) => { setPracticeReviewId(sessionId); setToolsVisited(true); setMainTab('Tools') }, [])
   const assigned = screens.find(screen => screen.id === assignedId || screen.persistedId === assignedId)
   const dayScreens=screens.filter(screen=>screen.saved?.workspace_kind!=='swing')
   const ownedScreens = controlledScreens(dayScreens, assignedId, loaded, external)
@@ -818,7 +862,7 @@ export default function App() {
       if(mainTab==='Swing'&&view!=='Swing')void bounded(Promise.resolve(saveHandlers.current.get('swing-primary')?.()),SAVE_TIMEOUT_MS).then(change).catch(cause=>setSwingWindowError(String(cause)))
       else change()
     }}
-  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option><option value="Tools">Tools</option></select> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
+  ><option value="Workspace">Workspace</option><option value="Analysis">Analysis</option><option value="Swing">Swing</option><option value="Tools">Tools</option></select> : null}{!assignedId && gamesAvailable ? <ToolbarActionButton icon="Games" onClick={() => void invoke('open_games_window').catch(error => setCloseError(`Games: ${String(error)}`))}>Games</ToolbarActionButton> : null}<NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>
   if(windowClosing)return null;
   return <div>
     <div className="desktop-messages"><NotificationCenter source="Desktop" request={messageHistory} onRequestChange={setMessageHistory} showLauncher={connection === 'authentication_required' || loadFailed} /></div>
@@ -828,13 +872,13 @@ export default function App() {
     {!assignedId && mainTab === 'Workspace' && external.includes(visibleId) && <main><header>{viewSelector}<nav className="screen-tabs">{screens.map(screen => <button key={screen.id} onClick={() => selectScreen(screen.id)}>{screen.name}{external.includes(screen.id) ? ' ↗' : ''}</button>)}</nav><button onClick={() => void invoke('focus_screen_window', { screenId: visibleId })}>Focus window</button><button onClick={() => void invoke('close_screen_window', { screenId: visibleId })}>Bring back</button></header><p>This screen is open in another window.</p></main>}
     {assignedId && loaded && !assigned && <main><p>Saved screen not found. Return to the main window.</p></main>}
     {ownedScreens.map(screen => <div key={screen.id} style={{ display: mainTab === 'Workspace' && (assignedId || screen.id === visibleId) ? 'contents' : 'none' }}>
-      <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={dayScreens} setScreens={setDayScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} />
+      <ScreenController viewSelector={viewSelector} workspaceVisible={Boolean(assignedId)||mainTab==='Workspace'} onAnalysisContextDays={setAnalysisContextDays} registerSave={registerSave} screenId={screen.id} screens={dayScreens} setScreens={setDayScreens} selectedId={visibleId} selectScreen={selectScreen} loaded={loaded} external={external} assignedId={assignedId} connection={connection} setConnection={setConnection} browserToken={browserToken} setBrowserToken={setBrowserToken} serverUrl={serverUrl} setServerUrl={setServerUrl} practiceRequest={practiceRequest && practiceRequest.screenId === screen.id ? { launch: practiceRequest.launch } : null} onPracticeSettled={settlePractice} onReviewPractice={reviewPractice} />
     </div>)}
     {!assignedId && mainTab === 'Swing' && connection === 'connected' && <>{swingWindowError&&<p role="alert">{swingWindowError}</p>}<SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${browserToken}`} navigationControls={<>{viewSelector}{linkedSwing.map(screen=><button key={screen.id} onClick={()=>void openSwingWindow(screen.saved!.portfolio_id!,screen)}>{screen.name}{external.includes(screen.id)?' ↗':''}</button>)}</>} request={swingRequest} subscribe={swingSubscribe} loadSymbols={swingSymbols} Renderer={swingChart} registerSave={registerSave} onCreateLinked={id=>void openSwingWindow(id)} onPopOut={id=>{if(!mayNavigate())return;void openSwingWindow(id).then(opened=>{if(opened)setMainTab('Workspace')})}} onAnalyse={id=>{setAnalysisPortfolio(id);setAnalysisVisited(true);setMainTab('Analysis')}} onDetach={() => setMainTab('Workspace')} /></>}
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection!=='connected' && <main><p>{connection==='authentication_required'?'Sign in in the main window to reconnect this portfolio.':'Waiting for the backend connection. The portfolio stays attached to its saved book.'}</p><button onClick={()=>void invoke('focus_main_window')}>Main window</button></main>}
     {assignedId && assigned?.saved?.workspace_kind==='swing' && connection==='connected' && (pinnedSwingPortfolio(assigned)?<><SwingWindow brokerRequest={swingBrokerRequest} registerNavigationGuard={registerNavigationGuard} onCloseWindow={closeWindow} key={`${serverUrl}:${assignedId}`} navigationControls={<><strong>{assigned.name}</strong><button onClick={()=>void invoke('focus_main_window')}>Main window</button><NotificationIcon onOpenHistory={() => setMessageHistory({})} /></>} request={swingRequest} subscribe={swingSubscribe} loadSymbols={swingSymbols} Renderer={swingChart} portfolioId={pinnedSwingPortfolio(assigned)!} workspaceId={assignedId} registerSave={registerSave} onAnalyse={id=>void emitTo('main','desktop-swing-analysis',{portfolioId:id})} onDetach={()=>{}}/></>:<p role="alert">This linked window has no portfolio identity. Reopen it from the main window.</p>)}
     {!assignedId && analysisVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Analysis…</p>}><DesktopAnalysis onNavigationReady={guard=>registerNavigationGuard("analysis",guard)} initialPortfolioId={analysisPortfolio} viewSelector={viewSelector} key={`${serverUrl}:${browserToken}`} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} historicalDays={analysisContextDays} active={mainTab === 'Analysis'} onClose={() => setMainTab('Workspace')} /></Suspense>}
-    {!assignedId && toolsVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Tools…</p>}><ToolsView key={`${serverUrl}:${browserToken}`} viewSelector={viewSelector} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} active={mainTab === 'Tools'} /></Suspense>}
+    {!assignedId && toolsVisited && connection !== 'authentication_required' && <Suspense fallback={<p role="status">Loading Tools…</p>}><ToolsView key={`${serverUrl}:${browserToken}`} viewSelector={viewSelector} baseUrl={serverUrl} token={browserToken} onUnauthorized={analysisUnauthorized} active={mainTab === 'Tools'} onStartPractice={launchPractice} practiceReviewId={practiceReviewId} onPracticeReviewOpened={() => setPracticeReviewId(null)} /></Suspense>}
   </div>
 }
 
@@ -870,7 +914,18 @@ function ScreenController(props: ScreenControllerProps) {
   const [realClosing, setRealClosing] = useState(false)
   const [realDay, setRealDay] = useState<RealTradingDayStatus | null>(null)
   const [realActionPending, setRealActionPending] = useState(false)
-  const [trading, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [strategyError, setStrategyError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<PricePickAction | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
+  const [tradingRaw, setTrading] = useState<DesktopTradingSnapshot | null>(null), [tradingError, setTradingError] = useState(''), [strategyError, setStrategyError] = useState(''), [tradingNotice, setTradingNotice] = useState(''), [drawingError, setDrawingError] = useState(''), [pricePickAction, setPricePickAction] = useState<PricePickAction | null>(null), [tradeTicket, setTradeTicket] = useState<TradeTicket | null>(null), [underlyingStrategyTicket, setUnderlyingStrategyTicket] = useState<UnderlyingStrategyTicket | null>(null), [tradeLabelState, setTradeLabelState] = useState<DesktopTradeLabelState | null>(null), [labelMetadata, setLabelMetadata] = useState<DesktopLabelMetadata>(emptyLabelMetadata), [labelMetadataStatus, setLabelMetadataStatus] = useState<DesktopLabelMetadataStatus>('idle'), [labelMetadataError, setLabelMetadataError] = useState(''), [sharedTradingSession, setSharedTradingSession] = useState(false), [preStartWallet, setPreStartWallet] = useState<number | null>(null), [historicalStarting, setHistoricalStarting] = useState(false)
+  // Risk switch (Milestones only): once the day loss is half way to Max loss the header turns red and P&L shows in %, on every
+  // surface that reads `trading.settings.desktop_pnl_display_mode`. `tradingRaw` is what the server sent; `trading` is what the screen draws.
+  const riskSwitch = useRiskSwitch({
+    enabled: tradingRaw?.settings.desktop_pnl_display_mode === 'milestones' && tradingRaw.session.state !== 'ended',
+    dayPnl: tradingRaw?.pnl.day ?? 0, capital: tradingRaw?.session.session_capital ?? 0,
+    maxLossPct: Number(tradingRaw?.settings.guardrail_ban_capital_pct ?? DEFAULT_MAX_LOSS_PCT),
+  })
+  const trading = useMemo<DesktopTradingSnapshot | null>(
+    () => (riskSwitch && tradingRaw ? { ...tradingRaw, settings: { ...tradingRaw.settings, desktop_pnl_display_mode: 'percent' } } : tradingRaw),
+    [tradingRaw, riskSwitch],
+  )
   useDismissMessage(loginError, setLoginError, 10_000)
   useDismissMessage(replayError, setReplayError, 10_000)
   useDismissMessage(tradingError, setTradingError, 10_000)
@@ -1661,8 +1716,16 @@ function ScreenController(props: ScreenControllerProps) {
       desktop_mode: mode.toLowerCase(),
       override: false,
       resume_bar_index: null as number | null,
+      // Strategy Practice: the marker makes this replay a practice run (the server resolves the recorded day from it).
+      ...(practiceRef.current && isHistoricalTradingMode(mode) ? { practice: practiceRef.current.practice } : {}),
     }
   }
+  // Strategy Practice (Pattern Library > Practice): a launch for this screen sets up the day (charts, date, start, speed) in the
+  // ordinary Replay controls, then starts the ordinary Replay once that state is in place. No candidate prompts, never an override.
+  const practiceRef = useRef<PracticeLaunch | null>(null)
+  const practiceHandled = useRef(0)
+  const [practiceStage, setPracticeStage] = useState<PracticeLaunch | null>(null)
+  const [lastPractice, setLastPractice] = useState<{ sessionId: string; strategy: string } | null>(null)
   const startRun = async () => {
     if (startPending.current || historicalStarting || (trading && trading.session.state !== 'ended' && (isLiveTradingMode(mode) ? Boolean(live) : Boolean(replay && replay.state !== 'stopped')))) return
     startPending.current = true
@@ -1677,6 +1740,7 @@ function ScreenController(props: ScreenControllerProps) {
     let startDispatched = false
     let attachedExisting = false
     let realSessionId: string | null = null
+    let failure: string | null = null
     try {
       setReplayError('')
       clearTradingError()
@@ -1710,7 +1774,15 @@ function ScreenController(props: ScreenControllerProps) {
       let resumeSessionId: string | null = null
       let replayStartTime = `${runStartTime}:00`
       let initialBarIndex: number | undefined
-      if (startBody && !attached) {
+      if (startBody && practiceRef.current && mode === 'Stepwise') {
+        // A Stepwise practice run advances by whole bars (the user's own Stepwise bar), so it starts on a bar boundary and the first bar is a
+        // full one. The server snaps the same way and records the start it used; the run controls show it.
+        const snapped = snapStartTime(replayStartTime, Number(startBody.strategy_interval_secs))
+        startBody.start_time = snapped
+        replayStartTime = snapped
+        setRunStartTime(snapped.slice(0, 5))
+      }
+      if (startBody && !attached && !practiceRef.current) {
         const candidateParams = new URLSearchParams({ symbol: String(startBody.symbol), date, instrument_type: String(startBody.instrument_type), desktop_mode: mode.toLowerCase() })
         candidateQuery = `candidate?${candidateParams}`
         const candidate = await desktopTradingRequest<DesktopTradingCandidate>(candidateQuery, 'GET')
@@ -1843,6 +1915,7 @@ function ScreenController(props: ScreenControllerProps) {
           setSharedTradingSession(false)
         }
         setTrading(tradeSnapshot)
+        setLastPractice(practiceRef.current ? { sessionId: tradeSnapshot.session.session_id, strategy: practiceRef.current.practice.strategy } : null)
         setPreStartWallet(tradeSnapshot.wallet_balance)
         setRunDate(preparation.date)
         const retainedIds = new Set(preparedTiles.map(tile => tile.id))
@@ -1859,6 +1932,7 @@ function ScreenController(props: ScreenControllerProps) {
         }
       }
     } catch (error) {
+      failure = String(error)
       if (!committed && createdLiveId) {
         stopNativeStream(`browse-live:${activeScreenId}:${createdLiveId}`)
         try { await liveRequest(`${createdLiveId}/stop`, 'POST'); if (contextRef.current === context) { setLiveSnapshot(live); setLiveEnabled(Boolean(live)) } } catch (cleanup) { reportLiveError(`Live cleanup needs retry: ${String(cleanup)}`) }
@@ -1879,6 +1953,7 @@ function ScreenController(props: ScreenControllerProps) {
       startPending.current = false
       setHistoricalStarting(false)
     }
+    return { committed, failure }
   }
   const replayAction = async (action: string, throwOnError = false) => {
     if (!replay) return
@@ -1968,6 +2043,37 @@ function ScreenController(props: ScreenControllerProps) {
     setRunDate(isLiveTradingMode(value) ? paperMarketDate() : activeScreen.tiles[0].tradingDate)
     setWalletOpen(false)
   }
+  // Strategy Practice, step 1: take the launch addressed to this screen. A screen that is running something refuses it with the reason.
+  useEffect(() => {
+    const request = props.practiceRequest
+    if (!request || practiceHandled.current === request.launch.id) return
+    practiceHandled.current = request.launch.id
+    const launch = request.launch
+    if ((trading && trading.session.state !== 'ended') || (replay && replay.state !== 'stopped') || historicalStarting || startPending.current) {
+      props.onPracticeSettled(launch.id, 'A session is running on this screen. Stop it before you start a practice run.')
+      return
+    }
+    const tiles = practiceTiles(launch) as TileConfig[]
+    setScreens(current => current.map(screen => screen.id === activeScreenId ? { ...screen, tiles, layout: compactLayout(tiles.length) } : screen))
+    setActiveToolTileId(tiles[0].id)
+    setMaximizedTileId(null)
+    switchMode(launch.mode === 'stepwise' ? 'Stepwise' : 'Replay')
+    setRunDate(launch.date)
+    setRunStartTime(launch.start_time.slice(0, 5))
+    setReplaySpeed(String(launch.speed))
+    setPracticeStage(launch)
+  }, [props.practiceRequest])
+  // Step 2: once the screen shows Replay or Stepwise on that day with the practice charts, start it and report how it went.
+  useEffect(() => {
+    const launch = practiceStage
+    if (!launch || mode !== (launch.mode === 'stepwise' ? 'Stepwise' : 'Replay') || runDate !== launch.date || activeScreen.tiles[0]?.symbol !== launch.symbol || activeScreen.tiles[0]?.tradingDate !== launch.date) return
+    setPracticeStage(null)
+    practiceRef.current = launch
+    void startRun().then(outcome => {
+      practiceRef.current = null
+      props.onPracticeSettled(launch.id, outcome?.committed ? undefined : outcome?.failure ?? 'The practice run did not start')
+    })
+  }, [practiceStage, mode, runDate, activeScreen.tiles])
   useEffect(() => {
     if (!isTradingMode(mode) || walletSessionActive || historicalStarting || connection !== 'connected') return
     void loadPreStartWallet(isLiveTradingMode(mode) ? paperMarketDate() : runDate).catch(reportTradingError)
@@ -2797,7 +2903,7 @@ function ScreenController(props: ScreenControllerProps) {
     pct: Number(guardRailSettingsRecord.guardrail_maxsize_pct ?? 20),
     value: Number(guardRailSettingsRecord.guardrail_maxsize_value ?? 0),
   }, maxSizePositions, screenSessionCapital, trading?.session.instrument_type)
-  const screenHeaderAlert = headerAlertColor({ redAlert: screenGuardRailAlertActive, banActive: Boolean(trading?.guardrails?.ban_active), maxSizeAlert: screenMaxSizeAlert })
+  const screenHeaderAlert = headerAlertColor({ redAlert: screenGuardRailAlertActive || riskSwitch, banActive: Boolean(trading?.guardrails?.ban_active), maxSizeAlert: screenMaxSizeAlert })
   const screenHighTierDisabled = Boolean(guardRailSettingsRecord.guardrail_ban_enabled)
     && screenClosedPnlPct <= Number(guardRailSettingsRecord.high_tier_pnl_threshold_pct ?? -Infinity)
   return <main>
@@ -2806,7 +2912,7 @@ function ScreenController(props: ScreenControllerProps) {
       <nav className="screen-tabs">{(props.assignedId ? [activeScreen] : screens).map(screen => <button key={screen.id} className={screen.id === activeScreenId ? 'active' : ''} onClick={() => { setActiveScreenId(screen.id); setMaximizedTileId(null) }}>{screen.name}{props.external.includes(screen.id) ? ' ↗' : ''}</button>)}{!props.assignedId && <button className="new-screen" onClick={addScreen}>＋</button>}</nav>
       {!props.assignedId && <span className="screen-actions"><button className="icon-button" title="Rename screen" aria-label="Rename screen" onClick={renameScreen}>✎</button><button className="icon-button" title="Duplicate screen" aria-label="Duplicate screen" onClick={duplicateScreen}>⧉</button><button className="icon-button" title="Pop out screen" aria-label="Pop out screen" onClick={() => void popOutScreen()}>⇱</button><button className="icon-button" title="Move screen left" aria-label="Move screen left" onClick={() => moveScreen(-1)}>‹</button><button className="icon-button" title="Move screen right" aria-label="Move screen right" onClick={() => moveScreen(1)}>›</button><button className="icon-button" title="Close screen" aria-label="Close screen" disabled={screens.length <= 1} onClick={() => void closeScreen().catch(reportTradingError)}>×</button></span>}
       {(['Browse', 'Paper', 'Replay', 'Stepwise'] as const).map(value => <button className={mode === value ? 'selected mode-button' : 'mode-button'} onClick={() => switchMode(value)} key={value} title={value === 'Paper' ? 'Live' : value} aria-label={value === 'Paper' ? 'Live' : value}><ToolbarIcon name={value} /></button>)}
-      {live?.feed && <small role="status" title={live.feed.reason ?? undefined}>Feed {live.feed.actual_provider ?? live.feed.selected_provider} · {live.feed.connection}{live.feed.actual_provider && live.feed.actual_provider !== live.feed.selected_provider ? ` (fallback from ${live.feed.selected_provider})` : ''}</small>}
+      {feedNotice(live?.feed) && <small role="status" title={live?.feed?.reason ?? undefined}>{feedNotice(live?.feed)}</small>}
       {mode === 'Browse' && <span className="run-controls live-controls"><ToolbarActionButton icon={live ? 'Stop' : 'Play'} onClick={() => void (live ? stopLive() : startLive())}>{live ? 'Stop Live' : 'Start Live'}</ToolbarActionButton><button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
       {mode === 'Paper' && !companion && <span className="run-controls"><label>Date <input type="date" value={paperMarketDate()} readOnly disabled /></label><label>Clock <input type="time" value={paperMarketTime().slice(0, 5)} readOnly disabled step="60" /></label>{!trading || (trading.session.state === 'ended' && trading.paper_status !== 'running') ? <ToolbarActionButton icon="Play" className="run-start" onClick={startRun} disabled={Boolean(historicalStarting || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00' || trading.paper_status === 'settled' || trading.cleanup_pending)))}>{historicalStarting ? 'Starting…' : trading?.paper_status === 'settled' || (trading && (trading.session.date !== paperMarketDate() || paperMarketTime() >= '15:09:00')) ? 'Closed' : trading?.paper_status === 'stopped' ? 'Resume' : 'Start'}</ToolbarActionButton> : <ToolbarActionButton icon={sharedTradingSession && !activeScreen.saved?.linked_group_id ? 'Detach' : 'Stop'} className="run-stop" onClick={() => void stopPaper()}>{sharedTradingSession && !activeScreen.saved?.linked_group_id ? 'Detach' : 'Stop'}</ToolbarActionButton>}{trading?.cleanup_pending && <small role="status">Paper cleanup pending; retrying automatically</small>}{trading?.settlement_pending && <small role="status">Close settlement pending an exact contract quote</small>}<button className="icon-button" title="Refresh live charts" aria-label="Refresh live charts" onClick={refreshLive} disabled={!live}><ToolbarIcon name="Refresh" /></button></span>}
       {(mode === 'Replay' || mode === 'Stepwise') && <span className="run-controls"><label>Date <input type="date" value={runDate} onChange={event => setRunDate(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} /></label><label>Start <input type="time" value={runStartTime} onChange={event => setRunStartTime(event.target.value)} disabled={Boolean(historicalStarting || (replay && replay.state !== 'stopped'))} step="60" /></label>{mode === 'Replay' && <label>Speed <select value={replaySpeed} onChange={event => updateReplaySpeed(event.target.value)} disabled={historicalStarting}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="1.1">1.1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></label>}{!replay || replay.state === 'stopped' ? <ToolbarActionButton icon="Play" className="run-start" onClick={startRun} disabled={historicalStarting}>{historicalStarting ? 'Starting…' : 'Start'}</ToolbarActionButton> : <>{mode === 'Replay' && <ToolbarActionButton icon={replay.state === 'paused' ? 'Play' : 'Pause'} className="run-pause" onClick={() => replayAction(replay.state === 'paused' ? 'resume' : 'pause')}>{replay.state === 'paused' ? 'Resume' : 'Pause'}</ToolbarActionButton>}{mode === 'Stepwise' && <ToolbarActionButton icon="Next" className="run-next" onClick={() => replayAction('next-bar')}>Next bar</ToolbarActionButton>}<ToolbarActionButton icon="Stop" className="run-stop" onClick={() => replayAction('stop')}>Stop</ToolbarActionButton><small>{replay.bar_index} · {new Date(replay.cursor * 1000).toISOString().slice(11, 19)}</small></>}</span>}
@@ -2816,6 +2922,16 @@ function ScreenController(props: ScreenControllerProps) {
       })()}<button className="flatten-button icon-button" title="Flatten" aria-label="Flatten" onClick={() => void flattenTrading().catch(reportTradingError)}><ToolbarIcon name="Flatten" /></button><button className="block-button icon-button" title="Block trading" aria-label="Block trading" disabled={blockPending || trading.guardrails?.ban_active} onClick={() => void blockTrading()}><ToolbarIcon name="Block" /></button></>}</>}
       {isTradingMode(mode) && <button disabled={!trading || trading.session.state === 'ended'} onClick={() => setOrderWindowOpen(true)}>Order</button>}
       {isHistoricalTradingMode(mode) && trading && trading.session.state !== 'ended' && (!replay || replay.state === 'stopped') && <span className="run-controls"><ToolbarActionButton icon="Refresh" disabled={historicalStarting} onClick={() => void startRun()}>Recover charts</ToolbarActionButton><ToolbarActionButton icon={sharedTradingSession ? 'Detach' : 'Stop'} disabled={historicalStarting} onClick={() => { void (async () => { if (!sharedTradingSession) await desktopTradingRequest(`${trading.session.session_id}/stop`, 'POST'); setTrading(null); setSharedTradingSession(false); setOrderWindowOpen(false) })().catch(reportTradingError) }}>{sharedTradingSession ? 'Detach session' : 'Stop session'}</ToolbarActionButton></span>}
+      {isHistoricalTradingMode(mode) && !companion && (() => {
+        // Strategy Practice: the strategy in the toolbar while it runs (never the recorded side or marks), then a way to the review.
+        const practice = trading?.session.practice ? { sessionId: trading.session.session_id, strategy: trading.session.practice.strategy } : lastPractice
+        if (!practice) return null
+        const finished = (!trading || trading.session.state === 'ended') && (!replay || replay.state === 'stopped')
+        return <span className="run-controls" data-testid="practice-badge" title="A practice run: its trades are kept apart from your normal replays and Performance totals">
+          <small>Practice: {practice.strategy}{mode === 'Stepwise' ? ' · Stepwise' : ''}</small>
+          {finished && <ToolbarActionButton icon="Inspect" onClick={() => props.onReviewPractice(practice.sessionId)}>Review practice</ToolbarActionButton>}
+        </span>
+      })()}
       {realEnabled && <ToolbarActionButton icon="Real" className={mode === 'Real' ? 'selected mode-button' : 'mode-button'} onClick={() => switchMode('Real')}>Real</ToolbarActionButton>}
       {mode === 'Real' && !companion && <span className="run-controls">{(!trading || trading.session.state === 'ended') && <label>Capital % <input aria-label="Real Day capital allocation percent" type="number" min="0.01" max="100" step="0.01" style={{ width: 65 }} value={realAllocationPct} onChange={event => setRealAllocationPct(event.target.value)} /></label>}{realDay?.date === paperMarketDate() && realDay.state !== 'active' && <small>{realDay.state === 'done' ? 'Done for day 🔒' : 'Closing for day…'}</small>}<small>{realBroker?.broker ?? trading?.session.execution_broker ?? 'Broker'} · {realBroker?.authenticated ? 'Connected' : 'Authentication required'}</small>{!realBroker?.authenticated && <ToolbarActionButton icon="Refresh" onClick={() => { if(realBroker?.broker==='kotak'){setShowKotakLogin(true);return;} const context = contextRef.current; void settingsAccountRequest<{ broker: string; authenticated: boolean; active_session_id?: string | null; restrictions_enabled?: boolean }>('broker/status', 'GET').then(value => { if (context === contextRef.current) {setRealBroker(value);if(value.broker==='kotak'&&!value.authenticated)setShowKotakLogin(true)} }).catch(reportTradingError) }}>{realBroker?.broker==='kotak'?'Connect Kotak Neo':'Check broker'}</ToolbarActionButton>}
         {(!trading || trading.session.state === 'ended') && realBroker?.active_session_id && <ToolbarActionButton icon={trading?.session.session_id === realBroker.active_session_id ? 'Stop' : 'Inspect'} disabled={realActionPending} onClick={() => { if (trading?.session.session_id === realBroker.active_session_id) void closeReal(false); else void desktopTradingRequest<DesktopTradingSnapshot>(`${realBroker.active_session_id}/snapshot`, 'GET').then(setTrading).catch(reportTradingError) }}>{trading?.session.session_id === realBroker.active_session_id ? 'Close outstanding session' : 'Inspect outstanding session'}</ToolbarActionButton>}

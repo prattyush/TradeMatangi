@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import Chart, { type Props, type LightweightChartState } from "./Chart";
+import { useChartDrawingStore } from "./useChartDrawingStore";
 import { useWebsiteChartRenderer } from "../hooks/useWebsiteChartRenderer";
 import type { OHLCCandle, Order, BrokerSnapshot } from "../services/api";
 import { flashError } from "../services/notifications";
@@ -58,6 +59,19 @@ export default function TradingChartHost(props: TradingChartProps) {
   }, [requestedRenderer, activity]);
   const [attempt, setAttempt] = useState(0);
   const lightweightState = useRef<LightweightChartState>({});
+  // The Lightweight chart saves its drawings to the database, as the KLine chart does (the same records for the same instrument).
+  const drawingStore = useChartDrawingStore({
+    enabled: renderer !== "kline",
+    paneType: props.paneType,
+    symbol: props.symbol,
+    right: props.right,
+    strike: props.strike,
+    expiry: props.expiry,
+    swingChart: props.swingChart,
+    chartKind: props.chartKind,
+    drawingStorageKey: props.drawingStorageKey,
+    legacyDrawingScope: props.legacyDrawingScope,
+  });
   const retained = useRef(new Map<number, OHLCCandle>());
   const identity = JSON.stringify([
     props.symbol,
@@ -92,6 +106,6 @@ export default function TradingChartHost(props: TradingChartProps) {
       </Suspense>
     </ChartBoundary>
   ) : (
-    <Chart {...props} lightweightState={lightweightState} />
+    <Chart {...props} lightweightState={lightweightState} persistDrawings drawingStore={drawingStore} />
   );
 }

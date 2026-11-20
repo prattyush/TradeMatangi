@@ -25,7 +25,7 @@ interface Props {
   // In-session trade labeling
   sessionId?: string | null
   pendingExitLabels?: PendingExitRt[]
-  openLegs?: { right: string | null; rtIndex: number; label: string }[]
+  openLegs?: { right: string | null; rtIndex: number; label: string; action?: 'BUY' | 'SELL' }[]
   savedEntryRtKeys?: string[]
   activeEntryStrategies?: Record<string, ActiveEntryStrategy>
   onSaveEntry?: (

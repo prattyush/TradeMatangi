@@ -1113,16 +1113,17 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
     if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
     let valid_id = |id: &str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if method == "POST" {
-        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks" | "video-links" | "whatif")
+        return matches!(route, "labels" | "performance/real-fees" | "pattern/strategies" | "pattern/categories" | "behavior/questions" | "behavior/marks" | "video-links" | "whatif" | "day-notes" | "day-notes/todos" | "day-notes/todos/status")
             || route.strip_prefix("behavior/questions/").and_then(|rest| rest.split_once('/')).map(|(id, action)| valid_id(id) && matches!(action, "update" | "archive" | "restore")).unwrap_or(false);
     }
-    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees" || route == "video-links" || route == "whatif"; }
+    if method == "DELETE" { return route == "snapshots" || route == "performance/real-fees" || route == "video-links" || route == "whatif" || route == "day-notes/todos"; }
     if method != "GET" { return false; }
     match route {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
-        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" => true,
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" | "day-notes" | "day-notes/todos" | "day-score" | "day-scores" |
+        "deep-dive/stats/all" | "deep-dive/practice/runs" | "deep-dive/practice/evaluate" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
     }
@@ -1156,7 +1157,7 @@ async fn desktop_analysis_request(
     response.json().await.map_err(|e| e.to_string())
 }
 
-/// Allowlist for the Patterns, Chart Structures and Fine Structures routes (`/api/desktop/v1/patterns/...`).
+/// Allowlist for the Patterns, Chart Structures, Fine Structures and Deep Dive routes (`/api/desktop/v1/patterns/...`).
 /// Mirrored by `validPatternsPath` in `src/patternsApi.ts`; keep the two in step.
 fn valid_patterns_path(path: &str, method: &str) -> bool {
     let route = path.split('?').next().unwrap_or("");
@@ -1170,6 +1171,7 @@ fn valid_patterns_path(path: &str, method: &str) -> bool {
         ("GET", ["pattern", "chart", "by-date"]) => true,
         ("GET", ["pattern", "chart", v]) => id(v),
         ("GET", ["pattern", "ohlc", "equity" | "options"]) => true,
+        ("GET", ["pattern", "traded"]) | ("GET", ["pattern", "traded", "summary"]) | ("POST", ["pattern", "traded", "save"]) => true,
         ("POST", ["pattern", "strategies" | "categories" | "chart" | "charts"]) => true,
         ("POST", ["pattern", "charts", "bulk-delete"]) => true,
         ("PUT" | "DELETE", ["pattern", "chart", v]) => id(v),
@@ -1183,6 +1185,13 @@ fn valid_patterns_path(path: &str, method: &str) -> bool {
         ("GET", ["fine-structures", "ohlc" | "ohlc-options", s, d]) => symbol(s) && date(d),
         ("POST", ["fine-structures", "definition" | "flow" | "search"]) => true,
         ("PUT" | "DELETE", ["fine-structures", "definition" | "flow", v]) => id(v),
+        ("GET", ["deep-dive", "dives" | "dive" | "stats"]) => true,
+        ("GET", ["deep-dive", "stats", "all"]) => true,
+        ("GET", ["deep-dive", "practice", "strategies" | "runs" | "evaluate"]) | ("POST", ["deep-dive", "practice", "pick"]) => true,
+        ("PUT", ["deep-dive", "setup"]) | ("DELETE", ["deep-dive", "setup"]) => true,
+        ("PUT", ["deep-dive", "setup", "tag-values"]) => true,
+        ("POST", ["deep-dive", "tags"]) | ("POST", ["deep-dive", "setup", "save-to-patterns"]) => true,
+        ("POST", ["deep-dive", "tags", v, "update" | "archive" | "restore"]) => id(v),
         ("GET", ["data", "symbols" | "price-at" | "expiry"]) => true,
         ("GET", ["data", "options", "find-strike-by-price"]) => true,
         _ => false,
@@ -1216,6 +1225,64 @@ async fn desktop_patterns_request(
     }
     if status == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
     response.json().await.map_err(|e| e.to_string())
+}
+
+/// Allowlist for the Games routes (`/api/desktop/v1/games/...`). Only these three families exist (spec section 3.4):
+/// `availability` and `window` are read-only market-data slices (served from G1), `state` is the progress record.
+/// Mirrored by `validGamesPath` in `src/gamesApi.ts`; keep the two in step (parity tests in both).
+fn valid_games_path(path: &str, method: &str) -> bool {
+    let route = path.split('?').next().unwrap_or("");
+    if route.is_empty() || route.starts_with('/') || route.contains('%') || route.contains('#') || route.contains('\\') || route.split('/').any(|s| s == "." || s == "..") { return false; }
+    matches!((method, route), ("GET", "availability" | "window" | "state") | ("PUT", "state"))
+}
+
+#[tauri::command]
+async fn desktop_games_request(
+    window: tauri::WebviewWindow,
+    base_url: String,
+    path: String,
+    method: String,
+    body: serde_json::Value,
+    host: tauri::State<'_, HostState>,
+) -> Result<serde_json::Value, String> {
+    // Games run in their own window only; no trading window can use this route family by accident.
+    if window.label() != "games" { return Err("Games requests are only available from the Games window".into()); }
+    if !valid_games_path(&path, &method) { return Err("Invalid games request".into()); }
+    let token = tokio::time::timeout(Duration::from_secs(30), host.access_token(&base_url)).await.map_err(|_| "Games authentication timed out")??;
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
+    let url = format!("{}/api/desktop/v1/games/{}", base_url.trim_end_matches('/'), path);
+    let request = match method.as_str() {
+        "GET" => client.get(url),
+        "PUT" => client.put(url).json(&body),
+        _ => return Err("Unsupported games request".into()),
+    };
+    let response = request.bearer_auth(token).send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+    if !status.is_success() {
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!("Games request failed ({status}): {detail}"));
+    }
+    if status == reqwest::StatusCode::NO_CONTENT { return Ok(serde_json::Value::Null); }
+    response.json().await.map_err(|e| e.to_string())
+}
+
+/// Open (or focus) the separate Games window. Only the main window may open it. The window holds no trading
+/// state and owns no streams, so closing it needs no handoff; it is destroyed with the main window.
+#[tauri::command]
+async fn open_games_window(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" { return Err("Only the main window can open Games".into()); }
+    if let Some(existing) = app.get_webview_window("games") {
+        existing.show().map_err(|error| error.to_string())?;
+        existing.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, "games", WebviewUrl::App("index.html?window=games".into()))
+        .title("Trade Matangi Games")
+        .inner_size(1100.0, 760.0)
+        .min_inner_size(800.0, 560.0)
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -2472,6 +2539,10 @@ pub fn run() {
         .manage(video::VideoJobState::default())
         .manage(youtube_upload::UploadState::default())
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                // The Games window never outlives the main window (it would keep the app running with no way back).
+                if let Some(games) = window.app_handle().get_webview_window("games") { let _ = games.destroy(); }
+            }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 if let Some(webview) = window.app_handle().get_webview_window(window.label()) { schedule_window_close(&webview, window.state::<HostState>().inner().clone()); }
             }
@@ -2503,6 +2574,8 @@ pub fn run() {
             desktop_settings_request,
             desktop_analysis_request,
             desktop_patterns_request,
+            desktop_games_request,
+            open_games_window,
             desktop_logout,
             queue_offline_mutation,
             pending_offline_mutations,
@@ -2550,6 +2623,19 @@ mod tests {
     }
 
     #[test]
+    fn games_allowlist_is_exact_and_method_scoped() {
+        let ok = [("GET", "state"), ("PUT", "state"), ("GET", "availability"), ("GET", "window?symbol=NIFTY&date=2026-10-01&start_sec=34200&duration_sec=300"), ("GET", "state?x=1")];
+        for (method, path) in ok { assert!(super::valid_games_path(path, method), "{method} {path}"); }
+        let bad = [
+            ("POST", "state"), ("DELETE", "state"), ("PUT", "availability"), ("PUT", "window"), ("GET", ""), ("GET", "/state"), ("GET", "state/"),
+            ("GET", "state/x"), ("GET", "states"), ("GET", "../analysis/sessions"), ("GET", "state/../x"), ("GET", "st%61te"), ("GET", "state#x"),
+            ("GET", "state\\x"), ("GET", "./state"), ("GET", "trades"), ("GET", "orders"), ("PATCH", "state"), ("get", "state"),
+            ("GET", "availability/x"), ("GET", "window/x"), ("GET", "?state"),
+        ];
+        for (method, path) in bad { assert!(!super::valid_games_path(path, method), "{method} {path}"); }
+    }
+
+    #[test]
     fn patterns_allowlist_is_exact_and_method_scoped() {
         let ok = [
             ("GET", "pattern/strategies"), ("GET", "pattern/charts?symbol=NIFTY"), ("GET", "pattern/chart/by-date?date=2026-10-01"),
@@ -2559,6 +2645,13 @@ mod tests {
             ("GET", "fine-structures/flows"), ("POST", "fine-structures/search"), ("DELETE", "fine-structures/definition/d1"),
             ("GET", "fine-structures/ohlc-options/NIFTY/2026-10-01?right=CE"),
             ("GET", "data/symbols"), ("GET", "data/price-at?symbol=NIFTY"), ("GET", "data/options/find-strike-by-price?symbol=NIFTY"),
+            ("GET", "pattern/traded?category=A&strategy=B"), ("GET", "pattern/traded/summary"), ("POST", "pattern/traded/save"),
+            ("GET", "deep-dive/dives"), ("GET", "deep-dive/dive?category=A&strategy=B"), ("GET", "deep-dive/stats?category=A"),
+            ("GET", "deep-dive/stats/all"), ("PUT", "deep-dive/setup"), ("DELETE", "deep-dive/setup?date=2026-10-01"),
+            ("PUT", "deep-dive/setup/tag-values"), ("POST", "deep-dive/setup/save-to-patterns"), ("POST", "deep-dive/tags"),
+            ("POST", "deep-dive/tags/abc123/update"), ("POST", "deep-dive/tags/abc123/archive"), ("POST", "deep-dive/tags/abc123/restore"),
+            ("GET", "deep-dive/practice/strategies"), ("GET", "deep-dive/practice/runs"), ("GET", "deep-dive/practice/evaluate?session_id=abc"),
+            ("POST", "deep-dive/practice/pick"),
         ];
         for (method, path) in ok { assert!(super::valid_patterns_path(path, method), "{method} {path}"); }
         let bad = [
@@ -2567,6 +2660,13 @@ mod tests {
             ("GET", "chart-structures/ohlc/NIFTY/2026-10-01/x"), ("GET", "chart-structures/ohlc/NIFTY/not-a-date"),
             ("GET", "data/historical"), ("POST", "data/symbols"), ("GET", "orders"), ("GET", "trading/orders"),
             ("GET", "pattern/chart/a\\b"), ("PATCH", "pattern/chart/abc"), ("GET", ""),
+            ("POST", "pattern/traded"), ("PUT", "pattern/traded/save"), ("DELETE", "pattern/traded"), ("GET", "pattern/traded/save"), ("GET", "pattern/traded/summary/x"), ("POST", "pattern/traded/summary"),
+            ("POST", "deep-dive/dives"), ("DELETE", "deep-dive/dive"), ("PUT", "deep-dive/tags"), ("GET", "deep-dive/setup"),
+            ("POST", "deep-dive/setup"), ("GET", "deep-dive/stats/all/x"), ("POST", "deep-dive/tags/a/b/update"),
+            ("POST", "deep-dive/tags/abc/delete"), ("POST", "deep-dive/tags//update"), ("GET", "deep-dive/tags"),
+            ("POST", "deep-dive/practice/strategies"), ("POST", "deep-dive/practice/runs"), ("POST", "deep-dive/practice/evaluate"), ("GET", "deep-dive/practice/pick"),
+            ("PUT", "deep-dive/practice/pick"), ("DELETE", "deep-dive/practice/runs"), ("GET", "deep-dive/practice"), ("GET", "deep-dive/practice/evaluate/x"),
+            ("GET", "deep-dive/practice/strategies/x"), ("POST", "deep-dive/practice/pick/x"),
         ];
         for (method, path) in bad { assert!(!super::valid_patterns_path(path, method), "{method} {path}"); }
     }
@@ -2590,6 +2690,27 @@ mod tests {
         for path in ["snapshots/event-id", "snapshots/../candle", "snapshots/event-id/candle/extra", "snapshots/%2e%2e/candle"] {
             assert!(!valid_analysis_path(path, "GET"));
         }
+    }
+
+    #[test]
+    fn deep_dive_stats_is_one_read_only_analysis_route() {
+        assert!(valid_analysis_path("deep-dive/stats/all", "GET"));
+        for method in ["POST", "DELETE", "PUT"] { assert!(!valid_analysis_path("deep-dive/stats/all", method), "{method}"); }
+        for path in ["deep-dive/stats", "deep-dive/dives", "deep-dive/dive", "deep-dive/setup", "deep-dive/tags", "deep-dive/stats/all/x", "deep-dive/../labels"] {
+            assert!(!valid_analysis_path(path, "GET"), "{path}");
+        }
+    }
+
+    #[test]
+    fn practice_review_and_runs_are_read_only_analysis_routes() {
+        for path in ["deep-dive/practice/runs", "deep-dive/practice/evaluate", "deep-dive/practice/evaluate?session_id=abc"] {
+            assert!(valid_analysis_path(path, "GET"), "{path}");
+            for method in ["POST", "DELETE", "PUT"] { assert!(!valid_analysis_path(path, method), "{method} {path}"); }
+        }
+        for path in ["deep-dive/practice", "deep-dive/practice/pick", "deep-dive/practice/strategies", "deep-dive/practice/evaluate/x", "deep-dive/practice/runs/x", "deep-dive/practice/../labels"] {
+            assert!(!valid_analysis_path(path, "GET"), "{path}");
+        }
+        assert!(!valid_analysis_path("deep-dive/practice/pick", "POST"));
     }
 
     #[test]
@@ -2617,6 +2738,38 @@ mod tests {
             assert!(!valid_analysis_path("whatif/range", method), "{method}");
         }
         for path in ["whatif/extra", "whatif/", "/whatif", "whatif/../labels", "what-if", "whatif%2Frange", "whatif/range/x"] {
+            for method in ["GET", "POST", "DELETE"] {
+                assert!(!valid_analysis_path(path, method), "{method} {path}");
+            }
+        }
+    }
+
+    #[test]
+    fn day_score_is_read_only_on_the_exact_paths() {
+        for path in ["day-score?date=2026-11-19", "day-scores?start=2026-11-01&end=2026-11-30&compute=true", "day-score", "day-scores"] {
+            assert!(valid_analysis_path(path, "GET"), "GET {path}");
+            for method in ["POST", "DELETE", "PUT"] {
+                assert!(!valid_analysis_path(path, method), "{method} {path}");
+            }
+        }
+        for path in ["day-score/", "day-score/x", "day-scores/x", "day-score/../labels", "dayscore"] {
+            assert!(!valid_analysis_path(path, "GET"), "GET {path}");
+        }
+    }
+
+    #[test]
+    fn day_notes_allow_the_exact_paths_with_post_for_every_write() {
+        assert!(valid_analysis_path("day-notes?date=2026-11-19", "GET"));
+        assert!(valid_analysis_path("day-notes", "POST"));
+        for method in ["GET", "POST", "DELETE"] {
+            assert!(valid_analysis_path("day-notes/todos", method), "{method}");
+        }
+        assert!(valid_analysis_path("day-notes/todos?todo_id=abc&date=2026-11-19", "DELETE"));
+        assert!(valid_analysis_path("day-notes/todos/status", "POST"));
+        for (path, method) in [("day-notes", "DELETE"), ("day-notes", "PUT"), ("day-notes/todos/status", "GET"), ("day-notes/todos/status", "DELETE"), ("day-notes/todos", "PUT")] {
+            assert!(!valid_analysis_path(path, method), "{method} {path}");
+        }
+        for path in ["day-notes/", "day-notes/extra", "day-notes/todos/x", "day-notes/../labels", "day-notes%2Ftodos", "daynotes"] {
             for method in ["GET", "POST", "DELETE"] {
                 assert!(!valid_analysis_path(path, method), "{method} {path}");
             }

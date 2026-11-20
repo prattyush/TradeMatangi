@@ -5,7 +5,7 @@ import type { PerformanceCycle } from '../performance'
 import { orderRoundTripsByEntry, tripKey, type LabeledRoundTrip } from '../labeling/model'
 import OneByOneLabeling from '../labeling/OneByOneLabeling'
 import RoundTripSplitLayout from '../labeling/RoundTripSplitLayout'
-import { useMaximized, useRoundTripView } from '../labeling/useRoundTripView'
+import { useCardMaximized, useRoundTripView } from '../labeling/useRoundTripView'
 import WalkthroughPanel from './WalkthroughPanel'
 import { buildWalkthrough } from './walkthroughModel'
 
@@ -35,7 +35,7 @@ export default function TradeWalkthrough({ symbol, date, sessionIds, allTrades, 
   const [retry, setRetry] = useState(0)
   const [index, setIndex] = useState(0)
   const [showAllMarkers, setShowAllMarkers] = useState(false)
-  const [maximized, setMaximized] = useMaximized()
+  const { maximized } = useCardMaximized()
   const sessionKey = sessionIds.join('|')
 
   useEffect(() => {
@@ -61,10 +61,6 @@ export default function TradeWalkthrough({ symbol, date, sessionIds, allTrades, 
   if (loading) return <p role="status">Loading round trips…</p>
   if (error) return <p role="alert">{error}<button onClick={() => setRetry(value => value + 1)}>Retry</button></p>
 
-  const maximizeButton = (
-    <button type="button" className="tl-ghost tl-maximize" onClick={() => setMaximized(!maximized)} aria-pressed={maximized}
-      aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): one chart with a switcher' : 'Maximize: larger view, Underlying and strike charts stacked'}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
-  )
   const info = current ? story.get(tripKey(current)) : undefined
   return (
     <RoundTripSplitLayout labelContractMarkers={false} sideScroll={false} symbol={symbol} date={date} historicalDays={historicalDays} chartTrades={chartTrades} getMarkerText={getMarkerText} focusTime={focusTime} maximized={maximized}>
@@ -76,7 +72,6 @@ export default function TradeWalkthrough({ symbol, date, sessionIds, allTrades, 
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }} title="Show every trade's markers on the chart, not just this trade's">
             <input type="checkbox" checked={showAllMarkers} onChange={event => setShowAllMarkers(event.target.checked)} /> All markers
           </label>
-          {maximizeButton}
         </>}
       >
         {info && <WalkthroughPanel trip={info} pnlMode={environment.pnlDisplayMode} />}

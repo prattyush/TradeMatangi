@@ -26,7 +26,7 @@ const CONTEXT_DAYS = 2
 
 /** What Browse was showing when the user left it (another tab), so coming back finds the same chart. */
 const remembered: { symbol: string; date: string | null; kind: Kind; picks: Record<OptionRight, RightPick> } = { symbol: 'NIFTY', date: null, kind: 'spot', picks: emptyPicks() }
-/** The server searches up to 30 strikes, and may have to download their histories first. */
+/** The server searches up to 50 strikes, and may have to download their histories first. */
 const MAX_PRICE_TIMEOUT_MS = 120_000
 
 function readRecents(): string[] {

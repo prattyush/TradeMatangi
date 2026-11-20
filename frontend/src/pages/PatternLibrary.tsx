@@ -15,6 +15,9 @@ import {
 } from 'lightweight-charts'
 import api, { PatternAnnotation, PatternChart, PatternChartMeta, OHLCCandle, TopPatterns } from '../services/api'
 import { buildMarkers, patternIdentity, cleanTopPatterns, MARKER_COLORS } from '../services/patternMarkers'
+import WebsiteDeepDive, { WebsiteCompare } from '../components/deepdive/WebsiteDeepDive'
+import WebsiteTradedPatterns from '../components/deepdive/WebsiteTradedPatterns'
+import WebsitePractice, { type WebsitePracticeProps } from '../components/deepdive/WebsitePractice'
 import { loadHistoricalDays, loadMaxPriceMode, loadMaxPriceThresholdCE, loadMaxPriceThresholdPE } from '../components/SettingsModal'
 import {
   PATTERN_ATM_TIME, PATTERN_MAX_PRICE_TIME, otmStrikes, patternStrikeRule, roundToStrike, savedStrikes,
@@ -87,8 +90,10 @@ function getUniquePatterns(annotations: PatternAnnotation[]): { identity: string
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
+// The page fills the box its parent gives it. It used to be `100vh` itself, which inside the app (a header above it) made it taller than
+// the window by the header's height, so the bottom of every tab (a chart's time axis, the end of a list) was clipped.
 const PAGE: CSSProperties = {
-  display: 'flex', flexDirection: 'column', height: '100vh',
+  display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, height: '100%',
   background: '#0d1117', color: '#e6edf3', fontFamily: 'monospace', overflow: 'hidden',
 }
 const HEADER: CSSProperties = {
@@ -689,8 +694,12 @@ function galleryGridStyle(columns: number): CSSProperties {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function PatternLibrary() {
-  const [mode, setMode] = useState<'create' | 'view'>('create')
+export default function PatternLibrary({ practice }: { practice?: WebsitePracticeProps } = {}) {
+  const [mode, setMode] = useState<'create' | 'view' | 'deepdive' | 'compare' | 'traded' | 'practice'>(practice?.reviewSessionId ? 'practice' : 'create')
+  // A finished practice run asked to be reviewed (the trading screen's Review button): open the Practice tab.
+  useEffect(() => { if (practice?.reviewSessionId) setMode('practice') }, [practice?.reviewSessionId])
+  // The Deep Dive puts its own header controls in this page's header row (a portal into the slot below), so the charts get the height.
+  const [deepDiveSlot, setDeepDiveSlot] = useState<HTMLElement | null>(null)
 
   // Form
   const [symbol, setSymbol] = useState('NIFTY')
@@ -740,7 +749,7 @@ export default function PatternLibrary() {
 
   // Annotations
   const [annotations, setAnnotations] = useState<PatternAnnotation[]>([])
-  const [activeToolKey, setActiveToolKey] = useState<string>('entry-CE')
+  const [activeToolKey, setActiveToolKey] = useState<string | null>(null) // no marker selected: a chart click marks nothing; the selected one is clicked again to put it down
 
   // Top Patterns
   const [topPatterns, setTopPatterns] = useState<TopPatterns>({})
@@ -968,12 +977,12 @@ export default function PatternLibrary() {
 
   const handleBarClick = useCallback((time: number, price: number) => {
     if (!chartLoaded) return
+    const tool = TOOL_OPTIONS.find(t => t.key === activeToolKey)
+    if (!tool) return
     const strategy = activeStrategy || newStrategyName.trim()
     const category = activeCategory || newCategoryName.trim()
     if (!category) { flashError('Please select or type a category name before annotating.'); return }
     if (!strategy) { flashError('Please select or type a strategy name before annotating.'); return }
-    const tool = TOOL_OPTIONS.find(t => t.key === activeToolKey)
-    if (!tool) return
     const id = crypto.randomUUID()
     const ann: PatternAnnotation = {
       id, time, price, type: tool.type, instrument: tool.instrument,
@@ -1105,6 +1114,9 @@ export default function PatternLibrary() {
       setLoadError(err instanceof Error ? err.message : 'Failed to load chart')
     }
   }, [mode, galleryStrategy, galleryCategory, galleryUnderlyingOnly])
+
+  // "From your trades" (Phase 26, S10): a trade saved as pattern marks opens in Create, like a chart loaded from the gallery.
+  const openTradedChart = useCallback(async (chartId: string) => { await handleGalleryLoad(chartId); setMode('create') }, [handleGalleryLoad])
 
   // ── Gallery delete ────────────────────────────────────────────────────────
 
@@ -1342,18 +1354,19 @@ export default function PatternLibrary() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={PAGE}>
+    <div style={PAGE} data-testid="pattern-library">
       {/* Header */}
       <div style={HEADER}>
         <span style={{ fontSize: 14, fontWeight: 700, marginRight: 4 }}>Pattern Library</span>
 
-        {(['create', 'view'] as const).map(m => (
+        {(['create', 'view', 'deepdive', 'compare', 'traded', ...(practice ? ['practice' as const] : [])] as const).map(m => (
           <button key={m}
             style={{ ...btn(mode === m ? '#1f6feb' : '#21262d'), border: '1px solid #30363d' }}
             onClick={() => setMode(m)}>
-            {m === 'create' ? '✏ Create' : '👁 View'}
+            {m === 'create' ? '✏ Create' : m === 'view' ? '👁 View' : m === 'deepdive' ? '🔍 Deep dive' : m === 'compare' ? '⚖ Compare' : m === 'traded' ? '🧾 From your trades' : '🎯 Practice'}
           </button>
         ))}
+        {mode === 'deepdive' && <span ref={setDeepDiveSlot} className="dd-web" style={{ display: 'contents' }} />}
 
         {mode === 'create' && (
           <>
@@ -1456,7 +1469,8 @@ export default function PatternLibrary() {
           {TOOL_OPTIONS.map(t => (
             <button key={t.key}
               style={{ ...toolBtn(activeToolKey === t.key), borderLeft: `3px solid ${colorDot(t.key)}` }}
-              onClick={() => setActiveToolKey(t.key)}>
+              onClick={() => setActiveToolKey(k => k === t.key ? null : t.key)}
+              title={activeToolKey === t.key ? 'Click again to stop marking' : undefined}>
               {t.label}
             </button>
           ))}
@@ -1525,7 +1539,23 @@ export default function PatternLibrary() {
       )}
 
       {/* Body */}
-      {mode === 'create' ? (
+      {mode === 'deepdive' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
+          <WebsiteDeepDive headerSlot={deepDiveSlot} />
+        </div>
+      ) : mode === 'compare' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
+          <WebsiteCompare />
+        </div>
+      ) : mode === 'traded' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
+          <WebsiteTradedPatterns onEdit={openTradedChart} />
+        </div>
+      ) : mode === 'practice' && practice ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' }}>
+          <WebsitePractice {...practice} />
+        </div>
+      ) : mode === 'create' ? (
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {renderCharts(false)}

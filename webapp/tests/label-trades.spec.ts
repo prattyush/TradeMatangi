@@ -13,15 +13,26 @@ const trade = (row: ReturnType<typeof leg>, extra: Record<string, unknown> = {})
 const trades = [trade(trips[0].entry_trades[0]), trade(trips[0].exit_trades[0]), trade(trips[1].entry_trades[0], ce), trade(trips[1].exit_trades[0], ce)]
 const session = { session_id: 's1', user_id: 'alice', symbol: 'NIFTY', date: '2026-10-08', start_time: '09:15:00', instrument_type: 'options', session_type: 'paper', strike: null, expiry: null, session_capital: 100000, net_pnl: 75.25, pnl_pct: 0.07, total_commission: 4, trade_count: 4, round_trip_count: 2, buy_count: 2, sell_count: 2 }
 
-async function mockAnalysis(page: Page, saves: unknown[][]) {
+const block = (days: number, tags: Array<[string, number, number]>, success: number, failed: number) => ({
+  days, buy_days: 0, sell_days: 0, success, failed, with_outcome: success + failed, success_pct: success + failed ? Math.round(1000 * success / (success + failed)) / 10 : null, outcome_few_days: true,
+  tags: tags.map(([name, valid, notValid]) => ({ tag_id: name, name, valid, not_valid: notValid, marked: valid + notValid, pct: Math.round(1000 * valid / (valid + notValid)) / 10, few_days: valid + notValid < 5 })),
+})
+// Buy setups: a second leg usually follows (7 of 8); Sell setups: it does not (1 of 6).
+const deepDiveStats = [{ category: 'Momentum', strategy: 'Breakout', owner_id: 'alice', shared: false,
+  all: block(14, [['Second leg', 8, 6]], 6, 5), buy: block(8, [['Second leg', 7, 1]], 5, 1), sell: block(6, [['Second leg', 1, 5]], 1, 4) }]
+
+async function mockAnalysis(page: Page, saves: unknown[][], options: { sellSecondTrip?: boolean; noDeepDive?: boolean } = {}) {
   await mockWorkspace(page)
+  // A sold CE is a bearish (Sell-side) position even though the option right is CE.
+  const roundTrips = options.sellSecondTrip ? [trips[0], { ...trips[1], entry_trades: [leg('t3', 'SELL', 10, ce)], exit_trades: [leg('t4', 'BUY', 12, ce)] }] : trips
   const bars = Array.from({ length: 200 }, (_, i) => ({ time: 1791447300 + i * 180, open: 100 + i / 4, high: 102 + i / 4, low: 99 + i / 4, close: 101 + i / 4 }))
   let labels: Record<string, unknown>[] = []
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url()), path = url.pathname, method = route.request().method()
     if (path.endsWith('/analysis/sessions')) return route.fulfill({ json: [session] })
     if (path.endsWith('/analysis/sessions/s1')) return route.fulfill({ json: { ...session, trades, orders: [], cycles: [] } })
-    if (path.endsWith('/analysis/round-trips')) return route.fulfill({ json: trips })
+    if (path.endsWith('/analysis/round-trips')) return route.fulfill({ json: roundTrips })
+    if (path.endsWith('/deep-dive/stats/all')) return options.noDeepDive ? route.fulfill({ status: 404, json: { detail: 'Not Found' } }) : route.fulfill({ json: { dives: deepDiveStats } })
     if (path.endsWith('/analysis/labels')) {
       if (method === 'POST') { const rows = route.request().postDataJSON().labels; saves.push(rows); labels = [...labels.filter(l => !rows.some((r: any) => r.round_trip_index === l.round_trip_index)), ...rows]; return route.fulfill({ json: rows }) }
       return route.fulfill({ json: labels })
@@ -47,7 +58,7 @@ test('Label Trades on a phone: one trade at a time, stacked panes become tabs, b
   await expect(page.getByText('Trade Analysis', { exact: true })).toBeVisible()
   await page.getByText('2026-10-08', { exact: true }).click()
   await page.getByRole('button', { name: 'Label Trades', exact: true }).click()
-  await expect(page.getByText('Trade 1 of 2', { exact: true })).toBeVisible()
+  await expect(page.getByText(/^Trade 1 of 2/)).toBeVisible()
   const bar = page.locator('.tl-bottom-nav')
   await expect(bar).toBeVisible()
   // Fixed to the bottom of the screen, above the page content.
@@ -57,7 +68,7 @@ test('Label Trades on a phone: one trade at a time, stacked panes become tabs, b
   // Edit trade 1; Next saves only that trade before moving.
   await page.locator('input[list^="et-"]').first().fill('FIRST')
   await page.getByRole('button', { name: 'Next trade' }).click()
-  await expect(page.getByText('Trade 2 of 2', { exact: true })).toBeVisible()
+  await expect(page.getByText(/^Trade 2 of 2/)).toBeVisible()
   expect(saves.map(rows => (rows as any[]).map(row => [row.round_trip_index, row.entry_tag]))).toEqual([[[0, 'FIRST']]])
   // The CE trade has a strike chart: phones show one pane at a time behind tabs.
   const tabs = page.getByRole('navigation', { name: 'Chart pane' })
@@ -69,7 +80,7 @@ test('Label Trades on a phone: one trade at a time, stacked panes become tabs, b
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/label-trades-phone.png' })
   await page.getByRole('button', { name: 'Previous trade' }).click()
-  await expect(page.getByText('Trade 1 of 2', { exact: true })).toBeVisible()
+  await expect(page.getByText(/^Trade 1 of 2/)).toBeVisible()
   expect(saves).toHaveLength(1) // untouched trade 2 is never written
   expect(errors).toEqual([])
 })
@@ -117,4 +128,58 @@ test('Settings → Analytics manages behavior questions: add, edit, archive and 
   await manager.getByRole('button', { name: 'Unarchive question: Chased price' }).click()
   await expect(manager.getByRole('button', { name: 'Archive question: Chased price' })).toBeVisible()
   expect(errors).toEqual([])
+})
+
+async function openLabelTrades(page: Page) {
+  await page.goto(app)
+  await page.getByRole('button', { name: /Analysis/ }).click()
+  await expect(page.getByText('Trade Analysis', { exact: true })).toBeVisible()
+  await page.getByText('2026-10-08', { exact: true }).click()
+  await page.getByRole('button', { name: 'Label Trades', exact: true }).click()
+  await expect(page.getByText(/^Trade 1 of 2/)).toBeVisible()
+}
+const expectedPattern = (page: Page) => page.locator('.tl-form .tl-field').first()
+
+test('Label Trades shows your Deep Dive percentages under the Expected Pattern, on the side the position profits from', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await mockAnalysis(page, [], { sellSecondTrip: true })
+  await openLabelTrades(page)
+  const form = expectedPattern(page)
+  await expect(form.locator('.dd-stats')).toHaveCount(0) // no expected strategy yet
+  await form.locator('select').nth(0).selectOption('Momentum')
+  await form.locator('select').nth(1).selectOption('Breakout')
+  // Trade 1 is a long equity position: Buy-side, 7 of 8 Buy days had a second leg.
+  const panel = form.locator('.dd-stats')
+  await expect(panel).toContainText('this position is Buy-side')
+  await expect(panel).toContainText('87.5%')
+  await expect(panel).toContainText('(n=8)')
+  await expect(panel).toContainText('Success 5 of 6 (83.3%)')
+  // The switch shows the other side and All without a request.
+  await panel.getByRole('button', { name: /^Sell \(6\)/ }).click()
+  await expect(panel).toContainText('16.7%')
+  await panel.getByRole('button', { name: /^All \(14\)/ }).click()
+  await expect(panel).toContainText('57.1%')
+  // Trade 2 is a SOLD CE: bearish, so Sell-side.
+  await page.getByRole('button', { name: 'Next trade' }).click()
+  await expect(page.getByText(/^Trade 2 of 2/)).toBeVisible()
+  await form.locator('select').nth(0).selectOption('Momentum')
+  await form.locator('select').nth(1).selectOption('Breakout')
+  await expect(form.locator('.dd-stats')).toContainText('this position is Sell-side')
+  await expect(form.locator('.dd-stats')).toContainText('16.7%')
+  await expect(form.locator('.dd-stats')).toContainText('Success 1 of 5 (20%)')
+  expect(errors).toEqual([])
+})
+
+test('Label Trades works without Deep Dive data: an older server shows no panel and labels still save', async ({ page }) => {
+  const saves: unknown[][] = []
+  await mockAnalysis(page, saves, { noDeepDive: true })
+  await openLabelTrades(page)
+  const form = expectedPattern(page)
+  await form.locator('select').nth(0).selectOption('Momentum')
+  await form.locator('select').nth(1).selectOption('Breakout')
+  await expect(form.locator('.dd-stats')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Next trade' }).click()
+  await expect(page.getByText(/^Trade 2 of 2/)).toBeVisible()
+  await expect.poll(() => saves.length).toBeGreaterThan(0)
 })

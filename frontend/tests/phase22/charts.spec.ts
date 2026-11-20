@@ -474,31 +474,69 @@ test("a drawing cannot be deleted before its pending creation is acknowledged", 
   await page.waitForFunction(() => (window as any).drawings.length === 0);
 });
 
-test("Lightweight drawings and indicator choices return after switching renderers", async ({
+test("Lightweight and KLine share one set of saved drawings, and the indicator choices return", async ({
   page,
 }) => {
   await page.goto("/tests/phase22/harness.html");
   await page.waitForSelector(".website-kline canvas");
+  // A horizontal line drawn in KLine ...
+  await page
+    .getByRole("button", { name: "Toggle drawing and indicator tools" })
+    .click();
+  await page
+    .getByRole("button", { name: "Horizontal line", exact: true })
+    .click();
+  const kline = await page.locator(".kline").boundingBox();
+  await page.mouse.click(kline!.x + 400, kline!.y + 250);
+  await page.waitForFunction(() => (window as any).drawings.length === 1);
+  // ... is on the Lightweight chart (the old behaviour kept Lightweight drawings in the browser only).
   await page.evaluate(() => (window as any).switchRenderer("lightweight"));
   await page.waitForSelector(".tv-lightweight-charts");
+  await expect(
+    page.getByRole("button", { name: "Clear", exact: true }),
+  ).toBeVisible();
   await page.getByTitle("Indicators", { exact: true }).click();
   await page.getByLabel("EMA 9/21", { exact: true }).uncheck();
   await page.getByTitle("Indicators", { exact: true }).click();
+  // A trend line drawn in Lightweight is saved as the same kind of record ...
   await page.getByTitle("Drawing tools", { exact: true }).click();
-  await page.getByText("─ Horizontal Line", { exact: true }).click();
+  await page.getByText("↗ Trend Line", { exact: true }).click();
+  await page.waitForTimeout(250); // the click that chose the tool is ignored for a moment
   const rect = await page.locator(".tv-lightweight-charts").boundingBox();
-  await page.mouse.click(rect!.x + rect!.width / 2, rect!.y + rect!.height / 2);
-  await expect(
-    page.getByRole("button", { name: "Clear", exact: true }),
-  ).toBeVisible();
+  await page.mouse.click(rect!.x + rect!.width * 0.4, rect!.y + rect!.height * 0.4);
+  await page.waitForTimeout(550);
+  await page.mouse.click(rect!.x + rect!.width * 0.55, rect!.y + rect!.height * 0.5);
+  await page.waitForFunction(() => (window as any).drawings.length === 2);
+  expect(
+    await page.evaluate(() => (window as any).drawings.map((d: any) => d.drawing.tool).sort()),
+  ).toEqual(["Horizontal", "Trend"]);
+  // ... and shows on the KLine chart.
   await page.evaluate(() => (window as any).switchRenderer("kline"));
   await page.waitForSelector(".website-kline canvas");
-  expect(await page.evaluate(() => (window as any).drawings.length)).toBe(0);
+  await page.waitForFunction(() =>
+    (window as any).chart().getOverlays().some((o: any) => o.name === "segment"),
+  );
+  // Deleting it in Lightweight deletes it for KLine too.
   await page.evaluate(() => (window as any).switchRenderer("lightweight"));
   await page.waitForSelector(".tv-lightweight-charts");
   await expect(
     page.getByRole("button", { name: "Clear", exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.waitForFunction(() => (window as any).drawings.length === 1);
+  await page.evaluate(() => (window as any).switchRenderer("kline"));
+  await page.waitForSelector(".website-kline canvas");
+  await page.waitForFunction(() =>
+    (window as any).chart().getOverlays().some((o: any) => o.name === "horizontalStraightLine"),
+  );
+  expect(
+    await page.evaluate(() =>
+      (window as any).chart().getOverlays().some((o: any) => o.name === "segment"),
+    ),
+  ).toBe(false);
+  // The indicator choice still comes back, and nothing was written through a PATCH.
+  await page.evaluate(() => (window as any).switchRenderer("lightweight"));
+  await page.waitForSelector(".tv-lightweight-charts");
   await page.getByTitle("Indicators", { exact: true }).click();
   await expect(page.getByLabel("EMA 9/21", { exact: true })).not.toBeChecked();
   expect(
@@ -611,7 +649,7 @@ for(const drawing of [
   });
   await page.getByTitle('Drawing tools',{exact:true}).click();
   await page.getByText(drawing.label,{exact:true}).click();
-  await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+  await page.waitForTimeout(250); // the click that chose the tool is ignored for a moment
   const rect=await page.locator('.tv-lightweight-charts').boundingBox();
   for(let i=0;i<drawing.clicks;i++){
     await page.mouse.click(rect!.x+rect!.width*(.4+i*.12),rect!.y+rect!.height*(.4+i*.1));
@@ -680,6 +718,62 @@ test('Swing chart resizes and toggles the shared tools without ResizeObserver er
   await page.waitForTimeout(300);
   expect(errors).toEqual([]);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+test('Swing Lightweight chart reads the Day-shared and the old private-scope drawings, and saves unscoped like KLine',async({page})=>{
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({swingHarness:true}));
+  await page.waitForSelector('.swing-renderer .website-kline canvas');
+  const instrument={exchange:'NSE',kind:'index',symbol:'NIFTY'};
+  const base=Date.parse('2026-10-16T09:15:00Z')/1000;
+  await page.evaluate(([instrument,base])=>{
+    const w=window as any;
+    w.drawings.push(
+      {drawing_id:'shared',revision:1,instrument,drawing:{tool:'Horizontal',points:[{timestamp:base,price:103}],visible:true,locked:false}},
+      {drawing_id:'scoped',revision:1,instrument:{...instrument,drawing_scope:'test'},drawing:{tool:'Trend',points:[{timestamp:base,price:100},{timestamp:base+900,price:104}],visible:true,locked:false}},
+    );
+  },[instrument,base]);
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await page.waitForSelector('.tv-lightweight-charts');
+  await expect(page.getByRole('button',{name:'Clear',exact:true})).toBeVisible();
+  // Both records were read: two Clears empty the chart.
+  await page.getByRole('button',{name:'Clear',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Clear',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Clear',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Clear',exact:true})).toHaveCount(0);
+  await page.waitForFunction(()=>(window as any).drawings.length===0);
+  // A new drawing is saved under the shared (unscoped) identity, the one the KLine swing chart writes.
+  await page.getByTitle('Drawing tools',{exact:true}).click();
+  await page.getByText('─ Horizontal Line',{exact:true}).click();
+  await page.waitForTimeout(250);
+  const rect=await page.locator('.tv-lightweight-charts').boundingBox();
+  await page.mouse.click(rect!.x+rect!.width/2,rect!.y+rect!.height/2);
+  await page.waitForFunction(()=>(window as any).drawings.length===1);
+  expect(await page.evaluate(()=>(window as any).drawings[0].instrument)).toEqual(instrument);
+});
+
+test('drawings a Lightweight swing chart kept only in this browser are copied to the database once',async({page})=>{
+  const key='swing-drawings:test:NIFTY:undefined:undefined:undefined:3m';
+  await page.addInitScript(([key])=>{
+    if(!localStorage.getItem(key))localStorage.setItem(key,JSON.stringify([{type:'hline',price:103}]));
+  },[key]);
+  await page.goto('/tests/phase22/harness.html');await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).setProps({swingHarness:true}));
+  await page.waitForSelector('.swing-renderer .website-kline canvas');
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await page.waitForSelector('.tv-lightweight-charts');
+  await page.waitForFunction(()=>(window as any).drawings.length===1);
+  expect(await page.evaluate(()=>(window as any).drawings[0].drawing.tool)).toBe('Horizontal');
+  await expect(page.getByRole('button',{name:'Clear',exact:true})).toBeVisible();
+  expect(await page.evaluate(k=>localStorage.getItem(`analysis-lw-migrated:${k}`),key)).toBe('1');
+  // The local copy stays, and a second opening copies nothing again.
+  expect(await page.evaluate(k=>localStorage.getItem(k),key)).not.toBeNull();
+  await page.evaluate(()=>(window as any).switchRenderer('kline'));
+  await page.waitForSelector('.website-kline canvas');
+  await page.evaluate(()=>(window as any).switchRenderer('lightweight'));
+  await page.waitForSelector('.tv-lightweight-charts');
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(()=>(window as any).drawings.length)).toBe(1);
 });
 
 test('KLine recovery reports the real error and retries only the chart',async({page})=>{
