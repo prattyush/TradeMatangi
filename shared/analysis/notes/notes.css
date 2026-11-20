@@ -1,0 +1,33 @@
+/* The Notes tab of an Analysis day: TODOs on top, the day's note beneath, a collapsed review last. */
+.dn { display: flex; flex-direction: column; gap: 14px; max-width: 980px; padding-bottom: 12px; }
+.dn h4 { margin: 0 0 6px; font-size: 14px; }
+.dn-hint { margin: 0 0 6px; font-size: 12px; }
+.dn ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dn-todo { border: 1px solid #30363d; border-left: 3px solid #d29922; border-radius: 6px; padding: 6px 10px; background: #161b22; }
+.dn-todo.working { border-left-color: #58a6ff; }
+.dn-todo.done, .dn-todo.improved { border-left-color: #3fb950; opacity: .85; }
+.dn-todo-main { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.dn-todo-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.dn-badge { font-size: 11px; padding: 0 6px; border: 1px solid #30363d; border-radius: 8px; color: #8b949e; white-space: nowrap; }
+.dn-status { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.dn-status button { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid #30363d; background: transparent; color: inherit; cursor: pointer; }
+.dn-status button[aria-pressed="true"] { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+.dn-status button.dn-s-done[aria-pressed="true"], .dn-status button.dn-s-improved[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dn-x { background: none; border: none; color: #8b949e; cursor: pointer; }
+.dn-history { margin-top: 4px; font-size: 12px; }
+.dn-history p { margin: 2px 0 0; }
+.dn-add { display: flex; gap: 6px; margin-top: 8px; }
+.dn-add input { flex: 1; min-width: 0; }
+.dn-note { display: flex; flex-direction: column; gap: 8px; }
+.dn-part { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.dn-part textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.dn-state { font-size: 11px; font-weight: 400; }
+.dn-review summary { cursor: pointer; font-weight: 600; }
+.dn-weeks { border-collapse: collapse; font-size: 12px; margin: 6px 0; }
+.dn-weeks th, .dn-weeks td { padding: 2px 14px 2px 0; text-align: left; }
+.dn-all li { font-size: 12px; }
+.dn-all li.done, .dn-all li.improved { opacity: .8; }
+
+/* Open TODOs above Label Trades. */
+.dn-banner { margin: 0 0 8px; padding: 6px 10px; border: 1px solid #9e6a03; border-left-width: 3px; border-radius: 6px; background: rgba(210, 153, 34, .08); font-size: 12px; }
+.dn-banner ul { margin: 2px 0 0; padding-left: 18px; }

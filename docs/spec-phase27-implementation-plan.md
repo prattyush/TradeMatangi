@@ -68,7 +68,7 @@ Approved 2026-11-20. Source of truth for sprint order; update the status column 
 | S2 | B3. Analysis Maximize | no | built, in PR (see "S2 as built") |
 | S3 | B1. Group tab in Results, then the live popup | popup: yes (dev only) | built, in PR (see "S3 as built") |
 | S4 | B2. Compare tab | no | built, in PR (see "S4 as built") |
-| S5 | B5. Notes and TODOs | no | planned |
+| S5 | B5. Notes and TODOs | no | built, in PR (see "S5 as built") |
 | S6 | B4. Day score backend and the guardrail snapshot | snapshot: yes (dev only) | planned |
 | S7 | B4. Score UI, system habits, Stats trend | no | planned |
 
@@ -110,4 +110,14 @@ Order: S1 first (a visible defect of the last release); S2 to S4 are independent
 - **No backend, allowlist or Rust change:** Compare reads `deep-dive/dives` and `deep-dive/dive`, which the Deep dive already uses on both transports.
 - **Tests:** `windowsapp/src/deepDive.test.ts` (4 model tests), website Playwright `deep-dive-compare.spec.ts` (stub host: days, legs, saved or preview strikes, per-pane interval, Maximize, no writes, empty state; and the real Lightweight and KLine charts through the Pattern Library page). Website suite 106 passed, desktop vitest 1838, `tsc` clean for the website, desktop and phone.
 - **Not covered:** `scripts/desktop-deepdive-check.mjs` (cannot run here), the Windows app and the webapp's own suite. By hand: section D of `docs/phase27-manual-acceptance.md`.
+
+## S5 as built (2026-11-20): Notes and TODOs
+
+- **Backend:** `day_notes_service.py` (tables `DayNotes` PK `user_id` SK `date`; `DayTodos` PK `user_id` SK `todo_id`; lazy `_ensure`), `routers/day_notes.py`, registered in `main.py`; also in `scripts/setup-dynamodb-tables.py`. Owner only; not part of the session delete cascade. Routes and the carry-over rule: `docs/architecture-backend.md` "Day notes and TODOs".
+- **Decision, changed from the plan:** the plan had `POST /api/day-notes/todos/{id}/status`. The routes are exact paths with the id in the body or query (`.../todos/status`, `DELETE .../todos?todo_id=`), so the Rust and TS allowlists stay exact-match like What If's and need no path-parameter rule.
+- **Decision:** a TODO's status is stored as history entries `{date, status, at}` (one per market date). The day view uses the status on that date, so an older day shows a TODO as it stood then and the "improving or not" review is possible. The review (weekly table, totals) is computed on the client from the full list (`weeklyReview`).
+- **Allowlists** (backend `desktop_analysis.py`, `analysisApi.ts`, `lib.rs`) with tests in all three; desktop rebuild needed.
+- **Screens:** `shared/analysis/notes/*`, the Notes tab in `GroupCard`, `OpenTodosBanner` in `TradeLabeling`; hosts: website `analysisEnvironment.tsx` and desktop `DesktopAnalysis.tsx` provide the `dayNotes` source. **Phone: no Notes tab** (not built; its Label trades, Walkthrough and What If are overlays without a day card). Left for a later step if wanted.
+- **Tests:** backend `test_day_notes.py` (18); `windowsapp/src/dayNotes.test.ts` (6) and the allowlist tests (TS and Rust `day_notes_allow_the_exact_paths_with_post_for_every_write`); website Playwright `analysis-notes.spec.ts` (both renderers). Website 108 passed, desktop vitest 1844, phone 121, cargo 78, backend desktop / day notes / what-if / behavior subset 486; `tsc` clean for website, desktop and phone.
+- **Not covered:** the Windows app and the webapp's own suite; real DynamoDB (the tests use moto). By hand: section E of `docs/phase27-manual-acceptance.md`.
 
