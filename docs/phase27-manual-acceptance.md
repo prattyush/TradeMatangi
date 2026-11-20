@@ -55,4 +55,11 @@ Status: built (S5), waiting for your try. Website, webapp and Windows app (needs
 10. A day shared with you does not show the Notes tab.
 
 ## F. Day score and system habits (S6, S7)
-Status: not built yet.
+Status: the backend is built (S6, real-trading path: dev only), the screens are S7. Needs a Windows rebuild (new analysis routes).
+S6, before any screen exists (use the website's address bar while signed in, or the browser's Network tab once S7 is in):
+1. Start a **replay** session (Day, any date), trade a little, Stop. In DynamoDB the session's `Sessions` row has `guardrail_limit_snapshot` with your Guardrail BAN % and whether the ban was on. Then paper, then one real session: the same.
+2. Change the BAN % in Settings, then resume a paper or real session from before: the row still has the old value (the limit does not follow settings).
+3. A session from before this change has no such field; the score uses a fixed 12 % and says `limit_source: estimated`.
+4. `GET /api/analysis/day-score?date=YYYY-MM-DD` for a day whose trades are all labelled: `status: scored` with a score and five items; with one trade unlabelled: `status: pending_labels` with `labelled` and `closed`; a day with no trades: `no_trades`.
+5. For a day you remember: check each rule against your trades (a repeat loss within 9 minutes on the same contract, an add to a loser, a day whose closed P&L stayed above zero, one loss after three wins) and the drawdown against what the day really touched. Tell me which numbers feel too harsh or too soft: they are all in `CONFIG` in `day_score_service.py`.
+6. Label or change a trade and read the score again: it follows. Delete a label: the day goes back to `pending_labels`.

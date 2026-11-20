@@ -1122,7 +1122,7 @@ fn valid_analysis_path(path: &str, method: &str) -> bool {
         "sessions" | "round-trips" | "labels" | "entry-tags" | "exit-tags" | "snapshots" | "performance" | "performance/swing" | "performance/cycles" | "performance/real-fees" |
         "data/historical" | "data/pre-session" | "data/options-historical" | "data/expiry" |
         "pattern/strategies" | "pattern/categories" | "pattern/chart/by-date" | "pattern/ohlc/equity" | "pattern/ohlc/options" |
-        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" | "day-notes" | "day-notes/todos" |
+        "behavior/questions" | "behavior/marks" | "behavior/marks/by-question" | "behavior/stats" | "behavior/habit-ledger" | "video-links" | "video-links/mine" | "whatif" | "whatif/range" | "day-notes" | "day-notes/todos" | "day-score" | "day-scores" |
         "deep-dive/stats/all" | "deep-dive/practice/runs" | "deep-dive/practice/evaluate" => true,
         _ if route.starts_with("snapshots/") => route.strip_prefix("snapshots/").and_then(|p| p.strip_suffix("/candle")).map(valid_id).unwrap_or(false),
         _ => route.strip_prefix("sessions/").or_else(|| route.strip_prefix("performance/cycles/")).map(valid_id).unwrap_or(false),
@@ -2741,6 +2741,19 @@ mod tests {
             for method in ["GET", "POST", "DELETE"] {
                 assert!(!valid_analysis_path(path, method), "{method} {path}");
             }
+        }
+    }
+
+    #[test]
+    fn day_score_is_read_only_on_the_exact_paths() {
+        for path in ["day-score?date=2026-11-19", "day-scores?start=2026-11-01&end=2026-11-30&compute=true", "day-score", "day-scores"] {
+            assert!(valid_analysis_path(path, "GET"), "GET {path}");
+            for method in ["POST", "DELETE", "PUT"] {
+                assert!(!valid_analysis_path(path, method), "{method} {path}");
+            }
+        }
+        for path in ["day-score/", "day-score/x", "day-scores/x", "day-score/../labels", "dayscore"] {
+            assert!(!valid_analysis_path(path, "GET"), "GET {path}");
         }
     }
 
