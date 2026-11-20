@@ -1,4 +1,4 @@
-import type { BehaviorQuestion } from '../api'
+import type { BehaviorKind, BehaviorQuestion } from '../api'
 
 /**
  * One closed, own, intraday trade with the habits (behavior marks) it carries. Built by the backend
@@ -46,8 +46,20 @@ export interface LedgerCoverage {
   truncated: boolean
 }
 
+/** The kind of a habit in the ledger: the user's own entry and exit questions, and the `system` habits the server calculates from the day (Phase 27). */
+export type HabitKind = BehaviorKind | 'system'
+
+/** A habit as the ledger lists it. A system habit (`sys:repeat_entry`, ...) is never marked, archived or edited: it is worked out from the day's trades. */
+export interface LedgerQuestion extends Omit<BehaviorQuestion, 'kind'> {
+  kind: HabitKind
+  system?: boolean
+}
+
+/** `Entry`, `Exit` or `System`: the label beside a habit. */
+export const kindLabel = (kind: HabitKind) => (kind === 'entry' ? 'Entry' : kind === 'exit' ? 'Exit' : 'System')
+
 export interface HabitLedger {
-  questions: BehaviorQuestion[]
+  questions: LedgerQuestion[]
   trades: LedgerTrade[]
   coverage: LedgerCoverage
 }

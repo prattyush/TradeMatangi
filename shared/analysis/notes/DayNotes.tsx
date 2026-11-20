@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAnalysisEnvironment } from '../environment'
 import { historyLine, isClosed, PART_LABEL, partsOf, sameParts, shortDate, STATUS_LABEL, STATUS_ORDER, todoTotals, weeklyReview } from './model'
 import { NOTE_PARTS, type DayNotesSource, type DayNotesView, type DayTodo, type NoteParts, type TodoStatus } from './types'
+import DayScoreBreakdown from '../dayScore/DayScoreBreakdown'
+import type { DayScore } from '../dayScore/types'
 import './notes.css'
 
 const AUTOSAVE_MS = 800
@@ -11,13 +13,13 @@ const AUTOSAVE_MS = 800
  * TODOs, which are carried from the day they were written until they are Done or Improved. Typing saves by itself a moment after
  * you stop, and once more when you leave the tab. Reviewing an older day shows each TODO as it stood that day.
  */
-export default function DayNotes({ date, readOnly = false }: { date: string; readOnly?: boolean }) {
+export default function DayNotes({ date, readOnly = false, score = null, scoreLoading = false, scoreError = null }: { date: string; readOnly?: boolean; score?: DayScore | null; scoreLoading?: boolean; scoreError?: string | null }) {
   const source = useAnalysisEnvironment().dayNotes
   if (!source) return <p className="pl-muted" role="status">Notes are not available here.</p>
-  return <Notes source={source} date={date} readOnly={readOnly} />
+  return <Notes source={source} date={date} readOnly={readOnly} score={score} scoreLoading={scoreLoading} scoreError={scoreError} />
 }
 
-function Notes({ source, date, readOnly }: { source: DayNotesSource; date: string; readOnly: boolean }) {
+function Notes({ source, date, readOnly, score, scoreLoading, scoreError }: { source: DayNotesSource; date: string; readOnly: boolean; score: DayScore | null; scoreLoading: boolean; scoreError: string | null }) {
   const [view, setView] = useState<DayNotesView | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [parts, setParts] = useState<NoteParts>(() => partsOf(null))
@@ -83,6 +85,7 @@ function Notes({ source, date, readOnly }: { source: DayNotesSource; date: strin
   const carried = view.todos.filter(todo => todo.carried)
   return <div className="dn" aria-label={`Notes for ${date}`}>
     {error && <p role="alert" className="pl-error">{error}</p>}
+    <DayScoreBreakdown score={score} loading={scoreLoading} error={scoreError} />
     <section className="dn-todos" aria-label="TODOs">
       <h4>TODOs {view.todos.length > 0 && <span className="pl-muted">({view.todos.length}{carried.length ? `, ${carried.length} carried over` : ''})</span>}</h4>
       <p className="pl-muted dn-hint">A TODO stays on every day until you mark it Done or Improved. Reviewing an older day shows it as it stood that day.</p>

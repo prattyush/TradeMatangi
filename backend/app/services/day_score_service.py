@@ -61,6 +61,17 @@ TITLES = {
     "big_loss_wipes_gains": "One loss wiped out three or more wins",
 }
 SYSTEM_HABITS = {"repeat_entry": "sys:repeat_entry", "add_to_loser": "sys:add_to_loser", "big_loss_wipes_gains": "sys:big_loss_wipes_gains"}
+
+#: The three system habits as Habits-ledger questions (kind ``system``): they are calculated, never marked, never archived, and are not in the
+#: question manager (it reads the user's own questions only). Each is shown next to the user's own habits in the scorecard, trends and compare.
+SYSTEM_QUESTIONS = (
+    {"question_id": "sys:repeat_entry", "kind": "system", "status": "active", "sort_order": -3, "created_at": "", "archived_at": None, "system": True,
+     "text": "Re-entered within 3 bars of a loss and lost again"},
+    {"question_id": "sys:add_to_loser", "kind": "system", "status": "active", "sort_order": -2, "created_at": "", "archived_at": None, "system": True,
+     "text": "Added to a losing position and both entries lost"},
+    {"question_id": "sys:big_loss_wipes_gains", "kind": "system", "status": "active", "sort_order": -1, "created_at": "", "archived_at": None, "system": True,
+     "text": "One loss wiped out three or more winning trades"},
+)
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MAX_RANGE_COMPUTE = 31
 
@@ -223,9 +234,17 @@ def big_loss_events(cycles) -> list[dict]:
 
 
 def system_flags(cycles) -> dict[str, list[str]]:
-    """The system habits (``sys:*``) each cycle showed, by cycle id: the rows the Habits ledger adds to the user's own."""
+    """The system habits (``sys:*``) each cycle showed, by cycle id: the rows the Habits ledger adds to the user's own.
+
+    A cycle with missing fields never breaks the ledger: a rule that cannot read the cycles gives no flags (it is logged).
+    """
     flags: dict[str, list[str]] = {}
-    for key, events in (("repeat_entry", repeat_entry_events(cycles)), ("add_to_loser", add_to_loser_events(cycles)), ("big_loss_wipes_gains", big_loss_events(cycles))):
+    for key, rule in (("repeat_entry", repeat_entry_events), ("add_to_loser", add_to_loser_events), ("big_loss_wipes_gains", big_loss_events)):
+        try:
+            events = rule(cycles)
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Day score: the %s habit could not be read from these cycles", key, exc_info=True)
+            continue
         for event in events:
             flags.setdefault(event["cycle_id"], [])
             if SYSTEM_HABITS[key] not in flags[event["cycle_id"]]:

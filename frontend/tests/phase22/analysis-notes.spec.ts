@@ -60,3 +60,54 @@ for (const renderer of ["lightweight", "kline"] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+// The day score: a chip on the day card, and its breakdown in the Notes tab.
+test("Analysis day score: a stored score shows on the card, the full score and its breakdown come with the open card", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error: Error) => errors.push(error.message));
+  page.on("console", (m: any) => { if (m.type() === "error" && !/favicon|Failed to load resource/.test(m.text())) errors.push(m.text()); });
+  await page.goto("/tests/phase22/analysis-notes.html?renderer=lightweight", { waitUntil: "domcontentloaded" });
+  // The list reads the stored scores once (nothing is computed for a closed card): the chip shows already.
+  await expect(page.getByTestId("day-score-badge")).toHaveText("Score 68");
+  expect(await page.evaluate(() => (window as any).scoreRanges)).toHaveLength(1);
+  expect(await page.evaluate(() => (window as any).scoreRanges[0])).not.toContain("compute");
+  expect(await page.evaluate(() => (window as any).scoreReads)).toEqual([]);
+  // Opening the card reads the day's full score; the chip follows it.
+  await page.getByText("2026-10-16").first().click();
+  await expect(page.getByTestId("day-score-badge")).toHaveText("Score 72");
+  await expect(page.getByTestId("day-score-badge")).toHaveClass(/fair/);
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  const score = page.getByRole("region", { name: "Day score" });
+  await expect(score.getByTestId("score-value")).toHaveText("72");
+  await expect(score.locator("tr[data-rule]")).toHaveCount(5);
+  // The costly rule is first, the bonus last.
+  await expect(score.locator("tr[data-rule]").first()).toHaveAttribute("data-rule", "drawdown");
+  await expect(score.locator("tr[data-rule]").last()).toHaveAttribute("data-rule", "clean_day");
+  await expect(score.locator("tr[data-rule=drawdown]")).toContainText("−8");
+  await expect(score.locator("tr[data-rule=clean_day]")).toContainText("+15");
+  await expect(score).toContainText("6.2% of capital against a 10% guardrail limit (52% of it)");
+  await expect(score.getByRole("note")).toHaveCount(0); // saved limit, full candles: nothing to warn about
+  // Changing tabs reads the score again (a label saved in Label Trades is in it by then).
+  const reads = (await page.evaluate(() => (window as any).scoreReads)).length;
+  await page.getByRole("button", { name: "Trades", exact: true }).click();
+  await expect.poll(async () => (await page.evaluate(() => (window as any).scoreReads)).length).toBeGreaterThan(reads);
+  expect(errors).toEqual([]);
+});
+
+test("Analysis day score: an estimated limit and partial candles are said, and a day with unlabelled trades has no chip", async ({ page }) => {
+  await page.goto("/tests/phase22/analysis-notes.html?renderer=lightweight&score=estimated", { waitUntil: "domcontentloaded" });
+  await page.getByText("2026-10-16").first().click();
+  await expect(page.getByTestId("day-score-badge")).toHaveText("Score 41");
+  await expect(page.getByTestId("day-score-badge")).toHaveClass(/poor/);
+  await expect(page.getByTestId("day-score-badge")).toHaveAttribute("title", /limit estimated, partial candles/);
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Day score" }).getByRole("note")).toContainText("estimated at 12%");
+  await expect(page.getByRole("region", { name: "Day score" }).getByRole("note")).toContainText("candles were missing");
+
+  await page.goto("/tests/phase22/analysis-notes.html?renderer=lightweight&score=pending", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("day-score-badge")).toHaveText("Score 68"); // the stored one, until the card says otherwise
+  await page.getByText("2026-10-16").first().click();
+  await expect(page.getByTestId("day-score-badge")).toHaveCount(0);
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await expect(page.getByTestId("score-pending")).toHaveText("Label the last closed trade (3 of 4 labelled) to get the day's score.");
+});
