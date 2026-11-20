@@ -59,6 +59,8 @@ const environment: any = {
   drawingRequest,
   resolveSymbolInstrument: async () => ({ kind: "index", exchange: "NSE" }),
   accountKey: "test",
+  // `?readonly=1`: saved drawings are shown but there are no tools to make or change them (the phone).
+  drawingsReadOnly: new URLSearchParams(location.search).get("readonly") === "1",
   reportError: (error: string) => w.errors.push(error),
   intervalMinutes: 3,
 };

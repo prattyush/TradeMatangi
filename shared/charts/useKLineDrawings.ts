@@ -29,6 +29,8 @@ interface Options {
   request: DrawingRequest | undefined;
   /** Keyboard shortcuts (Delete / Esc / Ctrl+Z) only act while the chart is active. */
   active?: boolean;
+  /** Show saved drawings only: locked, no selection, no tools, no shortcuts (the phone). */
+  readOnly?: boolean;
   onError?: (error: unknown) => void;
 }
 
@@ -38,7 +40,7 @@ interface Options {
  * charts, so a drawing made here also appears on the Day/Swing chart.
  * Mirrors the behaviour of `KLineChart.tsx` without its order/strategy state.
  */
-export function useKLineDrawings({ chartRef, instrument, request, active = true, onError }: Options) {
+export function useKLineDrawings({ chartRef, instrument, request, active = true, readOnly = false, onError }: Options) {
   const [drawings, setDrawings] = useState<LocalDrawing[]>([]);
   const drawingsRef = useRef<LocalDrawing[]>([]);
   drawingsRef.current = drawings;
@@ -145,7 +147,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
     });
   };
 
-  const handlers = {
+  const handlers = readOnly ? {} : {
     onPressedMoveStart: () => {
       gesture.current = true;
     },
@@ -164,7 +166,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
       name: overlayName(record.drawing.tool),
       paneId: "candle_pane",
       points: drawingPoints(record.drawing),
-      lock: Boolean(record.drawing.locked),
+      lock: readOnly || Boolean(record.drawing.locked),
       visible: record.drawing.visible !== false,
       styles: overlayStyles(record.drawing.style, styleRef.current),
       extendData: drawingExtendData(record.drawing, styleRef.current),
@@ -313,7 +315,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
 
   const startTool = (tool: string) => {
     const chart = chartRef.current;
-    if (!chart || !identityRef.current) return;
+    if (readOnly || !chart || !identityRef.current) return;
     const look = toolStyle(tool, styleRef.current);
     const id = chart.createOverlay({
       name: overlayName(tool),
@@ -384,7 +386,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
 
   useEffect(() => {
     const shortcuts = (event: KeyboardEvent) => {
-      if (!active || (event.target instanceof HTMLElement && event.target.closest("input,textarea,select,[contenteditable=true]"))) return;
+      if (readOnly || !active || (event.target instanceof HTMLElement && event.target.closest("input,textarea,select,[contenteditable=true]"))) return;
       if (event.key === "Escape") cancelTool();
       if ((event.key === "Delete" || event.key === "Backspace") && selected !== null) {
         event.preventDefault();

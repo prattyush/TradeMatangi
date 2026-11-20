@@ -25,6 +25,8 @@ export interface AnalysisEnvironment {
   drawingRequest?: (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<unknown>
   /** Catalogue kind/exchange of an underlying, so Analysis drawings share the trading chart's instrument key. */
   resolveSymbolInstrument?: (symbol: string) => Promise<{ kind: string; exchange: string } | undefined>
+  /** The charts show saved drawings but offer no tools to make or change them (the phone). */
+  drawingsReadOnly?: boolean
   /** Scopes locally-stored chart preferences (indicators) to the signed-in account. */
   accountKey?: string
   api: AnalysisApi

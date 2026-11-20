@@ -172,13 +172,13 @@ export default function DesktopAnalysisChart(props: Props) {
   },[props.symbol,environment.resolveSymbolInstrument])
   const drawingInstrument=useMemo(()=>environment.drawingRequest&&symbolInfo!==undefined&&symbolInfo!==false?analysisDrawingInstrument({symbol:props.symbol,right:props.right,strike:props.strike,expiry:props.expiry,kind:symbolInfo?.kind,exchange:symbolInfo?.exchange}):null,[environment.drawingRequest,symbolInfo,props.symbol,props.right,props.strike,props.expiry])
   const [hovered,setHovered]=useState(false)
-  const drawings=useKLineDrawings({chartRef,instrument:drawingInstrument,request:environment.drawingRequest,active:hovered&&environment.active!==false,onError:error=>environment.reportError?.(String(error),'Drawings')})
+  const drawings=useKLineDrawings({chartRef,instrument:drawingInstrument,request:environment.drawingRequest,active:hovered&&environment.active!==false,readOnly:environment.drawingsReadOnly,onError:error=>environment.reportError?.(String(error),'Drawings')})
   // Details over the chart follow the environment setting (default: always, as before).
   const chartInfo=environment.chartInfo??'always'; const chartInfoRef=useRef(chartInfo); chartInfoRef.current=chartInfo
   useEffect(()=>{chartRef.current?.setStyles({candle:{tooltip:{showRule:chartInfo}},indicator:{tooltip:{showRule:chartInfo}}})},[chartInfo])
   const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`,{hasVolume:candles.some(c=>c.volume!=null)})
   const [toolsVisible,toggleTools]=useToolsRailVisible()
-  const toolsAvailable=Boolean(environment.drawingRequest)
+  const toolsAvailable=Boolean(environment.drawingRequest)&&!environment.drawingsReadOnly
   // The bars the chart asks for: everything fetched on init, and (Browse) older pages on the left edge via `loadOlder`.
   const analysisLoader=()=>({getBars:async({type,timestamp,callback}:{type:string;timestamp:number|null;callback:(rows:KLineData[],more?:{forward:boolean;backward:boolean})=>void})=>{
     const toBar=(c:OHLCCandle):KLineData=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})})

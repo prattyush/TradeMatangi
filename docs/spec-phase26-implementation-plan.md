@@ -343,4 +343,4 @@ Plan: the Lightweight pattern charts save their drawings to the database through
 |---|---|
 | 1 | KLine **Risk : Reward** (stop first, then entry; 1 : 1, 1.5, 2) and **Buy / Sell markers** (`klineRiskReward.ts`, `klineMarker.ts`, `klineDrawingModel.ts` helpers, catalogue, both chart hosts): **built** (this PR) |
 | 2 | Lightweight drawings saved to the database and shared with KLine: mapping (`lightweightPersist.ts`), controller with the drawings service and sync on change, one-time copy of the local drawings, website environment: **built** |
-| 3 | Phone: saved drawings read-only (`drawingsReadOnly`, drawing service in the phone environment; a new APK) |
+| 3 | Phone: saved drawings read-only (`drawingsReadOnly`, a read-only drawings service in the phone environment; a new APK): **built** |
