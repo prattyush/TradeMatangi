@@ -8,6 +8,8 @@ import { openPositionTrades, RecentLiveTicks, reconcileChartObjects } from '../s
 import { rememberChartData } from '../services/chartDataCache'
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { attachRectangle, type RectanglePrimitive } from '../indicators/rectanglePrimitive'
+import { LightweightDrawControls, useLightweightDrawing } from './analysis/LightweightChartTools'
+import type { LwStore } from './analysis/lightweightDrawings'
 import {
   createChart,
   IChartApi,
@@ -67,6 +69,12 @@ export interface Props {
   externalMessage?: string
   externalLoadOlder?: (before: number) => Promise<unknown>
   drawingStorageKey?: string
+  /**
+   * Save the drawings to the database, shared with the KLine chart (same records), instead of keeping them in this browser. `drawingStore` is where
+   * (null while the symbol's kind is looked up: the drawings stay on the chart until it arrives). Without `persistDrawings` the chart is as before.
+   */
+  persistDrawings?: boolean
+  drawingStore?: LwStore | null
 
   historyMode?: 'live' | 'replay'
   symbol: string
@@ -466,7 +474,7 @@ function RatioIndicatorPanel({ comparison, series, ratioMode, height, expanded, 
 
 export default function Chart({
   lightweightState,
-  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey, headerStart,
+  candleAnchorSeconds=0, defaultShowAllMarkers=false, externalTradeMarkers=false, externalCandles, externalLoading, externalMessage, externalLoadOlder, drawingStorageKey, persistDrawings = false, drawingStore, headerStart,
   symbol, tradingDate, startTime, intervalMinutes, historyMode = 'replay',
   latestTick, completedBar, onPriceUpdate, height = 380,
   paneType = 'equity', strike, expiry, right, onReselectStrike,
@@ -531,8 +539,15 @@ export default function Chart({
   const drawModeRef = useRef<DrawMode>('none')
   const drawPtsRef = useRef<{ time: number; price: number }[]>([])
   const drawingsRef = useRef<Drawing[]>([])
+  // Saved to the database: the shared controller draws, loads and saves them, so the local copy below is not kept.
+  const persistDrawingsRef = useRef(persistDrawings)
+  const drawingTools = useLightweightDrawing(persistDrawings ? drawingStore ?? null : null)
+  const drawingToolsRef = useRef(drawingTools)
+  drawingToolsRef.current = drawingTools
+  const sharedDrawModeRef = useRef(drawingTools.state.mode)
+  sharedDrawModeRef.current = drawingTools.state.mode
   useEffect(() => {
-    if (!drawingStorageKey && !lightweightState) return
+    if (persistDrawings || (!drawingStorageKey && !lightweightState)) return
     const save = () => {
       const drawings: SavedDrawing[] = drawingsRef.current.map(d => {
         if (d.type === 'hline') return { type: d.type, price: d.ref.options().price, options: d.ref.options() }
@@ -547,7 +562,7 @@ export default function Chart({
     if(!drawingStorageKey)return save
     const timer=setInterval(save,1000)
     return ()=>{clearInterval(timer);save()}
-  },[drawingStorageKey,lightweightState])
+  },[drawingStorageKey,lightweightState,persistDrawings])
   const ignoreNextClickRef = useRef(false)
   const tradeMarkerPool = useRef(new Map<string, { object: ISeriesApi<'Line'>; signature: string }>())
   const [showAllMarkers, setShowAllMarkers] = useState(defaultShowAllMarkers)
@@ -734,6 +749,7 @@ export default function Chart({
     pnlTargetPrimitiveRef.current = pnlTargetPrimitive
     ema9Ref.current = e9
     ema21Ref.current = e21
+    const detachSharedDrawings = persistDrawingsRef.current ? drawingToolsRef.current.attach(chart, series) : null
     volumeStudiesRef.current = attachVolumeStudies(chart, { vwap: showVwap, volume: showVolume, onAvailableChange: setVolumeAvailable })
 
     chart.subscribeClick((param: MouseEventParams) => {
@@ -908,7 +924,7 @@ export default function Chart({
         hasSLOrders: false,
       })
     }
-    const removeMenu = bindChartMenu(container!, menuGesture, handleContextMenu, () => menuGesture === 'doubleclick' && (drawModeRef.current !== 'none' || Boolean(onPriceSelectRef.current) || Date.now() < swingClickUntil.current))
+    const removeMenu = bindChartMenu(container!, menuGesture, handleContextMenu, () => menuGesture === 'doubleclick' && (drawModeRef.current !== 'none' || sharedDrawModeRef.current !== 'none' || Boolean(onPriceSelectRef.current) || Date.now() < swingClickUntil.current))
     // Capture only a pending Swing order line; ordinary chart panning stays untouched.
     let drag: {id: string; startY: number; moved: boolean; price: number} | null = null
     let mounted = true
@@ -918,7 +934,7 @@ export default function Chart({
       if (latest) orderPriceLinesRef.current.get(id)?.applyOptions({price:orderDisplayPrice(latest)})
     }
     const dragStart = (event: MouseEvent) => {
-      if (event.button !== 0 || drawModeRef.current !== 'none' || onPriceSelectRef.current || !orderSelectionRef.current.onDrag) return
+      if (event.button !== 0 || drawModeRef.current !== 'none' || sharedDrawModeRef.current !== 'none' || onPriceSelectRef.current || !orderSelectionRef.current.onDrag) return
       const rect = container.getBoundingClientRect()
       const x = event.clientX - rect.left, y = event.clientY - rect.top
       if (x < 0 || x > chart.timeScale().width()) return
@@ -1002,6 +1018,7 @@ export default function Chart({
       positionPnlPrimitiveRef.current = null
       series.detachPrimitive(pnlTargetPrimitive)
       pnlTargetPrimitiveRef.current = null
+      detachSharedDrawings?.()
       chart.remove()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1021,7 +1038,7 @@ export default function Chart({
 
   // ── Historical + pre-session — equity only ───────────────────────────────────
   useEffect(() => {
-    if ((!drawingStorageKey && !lightweightState?.current.drawings) || !chartRef.current || !seriesRef.current) return
+    if (persistDrawings || (!drawingStorageKey && !lightweightState?.current.drawings) || !chartRef.current || !seriesRef.current) return
     try {
       const saved: SavedDrawing[] = lightweightState?.current.drawings ?? JSON.parse(drawingStorageKey ? localStorage.getItem(drawingStorageKey) ?? '[]' : '[]')
       for (const d of saved) {
@@ -1048,7 +1065,7 @@ export default function Chart({
       }
       setDrawingCount(drawingsRef.current.length)
     } catch { /* Ignore invalid old local drawings. */ }
-  },[drawingStorageKey,lightweightState])
+  },[drawingStorageKey,lightweightState,persistDrawings])
 
   // Both fetches run in parallel and are combined into a single series.setData()
   // call. This eliminates the race where a live tick's series.update(09:18) arrives
@@ -1839,7 +1856,8 @@ export default function Chart({
         </div>
 
         {/* Drawing tools dropdown */}
-        <div style={{ position: 'relative' }} ref={drawDropdownRef}>
+        {persistDrawings && <LightweightDrawControls tools={drawingTools} style={toolbarBtnStyle} />}
+        {!persistDrawings && <div style={{ position: 'relative' }} ref={drawDropdownRef}>
           <button
             onClick={e => { e.stopPropagation(); setDrawDropdownOpen(v => !v) }}
             style={toolbarBtnStyle(drawMode !== 'none')}
@@ -1879,7 +1897,7 @@ export default function Chart({
               ))}
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Interval dropdown */}
         {onIntervalChange && (
@@ -1919,7 +1937,7 @@ export default function Chart({
           </div>
         )}
 
-        {drawingCount > 0 && (
+        {!persistDrawings && drawingCount > 0 && (
           <button onClick={e => { e.stopPropagation(); clearLastDrawing() }} style={toolbarBtnStyle(false)}>
             Clear
           </button>

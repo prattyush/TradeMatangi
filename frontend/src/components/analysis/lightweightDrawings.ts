@@ -13,7 +13,7 @@ import { canonicalDrawingKey, drawingIdentity } from '../../../../shared/charts/
 import type { DrawingRecord, DrawingRequest } from '../../../../shared/charts/klineDrawingModel'
 import { hitBox, hitHorizontal, hitRect, hitSegments, markerBox, nearest, textBox, type Px } from './lightweightHit'
 import {
-  LW_MARKER_TEXT, LW_TEXT_MAX, fromPersisted, legacyToSpecs, specSignature, toPersisted,
+  LW_MARKER_TEXT, LW_TEXT_MAX, fromPersisted, isLegacyKeyOf, legacyToSpecs, specSignature, toPersisted,
   type LwKind, type LwPoint, type LwSpec,
 } from './lightweightPersist'
 
@@ -83,6 +83,8 @@ export interface LwStore {
   instrument: Record<string, unknown>
   /** localStorage key of this instrument's browser-only drawings from before they were saved to the database (copied up once). */
   legacyBase: string
+  /** A Swing chart's old private scope: its earlier records are still read (as the KLine chart does). */
+  legacyScope?: string
 }
 /** The browser-only drawings of an instrument (its key, and the Deep Dive per-day keys) that have not been copied up yet. */
 export const legacyKeys = (base: string) => {
@@ -90,7 +92,7 @@ export const legacyKeys = (base: string) => {
   try {
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i)
-      if (key && (key === base || key.startsWith(`${base}:deepdive:`)) && localStorage.getItem(`analysis-lw-migrated:${key}`) === null) keys.push(key)
+      if (key && isLegacyKeyOf(base, key) && localStorage.getItem(`analysis-lw-migrated:${key}`) === null) keys.push(key)
     }
   } catch { /* storage can be disabled */ }
   return keys
@@ -174,7 +176,7 @@ export class LightweightDrawingController {
     this.generation += 1
     this.removeAll()
     this.store = store
-    this.identity = store ? drawingIdentity(store.instrument, undefined, undefined, true) : null
+    this.identity = store ? drawingIdentity(store.instrument, undefined, store.legacyScope, true) : null
     this.mode = 'none'
     this.points = []
     this.pendingText = null

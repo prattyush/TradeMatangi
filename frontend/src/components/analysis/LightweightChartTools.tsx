@@ -28,6 +28,44 @@ function useFlagPreference(name: string, defaultValue: boolean) {
 }
 
 /**
+ * The saved drawings of one Lightweight chart (no indicators): the controller, its state for the toolbar and its actions.
+ * Call `attach(chart, series)` right after creating the chart and call the returned function before `chart.remove()`;
+ * the drawings are loaded from the database on attach (`store`: the drawings service and the instrument; null keeps
+ * them on the chart only). Used by the Analysis charts (through `useLightweightTools`) and by the trading chart.
+ */
+export function useLightweightDrawing(store: LwStore | null) {
+  const controller = useRef<LightweightDrawingController | null>(null)
+  const latest = useRef(store)
+  latest.current = store
+  const [state, setState] = useState<LwDrawingSnapshot>(emptyLwSnapshot)
+  const attach = useCallback((chart: IChartApi, series: ISeriesApi<'Candlestick'>) => {
+    const ctl = new LightweightDrawingController(chart, series, latest.current)
+    controller.current = ctl
+    const off = ctl.subscribe(() => setState(ctl.snapshot()))
+    setState(ctl.snapshot())
+    return () => {
+      off()
+      ctl.dispose()
+      if (controller.current === ctl) controller.current = null
+    }
+  }, [])
+  // A change of instrument (another contract tab); a new request function alone does not reload.
+  const storeKey = lightweightStoreKey(store)
+  useEffect(() => { controller.current?.setStore(latest.current) }, [storeKey])
+  return {
+    attach, state,
+    setMode: (mode: LwDrawMode) => controller.current?.setMode(mode),
+    clearLast: () => controller.current?.clearLast(),
+    submitText: (text: string) => controller.current?.submitText(text),
+    cancelText: () => controller.current?.cancelText(),
+    deleteSelected: () => controller.current?.deleteSelected(),
+    hitsDrawing: (point: { x: number; y: number }) => controller.current?.hitsDrawing(point) ?? false,
+    editSelectedText: () => controller.current?.editSelectedText(),
+  }
+}
+export type LightweightDrawingTools = ReturnType<typeof useLightweightDrawing>
+
+/**
  * Drawing + indicator state for one Lightweight Analysis chart.
  * Call `attach(chart, series)` right after creating the chart and call the returned
  * function before `chart.remove()`; drawings are loaded from the database on attach
@@ -35,10 +73,7 @@ function useFlagPreference(name: string, defaultValue: boolean) {
  * so recreating the chart (e.g. maximize) keeps them.
  */
 export function useLightweightTools(store: LwStore | null) {
-  const controller = useRef<LightweightDrawingController | null>(null)
-  const latest = useRef(store)
-  latest.current = store
-  const [state, setState] = useState<LwDrawingSnapshot>(emptyLwSnapshot)
+  const drawing = useLightweightDrawing(store)
   // EMA 9/21 is on by default (it was always on); VWAP and Volume are opt-in.
   const [showEma, setShowEma] = useFlagPreference('analysis-lw-ema', true)
   const [showVwap, setShowVwap] = useFlagPreference('analysis-lw-vwap', false)
@@ -49,35 +84,20 @@ export function useLightweightTools(store: LwStore | null) {
   const visible = useRef({ vwap: showVwap, volume: showVolume })
   visible.current = { vwap: showVwap, volume: showVolume }
   const attach = useCallback((chart: IChartApi, series: ISeriesApi<'Candlestick'>) => {
-    const ctl = new LightweightDrawingController(chart, series, latest.current)
-    controller.current = ctl
-    const off = ctl.subscribe(() => setState(ctl.snapshot()))
-    setState(ctl.snapshot())
+    const detach = drawing.attach(chart, series)
     const volume = attachVolumeStudies(chart, { ...visible.current, onAvailableChange: setVolumeAvailable })
     studies.current = volume
     return () => {
-      off()
-      ctl.dispose()
-      if (controller.current === ctl) controller.current = null
+      detach()
       if (studies.current === volume) studies.current = null
     }
   }, [])
-  // A change of instrument (another contract tab); a new request function alone does not reload.
-  const storeKey = lightweightStoreKey(store)
-  useEffect(() => { controller.current?.setStore(latest.current) }, [storeKey])
   useEffect(() => { studies.current?.setVisible({ vwap: showVwap, volume: showVolume }) }, [showVwap, showVolume])
   return {
-    attach, state, showEma, setShowEma,
+    ...drawing, attach, showEma, setShowEma,
     showVwap, setShowVwap, showVolume, setShowVolume, volumeAvailable,
     /** Feed the loaded candles (with volume) to the VWAP and volume series; [] clears them. */
     setVolumeData: (candles: ReadonlyArray<VolumeCandle>) => studies.current?.setData(candles),
-    setMode: (mode: LwDrawMode) => controller.current?.setMode(mode),
-    clearLast: () => controller.current?.clearLast(),
-    submitText: (text: string) => controller.current?.submitText(text),
-    cancelText: () => controller.current?.cancelText(),
-    deleteSelected: () => controller.current?.deleteSelected(),
-    hitsDrawing: (point: { x: number; y: number }) => controller.current?.hitsDrawing(point) ?? false,
-    editSelectedText: () => controller.current?.editSelectedText(),
   }
 }
 export type LightweightTools = ReturnType<typeof useLightweightTools>
@@ -102,9 +122,6 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
   }, [open])
-  const { mode, step, count } = tools.state
-  const hint = mode === 'none' ? '' : mode === 'hline' || mode === 'text' || mode === 'buymarker' || mode === 'sellmarker' ? 'click chart'
-    : step === 0 ? 'click 1st point' : 'click 2nd point'
   return (
     <span ref={root} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       <span style={{ position: 'relative' }}>
@@ -130,16 +147,39 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
           </div>
         )}
       </span>
+      <LightweightDrawControls tools={tools} />
+    </span>
+  )
+}
+
+/**
+ * "Draw ▾", the hint for the tool in use, a failed save, the Text box, the picked drawing's actions and "Clear".
+ * Shared by the Analysis charts and the trading chart; `style` lets a toolbar keep its own button look.
+ */
+export function LightweightDrawControls({ tools, style = buttonStyle }: { tools: LightweightDrawingTools; style?: (active: boolean) => React.CSSProperties }) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+  const { mode, step, count } = tools.state
+  const hint = mode === 'none' ? '' : mode === 'hline' || mode === 'text' || mode === 'buymarker' || mode === 'sellmarker' ? 'click chart'
+    : step === 0 ? 'click 1st point' : 'click 2nd point'
+  return (
+    <span ref={root} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       <span style={{ position: 'relative' }}>
-        <button type="button" title="Drawing tools" style={buttonStyle(mode !== 'none')} onClick={() => setOpen(v => v === 'draw' ? null : 'draw')}>
+        <button type="button" title="Drawing tools" style={style(mode !== 'none')} onClick={() => setOpen(v => !v)}>
           {LW_DRAW_LABEL[mode] ?? 'Draw'} ▾
         </button>
-        {open === 'draw' && (
+        {open && (
           <div style={{ ...menuStyle, minWidth: 155 }}>
             {LW_DRAW_ITEMS.map(item => (
               <div
                 key={item.mode} role="menuitem"
-                onClick={() => { tools.setMode(item.mode); setOpen(null) }}
+                onClick={() => { tools.setMode(item.mode); setOpen(false) }}
                 style={{ padding: '5px 10px', cursor: 'pointer', fontSize: 11, color: mode === item.mode ? '#f0883e' : '#e6edf3', background: mode === item.mode ? '#2a1a0a' : 'transparent' }}
               >
                 {item.label}
@@ -152,13 +192,13 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
       {tools.state.notice && <span role="alert" style={{ fontSize: 10, color: '#f85149' }} title={tools.state.notice}>⚠ {tools.state.notice.length > 60 ? `${tools.state.notice.slice(0, 57)}…` : tools.state.notice}</span>}
       {tools.state.pendingText && <ChartTextPrompt x={tools.state.pendingText.x} y={tools.state.pendingText.y} initial={tools.state.pendingText.initial ?? ""} onSubmit={tools.submitText} onCancel={tools.cancelText} />}
       {tools.state.selection && <SelectionActions tools={tools} />}
-      {count > 0 && <button type="button" style={buttonStyle(false)} title="Remove the last drawing" onClick={tools.clearLast}>Clear</button>}
+      {count > 0 && <button type="button" style={style(false)} title="Remove the last drawing" onClick={tools.clearLast}>Clear</button>}
     </span>
   )
 }
 
 /** The actions of the picked drawing, beside the click: change its text (a Text), delete it. It is drawn into `document.body`. */
-function SelectionActions({ tools }: { tools: LightweightTools }) {
+function SelectionActions({ tools }: { tools: LightweightDrawingTools }) {
   const selection = tools.state.selection
   if (!selection) return null
   const width = selection.canEditText ? 230 : 150
