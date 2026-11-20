@@ -320,3 +320,18 @@ The owner asked for Stepwise (one bar per Next Bar press) in Strategy Practice. 
 | S19 | Backend: the marker on `stepwise`, the snap, the recomputed offset, no attaching a practice start to another screen's session, practice runs out of context trades, `session_type` on runs. **Built:** `test_strategy_practice.py` (45), the desktop trading, Stepwise, simulation and analysis suites unchanged (316) |
 | S20 | Shared screens and website: the Replay / Stepwise switch (speed hidden for Stepwise), `startPractice(plan, {mode, speed})`, History and badge show the mode, the TS snap twin. **Built:** `PracticeHost.modes` (the website offers both, the desktop only Replay until S21), `snapStartTime` with the same table as the server, the website start as `session_type: 'stepwise'` with the user's bar; `practice.test.ts` (27), `practice.spec.ts` (mode switch, remembered, History mode) |
 | S21 | Windows app: launch mode, the practice effects for Stepwise, the snap inside `startRun`, the badge for both modes, the check script for both modes, acceptance items, `CLAUDE.md` row. **Built:** `PracticeLaunch.mode`, `modes: ['replay', 'stepwise']`, the effects, the marker for either historical mode, the snap in `startRun`, the badge; `launch.test.ts` (6), `desktop-practice-check.mjs` for both modes |
+
+## Views and chart tools (owner requests, 2026-11-18 to 11-20)
+
+Small follow-ups inside Phase 26 (no new sprints numbered; each was one PR into `dev` with a merge commit). The designs are in `docs/architecture-frontend.md`; the owner's checks are items 18 to 26 of `docs/phase26-manual-acceptance.md`.
+
+| PR | Scope |
+|---|---|
+| #896 | Mark days time axis was out of view on the website: the Pattern Library page now fits its frame (`flex:1; min-height:0`), `useFillWindow` re-checks its position every frame; the Playwright harness renders inside the real app frame so the bug is reproducible |
+| #897 | KLine **Fib Retracement** as line segments (`tmFibSegment`, `klineFibSegment.ts`), on every KLine chart; saved drawings keep the tool name so older drawings follow |
+| #898 | In-depth **Stacked / Side by side** switch (`useChartLayout`); Mark days **Underlying / CE / PE** (`usePreviewStrikes`, `PREVIEW_STRIKE_CAP` 75, 09:30 Max Price, preview only); KLine pattern marks as an arrow plus plain text (`annotationFigures.ts`, 20% bottom gap when marks exist) |
+| #899 | The Charts switch moved into the Mark row; **no marker selected** to begin with, click again to put it down (Deep Dive in-depth, website and Windows Pattern Library) |
+| #900 | **Text drawing**: KLine saved through the drawings API (`text` field, `tmText` overlay, `ChartTextPrompt`, double click edits), Lightweight in localStorage (`TextPrimitive`) |
+
+**Tests:** website Playwright `deep-dive-views`, `deep-dive-markdays-axis`, `kline-fib-segment`, `deep-dive-kline-marks`, `kline-text-drawing`, `analysis-tools` (Text), `deep-dive` (no marker selected); desktop vitest `annotationFigures`, `analysisDrawing`, `inDepth`; backend `test_desktop_persistence.py` (text field); desktop `desktop-deepdive-check.mjs`. Known pre-existing failures, not from this work: the `analysis-tools` KLine "restores after reload" test fails intermittently in the full website suite (also on unmodified `dev`), and `desktop-analysis-check.mjs` fails in its Python fixture (`performance_service.build_cycles`).
+**Not done:** editing or single deletion of a Lightweight Text drawing; Text on the Lightweight live-trading chart (`Chart.tsx`).
