@@ -65,7 +65,7 @@ Approved 2026-11-20. Source of truth for sprint order; update the status column 
 |---|---|---|---|
 | S0 | Docs (this plan, the spec decisions, acceptance skeleton, CLAUDE.md row, todo, Phase 26 corrections) | no | done (2026-11-20, straight to `dev`) |
 | S1 | A. Lightweight drawings on `Chart.tsx` (Browse, Day, Swing, live) | yes (dev only) | built, in PR (see "S1 as built") |
-| S2 | B3. Analysis Maximize | no | planned |
+| S2 | B3. Analysis Maximize | no | built, in PR (see "S2 as built") |
 | S3 | B1. Group tab in Results, then the live popup | popup: yes (dev only) | planned |
 | S4 | B2. Compare tab | no | planned |
 | S5 | B5. Notes and TODOs | no | planned |
@@ -87,3 +87,11 @@ Order: S1 first (a visible defect of the last release); S2 to S4 are independent
 - **Decisions:** Text and picking a single drawing come with the shared controller (the old inline tools had neither); a Swing chart writes unscoped records (shared with Day and with the KLine swing chart) and still reads its old private-scope records; the old browser-only drawings of every interval of Browse and Swing are copied up once; the Day chart's in-memory handoff is dropped (the database is the handoff). If the symbol's kind cannot be looked up the chart still draws, on the chart only, and shows a notice when a save fails.
 - **Tests:** `node --test` (18 in `frontend/src/components`), `windowsapp/src/lightweightDrawingIdentity.test.ts` (3), website Playwright: the cross-renderer test replaced the old "Lightweight drawings stay in the browser" test (which asserted the opposite), the seven per-tool tests wait for the tool click guard, plus two Swing tests; the whole website suite (98) passes; `tsc --noEmit` clean for the website and the desktop app.
 - **Not covered:** the webapp's own suite, and a real Browse, Day (replay, paper, real) and Swing session. By hand: `docs/phase27-manual-acceptance.md` section A.
+
+## S2 as built (2026-11-20): one Maximize on the Analysis day card
+
+- **Files:** `shared/analysis/TradeAnalysis.tsx` (`GroupCard` owns `maximized`, the Esc handler and the one button in the tab bar; the detail div becomes the full-window container and provides `CardMaximizeContext`), `shared/analysis/labeling/useRoundTripView.ts` (`CardMaximizeContext`, `useCardMaximized()`; `useMaximized` removed), `TradeLabeling.tsx`, `TradeWalkthrough.tsx`, `TradeWhatIf.tsx` (button removed, they read the card's state and pass it to the split layout), `labeling/RoundTripSplitLayout.tsx` (no own fixed wrapper: it fills the card), new `shared/analysis/maximize.css`, `kline/desktopAnalysis.css` (`.labels-maximized` no longer fixed).
+- **Decisions:** the container is fixed at `inset: 0` on the website and webapp and `inset: 42px 0 0` on the Windows app (its navigation bar stays). Esc is a window handler that the KLine per-chart maximize overrides first (it already stops the event). The button keeps the labels "Maximize" and "Restore", so the older scripts that click them keep working. A tab opened without a card (phone overlays) has no button. The day list is not unmounted, so filters and scroll are kept on Restore.
+- **Tests:** website Playwright `frontend/tests/phase22/analysis-maximize.spec.ts` (both renderers: one button, the card fills the window on every tab, Esc and Restore return); the whole website suite passes (100). `tsc` clean for the website, desktop and phone.
+- **Not covered:** `scripts/desktop-analysis-workflows.mjs` and `scripts/website-label-trades-check.mjs` cannot run in this environment (they fail the same way on unchanged `dev`); the latter was updated to give the tab a stand-in card. The Windows app and the webapp's own suite were not run. By hand: section B of `docs/phase27-manual-acceptance.md`.
+

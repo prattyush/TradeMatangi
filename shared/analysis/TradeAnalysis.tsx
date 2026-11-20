@@ -14,6 +14,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SessionSummary, SessionDetail, AnalysisTrade, EventSnapshot } from './api'
 import EventSnapshotViewer from './EventSnapshotViewer'
 import TradeLabeling from './TradeLabeling'
+import { CardMaximizeContext } from './labeling/useRoundTripView'
+import './maximize.css'
 import TradeWalkthrough from './walkthrough/TradeWalkthrough'
 import TradeWhatIf from './whatif/TradeWhatIf'
 import StatsModal from './StatsModal'
@@ -161,6 +163,14 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
   const [hasPattern, setHasPattern] = useState(false)
   const [showComparison, setShowComparison] = useState(false)
   const [showPracticeReview, setShowPracticeReview] = useState(false)
+  // One Maximize for the whole day card (all four tabs): the card's detail fills the window; Esc or Restore returns to the day list.
+  const [maximized, setMaximized] = useState(false)
+  useEffect(() => {
+    if (!maximized) return
+    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape') setMaximized(false) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [maximized])
 
   const handleExpand = async () => {
     if (expanded && group.trading_style==='swing') {
@@ -180,6 +190,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
         setLoading(false)
       }
     }
+    if (expanded) setMaximized(false)
     setExpanded(!expanded)
   }
 
@@ -376,9 +387,10 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
       {detailError && <div role="alert">{detailError}<button onClick={() => { setDetailError(''); setExpanded(false); void handleExpand() }}>Retry</button></div>}
       {/* Expanded detail */}
       {expanded&&group.trading_style==='swing'&&group.portfolio_id&&!group.sessions[0]?.shared&&environment.swingRequest&&environment.charts?.SwingChart?(environment.active===false?null:<SwingHistory onDraftStateChange={state=>{swingDraft.current=state;onSwingDraftStateChange?.(state);environment.onDirtyChange?.(state.dirty);environment.onLabelSavingChange?.(state.saving)}} request={environment.swingRequest} portfolioId={group.portfolio_id} sessionId={group.sessions[0]?.session_id} Renderer={environment.charts.SwingChart as ComponentType<SwingChartProps>} onClose={()=>setExpanded(false)}/>):expanded && details.size > 0 && (
-        <div className={environment.desktop && group.trading_style !== 'swing' && activeTab === 'trades' ? 'desktop-day-trades-content' : undefined} style={{ padding: '0 16px 16px', borderTop: '1px solid #21262d' }}>
+        <CardMaximizeContext.Provider value={maximized}>
+        <div data-testid="analysis-card-detail" className={[environment.desktop && group.trading_style !== 'swing' && activeTab === 'trades' ? 'desktop-day-trades-content' : '', maximized ? `analysis-card-max${environment.desktop ? ' analysis-card-max-desktop' : ''}` : ''].filter(Boolean).join(' ') || undefined} style={maximized ? undefined : { padding: '0 16px 16px', borderTop: '1px solid #21262d' }}>
           {/* Tab bar */}
-          <div style={{ display: 'flex', gap: 0, marginTop: 12, marginBottom: 12 }}>
+          <div style={{ display: 'flex', gap: 0, marginTop: 12, marginBottom: 12, alignItems: 'center' }}>
             <button
               onClick={() => { if (environment.confirmDiscard?.() !== false) setActiveTab('trades') }}
               style={{
@@ -427,6 +439,9 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
                 borderRadius: '4px 4px 0 0',
               }}
             >What If</button>
+            <button type="button" className="analysis-card-maximize" onClick={() => setMaximized(value => !value)} aria-pressed={maximized}
+              aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): back to the day list' : 'Maximize: this day fills the window, all four tabs'}
+              style={{ marginLeft: 'auto', background: '#21262d', border: '1px solid #30363d', color: '#c9d1d9', borderRadius: 6, padding: '3px 10px', fontSize: 12, cursor: 'pointer' }}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
           </div>
 
           <SessionVideos sessionIds={group.sessions.map(s => s.session_id)} canAdd={!group.sessions.some(s => s.shared)} />
@@ -506,6 +521,7 @@ export function GroupCard({ group, historicalDays = 2, initiallyExpanded = false
             />
           )}
         </div>
+        </CardMaximizeContext.Provider>
       )}
     </div>
   )

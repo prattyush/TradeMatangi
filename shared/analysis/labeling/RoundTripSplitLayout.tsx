@@ -7,7 +7,7 @@ import './labeling.css'
 
 /**
  * Charts on the left, the round trip's panel (children) on the right: the layout of Label Trades, Trade Walkthrough and
- * What If. Desktop gets its workflow wrapper; maximized covers the whole window. `footer` is for modals that live inside
+ * What If. Desktop gets its workflow wrapper; maximized (the card's Maximize) stacks the charts and fills the card's window-sized container. `footer` is for modals that live inside
  * the root (the behavior question manager).
  */
 export default function RoundTripSplitLayout({ symbol, date, historicalDays, chartTrades, getMarkerText, focusTime, maximized, children, footer, chartExtras, labelContractMarkers = true, sideScroll = true }: {
@@ -43,13 +43,7 @@ export default function RoundTripSplitLayout({ symbol, date, historicalDays, cha
       {footer}
     </div>
   )
+  // Maximized, the day card (`GroupCard`) is already the full-window container, so the layout only fills it.
   if (environment.desktop) return <div className={`desktop-label-workflow ${maximized ? 'labels-maximized' : ''}`}>{content}</div>
-  if (maximized) {
-    return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 2000, background: '#0d1117', display: 'flex', flexDirection: 'column', padding: 12 }}>
-        {content}
-      </div>
-    )
-  }
   return content
 }

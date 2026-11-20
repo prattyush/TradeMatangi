@@ -7,7 +7,7 @@ import { questionIdsByTrip } from './behavior/model'
 import { readableError } from './behavior/types'
 import RoundTripSplitLayout from './labeling/RoundTripSplitLayout'
 import { invalidateLabelProgress } from './labeling/dayProgress'
-import { useMaximized, useRoundTripView } from './labeling/useRoundTripView'
+import { useCardMaximized, useRoundTripView } from './labeling/useRoundTripView'
 import OneByOneLabeling from './labeling/OneByOneLabeling'
 import RoundTripLabelForm from './labeling/RoundTripLabelForm'
 import { combineSaverStates, LabelSaver, MarkSaver, type MarkEdit, type SaverState } from './labeling/saver'
@@ -215,7 +215,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
 
   const current = view === 'one_by_one' ? roundTrips[index] : undefined
   const { getMarkerText, focusTime, chartTrades } = useRoundTripView(roundTrips, current, allTrades, showAllMarkers)
-  const [maximized, setMaximized] = useMaximized()
+  const { maximized } = useCardMaximized()
 
   const blankFor = (rt: LabeledRoundTrip) => labels.get(tripKey(rt)) ?? blankLabel(rt.session_id, rt.index)
   const formFor = (rt: LabeledRoundTrip) => (
@@ -231,10 +231,6 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
       <button type="button" aria-pressed={view === 'one_by_one'} disabled={view === 'all' && dirtyAll} title={view === 'all' && dirtyAll ? 'Save labels before switching' : undefined} onClick={() => void switchView('one_by_one')}>One at a time</button>
       <button type="button" aria-pressed={view === 'all'} onClick={() => void switchView('all')}>All together</button>
     </div>
-  )
-  const maximizeButton = (
-    <button type="button" className="tl-ghost tl-maximize" onClick={() => setMaximized(!maximized)} aria-pressed={maximized}
-      aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore (Esc): one chart with a switcher' : 'Maximize: larger view, Underlying and strike charts stacked'}>{maximized ? '⤡ Restore' : '⤢ Maximize'}</button>
   )
 
   const sessionGroups = new Map<string, LabeledRoundTrip[]>()
@@ -253,7 +249,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
                 <input type="checkbox" checked={showAllMarkers} onChange={event => setShowAllMarkers(event.target.checked)} /> All markers
               </label>
               <button type="button" className="tl-ghost" onClick={() => setManageOpen(true)}>Manage questions</button>
-              {modeSwitch}{maximizeButton}
+              {modeSwitch}
             </>}
           >
             {roundTrips[index] && formFor(roundTrips[index])}
@@ -266,7 +262,7 @@ export default function TradeLabeling({ readOnly=false, symbol, date, sessionIds
               </span>
               <div style={{ flex: 1 }} />
               <button type="button" className="tl-ghost" onClick={() => setManageOpen(true)}>Manage questions</button>
-              {modeSwitch}{maximizeButton}
+              {modeSwitch}
               {readOnly && <span>Shared history · read only</span>}
               {dirtyAll && <span>Unsaved labels</span>}
               {markState.error && <span role="alert" style={{ fontSize: 12, color: '#f85149' }}>{markState.error} <button type="button" className="tl-ghost" onClick={() => void flushAll()}>Retry</button></span>}
