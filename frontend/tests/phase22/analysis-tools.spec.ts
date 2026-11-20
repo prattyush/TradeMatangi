@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
-const open = async (page: Page, mode: "kline" | "lightweight", volume = false) => {
-  await page.goto(`/tests/phase22/analysis-tools.html?mode=${mode}${volume ? "&volume=1" : ""}`, { waitUntil: "domcontentloaded" });
+const open = async (page: Page, mode: "kline" | "lightweight", volume = false, readonly = false) => {
+  await page.goto(`/tests/phase22/analysis-tools.html?mode=${mode}${volume ? "&volume=1" : ""}${readonly ? "&readonly=1" : ""}`, { waitUntil: "domcontentloaded" });
 };
 const chartPoint = async (page: Page, selector: string, dx = 0, dy = 0) => {
   const box = (await page.locator(selector).first().boundingBox())!;
@@ -562,5 +562,35 @@ test("Lightweight: drawings kept in the browser before are copied to the databas
   expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method === "POST"))).toHaveLength(0);
   expect(await serverTools(page)).toHaveLength(4);
   await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("KLine Analysis, read-only (the phone): saved drawings are shown locked, with no tools and no way to change them", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const t0 = Date.parse("2026-10-16T09:15:00Z") / 1000 + 30 * 180;
+  const rows = [
+    { drawing_id: "d1", revision: 1, drawing: { tool: "Horizontal", points: [{ timestamp: t0, price: 101 }], visible: true, locked: false } },
+    { drawing_id: "d2", revision: 1, drawing: { tool: "Text", text: "Saved elsewhere", points: [{ timestamp: t0, price: 103 }], visible: true, locked: false } },
+    { drawing_id: "d3", revision: 1, drawing: { tool: "Risk Reward", points: [{ timestamp: t0, price: 99 }, { timestamp: t0 + 900, price: 101.5 }], visible: true, locked: false } },
+    { drawing_id: "d4", revision: 1, drawing: { tool: "Buy Marker", text: "Buy UL", points: [{ timestamp: t0 + 300, price: 98 }], visible: true, locked: false } },
+  ];
+  await page.addInitScript((value) => sessionStorage.setItem("drawing-store", value), JSON.stringify(rows));
+  await open(page, "kline", false, true);
+  await page.waitForSelector(".analysis-kline canvas");
+  await page.waitForTimeout(700);
+  // No tools rail and no pencil toggle.
+  await expect(page.locator(".kline-tools-rail")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /drawing tools/i })).toHaveCount(0);
+  // Every saved drawing is there, drawn and locked.
+  const overlays = await page.evaluate(() => (window as any).charts().flatMap((c: any) => c.getOverlays()).map((o: any) => [o.name, o.lock]));
+  expect(overlays.sort()).toEqual([["horizontalStraightLine", true], ["tmBuyMarker", true], ["tmRiskReward", true], ["tmText", true]]);
+  // Clicks, the Delete key and Ctrl+Z change nothing.
+  const p = await chartPoint(page, ".analysis-kline");
+  await press(page, p.x, p.y);
+  await page.keyboard.press("Delete");
+  await page.keyboard.press("Control+z");
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method !== "GET"))).toEqual([]);
   expect(errors).toEqual([]);
 });

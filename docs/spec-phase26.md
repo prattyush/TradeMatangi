@@ -138,3 +138,5 @@ Do discuss anything as required.
 > **Risk : Reward and Buy / Sell markers on KLine (2026-11-20).** KLine charts have a **Risk : Reward** tool (click the stop, then the entry; it marks the 1 : 1, 1.5 : 1 and 2 : 1 levels) and **Buy / Sell markers**, as the Lightweight charts do, saved to the database like any KLine drawing. This is the first step toward sharing saved drawings between the KLine and Lightweight charts (Lightweight persistence is the next PR; the phone shows saved drawings read-only after that).
 
 > **Shared drawings (2026-11-20).** The Lightweight pattern charts save their drawings to the database as the same records KLine uses, so a drawing made, changed or deleted in one chart type is the same in the other (common tools: Horizontal, Trend, Fib Retracement, rectangle, Text, Buy / Sell markers, Risk : Reward). Drawings kept in the browser before are copied up once. KLine-only tools stay invisible in Lightweight and are never removed by it. The Lightweight live-trading chart is not changed.
+
+> **Phone (2026-11-20).** The Android app shows the saved drawings read-only (no drawing tools on the phone).

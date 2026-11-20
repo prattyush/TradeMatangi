@@ -95,3 +95,6 @@ Plan and rules: `docs/spec-phase24-phone-swing-plan.md`. Do **G.1 to G.7 with a 
 - Android back button steps back one level; at the root a second press exits.
 - *(Phase 2)* App lock (if turned on) asks on cold start and after a minute in the background.
 - Token refresh still works the day after signing in.
+
+## Saved drawings (read-only, 2026-11-20)
+- On the website or the Windows app draw a horizontal line, a Text, a Risk : Reward and a Buy marker on NIFTY (a KLine chart, or a Lightweight pattern chart on the website), then open the same symbol on the phone (Browse, or a Sessions chart): they show on the chart. There is no pencil or tools rail on the phone, tapping a drawing does nothing, and a change made on the website shows after the phone's chart is reopened.

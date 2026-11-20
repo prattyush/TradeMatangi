@@ -11,6 +11,7 @@ import { useServices } from '../app/AppContext'
 import { useChartInfo } from '../app/ChartInfo'
 import { isNativeApp } from '../api/storage'
 import type { ApiClient } from '../api/transport'
+import { createDrawingReader, createSymbolResolver } from './drawingReader'
 import '../../../shared/analysis/kline/desktopAnalysis.css'
 
 /**
@@ -64,11 +65,17 @@ export function usePhoneAnalysisEnvironment(): AnalysisEnvironment {
     const adapter = createAnalysisApi(request)
     const links = createVideoLinksApi(request)
     const whatIf = createWhatIfApi(request)
+    // Saved drawings are shown (read-only); the phone has no drawing tools.
+    const drawingRequest = createDrawingReader(client)
+    const resolveSymbolInstrument = createSymbolResolver(drawingRequest)
     const environment: AnalysisEnvironment = {
       api: adapter.api,
       performance: adapter.performance,
       videoLinks: { list: links.list, listMine: links.listMine, save: links.save, remove: links.remove, open: video => { void openVideo(video) } },
       whatIf,
+      drawingRequest,
+      resolveSymbolInstrument,
+      drawingsReadOnly: true,
       // Strategy Practice: the review of a practice run (the phone cannot start one; it has no order screens).
       practice: { api: createAnalysisPracticeApi(request), Chart: AnalysisChart as unknown as ComponentType<DiveChartProps>, historicalDays: 2 },
       chartPicking: true,
