@@ -1,6 +1,6 @@
 ### Patterns Strategy Deep Dive
 
-> **Status (2026-11-17): built and merged to `dev` (PRs #865 to #878).** What is left is the owner's acceptance, sections A to I of `docs/phase26-manual-acceptance.md` (the Windows app needs a rebuild), and the real-session try of the live label popups (Usage 3 below, sprint S9), which stays on `dev` and does not go to `preprod` before that try.
+> **Status (2026-11-20): built and merged to `dev` (PRs #865 to #878, then Strategy Practice #882 to #894 and the chart work #896 to #903; #904, the phone's read-only drawings, is the last open PR).** What is left is the owner's acceptance, sections A to M and items 18 to 36 of `docs/phase26-manual-acceptance.md` (the Windows app needs a rebuild, the phone a new APK, the website a redeploy), and the real-session try of the live label popups (Usage 3 below, sprint S9), which stays on `dev` and does not go to `preprod` before that try.
 >
 > The requirement text below is the owner's original draft, unchanged. The indented **Built** notes under each point say what was built and what differs from the draft. Plan, sprint notes and decisions: `docs/spec-phase26-implementation-plan.md`. Screens and shared code: `docs/architecture-frontend.md` ("Patterns Deep Dive", "Pattern Library: From your trades", "Phase 26 hardening"). Tables and routes: `docs/architecture-backend.md`.
 
@@ -87,7 +87,8 @@ Extensions:-
 |---|---|
 | Plan, sprint-by-sprint notes, decisions | `docs/spec-phase26-implementation-plan.md` |
 | What to try by hand (sections A to I) | `docs/phase26-manual-acceptance.md` |
-| Screens and shared code | `docs/architecture-frontend.md`, `shared/deepdive/`, `shared/traded/` |
+| Screens and shared code | `docs/architecture-frontend.md`, `shared/deepdive/`, `shared/traded/`, `shared/practice/` |
+| Chart drawings (KLine and Lightweight, shared records) | `shared/charts/` (`klineDrawingModel.ts`, `klineRiskReward.ts`, `klineMarker.ts`, `klineText.ts`, `klineFibSegment.ts`, `useKLineDrawings.ts`), `frontend/src/components/analysis/` (`lightweightDrawings.ts`, `lightweightPersist.ts`, `lightweightHit.ts`), `mobile/src/env/drawingReader.ts` |
 | Tables and routes | `docs/architecture-backend.md` (`DeepDiveSetups`, `DeepDiveTags`, `/api/deep-dive`, `/api/pattern/traded`) |
 | Backlog and later ideas | `docs/todo.md` (items 10 and 11) |
 | Tests at the end of the phase | backend 3570, `windowsapp` vitest 1762, website Playwright 64 specs, plus the browser checks under `scripts/` |
@@ -135,6 +136,43 @@ Do discuss anything as required.
 > - **Text drawing:** a **Text** tool on KLine charts (saved to the database as a one-point drawing with a `text` field, shared across screens of the instrument; double click changes the text; drag, lock, hide and delete as for any drawing) and on the Lightweight Analysis / Patterns / Deep Dive charts (saved to the database like KLine's since the shared-drawings change; a drawing can be picked with a click and deleted on its own, and a Text's text changed by a double click; not moved). The Lightweight live-trading chart is not changed.
 > - **Layout fixes:** the Mark days chart and its time axis end inside the window, and the Pattern Library page fits its frame, on the website.
 
-> **Risk : Reward and Buy / Sell markers on KLine (2026-11-20).** KLine charts have a **Risk : Reward** tool (click the stop, then the entry; it marks the 1 : 1, 1.5 : 1 and 2 : 1 levels) and **Buy / Sell markers**, as the Lightweight charts do, saved to the database like any KLine drawing. This is the first step toward sharing saved drawings between the KLine and Lightweight charts (Lightweight persistence is the next PR; the phone shows saved drawings read-only after that).
+### Shared chart drawings (KLine and Lightweight), 2026-11-18 to 11-20
 
-> **Shared drawings (2026-11-20).** The Lightweight pattern charts save their drawings to the database as the same records KLine uses, so a drawing made, changed or deleted in one chart type is the same in the other (common tools: Horizontal, Trend, Fib Retracement, rectangle, Text, Buy / Sell markers, Risk : Reward). Drawings kept in the browser before are copied up once. KLine-only tools stay invisible in Lightweight and are never removed by it. The Lightweight live-trading chart is not changed.
+Owner requests made while using the Deep Dive and Patterns charts (PRs #897, #900, #901, #902, #903, #904). They are chart-wide (the Analysis, Patterns and Deep Dive charts, and, for KLine, the trading charts), not specific to one screen. Design notes: `docs/architecture-frontend.md` ("Text drawing", "Lightweight drawings: pick, delete, change a Text", "KLine Risk : Reward and Buy / Sell marker drawings", "Lightweight drawings are saved and shared with KLine"), `docs/architecture-phone.md`; plan: `docs/spec-phase26-implementation-plan.md`; checks: items 20 to 36 of `docs/phase26-manual-acceptance.md`.
+
+> **The owner's decisions.**
+> - Drawings are **saved to the database and shared between the KLine and Lightweight charts** for the tools both have; **a line deleted in one chart type stays deleted in the other** (a soft delete of the one shared record).
+> - KLine gets the Lightweight-only tools so every saved drawing shows on both: **Risk : Reward** (modelled on the Long Position tool, but placed **stop first, then entry**, as a trade is entered with its stop) and **Buy / Sell markers**.
+> - The Windows app shows the KLine changes after a rebuild (same components). The Android phone shows saved drawings **read-only** (no drawing tools on the phone).
+> - Drawings kept in the browser before (Lightweight only) are **copied to the database once**.
+> - Lightweight drawings cannot be moved; they can be picked, deleted one at a time and a Text's text changed.
+
+> **The common tools.** One saved record per drawing (`{tool, points, text?, style?, visible, locked}`, the KLine shape), under the instrument's identity (option, or `{kind, exchange, symbol}` from the catalogue; no date, no scope), so the Day, Swing, Analysis, Patterns and Deep Dive charts of one instrument share them. Only the points, the text and a Text's colour are shared: each chart draws them in its own style.
+>
+> | Tool | Saved as | Points | Notes |
+> |---|---|---|---|
+> | Horizontal line | `Horizontal` | 1 | a Lightweight line keeps the time of the click |
+> | Trend line | `Trend` | 2 | |
+> | Fib Retracement | `Fib Retracement` | 2 | KLine draws 7 levels as segments between and a little past the two clicks (not across the chart); Lightweight draws 5 levels |
+> | Rectangle | `rect` | 2 | |
+> | Text | `Text` | 1 + `text` | up to 80 characters; asked for in a small box beside the click (Enter keeps it, Escape, Cancel or empty drops it) |
+> | Buy marker, Sell marker | `Buy Marker`, `Sell Marker` | 1 + `text` | blue up arrow below, orange down arrow above the point; text `Buy UL` / `Sell UL`, no background box |
+> | Risk : Reward | `Risk Reward` | 2: **stop, then entry** | levels at the stop, the entry and the entry plus 1, 1.5 and 2 times the stop-to-entry distance (upward when the stop is below the entry, a buy; downward otherwise), each with its price |
+>
+> KLine-only tools (ray, arrow, brush, Fibonacci extension and fan, parallel channel, measure, Gann box, Long and Short position) are not drawn in Lightweight and are never touched by it. A record hidden in KLine is not drawn in Lightweight; one locked in KLine is drawn but cannot be picked there.
+
+> **How it behaves.**
+> - **Making and deleting.** KLine: the tool rail, double click on a Text to change it, select and Delete (or Ctrl+Z for the last). Lightweight: **Draw ▾**; with no tool on, a click within 7 pixels of a drawing **picks** it (thicker lines, an outline on a rectangle or text, a small bar with **Delete** and, for a Text, **Edit text**); the Delete key deletes it, Escape or a click on empty chart drops the pick, a double click on a Text opens its text box, **Clear** removes the last one. In Deep Dive in-depth, with a marker selected, a click on a drawing picks the drawing and is not also an Entry / Exit mark.
+> - **Sync.** On one page the two chart types update each other at once; a second browser tab, another device or a change of the chart setting picks changes up when the chart next opens. A failed save or delete shows a notice and the chart is refreshed from the database.
+> - **Deep Dive.** Drawings belong to the instrument, not to a day (as on KLine); the time of a drawing places it on its day.
+> - **Old drawings.** The first time a Lightweight chart opens an instrument its browser-only drawings (also the Deep Dive per-day ones) are copied up, skipping any the database already has; the local copy is left in place.
+> - **Phone.** The phone's charts draw the saved drawings locked, with no tools rail, no selection and no shortcuts; its drawings service can only read (one instrument's drawing list, the chart colours, the catalogue).
+> - **Backend.** No change: a drawing is stored as given; the only checks are a non-empty tool and integer-timestamp points; delete is a soft delete.
+
+> **Not done, and limits.**
+> - The Lightweight **live-trading chart** (`Chart.tsx`, real trading) keeps its own local drawing tools, unchanged; Text, picking and saving were not added there.
+> - Lightweight drawings cannot be moved; there are no drawing tools on the phone.
+> - Live sync is same page only (no cross-tab push); two browsers that both copy up the same old drawings before either finishes could duplicate them.
+> - The backend lists a user's drawings and filters by instrument in Python, so each chart open reads all of the user's drawings; fine at today's size, an index would be the fix if they grow.
+> - A drawing made on one Deep Dive day shows on a neighbouring day when that day's chart history reaches back to it.
+> - The `analysis-tools` KLine "restores after reload" website test fails intermittently in the full suite (also on unmodified `dev`); the phone and desktop CI builds can fail on a temporary Gradle or network download error, which a re-run clears.
