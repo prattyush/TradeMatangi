@@ -10,7 +10,8 @@ import type {
   Time,
 } from 'lightweight-charts'
 import { attachRectangle, type RectanglePrimitive } from '../../indicators/rectanglePrimitive'
-import { attachText, TEXT_DRAWING_COLOR, type TextDrawingData, type TextPrimitive } from '../../indicators/textPrimitive'
+import { attachText, TEXT_DRAWING_COLOR, textWidth, type TextDrawingData, type TextPrimitive } from '../../indicators/textPrimitive'
+import { hitBox, hitHorizontal, hitRect, hitSegments, markerBox, nearest, textBox, type Px } from './lightweightHit'
 
 /**
  * Drawing tools for the Lightweight Analysis/Patterns charts: the same seven
@@ -71,9 +72,16 @@ const saveLine = (ref: ISeriesApi<'Line'>): SavedLine => {
 }
 
 /** A Text drawing waiting for its text: the clicked point, and where (viewport pixels) to put the prompt. */
-export interface LwPendingText { time: number; price: number; x: number; y: number }
-export interface LwDrawingSnapshot { mode: LwDrawMode; step: number; count: number; pendingText: LwPendingText | null }
-export const emptyLwSnapshot: LwDrawingSnapshot = { mode: 'none', step: 0, count: 0, pendingText: null }
+export interface LwPendingText { time: number; price: number; x: number; y: number; /** Set when the text of an existing drawing is being changed. */ editIndex?: number; initial?: string }
+/** The drawing a click picked: its name, whether it has text to edit, and where (viewport pixels) to show its actions. */
+export interface LwSelection { label: string; canEditText: boolean; x: number; y: number }
+export interface LwDrawingSnapshot { mode: LwDrawMode; step: number; count: number; pendingText: LwPendingText | null; selection: LwSelection | null }
+export const emptyLwSnapshot: LwDrawingSnapshot = { mode: 'none', step: 0, count: 0, pendingText: null, selection: null }
+const DRAWING_NAME: Record<Drawing['type'], string> = {
+  hline: 'Horizontal line', trendline: 'Trend line', fibretracement: 'Fib retracement', rect: 'Rectangle', text: 'Text',
+  buymarker: 'Buy marker', sellmarker: 'Sell marker', rrindicator: 'Risk:Reward',
+}
+
 
 export function lightweightDrawingKey(account: string, symbol: string, right?: string, strike?: number, expiry?: string) {
   return `analysis-lw-drawings:${account}:${symbol}:${right ?? ''}:${strike ?? ''}:${expiry ?? ''}`
@@ -84,6 +92,9 @@ export class LightweightDrawingController {
   private points: { time: number; price: number }[] = []
   private mode: LwDrawMode = 'none'
   private pendingText: LwPendingText | null = null
+  private selected: number | null = null
+  private selection: LwSelection | null = null
+  private unhighlight: (() => void) | null = null
   private modeChangedAt = 0
   private listeners = new Set<() => void>()
   private disposed = false
@@ -91,11 +102,12 @@ export class LightweightDrawingController {
 
   constructor(private chart: IChartApi, private series: ISeriesApi<'Candlestick'>, private storageKey: string | null) {
     chart.subscribeClick(this.onClick)
+    chart.chartElement().addEventListener('dblclick', this.onDoubleClick)
     this.restore()
   }
 
   snapshot(): LwDrawingSnapshot {
-    return { mode: this.mode, step: this.points.length, count: this.drawings.length, pendingText: this.pendingText }
+    return { mode: this.mode, step: this.points.length, count: this.drawings.length, pendingText: this.pendingText, selection: this.selection }
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener)
@@ -105,6 +117,7 @@ export class LightweightDrawingController {
 
   /** Selecting the active tool again turns it off. */
   setMode(next: LwDrawMode) {
+    this.clearSelection()
     this.mode = next === this.mode ? 'none' : next
     this.points = []
     this.pendingText = null
@@ -113,6 +126,7 @@ export class LightweightDrawingController {
   }
 
   clearLast() {
+    this.clearSelection()
     const drawing = this.drawings.pop()
     if (drawing) this.remove(drawing)
     this.mode = 'none'
@@ -125,6 +139,7 @@ export class LightweightDrawingController {
   /** Switch to another instrument's drawings (the chart instance is reused across contracts). */
   setStorageKey(key: string | null) {
     if (key === this.storageKey) return
+    this.clearSelection()
     this.removeAll()
     this.storageKey = key
     this.mode = 'none'
@@ -136,8 +151,9 @@ export class LightweightDrawingController {
 
   dispose() {
     this.disposed = true
+    this.clearSelection(false)
     this.listeners.clear()
-    try { this.chart.unsubscribeClick(this.onClick) } catch { /* chart already removed */ }
+    try { this.chart.unsubscribeClick(this.onClick); this.chart.chartElement().removeEventListener('dblclick', this.onDoubleClick) } catch { /* chart already removed */ }
   }
 
   private remove(drawing: Drawing) {
@@ -205,17 +221,162 @@ export class LightweightDrawingController {
     } catch { /* Ignore invalid old local drawings. */ }
   }
 
-  /** The text typed for a pending Text drawing (an empty text drops it). */
+  /** The text typed for a pending Text drawing (an empty text drops a new one and leaves a changed one as it was). */
   submitText(text: string) {
     const pending = this.pendingText
     this.pendingText = null
     const clean = text.trim().slice(0, 80)
     if (pending && clean && !this.disposed) {
-      try { this.finish({ type: 'text', ref: attachText(this.series, { time: pending.time, price: pending.price, text: clean, color: TEXT_DRAWING_COLOR }) }); return } catch { /* chart disposed */ }
+      try {
+        const ref = attachText(this.series, { time: pending.time, price: pending.price, text: clean, color: TEXT_DRAWING_COLOR })
+        if (pending.editIndex !== undefined && this.drawings[pending.editIndex]?.type === 'text') {
+          const old = this.drawings[pending.editIndex]
+          this.drawings[pending.editIndex] = { type: 'text', ref }
+          this.remove(old)
+          this.persist()
+          this.notify()
+        } else this.finish({ type: 'text', ref })
+        return
+      } catch { /* chart disposed */ }
     }
     this.notify()
   }
   cancelText() { this.pendingText = null; this.notify() }
+
+  // ── Picking a drawing: select it with a click, then delete it (or change a Text's text) ──
+
+  private px(time: number, price: number): Px | null {
+    const x = this.chart.timeScale().timeToCoordinate(time as Time)
+    const y = this.series.priceToCoordinate(price)
+    return x === null || y === null ? null : { x, y }
+  }
+  private linePoints(ref: ISeriesApi<'Line'>): Px[] {
+    return (ref.data() as LineData<Time>[]).flatMap(d => {
+      const at = d.value === undefined ? null : this.px(d.time as number, d.value)
+      return at ? [at] : []
+    })
+  }
+  /** How near (px) a click is to a drawing, null when it is not on it. */
+  private distance(drawing: Drawing, click: Px): number | null {
+    if (drawing.type === 'hline') {
+      const y = this.series.priceToCoordinate(drawing.ref.options().price)
+      return y === null ? null : hitHorizontal(click, y)
+    }
+    if (drawing.type === 'rect') {
+      const a = this.px(drawing.ref.p1.time, drawing.ref.p1.price)
+      const b = this.px(drawing.ref.p2.time, drawing.ref.p2.price)
+      return a && b ? hitRect(click, a, b) : null
+    }
+    if (drawing.type === 'text') {
+      const at = this.px(drawing.ref.data.time, drawing.ref.data.price)
+      return at ? hitBox(click, textBox(at, textWidth(drawing.ref.data.text))) : null
+    }
+    if (drawing.type === 'buymarker' || drawing.type === 'sellmarker') {
+      const [at] = this.linePoints(drawing.ref)
+      return at ? hitBox(click, markerBox(at, drawing.type === 'buymarker'), 0) : null
+    }
+    if (!('refs' in drawing)) return null
+    const segments = drawing.refs.flatMap(ref => {
+      const points = this.linePoints(ref)
+      return points.slice(1).map((point, i) => [points[i], point] as const)
+    })
+    return hitSegments(click, segments)
+  }
+  /** Make the drawing look picked: thicker lines, an outline on a rectangle or text. Returns how to undo it. */
+  private highlight(drawing: Drawing): () => void {
+    const thicker = (width: number) => Math.min(4, width + 2) as 1 | 2 | 3 | 4
+    if (drawing.type === 'hline') {
+      const width = drawing.ref.options().lineWidth
+      drawing.ref.applyOptions({ lineWidth: thicker(width) })
+      return () => drawing.ref.applyOptions({ lineWidth: width })
+    }
+    if (drawing.type === 'rect' || drawing.type === 'text') {
+      drawing.ref.setSelected(true)
+      return () => drawing.ref.setSelected(false)
+    }
+    if ('refs' in drawing) {
+      const widths = drawing.refs.map(ref => ref.options().lineWidth)
+      drawing.refs.forEach((ref, i) => ref.applyOptions({ lineWidth: thicker(widths[i]) }))
+      return () => drawing.refs.forEach((ref, i) => ref.applyOptions({ lineWidth: widths[i] }))
+    }
+    return () => undefined
+  }
+  private readonly onKey = (event: KeyboardEvent) => {
+    if (this.selected === null || (event.target instanceof HTMLElement && event.target.closest('input,textarea,select,[contenteditable=true]'))) return
+    if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); this.deleteSelected() }
+    else if (event.key === 'Escape') { this.clearSelection() }
+  }
+  /** Undo the picked look (always before the drawings are saved, so a thick line is never what is stored). */
+  private clearSelection(notify = true) {
+    if (this.selected === null) return
+    try { this.unhighlight?.() } catch { /* chart removed */ }
+    this.unhighlight = null
+    this.selected = null
+    this.selection = null
+    document.removeEventListener('keydown', this.onKey)
+    if (notify) this.notify()
+  }
+  private select(index: number, click: Px) {
+    this.clearSelection(false)
+    const drawing = this.drawings[index]
+    const rect = this.chart.chartElement().getBoundingClientRect()
+    this.selected = index
+    this.unhighlight = this.highlight(drawing)
+    this.selection = { label: DRAWING_NAME[drawing.type], canEditText: drawing.type === 'text', x: rect.left + click.x, y: rect.top + click.y }
+    document.addEventListener('keydown', this.onKey)
+    this.notify()
+  }
+  /** A click with no drawing tool on: pick the drawing under it (or none). */
+  private pick(param: MouseEventParams) {
+    if (!param.point || this.pendingText) return
+    const click = { x: param.point.x, y: param.point.y }
+    const index = nearest(this.drawings.map((drawing, i) => ({ index: i, distance: this.distance(drawing, click) })))
+    if (index === null) { this.clearSelection(); return }
+    this.select(index, click)
+  }
+  /**
+   * A double click on a Text changes its text. Lightweight swallows the second click of a double click (and has no double click event),
+   * so this listens to the browser's own `dblclick` on the chart.
+   */
+  private readonly onDoubleClick = (event: MouseEvent) => {
+    if (this.disposed || this.mode !== 'none' || this.pendingText) return
+    const rect = this.chart.chartElement().getBoundingClientRect()
+    const click = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    const index = nearest(this.drawings.map((drawing, i) => ({ index: i, distance: this.distance(drawing, click) })))
+    if (index === null || this.drawings[index].type !== 'text') return
+    if (this.selected !== index) this.select(index, click)
+    this.editSelectedText()
+  }
+
+  /** True when a click at this chart pixel is on a drawing (so a screen that also marks candles can leave that click to the drawing). */
+  hitsDrawing(point: { x: number; y: number }): boolean {
+    return nearest(this.drawings.map((drawing, i) => ({ index: i, distance: this.distance(drawing, point) }))) !== null
+  }
+
+  /** Delete the picked drawing. */
+  deleteSelected() {
+    const index = this.selected
+    if (index === null) return
+    const drawing = this.drawings[index]
+    this.clearSelection(false)
+    if (drawing) {
+      this.drawings.splice(index, 1)
+      this.remove(drawing)
+    }
+    this.persist()
+    this.notify()
+  }
+  /** Ask for a new text for the picked Text drawing. */
+  editSelectedText() {
+    const index = this.selected
+    const drawing = index === null ? undefined : this.drawings[index]
+    const at = this.selection
+    if (index === null || !drawing || drawing.type !== 'text' || !at) return
+    const { time, price, text } = drawing.ref.data
+    this.clearSelection(false)
+    this.pendingText = { time, price, x: at.x, y: at.y, editIndex: index, initial: text }
+    this.notify()
+  }
 
   private finish(drawing: Drawing) {
     this.drawings.push(drawing)
@@ -226,7 +387,9 @@ export class LightweightDrawingController {
   }
 
   private handleClick(param: MouseEventParams) {
-    if (this.disposed || this.mode === 'none' || !param.point || !param.time) return
+    if (this.disposed) return
+    if (this.mode === 'none') { this.pick(param); return }
+    if (!param.point || !param.time) return
     // Ignore the click that selected the tool (dropdown items can overlap the chart).
     if (Date.now() - this.modeChangedAt < 150) return
     const price = this.series.coordinateToPrice(param.point.y)

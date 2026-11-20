@@ -60,6 +60,16 @@ test("Deep Dive Lightweight chart: Indicators (EMA only) and Draw tools, without
   // A tool draws once and switches itself off: the next click is a mark again.
   await expect(page.getByTitle("Drawing tools").first()).not.toContainText("H-Line");
   await page.getByRole("button", { name: /Entry UL/ }).click(); // no marker is selected to begin with
+  // With a marker still selected, a click on the drawing picks the drawing (Delete / Escape) and is not also a mark.
+  await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 - 4, { steps: 6 });
+  await page.waitForTimeout(200);
+  await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2, { steps: 3 });
+  await page.waitForTimeout(150);
+  await page.mouse.down(); await page.waitForTimeout(60); await page.mouse.up();
+  await expect(page.getByRole("toolbar", { name: "Horizontal line selected" })).toBeVisible();
+  expect(await marks(page)).toBe(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
   // Move the pointer over the chart and press, as a person does (an instant teleport-and-click is not seen by the chart).
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 8 });
   await page.mouse.move(box.x + box.width / 3, box.y + box.height / 3, { steps: 8 });
