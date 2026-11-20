@@ -64,13 +64,13 @@ Approved 2026-11-20. Source of truth for sprint order; update the status column 
 | Sprint | Scope | Real-trading touch | Status |
 |---|---|---|---|
 | S0 | Docs (this plan, the spec decisions, acceptance skeleton, CLAUDE.md row, todo, Phase 26 corrections) | no | done (2026-11-20, straight to `dev`) |
-| S1 | A. Lightweight drawings on `Chart.tsx` (Browse, Day, Swing, live) | yes (dev only) | built, in PR (see "S1 as built") |
-| S2 | B3. Analysis Maximize | no | built, in PR (see "S2 as built") |
-| S3 | B1. Group tab in Results, then the live popup | popup: yes (dev only) | built, in PR (see "S3 as built") |
-| S4 | B2. Compare tab | no | built, in PR (see "S4 as built") |
-| S5 | B5. Notes and TODOs | no | built, in PR (see "S5 as built") |
-| S6 | B4. Day score backend and the guardrail snapshot | snapshot: yes (dev only) | planned |
-| S7 | B4. Score UI, system habits, Stats trend | no | built, in PR (see "S7 as built") |
+| S1 | A. Lightweight drawings on `Chart.tsx` (Browse, Day, Swing, live) | yes (dev only) | merged #905 (see "S1 as built") |
+| S2 | B3. Analysis Maximize | no | merged #906 (see "S2 as built") |
+| S3 | B1. Group tab in Results, then the live popup | popup: yes (dev only) | merged #907 (see "S3 as built") |
+| S4 | B2. Compare tab | no | merged #908 (see "S4 as built") |
+| S5 | B5. Notes and TODOs | no | merged #909 (see "S5 as built") |
+| S6 | B4. Day score backend and the guardrail snapshot | snapshot: yes (dev only) | merged #910 (see "S6 as built") |
+| S7 | B4. Score UI, system habits, Stats trend | no | merged #911 (see "S7 as built") |
 
 Order: S1 first (a visible defect of the last release); S2 to S4 are independent UI work; S5 before S6 because the score breakdown sits in the Notes tab.
 
