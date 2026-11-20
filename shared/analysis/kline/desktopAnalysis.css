@@ -50,7 +50,7 @@
 .analysis-pane-navigation { display: none; }
 .analysis-panels.chart-maximized { position: fixed; inset: 42px 0 0; height: auto; background: #10131a; z-index: 2200; grid-template-columns: minmax(0,1fr); }
 .chart-maximized .analysis-chart-separator { display: none; }
-.desktop-label-workflow.labels-maximized { position: fixed; inset: 42px 0 0; background: #10131a; z-index: 2200; padding: 12px; overflow: auto; }
+.desktop-label-workflow.labels-maximized { flex: 1; min-height: 0; background: #10131a; overflow: auto; }
 .analysis-snapshot-viewer { top: 42px !important; }
 .analysis-snapshot-viewer input { width: 100%; }
 .desktop-analysis-chart > [role="alert"], .desktop-analysis-chart > [role="status"] { position: absolute; top: 42px; left: 8px; padding: 6px; background: #182233; z-index: 3; }

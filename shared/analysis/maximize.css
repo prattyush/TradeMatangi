@@ -1,0 +1,9 @@
+/* The Analysis day card, maximized: the card's detail (tab bar, videos, the active tab) fills the window. One Maximize for all four tabs. */
+.analysis-card-max { position: fixed; inset: 0; z-index: 2200; background: #0d1117; overflow: auto; padding: 0 12px 12px; display: flex; flex-direction: column; box-sizing: border-box; }
+/* The Windows app keeps its navigation bar visible above the card. */
+.analysis-card-max-desktop { inset: 42px 0 0; }
+.analysis-card-max > * { flex: none; }
+/* The tabs that have a chart beside a panel fill the rest of the height. */
+.analysis-card-max > .tl-layout, .analysis-card-max > .desktop-label-workflow { flex: 1 1 0; min-height: 0; }
+/* Trades tab: the day journey and trade list on top, the chart panel gets the remaining height. */
+.analysis-card-max .analysis-panels:not(.chart-maximized) { height: auto; flex: 1 0 360px; }

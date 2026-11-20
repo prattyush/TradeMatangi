@@ -31,6 +31,8 @@ Both the charts of different strategies can be side by side and will have option
 Analysis tabs namely trades, label trades, walkthrough and what if should have a maximize when that section takes up the entire screen, and then revert back to multi day view upon restore.
 
 > **Decision (S2).** Label Trades, Walkthrough and What If already had their own Maximize (it covered the day list but not the tab bar); Trades had none. They are replaced by **one Maximize on the day card for all four tabs**, covering the whole screen including the tab bar, so tabs can be switched while maximized. Restore, or Esc, returns to the multi-day view with the day list as it was. Website, webapp and Windows app; the phone already shows these views full screen.
+>
+> **Built (S2).** One **Maximize** button at the right of the day card's tab bar (Trades, Label Trades, Walkthrough, What If). Maximized, the card's detail fills the window (the Windows app keeps its navigation bar), the tab bar stays so tabs switch while maximized, and Restore or Esc returns to the day list with its filters as they were. Label Trades, Walkthrough and What If show the Underlying and strike charts stacked while maximized, as before. The three per-tab buttons are gone; the phone's full-screen overlays have no card and so no button. Website, webapp and Windows app. Not tried yet on the Windows app (see `docs/phase27-manual-acceptance.md` section B).
 
 
 #### Score of a day

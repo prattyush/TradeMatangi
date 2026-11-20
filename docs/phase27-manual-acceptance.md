@@ -13,7 +13,13 @@ Status: built (S1), waiting for your try.
 7. Only after 1 to 6 on replay and paper: one try in a real session.
 
 ## B. Analysis Maximize (S2)
-Status: not built yet.
+Status: built (S2), waiting for your try. Website, webapp and Windows app (a Windows rebuild picks up shared code).
+1. Analysis, open a day: there is one Maximize button at the right of the tab bar (Trades, Label Trades, Walkthrough, What If), and none inside the tabs.
+2. Maximize on Trades: the day fills the window (the Windows app keeps its top bar); the trade list, the journey chart and the chart panel are all reachable.
+3. While maximized, switch to Label Trades, Walkthrough and What If: it stays maximized; Underlying and strike charts are stacked, with Prev / Next working.
+4. Restore, or Esc: back to the day list with the same filters and the same day open. Esc inside a maximized chart only returns that chart first.
+5. A chart's own Maximize (KLine) still works inside the maximized card.
+6. Phone: Label trades, Walkthrough and What If look as before (no Maximize button).
 
 ## C. Group tab (S3)
 Status: not built yet.
