@@ -14,7 +14,7 @@ test("KLine Analysis: left rail draws, saves to the shared instrument key and re
   await open(page, "kline");
   const rail = page.locator(".kline-tools-rail");
   await expect(rail).toBeVisible();
-  await expect(rail.getByRole("button")).toHaveCount(15 + 4); // 15 tools + repeat/lock/hide/delete
+  await expect(rail.getByRole("button")).toHaveCount(18 + 4); // 18 tools + repeat/lock/hide/delete
   await page.waitForSelector(".analysis-kline canvas");
   await expect(rail).toHaveAttribute("data-drawing-count", "0");
 
@@ -382,5 +382,64 @@ test("Lightweight Analysis: a drawing is picked with a click, deleted on its own
   await popup("Rectangle").getByRole("button", { name: "Delete" }).click();
   expect(await saved()).toEqual([]);
   await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("KLine Analysis: Risk Reward (stop, then entry) and Buy / Sell markers are saved drawings that come back after a reload and can be deleted", async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page, "kline");
+  const rail = page.locator(".kline-tools-rail");
+  await page.waitForSelector(".analysis-kline canvas");
+  const overlays = (name: string) => page.evaluate((n) => (window as any).charts().flatMap((c: any) => c.getOverlays()).filter((o: any) => o.name === n).map((o: any) => o.points), name);
+  const posts = () => page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method === "POST").map((r: any) => r.body.drawing));
+  const press = async (x: number, y: number) => {
+    await page.mouse.move(x - 3, y - 3, { steps: 6 });
+    await page.waitForTimeout(150);
+    await page.mouse.move(x, y, { steps: 3 });
+    await page.waitForTimeout(150);
+    await page.mouse.down(); await page.waitForTimeout(40); await page.mouse.up();
+    await page.waitForTimeout(200);
+  };
+
+  // Risk : Reward: the stop first (below), then the entry (above): a buy; the saved drawing has the stop as its first point.
+  await rail.getByRole("button", { name: /Risk : Reward/ }).click();
+  const stop = await chartPoint(page, ".analysis-kline", -120, 60);
+  const entry = await chartPoint(page, ".analysis-kline", 20, -20);
+  await press(stop.x, stop.y);
+  await press(entry.x, entry.y);
+  await expect(rail).toHaveAttribute("data-drawing-count", "1");
+  let saved = await posts();
+  expect(saved).toHaveLength(1);
+  expect(saved[0].tool).toBe("Risk Reward");
+  expect(saved[0].points).toHaveLength(2);
+  expect(saved[0].points[0].price).toBeLessThan(saved[0].points[1].price); // stop below the entry
+  await page.screenshot({ path: info.outputPath("rr.png") });
+
+  // Buy and Sell markers: one click each, saved with their default text.
+  await rail.getByRole("button", { name: "Buy marker" }).click();
+  const buy = await chartPoint(page, ".analysis-kline", -200, -90);
+  await press(buy.x, buy.y);
+  await rail.getByRole("button", { name: "Sell marker" }).click();
+  const sell = await chartPoint(page, ".analysis-kline", 150, 90);
+  await press(sell.x, sell.y);
+  await expect(rail).toHaveAttribute("data-drawing-count", "3");
+  saved = await posts();
+  expect(saved.map((d: any) => [d.tool, d.points.length, d.text])).toEqual([["Risk Reward", 2, undefined], ["Buy Marker", 1, "Buy UL"], ["Sell Marker", 1, "Sell UL"]]);
+
+  // Saved in the backend: all three come back after a reload, drawn by their own overlays.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "3");
+  await page.waitForTimeout(500);
+  expect(await overlays("tmRiskReward")).toHaveLength(1);
+  expect(await overlays("tmBuyMarker")).toHaveLength(1);
+  expect(await overlays("tmSellMarker")).toHaveLength(1);
+  await page.screenshot({ path: info.outputPath("rr-restored.png") });
+
+  // Ctrl+Z deletes the last drawing (the Sell marker): a DELETE reaches the backend.
+  await page.mouse.move(entry.x, entry.y, { steps: 4 });
+  await page.keyboard.press("Control+z");
+  await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "2");
+  expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method === "DELETE"))).toHaveLength(1);
   expect(errors).toEqual([]);
 });

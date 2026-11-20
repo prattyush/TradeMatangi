@@ -13,6 +13,8 @@ import { useKLineDrawings } from '../../charts/useKLineDrawings'
 import { ensureKLineExtensions, useKLineIndicators } from '../../charts/useKLineIndicators'
 import { registerFibSegmentOverlay } from '../../charts/klineFibSegment'
 import { registerTextOverlay } from '../../charts/klineText'
+import { registerRiskRewardOverlay } from '../../charts/klineRiskReward'
+import { registerMarkerOverlays } from '../../charts/klineMarker'
 import ChartTextPrompt from '../../charts/ChartTextPrompt'
 import { annotationFigures, type AnnotationMark } from './annotationFigures'
 import { KLineIndicatorMenu, KLineToolsRail, useToolsRailVisible } from '../../charts/KLineToolsPanel'
@@ -126,7 +128,7 @@ export default function DesktopAnalysisChart(props: Props) {
   const saveViewport=()=>{ const chart=chartRef.current; if(!chart||!candlesRef.current.length||restoring.current)return; const range=chart.getVisibleRange(); const index=Math.max(0,Math.min(candlesRef.current.length-1,Math.floor((range.from+range.to)/2))); viewports.set(loadedKey.current??keyRef.current,{barSpace:chart.getBarSpace().bar,anchor:candlesRef.current[index].time*1000}); while(viewports.size>32)viewports.delete(viewports.keys().next().value!) }
   useEffect(()=>{
     if(!container.current)return
-    ensureKLineExtensions(); registerFibSegmentOverlay(); registerTextOverlay(); registerAnalysisOverlays(); const chart=init(container.current); if(!chart)return
+    ensureKLineExtensions(); registerFibSegmentOverlay(); registerTextOverlay(); registerRiskRewardOverlay(); registerMarkerOverlays(); registerAnalysisOverlays(); const chart=init(container.current); if(!chart)return
     chartRef.current=chart; chart.setTimezone('Etc/UTC'); chart.setStyles('dark'); chart.setStyles({candle:{tooltip:{showRule:chartInfoRef.current}},indicator:{tooltip:{showRule:chartInfoRef.current}}}); chart.setSymbol({ticker:props.symbol,pricePrecision:2,volumePrecision:0}); chart.setPeriod({span:intervalMinutes,type:'minute'})
     let lastWidth=container.current.clientWidth
     let resizeRevision=0

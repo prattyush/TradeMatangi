@@ -335,3 +335,12 @@ Small follow-ups inside Phase 26 (no new sprints numbered; each was one PR into 
 
 **Tests:** website Playwright `deep-dive-views`, `deep-dive-markdays-axis`, `kline-fib-segment`, `deep-dive-kline-marks`, `kline-text-drawing`, `analysis-tools` (Text), `deep-dive` (no marker selected); desktop vitest `annotationFigures`, `analysisDrawing`, `inDepth`; backend `test_desktop_persistence.py` (text field); desktop `desktop-deepdive-check.mjs`. Known pre-existing failures, not from this work: the `analysis-tools` KLine "restores after reload" test fails intermittently in the full website suite (also on unmodified `dev`), and `desktop-analysis-check.mjs` fails in its Python fixture (`performance_service.build_cycles`).
 **Next PR (2026-11-20):** Lightweight drawings can be picked with a click, deleted on their own and a Text's text changed (`lightweightHit.ts`, controller selection; not moved). **Not done:** Text and picking on the Lightweight live-trading chart (`Chart.tsx`); saving Lightweight drawings to the database (the owner's next step).
+
+### Shared drawings for KLine and Lightweight (owner request, 2026-11-20; three PRs)
+Plan: the Lightweight pattern charts save their drawings to the database through the same drawings records as KLine (common tools: Horizontal, Trend, Fib Retracement, rectangle, Text, and the Buy / Sell markers and Risk : Reward that KLine gets here), so a drawing made or deleted in one chart type is the same in the other; the Windows app follows with a rebuild; the phone shows them read-only; browser-only Lightweight drawings are copied up once.
+
+| PR | Scope |
+|---|---|
+| 1 | KLine **Risk : Reward** (stop first, then entry; 1 : 1, 1.5, 2) and **Buy / Sell markers** (`klineRiskReward.ts`, `klineMarker.ts`, `klineDrawingModel.ts` helpers, catalogue, both chart hosts): **built** (this PR) |
+| 2 | Lightweight drawings saved to the database and shared with KLine: mapping, controller with the drawings service, sync on change, one-time copy of the local drawings, website environment |
+| 3 | Phone: saved drawings read-only (`drawingsReadOnly`, drawing service in the phone environment; a new APK) |

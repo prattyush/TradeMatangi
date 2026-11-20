@@ -10,6 +10,8 @@ import {
   overlayName,
   overlayPointsToStored,
   overlayStyles,
+  drawingExtendData,
+  newDrawingFields,
   textExtendData,
   toolStyle,
   type DrawingMode,
@@ -165,7 +167,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
       lock: Boolean(record.drawing.locked),
       visible: record.drawing.visible !== false,
       styles: overlayStyles(record.drawing.style, styleRef.current),
-      extendData: record.drawing.tool === "Text" ? textExtendData(record.drawing, styleRef.current) : undefined,
+      extendData: drawingExtendData(record.drawing, styleRef.current),
       ...handlers,
     } as any);
     if (typeof id !== "string") return;
@@ -317,7 +319,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
       name: overlayName(tool),
       paneId: "candle_pane",
       styles: overlayStyles(look, styleRef.current),
-      extendData: tool === "Text" ? { text: "", color: look.color } : undefined,
+      extendData: tool === "Text" ? { text: "", color: look.color } : drawingExtendData({ tool }, styleRef.current),
       ...handlers,
       onDrawStart: () => {
         gesture.current = true;
@@ -325,7 +327,7 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
       onDrawEnd: (event: any) => {
         gesture.current = false;
         const points = overlayPointsToStored(event.overlay.points);
-        const drawing: PersistedDrawing = { tool, points, style: look, visible: true, locked: false };
+        const drawing: PersistedDrawing = { tool, ...newDrawingFields(tool), points, style: look, visible: true, locked: false };
         setDrawings((items) => items.map((item) => (item.id === event.overlay.id ? { ...item, drawing, dirty: true } : item)));
         setActiveTool(null);
         if (tool === "Text") {
