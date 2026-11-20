@@ -1,6 +1,6 @@
 ### Patterns Strategy Deep Dive
 
-> **Status (2026-11-20): built and merged to `dev` (PRs #865 to #878, then Strategy Practice #882 to #894 and the chart work #896 to #903; #904, the phone's read-only drawings, is the last open PR).** What is left is the owner's acceptance, sections A to M and items 18 to 36 of `docs/phase26-manual-acceptance.md` (the Windows app needs a rebuild, the phone a new APK, the website a redeploy), and the real-session try of the live label popups (Usage 3 below, sprint S9), which stays on `dev` and does not go to `preprod` before that try.
+> **Status (2026-11-20): built and merged to `dev` (PRs #865 to #878, then Strategy Practice #882 to #894 and the chart work #896 to #904, the last being the phone's read-only drawings).** What is left is the owner's acceptance, sections A to M and items 18 to 36 of `docs/phase26-manual-acceptance.md` (the Windows app needs a rebuild, the phone a new APK, the website a redeploy), and the real-session try of the live label popups (Usage 3 below, sprint S9), which stays on `dev` and does not go to `preprod` before that try.
 >
 > The requirement text below is the owner's original draft, unchanged. The indented **Built** notes under each point say what was built and what differs from the draft. Plan, sprint notes and decisions: `docs/spec-phase26-implementation-plan.md`. Screens and shared code: `docs/architecture-frontend.md` ("Patterns Deep Dive", "Pattern Library: From your trades", "Phase 26 hardening"). Tables and routes: `docs/architecture-backend.md`.
 
@@ -91,7 +91,7 @@ Extensions:-
 | Chart drawings (KLine and Lightweight, shared records) | `shared/charts/` (`klineDrawingModel.ts`, `klineRiskReward.ts`, `klineMarker.ts`, `klineText.ts`, `klineFibSegment.ts`, `useKLineDrawings.ts`), `frontend/src/components/analysis/` (`lightweightDrawings.ts`, `lightweightPersist.ts`, `lightweightHit.ts`), `mobile/src/env/drawingReader.ts` |
 | Tables and routes | `docs/architecture-backend.md` (`DeepDiveSetups`, `DeepDiveTags`, `/api/deep-dive`, `/api/pattern/traded`) |
 | Backlog and later ideas | `docs/todo.md` (items 10 and 11) |
-| Tests at the end of the phase | backend 3570, `windowsapp` vitest 1762, website Playwright 64 specs, plus the browser checks under `scripts/` |
+| Tests at the end of the phase | backend 3570 (+ `test_desktop_persistence.py` with the Text drawing case), `windowsapp` vitest 1824, website Playwright 96 tests, `node --test` 31 (Lightweight hit-testing and persistence mapping), phone vitest 121 and phone UI 233, plus the browser checks under `scripts/` |
 
 
 

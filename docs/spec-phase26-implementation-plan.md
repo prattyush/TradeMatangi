@@ -267,7 +267,7 @@ All sprints are merged to `dev` except S11 (in PR). What remains is the **owner'
 
 ## Review changes (2026-11-17, after the owner's first look)
 
-- **From your trades**: charts side by side (each the full height of the viewer; under 1000px wide they stack). The Deep Dive's in-depth step stays stacked.
+- **From your trades**: charts side by side (each the full height of the viewer; under 1000px wide they stack). The Deep Dive's in-depth step is stacked by default and can be switched to side by side (#898).
 - **Maximize per chart** in both screens (`ChartFrame`, `useMaximizedChart`): a thin bar above each chart with its name and Maximize / Restore; the other chart hides but stays mounted; the choice is remembered across days and trades.
 - **Deep Dive header in the Pattern Library's own row** (`HeaderPortal`, `DeepDiveHost.headerSlot`, a slot in the website page header and the desktop `.pl-head`): back ("← All"), name, steps and the day walk no longer take rows of their own. Compact controls (‹ ›, no year in the day label, a truncating name) so the row fits on one line from about 1500px.
 - **Tests:** website `deep-dive.spec.ts` (header controls in the library's row at 1920px; maximize, persistence to the next day, restore) and `traded-patterns.spec.ts` (side by side, maximize, restore) on both renderers; `scripts/desktop-deepdive-check.mjs` (same on the built desktop app); `positionLabel` year rule in `deepDive.test.ts`.
@@ -334,13 +334,13 @@ Small follow-ups inside Phase 26 (no new sprints numbered; each was one PR into 
 | #900 | **Text drawing**: KLine saved through the drawings API (`text` field, `tmText` overlay, `ChartTextPrompt`, double click edits), Lightweight (`TextPrimitive`; saved to the database since PR 2 of the shared drawings) |
 
 **Tests:** website Playwright `deep-dive-views`, `deep-dive-markdays-axis`, `kline-fib-segment`, `deep-dive-kline-marks`, `kline-text-drawing`, `analysis-tools` (Text), `deep-dive` (no marker selected); desktop vitest `annotationFigures`, `analysisDrawing`, `inDepth`; backend `test_desktop_persistence.py` (text field); desktop `desktop-deepdive-check.mjs`. Known pre-existing failures, not from this work: the `analysis-tools` KLine "restores after reload" test fails intermittently in the full website suite (also on unmodified `dev`), and `desktop-analysis-check.mjs` fails in its Python fixture (`performance_service.build_cycles`).
-**Next PR (2026-11-20):** Lightweight drawings can be picked with a click, deleted on their own and a Text's text changed (`lightweightHit.ts`, controller selection; not moved). **Not done:** Text and picking on the Lightweight live-trading chart (`Chart.tsx`); saving Lightweight drawings to the database (the owner's next step).
+**Merged (#901, 2026-11-20):** Lightweight drawings can be picked with a click, deleted on their own and a Text's text changed (`lightweightHit.ts`, controller selection; not moved). **Not done:** Text, picking and saving on the Lightweight live-trading chart (`Chart.tsx`); saving Lightweight drawings to the database was done later (#903, below).
 
 ### Shared drawings for KLine and Lightweight (owner request, 2026-11-20; three PRs)
 Plan: the Lightweight pattern charts save their drawings to the database through the same drawings records as KLine (common tools: Horizontal, Trend, Fib Retracement, rectangle, Text, and the Buy / Sell markers and Risk : Reward that KLine gets here), so a drawing made or deleted in one chart type is the same in the other; the Windows app follows with a rebuild; the phone shows them read-only; browser-only Lightweight drawings are copied up once.
 
 | PR | Scope |
 |---|---|
-| 1 | KLine **Risk : Reward** (stop first, then entry; 1 : 1, 1.5, 2) and **Buy / Sell markers** (`klineRiskReward.ts`, `klineMarker.ts`, `klineDrawingModel.ts` helpers, catalogue, both chart hosts): **built** (this PR) |
-| 2 | Lightweight drawings saved to the database and shared with KLine: mapping (`lightweightPersist.ts`), controller with the drawings service and sync on change, one-time copy of the local drawings, website environment: **built** |
-| 3 | Phone: saved drawings read-only (`drawingsReadOnly`, a read-only drawings service in the phone environment; a new APK): **built** |
+| 1 | KLine **Risk : Reward** (stop first, then entry; 1 : 1, 1.5, 2) and **Buy / Sell markers** (`klineRiskReward.ts`, `klineMarker.ts`, `klineDrawingModel.ts` helpers, catalogue, both chart hosts): **built** (#902) |
+| 2 | Lightweight drawings saved to the database and shared with KLine: mapping (`lightweightPersist.ts`), controller with the drawings service and sync on change, one-time copy of the local drawings, website environment: **built** (#903) |
+| 3 | Phone: saved drawings read-only (`drawingsReadOnly`, a read-only drawings service in the phone environment; a new APK): **built** (#904) |
