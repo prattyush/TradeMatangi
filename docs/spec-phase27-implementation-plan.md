@@ -1,6 +1,6 @@
 # Phase 27: Implementation plan (Deep Dive upgrades, Analysis upgrades, Lightweight drawings)
 
-Approved 2026-11-20. Source of truth for sprint order; update the status column as sprints merge. Spec: `docs/spec-phase27.md` (the owner's draft, with the decisions and Built notes under each requirement).
+**Status (2026-11-21): all sprints merged (S1 #905 to S7 #911); the owner's acceptance is pending.** Where the build differs from sections A and B below, the "S# as built" sections at the end win. Approved 2026-11-20. Source of truth for sprint order; the status column is up to date. Spec: `docs/spec-phase27.md` (the owner's draft, with the decisions and Built notes under each requirement).
 
 ## Context
 - `docs/spec-phase27.md` asks for: grouped tag results, a Deep Dive comparison, an Analysis maximize, a score of a day (as system habits and in Stats) and improvement notes with carried-over TODOs.

@@ -1,9 +1,9 @@
 # Phase 27: Manual acceptance (owner)
 
-Tick each item when tried. The sections follow the sprints of `docs/spec-phase27-implementation-plan.md`; a section is added when its sprint merges. Website and webapp come from `dev` after a redeploy; the Windows app needs a rebuild when a sprint changes a Rust allowlist.
+**Status (2026-11-21): every sprint is merged to `dev` (S1 #905 to S7 #911); nothing below has been tried by the owner yet.** Tick each item when tried. The sections follow the sprints of `docs/spec-phase27-implementation-plan.md`; a section is added when its sprint merges. Website and webapp come from `dev` after a redeploy; the Windows app needs a rebuild when a sprint changes a Rust allowlist.
 
 ## A. Lightweight drawings shared with KLine (S1, real-trading chart: dev only)
-Status: built (S1), waiting for your try.
+Status: merged #905 (S1), waiting for your try.
 1. Browse, KLine: draw a Horizontal line, a Trend line and a Text. Switch Settings > Trading Chart to Lightweight: the same three are on the Browse chart.
 2. Browse, Lightweight: draw a Fib Retracement and a Rectangle. Switch back to KLine: they are there.
 3. Delete one drawing in Lightweight: it is gone in KLine (and the other way round).
@@ -13,7 +13,7 @@ Status: built (S1), waiting for your try.
 7. Only after 1 to 6 on replay and paper: one try in a real session.
 
 ## B. Analysis Maximize (S2)
-Status: built (S2), waiting for your try. Website, webapp and Windows app (a Windows rebuild picks up shared code).
+Status: merged #906 (S2), waiting for your try. Website, webapp and Windows app (a Windows rebuild picks up shared code).
 1. Analysis, open a day: there is one Maximize button at the right of the tab bar (Trades, Label Trades, Walkthrough, What If), and none inside the tabs.
 2. Maximize on Trades: the day fills the window (the Windows app keeps its top bar); the trade list, the journey chart and the chart panel are all reachable.
 3. While maximized, switch to Label Trades, Walkthrough and What If: it stays maximized; Underlying and strike charts are stacked, with Prev / Next working.
@@ -22,7 +22,7 @@ Status: built (S2), waiting for your try. Website, webapp and Windows app (a Win
 6. Phone: Label trades, Walkthrough and What If look as before (no Maximize button).
 
 ## C. Group tab (S3; the live popups are real-trading screens: dev only)
-Status: built (S3), waiting for your try. Website, webapp and Windows app (a Windows rebuild picks up shared code).
+Status: merged #907 (S3), waiting for your try. Website, webapp and Windows app (a Windows rebuild picks up shared code).
 1. Pattern Library > Deep dive > a strategy with at least two tags, marked on several days > Results: a **Group** button beside All / Buy / Sell.
 2. Group: pick tag A and tag B. Check the numbers on a few days by hand: only days where both tags are marked count; "n not counted" lists the others and says which tag is missing.
 3. "When A was valid, B was valid x% (n of m)" matches a count of the days where A is Valid. Swap A and B and the conditional lines swap.
@@ -32,7 +32,7 @@ Status: built (S3), waiting for your try. Website, webapp and Windows app (a Win
 7. Saving a label with the Group view open changes nothing in what is saved.
 
 ## D. Compare tab (S4)
-Status: built (S4), waiting for your try. Website, webapp and Windows app (needs a Windows rebuild for the shared code).
+Status: merged #908 (S4), waiting for your try. Website, webapp and Windows app (needs a Windows rebuild for the shared code).
 1. Pattern Library: a **Compare** tab beside Deep dive. With no marked days anywhere it says "Nothing to compare yet".
 2. Two panes. Pick a different strategy in each, and a marked day in each (newest first). The day's chart shows with its marks.
 3. Switch pane A to CE and pane B to PE (for example a Buy day on CE and a Sell day on PE): each uses the strike saved with that day. A day with no saved strike shows a preview strike and the note says so.
@@ -42,7 +42,7 @@ Status: built (S4), waiting for your try. Website, webapp and Windows app (needs
 7. A strategy shared with you can be compared too (it is marked "(shared)").
 
 ## E. Notes and TODOs (S5)
-Status: built (S5), waiting for your try. Website, webapp and Windows app (needs a Windows rebuild: new analysis routes). The phone has no Notes tab yet.
+Status: merged #909 (S5), waiting for your try. Website, webapp and Windows app (needs a Windows rebuild: new analysis routes). The phone has no Notes tab yet.
 1. Analysis, open a day: a fifth tab **Notes** after What If.
 2. Write in the four boxes and wait a second: "Saved" appears. Reload Analysis and open the same day: the note is there. Clear all four boxes: the note is removed.
 3. Type in a box and switch to Trades at once: come back, the text was kept.
@@ -55,7 +55,7 @@ Status: built (S5), waiting for your try. Website, webapp and Windows app (needs
 10. A day shared with you does not show the Notes tab.
 
 ## F. Day score and system habits (S6, S7)
-Status: built (S6 backend, real-trading path: dev only; S7 screens). Needs a Windows rebuild (new analysis routes). The phone shows the System habits but no chip or breakdown.
+Status: merged (S6 #910, the backend and the session-create snapshot, real-trading path: dev only; S7 #911, the screens). Needs a Windows rebuild (new analysis routes). The phone shows the System habits but no chip or breakdown.
 S7, the screens (website, webapp, Windows app):
 - Analysis, a day whose trades are all labelled: a chip **Score nn** next to the "n/n labelled" badge (green 75+, amber 50 to 74, red below), on the card and, once any card has scored the day, in the list.
 - Open the day, Notes tab: **Day score** first: the score, "A plain day 60", each rule with its points and what was found, the lowest point of the day against the limit, and a yellow note if the limit is estimated or candles were missing.
