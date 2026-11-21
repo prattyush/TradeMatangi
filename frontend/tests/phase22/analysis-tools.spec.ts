@@ -594,3 +594,24 @@ test("KLine Analysis, read-only (the phone): saved drawings are shown locked, wi
   expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method !== "GET"))).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test("KLine Analysis: the Underlying chart offers All / CE / PE marker buttons like the Lightweight chart", async ({ page }) => {
+  await page.goto("/tests/phase22/analysis-tools.html?mode=panels", { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".analysis-kline canvas");
+  const underlying = page.locator(".analysis-underlying-pane");
+  const buttons = underlying.locator("header > button.marker-filter");
+  await expect(buttons).toHaveText(["All", "CE", "PE"]);
+  await expect(buttons.nth(0)).toHaveAttribute("aria-pressed", "true");
+  // The Underlying chart (the first KLine chart) draws the CE fill once; only PE hides it; the option chart beside it keeps its own.
+  const marks = () => page.evaluate(() => (window as any).charts().map((chart: any) => chart.getOverlays().filter((o: any) => o.name === "analysisExecution").length));
+  await expect.poll(marks).toEqual([1, 1]);
+  await buttons.nth(2).click();
+  await expect(buttons.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(marks).toEqual([0, 1]);
+  await buttons.nth(1).click();
+  await expect.poll(marks).toEqual([1, 1]);
+  await buttons.nth(0).click();
+  await expect.poll(marks).toEqual([1, 1]);
+  // A contract chart has no filter.
+  await expect(page.locator(".analysis-option-pane header > button.marker-filter")).toHaveCount(0);
+});
