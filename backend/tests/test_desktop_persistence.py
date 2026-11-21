@@ -183,3 +183,23 @@ def test_drawing_conditional_write_conflict_is_normalized():
     table.items[("u", "drawing")] = {"drawing_id": "drawing", "revision": 1}
     with patch.object(persistence, "_table", return_value=table), pytest.raises(ValueError, match="revision_conflict"):
         persistence.update_drawing("u", "drawing", line(), 1, "mutation")
+
+
+def test_notes_scope_is_its_own_namespace_and_accepts_the_seed_marker(monkeypatch):
+    """Phase 27 S8: a day's Notes chart uses `drawing_scope: notes:<date>`. Its records, its hidden seed marker and its deletes never
+    touch the unscoped records the other charts use, nor another day's Notes."""
+    table = FakeTable()
+    monkeypatch.setattr(persistence, "_table", lambda name: table)
+    other_chart = persistence.create_drawing("u", equity(), line(), "plain")
+    day = {**equity(), "drawing_scope": "notes:2026-10-16"}
+    next_day = {**equity(), "drawing_scope": "notes:2026-10-17"}
+    copy = persistence.create_drawing("u", day, line(), "copy")  # what the one-time copy from the other charts writes
+    marker = {"tool": "NotesSeed", "points": [{"timestamp": 0, "price": 0}]}
+    persistence.create_drawing("u", day, marker, "marker")
+    assert [row["drawing_id"] for row in persistence.list_drawings("u", equity())] == [other_chart["drawing_id"]]
+    assert sorted(row["drawing"]["tool"] for row in persistence.list_drawings("u", day)) == sorted(["NotesSeed", line()["tool"]])
+    assert persistence.list_drawings("u", next_day) == []
+    # Deleting in Notes leaves the other charts' drawing alone.
+    persistence.update_drawing("u", copy["drawing_id"], line(), 1, "delete-copy", deleted=True)
+    assert [row["drawing"]["tool"] for row in persistence.list_drawings("u", day)] == ["NotesSeed"]
+    assert [row["drawing_id"] for row in persistence.list_drawings("u", equity())] == [other_chart["drawing_id"]]

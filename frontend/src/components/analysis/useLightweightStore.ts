@@ -9,7 +9,7 @@ import { lightweightDrawingKey, type LwStore } from './lightweightDrawings'
  * use for this symbol (option or underlying), so both chart types share the records. Null while the symbol's kind is being looked up,
  * when the symbol cannot be resolved, or when there is no drawings service: the drawings then stay on the chart only.
  */
-export function useLightweightStore(args: { symbol: string; right?: string; strike?: number; expiry?: string }): LwStore | null {
+export function useLightweightStore(args: { symbol: string; right?: string; strike?: number; expiry?: string; scope?: string; readOnly?: boolean }): LwStore | null {
   const environment = useOptionalAnalysisEnvironment()
   const resolve = environment?.resolveSymbolInstrument
   const request = environment?.drawingRequest
@@ -30,6 +30,8 @@ export function useLightweightStore(args: { symbol: string; right?: string; stri
       request,
       instrument: analysisDrawingInstrument({ symbol: args.symbol, right: args.right, strike: args.strike, expiry: args.expiry, kind: info?.kind, exchange: info?.exchange }),
       legacyBase: lightweightDrawingKey(rendererAccountKey(), args.symbol, args.right, args.strike, args.expiry),
+      ...(args.scope ? { scope: args.scope } : {}),
+      ...(args.readOnly ? { readOnly: true } : {}),
     }
-  }, [request, info, args.symbol, args.right, args.strike, args.expiry])
+  }, [request, info, args.symbol, args.right, args.strike, args.expiry, args.scope, args.readOnly])
 }

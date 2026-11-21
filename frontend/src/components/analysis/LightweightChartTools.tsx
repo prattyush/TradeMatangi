@@ -95,6 +95,8 @@ export function useLightweightTools(store: LwStore | null) {
   useEffect(() => { studies.current?.setVisible({ vwap: showVwap, volume: showVolume }) }, [showVwap, showVolume])
   return {
     ...drawing, attach, showEma, setShowEma,
+    /** Only viewing the saved drawings (the Summary): the Draw menu is not offered. */
+    readOnly: Boolean(store?.readOnly),
     showVwap, setShowVwap, showVolume, setShowVolume, volumeAvailable,
     /** Feed the loaded candles (with volume) to the VWAP and volume series; [] clears them. */
     setVolumeData: (candles: ReadonlyArray<VolumeCandle>) => studies.current?.setData(candles),
@@ -147,7 +149,7 @@ export function LightweightChartTools({ tools }: { tools: LightweightTools }) {
           </div>
         )}
       </span>
-      <LightweightDrawControls tools={tools} />
+      {!tools.readOnly && <LightweightDrawControls tools={tools} />}
     </span>
   )
 }

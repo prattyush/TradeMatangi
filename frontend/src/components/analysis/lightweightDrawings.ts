@@ -11,6 +11,7 @@ import { attachText, TEXT_DRAWING_COLOR, textWidth, type TextPrimitive } from '.
 import { announceDrawingChange, watchDrawingChanges } from '../../../../shared/charts/drawingEvents'
 import { canonicalDrawingKey, drawingIdentity } from '../../../../shared/charts/drawingIdentity'
 import type { DrawingRecord, DrawingRequest } from '../../../../shared/charts/klineDrawingModel'
+import { loadScopedRecords, scopedIdentity, seedScopedDrawings } from '../../../../shared/charts/scopedDrawings'
 import { hitBox, hitHorizontal, hitRect, hitSegments, markerBox, nearest, textBox, type Px } from './lightweightHit'
 import {
   LW_MARKER_TEXT, LW_TEXT_MAX, fromPersisted, isLegacyKeyOf, legacyToSpecs, specSignature, toPersisted,
@@ -85,6 +86,13 @@ export interface LwStore {
   legacyBase: string
   /** A Swing chart's old private scope: its earlier records are still read (as the KLine chart does). */
   legacyScope?: string
+  /**
+   * A private namespace for the drawings (the day's Notes chart, `notesScope(date)`): the other charts' drawings of the contract are
+   * copied into it once, and what is drawn, changed or deleted stays in it. Without it nothing changes.
+   */
+  scope?: string
+  /** Show the saved drawings only (the Summary): no tools, no picking, nothing is copied or saved. */
+  readOnly?: boolean
 }
 /** The browser-only drawings of an instrument (its key, and the Deep Dive per-day keys) that have not been copied up yet. */
 export const legacyKeys = (base: string) => {
@@ -101,7 +109,7 @@ export const legacyKeys = (base: string) => {
 export function lightweightDrawingKey(account: string, symbol: string, right?: string, strike?: number, expiry?: string) {
   return `analysis-lw-drawings:${account}:${symbol}:${right ?? ''}:${strike ?? ''}:${expiry ?? ''}`
 }
-export const lightweightStoreKey = (store: LwStore | null) => (store ? canonicalDrawingKey(store.instrument) : '')
+export const lightweightStoreKey = (store: LwStore | null) => (store ? `${canonicalDrawingKey(store.instrument)}${store.scope ? `|${store.scope}` : ''}${store.readOnly ? '|view' : ''}` : '')
 
 export class LightweightDrawingController {
   private drawings: Drawing[] = []
@@ -118,6 +126,8 @@ export class LightweightDrawingController {
   // Saving to the database
   private store: LwStore | null = null
   private identity: ReturnType<typeof drawingIdentity> | null = null
+  /** Set for a scoped (Notes) chart: its own namespace and the plain one it starts from. */
+  private scoped: ReturnType<typeof scopedIdentity> | null = null
   private readonly owner = crypto.randomUUID()
   private generation = 0
   private busyCount = 0
@@ -176,7 +186,8 @@ export class LightweightDrawingController {
     this.generation += 1
     this.removeAll()
     this.store = store
-    this.identity = store ? drawingIdentity(store.instrument, undefined, store.legacyScope, true) : null
+    this.scoped = store?.scope ? scopedIdentity(store.instrument, store.scope) : null
+    this.identity = this.scoped ?? (store ? drawingIdentity(store.instrument, undefined, store.legacyScope, true) : null)
     this.mode = 'none'
     this.points = []
     this.pendingText = null
@@ -184,7 +195,12 @@ export class LightweightDrawingController {
     this.known = new Set()
     if (store && this.identity) {
       this.stopWatching = watchDrawingChanges(this.owner, this.identity.readKeys, () => { void this.refresh() })
-      void this.refresh().then(() => this.migrate())
+      if (this.scoped) {
+        // The first time this day's Notes chart is opened, start from the drawings of the other charts (never when only viewing).
+        const scoped = this.scoped
+        const ready = store.readOnly ? Promise.resolve() : seedScopedDrawings(store.request, scoped).then(() => undefined, error => this.fail('load', error))
+        void ready.then(() => this.refresh())
+      } else void this.refresh().then(() => this.migrate())
     }
     this.notify()
   }
@@ -234,7 +250,9 @@ export class LightweightDrawingController {
       return
     }
     try {
-      const results = await Promise.all(identity.readKeys.map(key => store.request(`drawings?instrument=${encodeURIComponent(key)}`, 'GET')))
+      const results = this.scoped
+        ? [{ drawings: await loadScopedRecords(store.request, this.scoped, Boolean(store.readOnly)) }]
+        : await Promise.all(identity.readKeys.map(key => store.request(`drawings?instrument=${encodeURIComponent(key)}`, 'GET')))
       if (this.disposed || version !== this.generation || this.store !== store) return
       if (this.busyCount > 0) { void this.refresh(); return }
       const records = [...new Map(results
@@ -465,7 +483,7 @@ export class LightweightDrawingController {
    * so this listens to the browser's own `dblclick` on the chart.
    */
   private readonly onDoubleClick = (event: MouseEvent) => {
-    if (this.disposed || this.mode !== 'none' || this.pendingText) return
+    if (this.disposed || this.store?.readOnly || this.mode !== 'none' || this.pendingText) return
     const rect = this.chart.chartElement().getBoundingClientRect()
     const click = { x: event.clientX - rect.left, y: event.clientY - rect.top }
     const index = nearest(this.drawings.map((drawing, i) => ({ index: i, distance: this.distance(drawing, click) })))
@@ -574,7 +592,7 @@ export class LightweightDrawingController {
   }
 
   private handleClick(param: MouseEventParams) {
-    if (this.disposed) return
+    if (this.disposed || this.store?.readOnly) return
     if (this.mode === 'none') { this.pick(param); return }
     if (!param.point || !param.time) return
     // Ignore the click that selected the tool (dropdown items can overlap the chart).

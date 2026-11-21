@@ -4,6 +4,7 @@ import { textPromptAnchor, type TextPromptState } from "./ChartTextPrompt";
 import { beginChartActivity } from "./chartActivity";
 import { announceDrawingChange, watchDrawingChanges } from "./drawingEvents";
 import { canonicalDrawingKey, drawingIdentity } from "./drawingIdentity";
+import { loadScopedRecords, scopedIdentity, seedScopedDrawings } from "./scopedDrawings";
 import {
   defaultDrawingStyle,
   drawingPoints,
@@ -31,6 +32,11 @@ interface Options {
   active?: boolean;
   /** Show saved drawings only: locked, no selection, no tools, no shortcuts (the phone). */
   readOnly?: boolean;
+  /**
+   * A private namespace for the drawings (the day's Notes chart, `notesScope(date)`): the other charts' drawings of the contract are copied
+   * into it once, and everything drawn, changed or deleted here stays here. Without it nothing changes.
+   */
+  scope?: string;
   onError?: (error: unknown) => void;
 }
 
@@ -40,7 +46,7 @@ interface Options {
  * charts, so a drawing made here also appears on the Day/Swing chart.
  * Mirrors the behaviour of `KLineChart.tsx` without its order/strategy state.
  */
-export function useKLineDrawings({ chartRef, instrument, request, active = true, readOnly = false, onError }: Options) {
+export function useKLineDrawings({ chartRef, instrument, request, active = true, readOnly = false, scope, onError }: Options) {
   const [drawings, setDrawings] = useState<LocalDrawing[]>([]);
   const drawingsRef = useRef<LocalDrawing[]>([]);
   drawingsRef.current = drawings;
@@ -63,9 +69,13 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
 
   const identity = useMemo(() => {
     if (!instrument) return null;
+    if (scope) {
+      const scoped = scopedIdentity(instrument, scope);
+      return { writeInstrument: scoped.writeInstrument, readKeys: scoped.readKeys, key: scoped.scopedKey, signature: JSON.stringify(scoped.readKeys), scoped };
+    }
     const { writeInstrument, readKeys } = drawingIdentity(instrument, undefined, undefined, true);
-    return { writeInstrument, readKeys, key: canonicalDrawingKey(writeInstrument), signature: JSON.stringify(readKeys) };
-  }, [instrument && canonicalDrawingKey(instrument)]);
+    return { writeInstrument, readKeys, key: canonicalDrawingKey(writeInstrument), signature: JSON.stringify(readKeys), scoped: undefined };
+  }, [instrument && canonicalDrawingKey(instrument), scope]);
   const identityRef = useRef(identity);
   identityRef.current = identity;
 
@@ -210,10 +220,13 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
         return;
       }
       const mine = ++version;
-      void Promise.all(
-        (JSON.parse(identity.signature) as string[]).map((key) =>
-          request(`drawings?instrument=${encodeURIComponent(key)}`, "GET"),
-        ),
+      void (identity.scoped
+        ? loadScopedRecords(request, identity.scoped, readOnly).then((drawings) => [{ drawings }])
+        : Promise.all(
+            (JSON.parse(identity.signature) as string[]).map((key) =>
+              request(`drawings?instrument=${encodeURIComponent(key)}`, "GET"),
+            ),
+          )
       )
         .then((values) => {
           if (disposed || mine !== version) return;
@@ -236,14 +249,19 @@ export function useKLineDrawings({ chartRef, instrument, request, active = true,
           if (!disposed && mine === version) errorRef.current?.(error);
         });
     };
-    refresh();
+    if (identity.scoped && !readOnly) {
+      // The first time this day's Notes chart is opened, start from the drawings of the other charts.
+      void seedScopedDrawings(request, identity.scoped)
+        .catch((error) => errorRef.current?.(error))
+        .then(() => refresh());
+    } else refresh();
     const stop = watchDrawingChanges(owner.current, identity.readKeys, refresh);
     return () => {
       disposed = true;
       window.clearTimeout(retry);
       stop();
     };
-  }, [identity?.signature, request]);
+  }, [identity?.signature, request, readOnly]);
 
   const deleteDrawing = async (id: string) => {
     const drawing = drawingsRef.current.find((item) => item.id === id);
