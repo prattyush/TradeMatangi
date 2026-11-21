@@ -49,7 +49,7 @@
 /* The Back button lives in the chart's header row. */
 .back-button { min-width: 40px; min-height: 36px; padding: 0 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; font-size: 18px; line-height: 1; }
 /* The marker filter and the Option contract pill are enough in this narrow chart column. */
-.phone-labeling .phone-chart .desktop-analysis-chart header select[aria-label='Underlying markers'] { display: none; }
+.phone-labeling .phone-chart .desktop-analysis-chart header button.marker-filter { display: none; }
 
 /* The shared manager dialog (Manage questions) in a short screen. */
 .phone-labeling .tl-modal-card { max-height: 92vh; }
