@@ -1,6 +1,6 @@
 # Phase 27: Implementation plan (Deep Dive upgrades, Analysis upgrades, Lightweight drawings)
 
-**Status (2026-11-21): all sprints merged (S1 #905 to S7 #911); the owner's acceptance is pending.** Where the build differs from sections A and B below, the "S# as built" sections at the end win. Approved 2026-11-20. Source of truth for sprint order; the status column is up to date. Spec: `docs/spec-phase27.md` (the owner's draft, with the decisions and Built notes under each requirement).
+**Status (2026-11-21): S1 to S7 merged (#905 to #911); the owner's acceptance is pending. S8 to S11 (Notes Upgrade and Analysis Summary, sections C and D below) are planned and not built.** Where the build differs from sections A and B below, the "S# as built" sections at the end win. Approved 2026-11-20. Source of truth for sprint order; the status column is up to date. Spec: `docs/spec-phase27.md` (the owner's draft, with the decisions and Built notes under each requirement).
 
 ## Context
 - `docs/spec-phase27.md` asks for: grouped tag results, a Deep Dive comparison, an Analysis maximize, a score of a day (as system habits and in Stats) and improvement notes with carried-over TODOs.
@@ -71,8 +71,20 @@
 | S5 | B5. Notes and TODOs | no | merged #909 (see "S5 as built") |
 | S6 | B4. Day score backend and the guardrail snapshot | snapshot: yes (dev only) | merged #910 (see "S6 as built") |
 | S7 | B4. Score UI, system habits, Stats trend | no | merged #911 (see "S7 as built") |
+| S8 | C. Scoped drawings foundation: an optional day scope on both Analysis chart renderers, the other charts' drawings copied once into it | shared Lightweight controller (also `Chart.tsx`): optional parameter, default unchanged; **dev only** | planned |
+| S9 | C. Notes upgrade: the date-wide symbol chart in Notes, a tidier layout, click-to-explain score rules | no | planned |
+| S10 | D. Summary backend: `GET /api/analysis/day-summary` and the three allowlists | no | planned |
+| S11 | D. Summary screens: day cards, the Deck view, the daily chart | no | planned |
 
 Order: S1 first (a visible defect of the last release); S2 to S4 are independent UI work; S5 before S6 because the score breakdown sits in the Notes tab.
+
+## C. Notes Upgrade (S8, S9) and D. Analysis Summary (S10, S11): approved plan, 2026-11-21
+Decisions with the owner: one **Summary** section beside Stats with a card per market date and a **Deck** view that pages through the days; the Notes chart shows the drawings saved by other charts but its own edits, deletes and texts belong to Notes only, and the Summary shows those; not on the phone. Design (details are written into "S# as built" when each sprint merges):
+- **S8, scoped drawings.** Drawings are keyed by the whole instrument JSON with no date; the existing `drawing_scope` (used by Swing) gives a separate namespace without a backend change: `notes:<date>`. `shared/charts/drawingIdentity.ts` gets `notesScope(date)` and a shared `seedScopedDrawings` that copies the contract's other-chart drawings into the scope **once** (a hidden `NotesSeed` marker record says it was done, so a deleted drawing is not re-added). `useKLineDrawings` and the Lightweight store/controller get an optional `scope`; `AnalysisChart.tsx`, `AnalysisCharts.tsx`, `AnalysisPanels` and the chart props get an optional `drawingScope`. Default behaviour unchanged. Limit: drawings made elsewhere after the first open are not added.
+- **S9, Notes upgrade.** A shared `DayChart` (symbol tabs over `environment.charts.AnalysisChartPanel`, with the Notes scope; editable in Notes, read only in the Summary) fed with the trades of all the date's groups (same date, not shared, not swing, not practice; details fetched only while the Notes tab is open). `DayNotes` layout tidied (chart on top, notes and TODOs side by side, Review last); `DayScoreBreakdown` rows open on a click with a static explanation per rule (a test compares the numbers with `day_score_service.CONFIG`).
+- **S10, Summary backend.** `GET /api/analysis/day-summary` (start, end, filters of the performance report; at most 62 days, newest first, `truncated` flag) built on `load_session_cycles`: per date the symbols with session ids and contracts, totals, a strategy table, label info, best and worst trade, the journey (`day_journey.journeys`), the stored score and the note when written. Added to the three allowlists with parity tests (Windows rebuild).
+- **S11, Summary screens.** `shared/analysis/summary/` (view, card, deck, model, css), a `DaySummarySource` in the environment, the Windows app's third view and the website's button; the daily chart is a small SVG from `browse/history?interval=1440`.
+- Strategy P&L % is the net P&L of the strategy's trades over the day's capital, with the mean per trade beside it.
 
 ## Verification
 - Backend: `cd backend && source ~/venvs/tradematangi/bin/activate && python -m pytest tests/ -v` (17 `test_auth.py` tests need DynamoDB Local).
