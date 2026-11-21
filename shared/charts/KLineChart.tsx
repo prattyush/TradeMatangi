@@ -34,6 +34,7 @@ import type {
 } from "../../windowsapp/src/contracts";
 import { formatCandleCloseCountdown } from "../../windowsapp/src/liveCountdown";
 import { buildTradeMarkers } from "./tradeMarkers";
+import { MARK_TEXT_STYLE } from "../analysis/kline/annotationFigures";
 import { targetProfitLabel, targetProfitLinePrice } from "./targetProfitLabel";
 import {
   parsePnlTargets,
@@ -177,10 +178,10 @@ const ensureExtensions = () => {
                   baseline: "bottom",
                 },
                 styles: {
+                  ...MARK_TEXT_STYLE,
                   color: marker.color,
                   size: 8,
                   family: "Inter, system-ui, sans-serif",
-                  weight: "bold",
                 },
                 ignoreEvent: true,
               },
