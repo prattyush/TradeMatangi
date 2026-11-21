@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { annotationFigures, ARROW_HEIGHT, MARK_GAP, MARK_TEXT_STYLE } from '../../shared/analysis/kline/annotationFigures'
 
 const entry = { color: '#3b82f6', text: 'Break/ORB', position: 'belowBar' as const, shape: 'arrowUp' as const }
@@ -29,5 +30,19 @@ describe('KLine pattern marks (like the Lightweight markers)', () => {
     expect(text.styles).toMatchObject({ backgroundColor: 'transparent', borderSize: 0, color: entry.color })
     expect(MARK_TEXT_STYLE.backgroundColor).toBe('transparent')
     expect(annotationFigures({ x: 0, y: 0 }, { ...entry, text: '' })).toHaveLength(1)
+  })
+})
+
+describe('KLine buy / sell execution markers have no blue box either', () => {
+  // klinecharts paints a blue box behind every text figure unless the style says otherwise; the execution markers (Analysis, trading charts,
+  // What If) build their text figures inline, so the style is checked in their source.
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
+  it('draws the Analysis execution and What If marker text with the shared no-box style', () => {
+    const source = read('../../shared/analysis/kline/AnalysisChart.tsx')
+    expect(source.match(/\.\.\.MARK_TEXT_STYLE,color:marker\.color/g)?.length).toBe(2)
+  })
+  it('draws the trading chart marker text with the shared no-box style', () => {
+    const source = read('../../shared/charts/KLineChart.tsx')
+    expect(source).toMatch(/name: "desktopTradeMarker"[\s\S]*?\.\.\.MARK_TEXT_STYLE/)
   })
 })
