@@ -1,6 +1,6 @@
 # Phase 27: Implementation plan (Deep Dive upgrades, Analysis upgrades, Lightweight drawings)
 
-**Status (2026-11-21): S1 to S7 merged (#905 to #911); the owner's acceptance is pending. S8 to S11 (Notes Upgrade and Analysis Summary, sections C and D below) are planned and not built.** Where the build differs from sections A and B below, the "S# as built" sections at the end win. Approved 2026-11-20. Source of truth for sprint order; the status column is up to date. Spec: `docs/spec-phase27.md` (the owner's draft, with the decisions and Built notes under each requirement).
+**Status (2026-11-21): S1 to S7 merged (#905 to #911); the owner's acceptance is pending. S8 (#914) and S9 (#915) are merged; S10 (the Summary backend) is built in a PR; S11 (the Summary screens) is planned (Notes Upgrade and Analysis Summary, sections C and D below).** Where the build differs from sections A and B below, the "S# as built" sections at the end win. Approved 2026-11-20. Source of truth for sprint order; the status column is up to date. Spec: `docs/spec-phase27.md` (the owner's draft, with the decisions and Built notes under each requirement).
 
 ## Context
 - `docs/spec-phase27.md` asks for: grouped tag results, a Deep Dive comparison, an Analysis maximize, a score of a day (as system habits and in Stats) and improvement notes with carried-over TODOs.
@@ -72,8 +72,8 @@
 | S6 | B4. Day score backend and the guardrail snapshot | snapshot: yes (dev only) | merged #910 (see "S6 as built") |
 | S7 | B4. Score UI, system habits, Stats trend | no | merged #911 (see "S7 as built") |
 | S8 | C. Scoped drawings foundation: an optional day scope on both Analysis chart renderers, the other charts' drawings copied once into it | shared Lightweight controller (also `Chart.tsx`): optional parameter, default unchanged; **dev only** | merged #914 (see "S8 as built") |
-| S9 | C. Notes upgrade: the date-wide symbol chart in Notes, a tidier layout, click-to-explain score rules | no | built, in PR (see "S9 as built") |
-| S10 | D. Summary backend: `GET /api/analysis/day-summary` and the three allowlists | no | planned |
+| S9 | C. Notes upgrade: the date-wide symbol chart in Notes, a tidier layout, click-to-explain score rules | no | merged #915 (see "S9 as built") |
+| S10 | D. Summary backend: `GET /api/analysis/day-summary` and the three allowlists | no | built, in PR (see "S10 as built") |
 | S11 | D. Summary screens: day cards, the Deck view, the daily chart | no | planned |
 
 Order: S1 first (a visible defect of the last release); S2 to S4 are independent UI work; S5 before S6 because the score breakdown sits in the Notes tab.
@@ -166,3 +166,11 @@ Decisions with the owner: one **Summary** section beside Stats with a card per m
 - `DayNotes.tsx`: a header (long date, Score chip, save state), the chart box (with a line saying what stays with the day), then a two column grid (note | Day score and TODOs; one column under 1000 px), and the Review. `notes.css` tidied (cards, the chart's tab pills, a fixed good chart height also when the card is maximized).
 - `dayScore/ruleHelp.ts`: `RULE_NUMBERS` (a literal copy of the backend `CONFIG`, parsed by `test_notes_tab_rule_numbers_match_the_config` in `test_day_score.py`), `ruleHelp(key)` (why, how with the numbers), `baseHelp`; `model.ts` `eventTimes` (HH:MM of each event from the score's `events`); `DayScoreBreakdown.tsx` rows are buttons (`aria-expanded`, one open at a time) with the explanation row; `types.ts` `DayScore.events`.
 - Tests: `windowsapp/src/dayNotesChart.test.ts` (6), website Playwright `analysis-notes.spec.ts` (two renderers: the day's chart with two symbols, a scoped drawings read; a rule opening and closing), the harness `analysis-notes.tsx` gets `?symbols=2`, the symbols catalogue and the drawings routes, and the backend test above.
+
+## S10 as built (2026-11-22): the Summary's data
+- `backend/app/services/day_summary_service.py` and `routers/day_summary.py` (prefix `/api/analysis`, owner only): `GET /day-summary` takes the `performance.filters` query (so the Stats filters mean the same here) and calls `performance_service.load_cycles` with `trading_style=intraday`, `include_shared=false`, `include_practice=false` forced, then drops any cycle that is shared or not the caller's. `build_days(cycles, scores, notes, max_days=62)` is pure (tests build cycles with `build_cycles`): per date `symbols`, `open_trades`, `totals`, `strategies`, `labels`, `best`, `worst`, `journeys`, `score`, `note`; days newest first, `total_days` and `truncated`.
+- Numbers: only closed cycles count. `totals` and each strategy row come from `performance_service.outcome_stats` plus `pnl_pct`, the **sum** of the trades' P&L % of their own capital (so a day of mixed modes with different capitals still adds up), and `mean_pnl_pct`. Strategy = the label's expected strategy; a label without one is "No strategy named", no label is "Unlabelled"; both sort after the named strategies. Label info counts a trade as plan followed or not only when it has both an expected and an actual strategy. Best and worst are ranked by % of capital and exist only for a trade with a win or a loss (an all-losing day has no best).
+- Journeys: `day_journey.journeys` of the kept cycles, grouped by date, without the entry-sizing block; one per mode (replay, paper, real keep their own capital).
+- The stored score comes from `day_score_service.list_scores` and the notes from the new `day_notes_service.notes_between` (one range query); neither is computed here, and both are looked up only for the kept date range.
+- Allowlists: `desktop_analysis.py` (`/api/analysis/day-summary`, GET), `analysisApi.ts` (`day-summary` in the GET pattern) and `lib.rs` (`"day-summary"`), with a test in each. A Windows rebuild is needed.
+- Tests: `backend/tests/test_day_summary.py` (12: totals, strategies and labels by hand, best and worst, open trades, symbols and journeys per mode, 62-day cut-off, note and score, service wiring and forced filters, notes range, web and desktop routes), `analysisApi.test.ts`, cargo `day_summary_is_read_only_on_the_exact_path`.

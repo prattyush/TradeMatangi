@@ -82,3 +82,12 @@ Status: S8 merged #914 (the scoped drawings, shared with the trading chart's con
 6. The note beside the Day score and the TODOs (two columns on a wide window, one on a narrow one); Maximize: the chart keeps a good height and everything still scrolls.
 7. Day score: click a rule, for example "Drawdown against the guardrail limit": why it counts, how its points are set (the numbers match the score you see) and, for repeat entries, adding to a loser and one loss wiping the wins, the times it was found. Click again: it closes.
 8. A day with no trades (or only a shared day) shows no chart and a plain message.
+
+## H. Summary data (S10; the screens come with S11)
+Status: S10 in PR. Backend only, so the try is a request in the browser. Needs the backend from this branch (and a Windows rebuild for the desktop route).
+1. Signed in on the website, open `/api/analysis/day-summary?start_date=<a month ago>&end_date=<today>` in the same browser (or ask for it from the Windows app later in S11). You get `days`, newest first, one per market date you traded, each with `symbols`, `totals`, `strategies`, `labels`, `best`, `worst`, `journeys`, `score` and `note`.
+2. Pick one day and compare with Stats for the same single date and the same Mode / Type / Symbol: the trade count, win % and net P&L match; the Day P&L Journey end point equals the net P&L.
+3. A day where every trade is labelled shows the strategy rows by name; a day with unlabelled trades has an "Unlabelled" row last. "plan_followed" counts only trades that have both an expected and an actual strategy.
+4. A Strategy Practice run and a swing portfolio are not in the list.
+5. `note` is `null` on a day you wrote nothing for; once you write a Context line in the Notes tab it appears here. `score` is `null` for a day whose score was never stored (open its Notes tab once), and the number after.
+6. A range of more than 62 trading days returns the newest 62 with `truncated: true`.
