@@ -23,24 +23,27 @@ export function unlockAlertAudio(): void {
   if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => undefined);
 }
 
-/** Two short tones. Returns false if audio is unavailable. */
+/** Two rounds of two tones (about 1.2 s in all), so the alert is long enough to notice. Returns false if audio is unavailable. */
 export function playAlertBeep(): boolean {
   const ctx = audioContext();
   if (!ctx) return false;
   if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
-  const start = ctx.currentTime + 0.02;
-  [880, 1175].forEach((frequency, index) => {
-    const at = start + index * 0.18;
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    oscillator.type = "sine";
-    oscillator.frequency.value = frequency;
-    gain.gain.setValueAtTime(0.0001, at);
-    gain.gain.exponentialRampToValueAtTime(0.25, at + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.15);
-    oscillator.connect(gain).connect(ctx.destination);
-    oscillator.start(at);
-    oscillator.stop(at + 0.16);
-  });
+  const first = ctx.currentTime + 0.02;
+  const ROUNDS = 2, ROUND_GAP = 0.7;
+  for (let round = 0; round < ROUNDS; round += 1) {
+    [880, 1175].forEach((frequency, index) => {
+      const at = first + round * ROUND_GAP + index * 0.22;
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.25, at + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.2);
+      oscillator.connect(gain).connect(ctx.destination);
+      oscillator.start(at);
+      oscillator.stop(at + 0.21);
+    });
+  }
   return true;
 }
