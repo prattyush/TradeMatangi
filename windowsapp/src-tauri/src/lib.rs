@@ -735,15 +735,26 @@ async fn desktop_option_metadata(
     base_url: String,
     symbol: String,
     as_of_date: String,
+    purpose: Option<String>,
     host: tauri::State<'_, HostState>,
 ) -> Result<serde_json::Value, String> {
     desktop_get(
         base_url,
         "option-metadata",
-        vec![("symbol", symbol), ("as_of_date", as_of_date)],
+        option_metadata_query(symbol, as_of_date, purpose),
         host,
     )
     .await
+}
+
+/// The query of `option-metadata`. `purpose=trading` (a session being set up) follows the user's "Next expiry on expiry days"
+/// setting; anything else, and Browse, is left out so the server answers with the nearest expiry.
+fn option_metadata_query(symbol: String, as_of_date: String, purpose: Option<String>) -> Vec<(&'static str, String)> {
+    let mut query = vec![("symbol", symbol), ("as_of_date", as_of_date)];
+    if purpose.as_deref() == Some("trading") {
+        query.push(("purpose", "trading".to_string()));
+    }
+    query
 }
 
 #[tauri::command]
@@ -2755,6 +2766,17 @@ mod tests {
         for path in ["day-score/", "day-score/x", "day-scores/x", "day-score/../labels", "dayscore"] {
             assert!(!valid_analysis_path(path, "GET"), "GET {path}");
         }
+    }
+
+    #[test]
+    fn option_metadata_asks_for_the_trading_expiry_only_when_told_to() {
+        let plain = option_metadata_query("NIFTY".into(), "2026-11-17".into(), None);
+        assert_eq!(plain, vec![("symbol", "NIFTY".to_string()), ("as_of_date", "2026-11-17".to_string())]);
+        let other = option_metadata_query("NIFTY".into(), "2026-11-17".into(), Some("browse".into()));
+        assert_eq!(other, plain);
+        let trading = option_metadata_query("NIFTY".into(), "2026-11-17".into(), Some("trading".into()));
+        assert_eq!(trading.last(), Some(&("purpose", "trading".to_string())));
+        assert_eq!(trading.len(), 3);
     }
 
     #[test]

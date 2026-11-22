@@ -329,6 +329,28 @@ class TestWebsiteAnalysisChartRenderer:
         update.assert_not_called()
 
 
+class TestNextExpiryOnExpiryDaySetting:
+    def test_default_is_off_and_old_records_get_it(self):
+        assert svc.DEFAULT_SETTINGS["next_expiry_on_expiry_day"] is False
+        mock_resource, _ = _mock_db({"user_id": "user-123", "historical_days": 4})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            assert svc.get_settings("user-123")["next_expiry_on_expiry_day"] is False
+
+    def test_it_is_saved_and_read_back(self):
+        body = {"next_expiry_on_expiry_day": True}
+        with patch("app.services.user_settings_service.update_settings", return_value=body) as update:
+            response = client.put("/api/users/settings", json=body)
+        assert response.status_code == 200 and response.json()["next_expiry_on_expiry_day"] is True
+        update.assert_called_once_with(FIXED_USER_ID, body)
+
+    def test_a_stored_value_is_a_bool(self):
+        mock_resource, _ = _mock_db({"user_id": "user-123", "next_expiry_on_expiry_day": True})
+        with patch("app.services.db.get_dynamodb_resource", return_value=mock_resource):
+            assert svc.get_settings("user-123")["next_expiry_on_expiry_day"] is True
+            assert svc.wants_next_expiry("user-123") is True
+        assert svc.wants_next_expiry(None) is False
+
+
 class TestTargetLevelsAndCandleAlertSettings:
     def test_defaults(self):
         assert svc.DEFAULT_SETTINGS["pnl_target_levels"] == ""

@@ -29,6 +29,7 @@ import { useRecording } from "../../shared/useRecording"
 import { desktopRecordingSessions } from "../../shared/recordingClocks"
 import { requiredContracts, primaryLinkedScreen } from "./sessionContracts"
 import { premiumPresetsFor } from '../../shared/optionPremiumPresets'
+import { metadataQuery } from './optionMetadata'
 import { BoundedHistoryCache, browseCandles, browseHistoryPath, browseHorizonDays, mergeHistory, oldestDate, type BrowseHistoryPage, type UnderlyingHistoryPage } from './historyPaging'
 import { strategySettingsPayload, settingsWalletContext } from './settingsFields'
 import { accountSettingsRequest } from './desktopSettingsRequest'
@@ -388,7 +389,7 @@ function InstrumentPicker({ initial, lockedTradingDate, referenceTime, sessionId
     setMetadata(null)
     const params = new URLSearchParams({ symbol: draft.symbol, trading_date: draft.tradingDate, interval_minutes: '1', context_days: '0' })
     if (mode === 'Browse') params.set('granularity', 'minute') // Browse only draws candles: minute data, not second-level
-    void Promise.all([api<OptionMetadata>('metadata', new URLSearchParams({ symbol: draft.symbol, as_of_date: draft.tradingDate })), api<HistoricalPage>('history', params)]).then(([value, page]) => {
+    void Promise.all([api<OptionMetadata>('metadata', new URLSearchParams(metadataQuery(draft.symbol, draft.tradingDate, mode !== 'Browse'))), api<HistoricalPage>('history', params)]).then(([value, page]) => {
       if (!active) return
       setMetadata(value)
       const at = Math.floor(new Date(draft.tradingDate + 'T' + referenceTime + 'Z').getTime() / 1000)

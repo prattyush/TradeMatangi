@@ -13,7 +13,7 @@ import pandas as pd
 
 from app.config import SUPPORTED_SYMBOLS
 from app.services.historical_data_service import historical_operation, load_history
-from app.services.options_service import STRIKE_INTERVALS, get_atm_strike, get_expiry_date
+from app.services.options_service import STRIKE_INTERVALS, get_atm_strike, get_expiry_date, trading_expiry
 from app.utils import is_trading_day
 
 
@@ -176,7 +176,9 @@ def find_max_price_strike_minute(symbol, date, expiry, right, cap, reference_tim
     return {"strike": strike, "price": premium}
 
 
-def prepare(mode, date, reference_time, panes):
+def prepare(mode, date, reference_time, panes, next_on_expiry_day=False, existing_session=False):
+    """Resolve the panes of a session (or a Browse view). A trading session must use ``trading_expiry`` (the next expiry on an expiry day when the
+    user's setting is on); Browse and an already started session also accept the plain expiry."""
     requested = calendar_date.fromisoformat(date)
     if not is_trading_day(requested):
         raise ValueError("The selected date is not a trading day")
@@ -196,7 +198,14 @@ def prepare(mode, date, reference_time, panes):
                     calendar_date.fromisoformat(item["expiry"])
                     if item["expiry"] < date:
                         raise ValueError("The option contract has expired")
-                    if item["expiry"] != get_expiry_date(symbol, date):
+                    plain = get_expiry_date(symbol, date)
+                    allowed = {plain}
+                    if mode != "browse":
+                        wanted = trading_expiry(symbol, date, next_on_expiry_day)
+                        allowed = {wanted, plain} if existing_session else {wanted}
+                    if item["expiry"] not in allowed:
+                        if mode != "browse" and item["expiry"] == plain:
+                            raise ValueError(f"Expiry day: the next expiry ({wanted}) is used for new sessions (Settings > Trading)")
                         raise ValueError("Expiry is outside the supported date-aware option range")
                     if item.get("selection_mode") == "max_price":
                         found, premium, history = find_max_price_strike(

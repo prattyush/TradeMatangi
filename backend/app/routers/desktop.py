@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from app.config import SUPPORTED_SYMBOLS
 from app.dependencies import get_desktop_user_id
 from app.services.data_loader import candles_to_records, load_dataframe, resample_to_candles
-from app.services.options_service import STRIKE_INTERVALS, get_expiry_date
+from app.services.options_service import STRIKE_INTERVALS, get_expiry_date, trading_expiry_for_user
 from app.utils import is_trading_day, prior_trading_days
 
 router = APIRouter(prefix="/api/desktop/v1", tags=["desktop"])
@@ -120,9 +120,13 @@ async def catalogue(_: str = Depends(get_desktop_user_id)) -> DesktopCatalogue:
 async def option_metadata(
     symbol: str = Query(...),
     as_of_date: str = Query(...),
-    _: str = Depends(get_desktop_user_id),
+    purpose: str = Query(default="browse", pattern="^(browse|trading)$"),
+    user_id: str = Depends(get_desktop_user_id),
 ) -> OptionMetadata:
-    """Date-aware option selection metadata; never substitutes an invalid contract."""
+    """Date-aware option selection metadata; never substitutes an invalid contract.
+
+    purpose=trading is for a session that is about to be set up: with the user's "Next expiry on expiry days" setting on, an expiry day
+    lists the next expiry. The default (Browse) lists the nearest expiry."""
     if symbol not in SUPPORTED_SYMBOLS:
         raise HTTPException(status_code=404, detail="Desktop instrument is not supported")
     try:
@@ -133,7 +137,7 @@ async def option_metadata(
         return OptionMetadata(symbol=symbol, as_of_date=as_of_date, expiries=[], strike_interval=0, available=False, unavailable_reason="No listed option contracts in the catalogue")
     if not is_trading_day(requested_date):
         return OptionMetadata(symbol=symbol, as_of_date=as_of_date, expiries=[], strike_interval=STRIKE_INTERVALS[symbol], available=False, unavailable_reason="The selected date is not a trading day")
-    expiry = get_expiry_date(symbol, as_of_date)
+    expiry = await asyncio.to_thread(trading_expiry_for_user, user_id, symbol, as_of_date) if purpose == "trading" else get_expiry_date(symbol, as_of_date)
     return OptionMetadata(symbol=symbol, as_of_date=as_of_date, expiries=[expiry], strike_interval=STRIKE_INTERVALS[symbol], available=True)
 
 

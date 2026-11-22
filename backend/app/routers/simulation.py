@@ -140,13 +140,16 @@ async def _prepare_real_options_resume(session, broker) -> None:
         raise HTTPException(status_code=502, detail=f"Could not restore Kotak option contracts: {exc}") from exc
 
 
-def _normalise_option_contract_request(req: SimulationStartRequest) -> None:
-    """Defend against stale client option metadata after symbol/date switches."""
+def _normalise_option_contract_request(req: SimulationStartRequest, user_id: str | None = None) -> None:
+    """Defend against stale client option metadata after symbol/date switches.
+
+    The expiry is the one a trading session uses: the nearest expiry, or on an expiry day the next one when the user's
+    "Next expiry on expiry days" setting is on. A resumed session is rebuilt from its saved contracts, not from this request."""
     if req.instrument_type != "options" or req.expiry is None:
         return
     try:
         from app.services import options_service
-        expected_expiry = options_service.get_expiry_date(req.symbol, req.date)
+        expected_expiry = options_service.trading_expiry_for_user(user_id, req.symbol, req.date)
         if req.expiry != expected_expiry:
             logger.warning(
                 "start_simulation: correcting stale expiry for %s %s: %s -> %s",
@@ -505,7 +508,7 @@ async def _start_simulation_impl(
         if req.right is not None and req.right.upper() not in ("CE", "PE"):
             raise HTTPException(400, "right must be 'CE', 'PE', or null (dual-stream)")
     if not (paper_record and paper_record.get("desktop_origin") == "desktop_paper"):
-        _normalise_option_contract_request(req)
+        _normalise_option_contract_request(req, user_id)
 
     if is_real:
         # Real trading: whitelist + Kotak auth + fund sync

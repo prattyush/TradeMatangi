@@ -244,7 +244,7 @@ export default function SessionControls({
           const priceQueryTime = isLiveSession ? getCurrentIstTime() : startTime
           const [priceRes, expiryRes] = await Promise.all([
             api.getPriceAt(currentSymbol, currentDate, priceQueryTime, isLiveSession ? 'live' : 'replay'),
-            api.getExpiry(currentSymbol, currentDate),
+            api.getExpiry(currentSymbol, currentDate, 'trading'),
           ])
           const interval = symbols.find(item => item.symbol === currentSymbol)?.strike_interval ?? STRIKE_INTERVALS[currentSymbol] ?? 50
           const atmStrike = Math.round(priceRes.price / interval) * interval

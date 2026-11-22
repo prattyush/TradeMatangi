@@ -79,6 +79,7 @@ DEFAULT_SETTINGS: dict = {
     # Comma-separated target day P&L values (% of capital or rupees, per display mode).
     "pnl_target_levels": "",
     "candle_alert_enabled": False,
+    "next_expiry_on_expiry_day": False,
     "candle_alert_interval_min": 3,
     "candle_alert_seconds_before": 15,
     "desktop_confirm_flatten": True,
@@ -115,6 +116,17 @@ def _risk_percentage(value, default: float) -> float:
     # Treat values strictly below 1 as legacy fractions. A stored value of 1
     # is a valid new setting meaning exactly 1%.
     return parsed * 100 if 0 < parsed < 1 else parsed
+
+
+def wants_next_expiry(user_id: str | None) -> bool:
+    """The user's "Next expiry on expiry days" setting (off when the user is unknown or the settings cannot be read)."""
+    if not user_id:
+        return False
+    try:
+        return bool(get_settings(user_id).get("next_expiry_on_expiry_day"))
+    except Exception:  # noqa: BLE001 - a settings read must not stop a session from starting
+        logger.warning("next_expiry_on_expiry_day could not be read for %s; using the default", user_id)
+        return False
 
 
 def get_settings(user_id: str, *, strict: bool = False) -> dict:

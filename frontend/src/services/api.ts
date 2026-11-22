@@ -302,6 +302,7 @@ export interface UserSettingsResponse {
   show_bar_pnl_label?: boolean
   pnl_target_levels?: string
   candle_alert_enabled?: boolean
+  next_expiry_on_expiry_day?: boolean
   candle_alert_interval_min?: number
   candle_alert_seconds_before?: number
   funds_ratio_l_pct?: number
@@ -1156,9 +1157,10 @@ const api = {
     return res.json()
   },
 
-  async getExpiry(symbol: string, date: string): Promise<ExpiryResponse> {
-    const url = `${BACKEND_URL}/api/data/expiry?symbol=${encodeURIComponent(symbol)}&date=${date}`
-    const res = await fetch(url)
+  /** The nearest expiry; `purpose: 'trading'` is for a session about to start and follows the user's "Next expiry on expiry days" setting. */
+  async getExpiry(symbol: string, date: string, purpose?: 'trading'): Promise<ExpiryResponse> {
+    const url = `${BACKEND_URL}/api/data/expiry?symbol=${encodeURIComponent(symbol)}&date=${date}${purpose ? `&purpose=${purpose}` : ''}`
+    const res = await fetch(url, { headers: _authHeaders() })
     if (!res.ok) throw new Error(`Expiry fetch failed: ${res.status}`)
     return res.json()
   },

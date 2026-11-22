@@ -246,7 +246,7 @@ def test_max_price_search_accepts_the_websites_header_for_browse_only(monkeypatc
 
     from app.services import desktop_preparation
 
-    monkeypatch.setattr(desktop_preparation, "prepare", lambda mode, date, ref, panes: {"version": 1, "date": date, "reference_time": ref, "panes": []})
+    monkeypatch.setattr(desktop_preparation, "prepare", lambda mode, date, ref, panes, *rest: {"version": 1, "date": date, "reference_time": ref, "panes": []})
     pane = dict(id="ce", kind="option", symbol="NIFTY", interval="3", tradingDate="2026-10-08", expiry="2026-10-08", strike="24500", right="CE")
     client = TestClient(app)
     path = "/api/desktop/v1/trading/prepare-session"
