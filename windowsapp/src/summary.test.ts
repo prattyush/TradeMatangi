@@ -1,4 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { chartSymbol, chronological, clock, dailyCandles, dailyGeometry, deckStep, money, noteParts, percent, stripTone, summaryQuery, totalsOf, tradeName, tone } from '../../shared/analysis/summary/summaryModel'
 import { createDaySummarySource } from '../../shared/analysis/summary/source'
@@ -103,8 +105,8 @@ describe('the hosts', () => {
     expect(desktop).toContain("'Sessions' | 'Stats' | 'Summary'")
     expect(desktop).toContain('summaryVisited &&')
     expect(desktop).toContain('createDaySummarySource(notesRequest)')
-    const sources = (dir: string): string[] => readdirSync(dir).flatMap(name => { const path = `${dir}/${name}`; return statSync(path).isDirectory() ? sources(path) : /\.tsx?$/.test(name) ? [path] : [] })
-    const phone = sources(new URL('../../mobile/src', import.meta.url).pathname)
+    const sources = (dir: string): string[] => readdirSync(dir).flatMap(name => { const path = join(dir, name); return statSync(path).isDirectory() ? sources(path) : /\.tsx?$/.test(name) ? [path] : [] })
+    const phone = sources(fileURLToPath(new URL('../../mobile/src', import.meta.url)))
     expect(phone.length).toBeGreaterThan(10)
     expect(phone.filter(file => readFileSync(file, 'utf8').includes('daySummary'))).toEqual([])
   })
