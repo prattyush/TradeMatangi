@@ -144,3 +144,13 @@ export function readMaxPrice(response: { panes?: PreparedPane[] } | null | undef
 
 /** The paged history route (`GET`): pages of whole trading days before `before`, for scroll-back of an index or equity. */
 export const BROWSE_HISTORY_PATH = '/api/desktop/v1/browse/history'
+
+/**
+ * May a scroll-back request for older candles go to the server? Only when the candles held are those of this pane and interval
+ * (`heldKey` equals `key`) and the cursor is not older than the oldest of them. A chart that has just been re-created for a new
+ * interval can still hold the previous interval's candles and ask with their oldest time; the answer is for the NEW interval and,
+ * merged with the new first load, leaves a hole (3m data from 27 Oct, then 5m pages from 26 Oct and before).
+ */
+export function acceptCursor(heldKey: string | null | undefined, key: string, heldOldest: number | undefined, before: number): boolean {
+  return heldKey === key && heldOldest !== undefined && Number.isFinite(before) && before >= heldOldest
+}
