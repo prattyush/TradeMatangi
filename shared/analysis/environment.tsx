@@ -7,6 +7,7 @@ import type { VideoLinksSource } from './videoLinks'
 import type { WhatIfSource } from './whatif/scenarios'
 import type { DayNotesSource } from './notes/types'
 import type { DayScoreSource } from './dayScore/types'
+import type { DaySummarySource } from './summary/types'
 import type { StatsAllEntry } from '../deepdive/types'
 import type { DiveChartProps } from '../deepdive/ui/host'
 import type { PracticeApi } from '../practice/types'
@@ -42,6 +43,8 @@ export interface AnalysisEnvironment {
   dayNotes?: DayNotesSource
   /** The day score (Phase 27). Without it no score is shown. */
   dayScore?: DayScoreSource
+  /** The Summary's day cards (Phase 27). Without it the Summary is not offered (the phone). */
+  daySummary?: DaySummarySource
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
     getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>

@@ -1,7 +1,8 @@
 .desktop-analysis { position: fixed; inset: 0; background: #10131a; overflow: hidden; z-index: 20; }
 .desktop-analysis[hidden], .desktop-analysis [hidden] { display: none !important; }
 .analysis-navigation { height: 42px; display: flex; gap: 8px; align-items: center; padding: 4px 12px; }
-.analysis-sessions, .analysis-stats { position: absolute; inset: 42px 0 0; }
+.analysis-sessions, .analysis-stats, .analysis-summary { position: absolute; inset: 42px 0 0; }
+.analysis-summary { overflow: auto; }
 .analysis-sessions > div { position: absolute !important; inset: 0 !important; }
 .desktop-analysis .pa-overlay { position: absolute; inset: 0; }
 .desktop-analysis main { height: auto; display: block; }
