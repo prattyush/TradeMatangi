@@ -380,16 +380,34 @@ def score_day(cycles, *, capital: float, limit_pct: float, limit_source: str, lo
 
 # ── Loading a day ────────────────────────────────────────────────────────────
 
-def _day_sessions(user_id: str, date: str) -> list[dict]:
-    """The user's own intraday sessions of a market date (no swing, no practice, one per broker projection)."""
+def _skip_reason(session: dict, user_id: str, date: str) -> str | None:
+    """Why a session row is not part of the day's score (``None`` = it is), so the diagnostics can say it."""
+    if session.get("user_id") != user_id:
+        return "other_user"
+    if session.get("date") != date:
+        return "other_date"
+    if session.get("trading_style") == "swing" or session.get("record_type") == "swing_portfolio":
+        return "swing"
+    if ":archive:" in session["session_id"]:
+        return "archive"
+    if session.get("practice"):
+        return "practice"
+    if session.get("broker_projection_owner", session["session_id"]) != session["session_id"]:
+        return "projection_alias"
+    return None
+
+
+def _user_session_rows(user_id: str) -> list[dict]:
     from boto3.dynamodb.conditions import Key
     from app.services.performance_service import query_all
-    rows = query_all(_resource().Table("Sessions"), IndexName="UserIdIndex", KeyConditionExpression=Key("user_id").eq(user_id))
+    return query_all(_resource().Table("Sessions"), IndexName="UserIdIndex", KeyConditionExpression=Key("user_id").eq(user_id))
+
+
+def _day_sessions(user_id: str, date: str) -> list[dict]:
+    """The user's own intraday sessions of a market date (no swing, no practice, one per broker projection)."""
     owners, kept = set(), []
-    for session in rows:
-        if (session.get("user_id") != user_id or session.get("date") != date or session.get("trading_style") == "swing" or session.get("record_type") == "swing_portfolio"
-                or ":archive:" in session["session_id"] or session.get("practice")
-                or session.get("broker_projection_owner", session["session_id"]) != session["session_id"]):
+    for session in _user_session_rows(user_id):
+        if _skip_reason(session, user_id, date):
             continue
         owner = session.get("broker_projection_id") or session["session_id"]
         if owner in owners:
@@ -423,21 +441,103 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _unlabelled_by_session(sessions: list[dict], closed: list[dict]) -> list[dict]:
+    """Where the closed trades without a label are, so a day that cannot be scored yet says which session still needs them (the score
+    covers every session of the date: other symbols, paper, replay and stepwise runs too, not only the one on screen). Each row lists
+    the first few trades (entry time, contract, side) so they can be found."""
+    by_id = {s["session_id"]: s for s in sessions}
+    groups: dict[str, list[dict]] = {}
+    for cycle in closed:
+        if not cycle.get("label"):
+            groups.setdefault(cycle.get("session_id"), []).append(cycle)
+    rows = [{"session_id": sid, "session_type": (by_id.get(sid) or {}).get("session_type") or "sim", "symbol": (by_id.get(sid) or {}).get("symbol") or "",
+             "count": len(items),
+             "trades": [{"entry_time": c.get("entry_time"), "right": c.get("right"), "strike": c.get("strike"), "direction": c.get("direction")} for c in items[:6]]}
+            for sid, items in groups.items()]
+    return sorted(rows, key=lambda r: (-r["count"], r["symbol"], r["session_id"]))
+
+
+# ── Diagnostics ──────────────────────────────────────────────────────────────
+
+_LOGGED: dict[tuple[str, str], str] = {}
+
+
+def _short(value) -> str:
+    return str(value)[:10] if value is not None else ""
+
+
+def _log_day(user_id: str, day: str, sessions: list[dict], cycles_by_session: dict[str, list[dict]], result: dict) -> None:
+    """One ``DAYSCORE-DIAG`` line in the backend log for a day that cannot be scored yet (or is scored): which sessions were read and
+    which were left out and why, how many closed trades each has against the round trips Label Trades shows and the label rows saved,
+    and exactly which closed trades have no label. Written once per change of the day's data; never raises, never changes a score."""
+    key = (user_id, day)
+    if _LOGGED.get(key) == result.get("fingerprint"):
+        return
+    _LOGGED[key] = result.get("fingerprint")
+    try:
+        from app.services.trade_label_service import compute_round_trips_for_session, get_labels_for_session
+        rows = []
+        for row in _user_session_rows(user_id):
+            if row.get("date") == day:
+                rows.append({"id": row["session_id"], "type": row.get("session_type"), "symbol": row.get("symbol"), "inst": row.get("instrument_type"),
+                             "style": row.get("trading_style"), "practice": bool(row.get("practice")), "proj": _short(row.get("broker_projection_id")),
+                             "owner": _short(row.get("broker_projection_owner")), "created": row.get("created_at"), "state": row.get("state"),
+                             "skipped": _skip_reason(row, user_id, day)})
+        detail = []
+        for session in sessions:
+            sid = session["session_id"]
+            cycles = cycles_by_session.get(sid, [])
+            closed = [c for c in cycles if c.get("state") == "closed"]
+            try:
+                trips = compute_round_trips_for_session(sid)
+                labels = get_labels_for_session(sid)
+            except Exception as exc:  # noqa: BLE001 - a diagnostic read must not break anything
+                trips, labels = [], []
+                detail.append({"id": sid, "read_error": str(exc)[:120]})
+            label_indexes = {int(label["round_trip_index"]) for label in labels}
+            unlabelled = []
+            for c in closed:
+                if c.get("label"):
+                    continue
+                unlabelled.append({"cycle": _short(c["cycle_id"]), "index": c.get("index"), "label_index": c.get("label_index"), "index_has_label_row": c.get("index") in label_indexes,
+                                   "entry": c.get("entry_time"), "exit": c.get("exit_time"), "dir": c.get("direction"), "right": c.get("right"), "strike": c.get("strike"),
+                                   "fills": [(r.get("role"), _short(r.get("broker_order_id") or r.get("kotak_order_id") or r.get("trade_id")), r.get("quantity")) for r in c.get("executions", [])][:6]})
+            fills = []
+            if unlabelled:
+                # the raw fills of a session with unlabelled trades: a fill that is larger than the open position (a flip through flat) shows here
+                from app.services.analysis_service import get_trades_for_session
+                fills = [(t.get("side"), int(t.get("quantity", 0)), t.get("timestamp"), _short(t.get("broker_order_id") or t.get("kotak_order_id") or t.get("trade_id")), t.get("strike"), t.get("right"))
+                         for t in sorted(get_trades_for_session(sid), key=lambda t: (int(t.get("timestamp", 0)), str(t.get("trade_id", ""))))][:60]
+            detail.append({"id": sid, "type": session.get("session_type"), "symbol": session.get("symbol"), "cycles": len(cycles), "closed": len(closed), "fills": fills,
+                           "closed_labelled": sum(1 for c in closed if c.get("label")), "round_trips_shown_in_label_trades": len(trips),
+                           "label_rows": sorted(label_indexes), "label_rows_with_cycle_id": sum(1 for label in labels if label.get("analytics_cycle_id")),
+                           "label_rows_complete": sum(1 for label in labels if label.get("expected_strategy") and label.get("actual_strategy") and label.get("expected_category") and label.get("actual_category")),
+                           "unlabelled": unlabelled})
+        logger.info("DAYSCORE-DIAG %s", json.dumps({"date": day, "status": result.get("status"), "closed": result.get("closed"), "labelled": result.get("labelled"),
+                                                     "user": _short(user_id), "session_rows_of_the_date": rows, "scored_sessions": detail}, default=str))
+    except Exception:  # noqa: BLE001
+        logger.exception("DAYSCORE-DIAG failed for %s", day)
+
+
 def compute_day(user_id: str, date: str, *, load_frame=None) -> dict:
     """Scores a market date from scratch (no cache): ``status`` is ``no_trades``, ``pending_labels`` (some closed trade has no label yet) or ``scored``."""
     from app.services import performance_service
     day = clean_date(date)
     sessions = _day_sessions(user_id, day)
     cycles: list[dict] = []
+    by_session: dict[str, list[dict]] = {}
     for session in sessions:
-        cycles.extend(performance_service.load_session_cycles(session))
+        by_session[session["session_id"]] = performance_service.load_session_cycles(session)
+        cycles.extend(by_session[session["session_id"]])
     closed = closed_in_order(cycles)
     base = {"date": day, "sessions": len(sessions), "closed": len(closed), "labelled": sum(1 for c in closed if c.get("label")), "config_version": CONFIG_VERSION}
     fingerprint = _fingerprint(day, sessions, cycles)
     if not closed:
         return {**base, "status": "no_trades", "score": None, "fingerprint": fingerprint}
     if base["labelled"] < len(closed):
-        return {**base, "status": "pending_labels", "score": None, "fingerprint": fingerprint}
+        pending = {**base, "status": "pending_labels", "score": None, "fingerprint": fingerprint, "unlabelled": _unlabelled_by_session(sessions, closed)}
+        _log_day(user_id, day, sessions, by_session, pending)
+        return pending
     limits = [session_limit(s) for s in sessions]
     limit_pct = min(pct for pct, _ in limits)
     source = "saved" if all(src == "saved" for _, src in limits) else "estimated"

@@ -159,7 +159,7 @@ def _fetch_span(provider: str, item: dict, days: list[Date], span: int) -> pd.Da
         return pd.concat(parts).sort_index() if parts else pd.DataFrame()
 
 
-def _fill_days(item: dict, wanted: list[Date]) -> tuple[dict[Date, pd.DataFrame], set[Date], str | None]:
+def _fill_days(item: dict, wanted: list[Date], trace: dict | None = None) -> tuple[dict[Date, pd.DataFrame], set[Date], str | None]:
     """The 1-minute frame of every wanted day that any source can give, fetching missing days in windows.
 
     Returns ``(have, failed, failure)``. ``failed`` holds the days that are missing because a source **failed or was
@@ -170,10 +170,13 @@ def _fill_days(item: dict, wanted: list[Date]) -> tuple[dict[Date, pd.DataFrame]
     have: dict[Date, pd.DataFrame] = {}
     errored: set[Date] = set()
     missing: list[Date] = []
+    source: dict[Date, str] = {} if trace is None else trace.setdefault("source", {})
+    windows_log: list = [] if trace is None else trace.setdefault("windows", [])
     for day in wanted:
         frame = _cached_day(item, day)
         if frame is not None:
             have[day] = frame
+            source[day] = "cache"
         else:
             missing.append(day)
     failure: str | None = None
@@ -184,6 +187,7 @@ def _fill_days(item: dict, wanted: list[Date]) -> tuple[dict[Date, pd.DataFrame]
         if cooling:
             failure = failure or cooling
             errored.update(missing)
+            windows_log.append({"provider": provider, "cooling": cooling})
             continue
         for first, last in _windows(missing, WINDOW_DAYS[provider]):
             key = f"{provider}:{_identity(item)}:{first}:{last}"
@@ -194,12 +198,14 @@ def _fill_days(item: dict, wanted: list[Date]) -> tuple[dict[Date, pd.DataFrame]
                     frame = _cached_day(item, day)
                     if frame is not None:
                         have[day] = frame
+                        source[day] = "cache"
                         todo.remove(day)
                 if not todo:
                     continue
                 try:
                     rows = _fetch_span(provider, item, todo, WINDOW_DAYS[provider])
                 except Exception as exc:  # noqa: BLE001 - try the next source
+                    windows_log.append({"provider": provider, "from": str(min(todo)), "to": str(max(todo)), "days": len(todo), "error": f"{type(exc).__name__}: {str(exc)[:100]}"})
                     reason = _token_reason(provider, exc)
                     if reason:
                         _cooldown[provider] = (time.monotonic() + _COOLDOWN_SECONDS, reason)
@@ -212,6 +218,9 @@ def _fill_days(item: dict, wanted: list[Date]) -> tuple[dict[Date, pd.DataFrame]
                     continue
                 # The provider answered for these days: a day it has no rows for is a gap, not a failure.
                 errored.difference_update(todo)
+                got = [] if rows.empty else sorted({d for d in rows.index.date if d in set(todo)})
+                windows_log.append({"provider": provider, "from": str(min(todo)), "to": str(max(todo)), "days": len(todo), "rows": int(len(rows)),
+                                    "days_with_rows": len(got), "last_row": str(rows.index.max()) if not rows.empty else None})
                 if rows.empty:
                     continue  # nothing for any of these days (an empty frame has no date index to compare)
                 for day in todo:
@@ -221,6 +230,7 @@ def _fill_days(item: dict, wanted: list[Date]) -> tuple[dict[Date, pd.DataFrame]
                     frame = _write_day(provider, item, day, day_rows)
                     if not frame.empty:
                         have[day] = frame
+                        source[day] = f"fetched:{provider}"
         missing = [day for day in missing if day not in have]
     return have, {day for day in wanted if day not in have and day in errored}, failure
 
@@ -305,6 +315,36 @@ def _bucketed(frames: list[pd.DataFrame], interval: int) -> pd.DataFrame:
     return frame.groupby(stamps).agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
 
 
+def _ranges(days: list[Date]) -> list[str]:
+    """``first..last (n days)`` for a long list of days, to keep a log line short."""
+    ordered = sorted(days)
+    return [f"{ordered[0]}..{ordered[-1]} ({len(ordered)} days)"] if ordered else []
+
+
+def _log_page(symbol: str, interval: int, anchor: Date, before, count: int, wanted: list[Date], have: dict, failed: set, failure, trace: dict, run: list[Date], result: dict) -> None:
+    """One ``BROWSE-DIAG`` line per page request: which days were asked for, where each came from (cache, a provider window, or nowhere), what the provider
+    windows returned, which days failed or were passed over as gaps, and what the page finally holds. Never raises."""
+    try:
+        source = trace.get("source", {})
+        by_source: dict[str, list[Date]] = {}
+        for day in wanted:
+            kind = source.get(day) or ("failed" if day in failed else "no_rows_anywhere" if day not in have else "cache")
+            by_source.setdefault(kind, []).append(day)
+        candles = result.get("candles") or []
+        stamp = lambda t: pd.Timestamp(int(t), unit="s").isoformat() if t is not None else None  # noqa: E731
+        logger.info("BROWSE-DIAG %s", json.dumps({
+            "symbol": symbol, "interval": interval, "anchor": str(anchor), "before": stamp(before), "count": count,
+            "wanted": f"{wanted[0]}..{wanted[-1]} ({len(wanted)} trading days)" if wanted else None,
+            "days_by_source": {kind: _ranges(days) if len(days) > 8 else [str(d) for d in sorted(days)] for kind, days in by_source.items()},
+            "provider_windows": trace.get("windows", []), "failure": failure,
+            "page_run": f"{run[-1]}..{run[0]}" if run else None,
+            "returned": {"candles": len(candles), "first": stamp(candles[0]["time"]) if candles else None, "last": stamp(candles[-1]["time"]) if candles else None,
+                         "more": result.get("more"), "oldest_date": result.get("oldest_date")},
+        }, default=str))
+    except Exception:  # noqa: BLE001
+        logger.exception("BROWSE-DIAG failed")
+
+
 def page(symbol: str, interval: int, anchor: Date, before: int | None = None, days: int | None = None) -> dict:
     """One page of candles ending at `anchor` (or just before `before`, epoch seconds IST-as-UTC)."""
     if interval not in INTERVALS:
@@ -343,7 +383,8 @@ def page(symbol: str, interval: int, anchor: Date, before: int | None = None, da
         frame.index = [int(stamp.tz_localize("UTC").timestamp()) for stamp in frame.index]
         result["candles"] = _records(frame)
     else:
-        have, failed, failure = _fill_days(item, wanted)
+        trace: dict = {}
+        have, failed, failure = _fill_days(item, wanted, trace)
         # A page is the run of days next to the seam, newest first, up to the first day that could not be loaded. Days
         # beyond a failed one are not returned: the client asks again from the oldest candle it holds, so skipping the
         # failed day would hide it for good (the chart jumped from one day to months earlier). A day no source has data
@@ -355,6 +396,7 @@ def page(symbol: str, interval: int, anchor: Date, before: int | None = None, da
             elif day in failed:
                 break
         if not run:
+            _log_page(symbol, interval, anchor, before, count, wanted, have, failed, failure, trace, run, result)
             if failed:
                 raise BrowseUnavailable(failure or "Historical provider failed. Try again.")
             return result
@@ -366,6 +408,7 @@ def page(symbol: str, interval: int, anchor: Date, before: int | None = None, da
         if cutoff is not None:
             merged = merged[merged.index < int(cutoff.timestamp())]
         result["candles"] = _records(merged)
+        _log_page(symbol, interval, anchor, before, count, wanted, have, failed, failure, trace, run, result)
     if result["candles"]:
         result["before"] = result["candles"][0]["time"]
     result["partial"] = wanted[0] == today and bool(swing_market.window(swing_market.now()))

@@ -18,6 +18,8 @@ describe('day score model', () => {
     expect(pendingText({ status: 'no_trades', closed: 0, labelled: 0 })).toMatch(/No closed trades/)
     expect(pendingText({ status: 'pending_labels', closed: 5, labelled: 3 })).toBe('Label the 2 closed trades that have no label (3 of 5 labelled) to get the day\'s score.')
     expect(pendingText({ status: 'pending_labels', closed: 4, labelled: 3 })).toMatch(/Label the last closed trade \(3 of 4 labelled\)/)
+    expect(pendingText({ status: 'pending_labels', closed: 5, labelled: 2, unlabelled: [{ session_id: 'a', session_type: 'sim', symbol: 'BSESEN', count: 2 }, { session_id: 'b', session_type: 'paper', symbol: 'NIFTY', count: 1 }] }))
+      .toBe("Label the 3 closed trades that have no label (2 of 5 labelled) to get the day's score. The score covers every session of the day. Still without a label: Replay BSESEN 2, Paper NIFTY 1.")
     expect(pendingText({ status: 'scored', closed: 3, labelled: 3 })).toBe('')
   })
 

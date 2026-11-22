@@ -32,6 +32,8 @@ export interface DayScore {
   closed: number
   labelled: number
   sessions: number
+  /** For `pending_labels`: the sessions that still have closed trades without a label. */
+  unlabelled?: Array<{ session_id: string; session_type: string; symbol: string; count: number; trades?: Array<{ entry_time?: number | null; right?: string | null; strike?: number | null; direction?: string | null }> }>
   base?: number
   items?: ScoreItem[]
   /** The capital-loss limit (%) the day was scored against and where it came from: `saved` with the session, or `estimated` (a fixed value for older sessions). */

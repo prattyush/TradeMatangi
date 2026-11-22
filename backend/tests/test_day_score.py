@@ -261,6 +261,47 @@ def test_status_is_no_trades_then_pending_labels_then_scored(database, monkeypat
     assert done["limit_pct"] == 10.0 and done["limit_source"] == "saved" and done["capital"] == 100000
 
 
+def test_a_pending_day_says_which_session_still_has_trades_without_a_label(database, monkeypatch):
+    # The score is for the whole date: one session fully labelled does not make the day scorable while another one is not.
+    a = labelled(flat(trade(1, 0, 3), trade(2, 300, 3)))
+    other = {**SESSION, "session_id": "s2", "symbol": "BSESEN", "session_type": "paper", "created_at": 2}
+    b = cycles_of(*[f for g in [trade(3, 900, 3), trade(4, 1200, 3), trade(5, 1500, 3)] for f in g], session=other)
+    labelled(b[:1])
+    stub_day(monkeypatch, [SESSION, other], {"s1": a, "s2": b})
+    pending = svc.compute_day("alice", "2026-11-16", load_frame=NO_CANDLES)
+    assert pending["status"] == "pending_labels" and pending["labelled"] == len(a) + 1 and pending["closed"] == len(a) + len(b)
+    assert [(r["session_id"], r["session_type"], r["symbol"], r["count"], len(r["trades"])) for r in pending["unlabelled"]] == [("s2", "paper", "BSESEN", len(b) - 1, len(b) - 1)]
+    assert set(pending["unlabelled"][0]["trades"][0]) == {"entry_time", "right", "strike", "direction"}
+    labelled(b)
+    assert svc.compute_day("alice", "2026-11-16", load_frame=NO_CANDLES)["status"] == "scored"
+
+
+def test_a_pending_day_writes_one_diagnostic_line_per_change(database, monkeypatch, caplog):
+    import json
+    import logging
+    svc._LOGGED.clear()
+    a = labelled(flat(trade(1, 0, 3), trade(2, 300, 3)))
+    other = {**SESSION, "session_id": "s2", "symbol": "BSESEN", "session_type": "paper", "created_at": 2}
+    b = cycles_of(*[f for g in [trade(3, 900, 3), trade(4, 1200, 3)] for f in g], session=other)
+    stub_day(monkeypatch, [SESSION, other], {"s1": a, "s2": b})
+    monkeypatch.setattr(svc, "_user_session_rows", lambda user: [SESSION, other, {**SESSION, "session_id": "s3", "date": "2026-11-16", "practice": {"strategy": "x"}}])
+    from app.services import trade_label_service, analysis_service
+    monkeypatch.setattr(trade_label_service, "compute_round_trips_for_session", lambda sid: [])
+    monkeypatch.setattr(trade_label_service, "get_labels_for_session", lambda sid: [{"round_trip_index": 0, "analytics_cycle_id": None, "expected_strategy": "S"}])
+    monkeypatch.setattr(analysis_service, "get_trades_for_session", lambda sid: [{"side": "BUY", "quantity": 10, "timestamp": 1, "trade_id": "t1"}])
+    with caplog.at_level(logging.INFO, logger=svc.logger.name):
+        svc.compute_day("alice", "2026-11-16", load_frame=NO_CANDLES)
+        svc.compute_day("alice", "2026-11-16", load_frame=NO_CANDLES)  # nothing changed: not written again
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("DAYSCORE-DIAG")]
+    assert len(lines) == 1
+    data = json.loads(lines[0].split(" ", 1)[1])
+    assert data["status"] == "pending_labels" and data["closed"] == len(a) + len(b) and data["labelled"] == len(a)
+    assert {r["id"]: r["skipped"] for r in data["session_rows_of_the_date"]} == {"s1": None, "s2": None, "s3": "practice"}
+    scored = {d["id"]: d for d in data["scored_sessions"]}
+    assert scored["s1"]["unlabelled"] == [] and len(scored["s2"]["unlabelled"]) == len(b) and scored["s2"]["fills"] and scored["s1"]["fills"] == []
+    assert scored["s2"]["unlabelled"][0]["index_has_label_row"] in (True, False) and "fills" in scored["s2"]["unlabelled"][0]
+
+
 def test_two_sessions_on_a_day_use_the_strictest_limit_and_are_estimated_if_any_is(database, monkeypatch):
     a = flat(trade(1, 0, 3), trade(2, 300, 3))
     other = {**SESSION, "session_id": "s2", "created_at": 2}
