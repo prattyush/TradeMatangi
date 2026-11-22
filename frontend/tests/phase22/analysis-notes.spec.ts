@@ -111,3 +111,53 @@ test("Analysis day score: an estimated limit and partial candles are said, and a
   await page.getByRole("button", { name: "Notes", exact: true }).click();
   await expect(page.getByTestId("score-pending")).toHaveText("Label the last closed trade (3 of 4 labelled) to get the day's score.");
 });
+
+// The Notes tab's chart of the whole day (Phase 27, S9) and the rules of the score that open on a click.
+for (const renderer of ["lightweight", "kline"] as const) {
+  test(`Analysis Notes (${renderer}): the day's chart has a tab per symbol and keeps its drawings in the day's own namespace`, async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error: Error) => errors.push(error.message));
+    page.on("console", (m: any) => { if (m.type() === "error" && !/favicon|Failed to load resource/.test(m.text())) errors.push(m.text()); });
+    await page.goto(`/tests/phase22/analysis-notes.html?renderer=${renderer}&symbols=2`, { waitUntil: "domcontentloaded" });
+    // Two symbols on the date are two cards; the Notes tab of either one is the date's.
+    await page.getByText("2026-10-16").first().click();
+    await page.getByRole("button", { name: "Notes", exact: true }).click();
+    const notes = page.getByLabel("Notes for 2026-10-16");
+    await expect(notes.getByRole("heading", { level: 3 })).toContainText(/Friday,? 16 Oct 2026/);
+    const chart = notes.getByLabel("Charts for 2026-10-16");
+    const tabs = chart.getByRole("navigation", { name: "Symbol" });
+    await expect(tabs.getByRole("button")).toHaveText(["BANKNIFTY", "NIFTY"]);
+    await expect(tabs.getByRole("button", { name: "BANKNIFTY", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(chart.locator("canvas").first()).toBeVisible();
+    // Its drawings are asked for in the day's own namespace, never the plain one only.
+    const scopedReads = () => page.evaluate(() => ((window as any).requests as string[]).filter((r) => r.includes("drawings?instrument=") && decodeURIComponent(r).includes('"drawing_scope":"notes:2026-10-16"')).length);
+    await expect.poll(scopedReads).toBeGreaterThan(0);
+    // The other symbol: its candles are asked for and the NIFTY chart (with its CE tab) opens.
+    await tabs.getByRole("button", { name: "NIFTY", exact: true }).click();
+    await expect(tabs.getByRole("button", { name: "NIFTY", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(chart.locator("canvas").first()).toBeVisible();
+    await expect.poll(() => page.evaluate(() => ((window as any).requests as string[]).filter((r) => r.includes("symbol=NIFTY")).length)).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+  });
+}
+
+test("Analysis Notes: a rule of the day score opens on a click to say why it counts, how the points are set and what was found", async ({ page }) => {
+  await page.goto("/tests/phase22/analysis-notes.html?score=scored", { waitUntil: "domcontentloaded" });
+  await page.getByText("2026-10-16").first().click();
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  const score = page.getByLabel("Notes for 2026-10-16").getByRole("region", { name: "Day score" });
+  const drawdown = score.getByRole("button", { name: /Drawdown against the guardrail limit/ });
+  await expect(drawdown).toHaveAttribute("aria-expanded", "false");
+  await expect(score.locator(".ds-help")).toHaveCount(0);
+  await drawdown.click();
+  await expect(drawdown).toHaveAttribute("aria-expanded", "true");
+  const help = score.locator(".ds-help");
+  await expect(help).toContainText("Why it counts.");
+  await expect(help).toContainText("50% of the limit −8, 75% of the limit −14, 100% of the limit −25, 150% of the limit −35");
+  // One open at a time: another rule replaces it; a second click closes it.
+  await score.getByRole("button", { name: /Repeat entries after a loss/ }).click();
+  await expect(help).toHaveCount(1);
+  await expect(help).toContainText("within 3 bars (9 minutes on 3-minute bars)");
+  await score.getByRole("button", { name: /Repeat entries after a loss/ }).click();
+  await expect(score.locator(".ds-help")).toHaveCount(0);
+});

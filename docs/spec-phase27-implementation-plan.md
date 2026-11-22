@@ -71,8 +71,8 @@
 | S5 | B5. Notes and TODOs | no | merged #909 (see "S5 as built") |
 | S6 | B4. Day score backend and the guardrail snapshot | snapshot: yes (dev only) | merged #910 (see "S6 as built") |
 | S7 | B4. Score UI, system habits, Stats trend | no | merged #911 (see "S7 as built") |
-| S8 | C. Scoped drawings foundation: an optional day scope on both Analysis chart renderers, the other charts' drawings copied once into it | shared Lightweight controller (also `Chart.tsx`): optional parameter, default unchanged; **dev only** | built, in PR (see "S8 as built") |
-| S9 | C. Notes upgrade: the date-wide symbol chart in Notes, a tidier layout, click-to-explain score rules | no | planned |
+| S8 | C. Scoped drawings foundation: an optional day scope on both Analysis chart renderers, the other charts' drawings copied once into it | shared Lightweight controller (also `Chart.tsx`): optional parameter, default unchanged; **dev only** | merged #914 (see "S8 as built") |
+| S9 | C. Notes upgrade: the date-wide symbol chart in Notes, a tidier layout, click-to-explain score rules | no | built, in PR (see "S9 as built") |
 | S10 | D. Summary backend: `GET /api/analysis/day-summary` and the three allowlists | no | planned |
 | S11 | D. Summary screens: day cards, the Deck view, the daily chart | no | planned |
 
@@ -160,3 +160,9 @@ Decisions with the owner: one **Summary** section beside Stats with a card per m
 - No backend change (the instrument id is the whole instrument JSON, so `drawing_scope` already separates the records); `test_desktop_persistence.py` pins that a scoped namespace and the marker do not touch the plain records or another day.
 - Tests: `windowsapp/src/scopedDrawings.test.ts` (7), the harness page `frontend/tests/phase22/analysis-tools.*` gets `?scope=` and `?view=1` and a drawings service that separates scoped records, with three new Playwright cases (KLine and Lightweight: seeded copy, delete and a new text stay in Notes and the plain chart never sees them, reopening copies nothing; KLine viewing: read only and nothing saved).
 - Nothing in the apps uses it until S9 (the Notes chart), so there is no screen to try yet.
+
+## S9 as built (2026-11-22): the Notes upgrade
+- `shared/analysis/notes/DayChart.tsx` and `dayChartModel.ts` (`daySessions`, `daySymbols`, `tradesBySymbol`): the date's own intraday sessions with trades (from `api.getAnalysisSessions` for that date; no shared, swing or practice run) and their trades from `getSessionDetail`, a symbol tab per symbol (hidden when there is one), and `environment.charts.AnalysisChartPanel` with `drawingScope={notesScope(date)}` and `drawingsReadOnly` (the Summary will pass it). It asks only while the Notes tab is open and needs no change in the hosts (not `GroupCard`, not the Windows `DesktopAnalysisSessions`), because the date's sessions come through the environment's own api. Both renderers (KLine `AnalysisPanels`, Lightweight `WebsiteAnalysisChartPanel`).
+- `DayNotes.tsx`: a header (long date, Score chip, save state), the chart box (with a line saying what stays with the day), then a two column grid (note | Day score and TODOs; one column under 1000 px), and the Review. `notes.css` tidied (cards, the chart's tab pills, a fixed good chart height also when the card is maximized).
+- `dayScore/ruleHelp.ts`: `RULE_NUMBERS` (a literal copy of the backend `CONFIG`, parsed by `test_notes_tab_rule_numbers_match_the_config` in `test_day_score.py`), `ruleHelp(key)` (why, how with the numbers), `baseHelp`; `model.ts` `eventTimes` (HH:MM of each event from the score's `events`); `DayScoreBreakdown.tsx` rows are buttons (`aria-expanded`, one open at a time) with the explanation row; `types.ts` `DayScore.events`.
+- Tests: `windowsapp/src/dayNotesChart.test.ts` (6), website Playwright `analysis-notes.spec.ts` (two renderers: the day's chart with two symbols, a scoped drawings read; a rule opening and closing), the harness `analysis-notes.tsx` gets `?symbols=2`, the symbols catalogue and the drawings routes, and the backend test above.

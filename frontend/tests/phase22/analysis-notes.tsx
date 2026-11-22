@@ -16,7 +16,8 @@ const json = (data: any, status = 200) => new Response(JSON.stringify(data), { s
 const session = (id: string, date: string, extra: any = {}) => ({ session_id: id, user_id: "owner", symbol: "NIFTY", date, start_time: "09:30:00", instrument_type: "options", session_type: "sim",
   strike: 24500, expiry: "2026-10-20", session_capital: 100000, net_pnl: 0, pnl_pct: 0, realized_pnl: 0, open_entry_fees: 0, open_quantity: 0, total_commission: 10,
   trade_count: 2, round_trip_count: 1, winning_round_trip_count: 1, buy_count: 1, sell_count: 1, ...extra });
-const sessions = [session("s1", "2026-10-16", { net_pnl: 500 })];
+// `?symbols=2` adds a second symbol (an equity session) to the same date, for the day chart's tabs.
+const sessions = [session("s1", "2026-10-16", { net_pnl: 500 }), ...(params.get("symbols") === "2" ? [session("s2", "2026-10-16", { symbol: "BANKNIFTY", instrument_type: "equity", strike: null, expiry: null, net_pnl: -120 })] : [])];
 const leg = (trade_id: string, side: string, t: number, extra: any = {}) => ({ trade_id, side, quantity: 65, price: 100 + t, timestamp: base + t * 180, session_id: "s1", user_id: "owner", symbol: "NIFTY", instrument_type: extra.right ? "options" : "equity", right: null, strike: null, expiry: null, commission: 1, ...extra });
 const ce = { right: "CE", strike: 24500, expiry: "2026-10-20" };
 const trades = [leg("t1", "BUY", 2), leg("t2", "SELL", 5), leg("t3", "BUY", 10, ce), leg("t4", "SELL", 14, ce)];
@@ -86,6 +87,7 @@ window.fetch = async (input: any, options: any = {}) => {
   const path = url.pathname;
   if (path === "/api/analysis/sessions") return json(sessions);
   if (path === "/api/analysis/sessions/s1") return json({ ...sessions[0], trades, orders: [], cycles: [] });
+  if (path === "/api/analysis/sessions/s2") return json({ ...sessions[1], trades: [leg("b1", "BUY", 3, { session_id: "s2", symbol: "BANKNIFTY" }), leg("b2", "SELL", 9, { session_id: "s2", symbol: "BANKNIFTY" })], orders: [], cycles: [] });
   if (path === "/api/analysis/round-trips") return json(trips);
   if (path === "/api/pattern/ohlc/equity") return json({ symbol: url.searchParams.get("symbol"), candles });
   if (path === "/api/pattern/ohlc/options") return json({ symbol: url.searchParams.get("symbol"), candles });
@@ -95,6 +97,11 @@ window.fetch = async (input: any, options: any = {}) => {
   if (path === "/api/whatif" || path === "/api/whatif/range") return json({ scenarios: [] });
   if (path.startsWith("/api/day-notes")) return notes(path, options, url);
   if (path === "/api/analysis/day-scores") { w.scoreRanges.push(url.search); return json({ scores: scoreMode === "none" ? [] : [{ date: "2026-10-16", score: 68, limit_source: "saved", partial: false, computed_at: "t" }], pending: 0 }); }
+  // The symbols catalogue and the drawings service (the charts look the instrument up, then read and write their drawings).
+  if (path === "/api/data/symbols") return json({ symbols: [{ symbol: "NIFTY", chart_type: "index" }, { symbol: "BANKNIFTY", chart_type: "index" }] });
+  if (path === "/api/desktop/v1/chart-settings") return json({ settings: {} });
+  if (path === "/api/desktop/v1/drawings") return json({ drawing_id: "d1", revision: 1, drawing: JSON.parse(options.body ?? "{}").drawing });
+  if (path.startsWith("/api/desktop/v1/drawings")) return json({ version: 1, drawings: [] });
   if (path === "/api/analysis/day-score") { w.scoreReads.push(url.searchParams.get("date")); return json(dayScore()); }
   return json({});
 };

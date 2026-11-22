@@ -1,5 +1,5 @@
 /** Pure helpers for showing a day score: its colour band, its wording and the trend series. */
-import type { DayScore, ScoreItem, ScoreRow } from './types'
+import type { DayScore, ScoreItem, ScoreRow, ScoreRuleKey } from './types'
 
 export type ScoreBand = 'good' | 'fair' | 'poor'
 
@@ -38,3 +38,13 @@ export const itemsByImpact = (items: readonly ScoreItem[]): ScoreItem[] => [...i
 
 /** Trend values by date for the Stats chart; days without a stored score are absent. */
 export const scoreByDate = (rows: readonly ScoreRow[]): Map<string, number> => new Map(rows.map(row => [row.date, row.score]))
+
+/** When each event of a rule happened (HH:MM on the market clock, in order), for "found at 10:42, 11:15" in the explanation. */
+export function eventTimes(score: Pick<DayScore, 'events'>, key: ScoreRuleKey): string[] {
+  const events = (score.events as Record<string, Array<{ time?: number }> | undefined> | undefined)?.[key] ?? []
+  return events
+    .map(event => event.time)
+    .filter((time): time is number => typeof time === 'number' && Number.isFinite(time) && time > 1e9)
+    .sort((a, b) => a - b)
+    .map(time => new Date((time > 1e12 ? time : time * 1000)).toISOString().slice(11, 16))
+}
