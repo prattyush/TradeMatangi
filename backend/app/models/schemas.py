@@ -496,6 +496,7 @@ class UserSettingsResponse(ContractModel):
     show_bar_pnl_label: bool = True
     pnl_target_levels: str = ""
     candle_alert_enabled: bool = False
+    next_expiry_on_expiry_day: bool = False
     candle_alert_interval_min: int = 3
     candle_alert_seconds_before: int = 15
     desktop_confirm_flatten: bool = True
@@ -550,6 +551,7 @@ class UserSettingsUpdateRequest(ContractModel):
     show_bar_pnl_label: bool | None = None
     pnl_target_levels: str | None = None
     candle_alert_enabled: bool | None = None
+    next_expiry_on_expiry_day: bool | None = None
     candle_alert_interval_min: Literal[1, 3, 5, 10, 15, 30] | None = None
     candle_alert_seconds_before: int | None = Field(default=None, ge=1, le=600)
     desktop_confirm_flatten: bool | None = None

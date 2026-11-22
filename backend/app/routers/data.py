@@ -25,6 +25,7 @@ from app.services.data_loader import (
 from app.services.broker_service import fetch_historical, BreezeTokenError, BreezeSymbolError
 from app.config import DEFAULT_SYMBOL, CANDLE_INTERVAL_MINUTES, SUPPORTED_SYMBOLS, DATA_DIR
 from app.utils import prior_trading_days
+from app.dependencies import get_request_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -389,16 +390,20 @@ async def get_price_at(
 async def get_expiry(
     symbol: str = Query(...),
     date: str = Query(...),
+    purpose: str = Query(default="browse", pattern="^(browse|trading)$"),
+    user_id: str = Depends(get_request_user_id),
 ):
     """
     Return the next valid options expiry date for the given symbol and trading date.
     NIFTY: next weekly expiry; equities: current month's monthly expiry.
+    purpose=trading is for a session that is about to start: with the user's "Next expiry on expiry days" setting on, an
+    expiry day answers with the next expiry. The default (browse, analysis tools) is always the nearest expiry.
     """
     if symbol not in SUPPORTED_SYMBOLS:
         raise HTTPException(status_code=400, detail=f"Unsupported symbol: {symbol}")
 
-    from app.services.options_service import get_expiry_date
-    expiry = get_expiry_date(symbol, date)
+    from app.services.options_service import get_expiry_date, trading_expiry_for_user
+    expiry = await asyncio.to_thread(trading_expiry_for_user, user_id, symbol, date) if purpose == "trading" else get_expiry_date(symbol, date)
     return ExpiryResponse(symbol=symbol, date=date, expiry=expiry)
 
 

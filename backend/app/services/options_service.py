@@ -122,6 +122,44 @@ def get_expiry_date(symbol: str, trading_date_str: str) -> str:
     return monthly
 
 
+def is_expiry_day(symbol: str, trading_date_str: str) -> bool:
+    """Whether the nearest expiry of the symbol falls on this very date (the day its contracts expire)."""
+    return get_expiry_date(symbol, trading_date_str) == trading_date_str
+
+
+def next_expiry_after(symbol: str, expiry: str) -> str:
+    """The first expiry of the symbol later than ``expiry``.
+
+    Asks from the day after the expiry onward until the answer moves past it: an expiry that was moved back for a holiday
+    (a Tuesday holiday expires on the Monday) is returned again by the first ask, so a single step would not be enough.
+    """
+    day = datetime.date.fromisoformat(expiry)
+    for _ in range(45):
+        day += datetime.timedelta(days=1)
+        candidate = get_expiry_date(symbol, day.isoformat())
+        if candidate > expiry:
+            return candidate
+    raise ValueError(f"No expiry found after {expiry} for {symbol}")
+
+
+def trading_expiry(symbol: str, trading_date_str: str, next_on_expiry_day: bool = False) -> str:
+    """The expiry a trading session on this date uses.
+
+    The nearest expiry (``get_expiry_date``), except that with ``next_on_expiry_day`` on, a date that is itself the expiry day uses the
+    next expiry: expiry days are volatile. Only sessions that are started use this; Browse and the analysis tools keep the plain expiry.
+    """
+    expiry = get_expiry_date(symbol, trading_date_str)
+    if next_on_expiry_day and expiry == trading_date_str:
+        return next_expiry_after(symbol, expiry)
+    return expiry
+
+
+def trading_expiry_for_user(user_id: str | None, symbol: str, trading_date_str: str) -> str:
+    """``trading_expiry`` with the user's saved "Next expiry on expiry days" setting."""
+    from app.services.user_settings_service import wants_next_expiry
+    return trading_expiry(symbol, trading_date_str, wants_next_expiry(user_id))
+
+
 def get_atm_strike(symbol: str, price: float, offset: int = 0) -> int | float:
     """
     Compute the ATM strike for the given underlying price.

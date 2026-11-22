@@ -285,7 +285,9 @@ async def prepare_session(req: PreparationRequest, user_id: str = Depends(prepar
         now = datetime.now(ZoneInfo("Asia/Kolkata"))
         req.date, req.reference_time = now.date().isoformat(), now.strftime("%H:%M:%S")
     try:
-        return await run_history(prepare, req.mode, req.date, req.reference_time, [pane.model_dump() for pane in req.panes])
+        from app.services.user_settings_service import wants_next_expiry
+        next_expiry = await asyncio.to_thread(wants_next_expiry, user_id) if req.mode != "browse" else False
+        return await run_history(prepare, req.mode, req.date, req.reference_time, [pane.model_dump() for pane in req.panes], next_expiry, bool(req.session_id))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -615,17 +617,17 @@ def _assert_can_switch_active_right(session, contract: dict) -> None:
             )
 
 
-def _seed_underlying_options_request(req: SimulationStartRequest) -> None:
+def _seed_underlying_options_request(req: SimulationStartRequest, user_id: str | None = None) -> None:
     from app.services.historical_data_service import historical_operation
     with historical_operation(mode="live" if req.session_type in ("paper", "real") else "replay"):
-        _seed_underlying_options_request_impl(req)
+        _seed_underlying_options_request_impl(req, user_id)
 
 
-def _seed_underlying_options_request_impl(req: SimulationStartRequest) -> None:
+def _seed_underlying_options_request_impl(req: SimulationStartRequest, user_id: str | None = None) -> None:
     """Resolve expiry/ATM for desktop sessions that start from only the underlying chart."""
     if req.instrument_type != "options" or (req.strike is not None and req.expiry):
         return
-    expiry = req.expiry or options_service.get_expiry_date(req.symbol, req.date)
+    expiry = req.expiry or options_service.trading_expiry_for_user(user_id, req.symbol, req.date)
     start_time = req.start_time if len(req.start_time) == 8 else f"{req.start_time}:00"
     ts = int(datetime.strptime(f"{req.date} {start_time}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp())
     underlying = options_service.get_underlying_price_at(req.symbol, req.date, ts)
@@ -1180,7 +1182,7 @@ async def _start_desktop_trading(req: DesktopTradingStartRequest, user_id: str):
         req.session_type = "stepwise"
         req.stepwise = True
     from app.services.history_workers import run_history
-    await run_history(_seed_underlying_options_request, req)
+    await run_history(_seed_underlying_options_request, req, user_id)
     session_response = await simulation_router.start_with_paper_claim(req, user_id, desktop_independent=True)
     session = _require_session(session_response.session_id, user_id)
     setattr(session, "desktop_mode", req.desktop_mode)
