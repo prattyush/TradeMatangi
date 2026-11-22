@@ -9,6 +9,8 @@ import api from '../services/api'
 import BehaviorManagerModal from '../../../shared/analysis/behavior/BehaviorManagerModal'
 import BehaviorPicker from '../../../shared/analysis/behavior/BehaviorPicker'
 import { useBehaviorData } from '../../../shared/analysis/behavior/useBehaviorData'
+import StatsPanel from '../../../shared/deepdive/ui/StatsPanel'
+import type { StatsAllEntry } from '../../../shared/deepdive/types'
 
 interface PendingRoundTrip {
   right: string
@@ -48,6 +50,19 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
   const behavior = useBehaviorData(api, sid)
   const [answers, setAnswers] = useState<Record<string, Record<string, boolean>>>({})
   const [managing, setManaging] = useState(false)
+  // Phase 26: the user's Deep Dive percentages and each round trip's opening side. Optional and loaded on their own: neither
+  // delays the label values nor the save, and an error or an older server just means no panel.
+  const [deepDive, setDeepDive] = useState<StatsAllEntry[]>([])
+  const [openedBy, setOpenedBy] = useState<Record<number, string>>({})
+  useEffect(() => {
+    let alive = true
+    api.getDeepDiveStats().then(rows => {
+      if (!alive || !Array.isArray(rows) || rows.length === 0) return
+      setDeepDive(rows)
+      return api.getRoundTrips(sid).then(trips => { if (alive) setOpenedBy(Object.fromEntries(trips.map(trip => [trip.index, trip.entry_trades[0]?.side ?? '']))) })
+    }).catch(() => undefined)
+    return () => { alive = false }
+  }, [sid])
 
   const [fields, setFields] = useState(roundTrips.map(() => ({
     expCat: '', expStrat: '', actCat: '', actStrat: '', entryTag: 'AS_PER_PATTERN', exitTag: 'AS_PER_PATTERN',
@@ -154,6 +169,9 @@ export default function StepwiseLabelPopup({ sid, date, symbol, roundTrips, onDo
                   </select>
                 </div>
               </div>
+              {fields[i].expCat && fields[i].expStrat && <div style={{ gridColumn: '1 / -1' }}>
+                <StatsPanel entries={deepDive} category={fields[i].expCat} strategy={fields[i].expStrat} trade={{ right: rt.right || null, action: openedBy[rt.round_trip_index] }} />
+              </div>}
               <div>
                 <div style={{ fontSize: 10, color: '#484f58', marginBottom: 2 }}>Entry Tag</div>
                 <input list={`et-step-${i}`} value={fields[i].entryTag} onChange={e => updateField(i, 'entryTag', e.target.value)} placeholder="AS_PER_PATTERN" style={inputStyle} />

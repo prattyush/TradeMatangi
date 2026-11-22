@@ -31,10 +31,16 @@ const leg=(id,side)=>({trade_id:id,side,quantity:65,price:100,timestamp:1});
 // A real session: slots come from the committed broker book (open CE index 3 while PE index 2 already closed).
 const state={open:[{index:3,right:'CE',strike:25000,expiry:'2026-10-15',entry_trades:[leg('a','BUY')],exit_trades:[],pnl:0}],completed:[{index:2,right:'PE',strike:24900,expiry:'2026-10-15',entry_trades:[leg('b','BUY')],exit_trades:[leg('c','SELL')],pnl:-12.5}],labels:[]};
 const metadata={categories:['Momentum'],strategies:['Breakout'],entry_tags:[],exit_tags:[]};
+// Phase 26: the Deep Dive percentages ride on the metadata. Buy setups: second leg 7 of 8; Sell setups: 1 of 6.
+const block=(days,tags,success,failed)=>({days,buy_days:0,sell_days:0,success,failed,with_outcome:success+failed,success_pct:Math.round(1000*success/(success+failed))/10,outcome_few_days:true,tags:tags.map(([name,valid,notValid])=>({tag_id:name,name,valid,not_valid:notValid,marked:valid+notValid,pct:Math.round(1000*valid/(valid+notValid))/10,few_days:valid+notValid<5}))});
+const deepDive=[{category:'Momentum',strategy:'Breakout',owner_id:'alice',shared:false,all:block(14,[['Second leg',8,6]],6,5),buy:block(8,[['Second leg',7,1]],5,1),sell:block(6,[['Second leg',1,5]],1,4)}];
+const app2=createRoot(document.getElementById('root2'));
+window.showDeepDive=(right,side,withStats)=>app2.render(<DesktopLabelPanel state={{open:[{index:7,right,strike:right?25000:null,expiry:right?'2026-10-15':null,entry_trades:[leg('d',side)],exit_trades:[],pnl:0}],completed:[],labels:[]}} metadata={withStats?{...metadata,deep_dive:deepDive}:metadata} metadataStatus="ready" metadataError="" onReloadMetadata={()=>{}} behaviorApi={behaviorApi} sessionId="real-2" onSave={async(rt,fields)=>{window.deepDiveSaves.push({index:rt.index,fields})}}/>);
+window.deepDiveSaves=[];
 window.show=()=>createRoot(document.getElementById('root')).render(<React.StrictMode><DesktopLabelPanel state={state} metadata={metadata} metadataStatus="ready" metadataError="" onReloadMetadata={()=>{}} behaviorApi={behaviorApi} sessionId="real-1"
   onSave={async(rt,fields,behaviors)=>{window.saves.push({index:rt.index,fields,behaviors});if(behaviors&&Object.keys(behaviors).length)await behaviorApi.saveBehaviorMarks('real-1',rt.index,behaviors)}}/></React.StrictMode>);
 `, resolveDir: root + '/windowsapp', loader: 'tsx' }, bundle: true, jsx: 'automatic', outfile: dir + '/app.js', define: { 'import.meta.env': '{}' }, nodePaths: [root + '/windowsapp/node_modules'], alias: { react: root + '/windowsapp/node_modules/react', 'react-dom': root + '/windowsapp/node_modules/react-dom' }, logLevel: 'silent' })
-await writeFile(dir + '/index.html', '<html><head><link rel="stylesheet" href="/app.css"></head><body><div id="root" style="width:300px"></div><script type="module" src="/app.js"></script></body></html>')
+await writeFile(dir + '/index.html', '<html><head><link rel="stylesheet" href="/app.css"></head><body><div id="root" style="width:300px"></div><div id="root2" style="width:300px"></div><script type="module" src="/app.js"></script></body></html>')
 const server = createServer(async (req, res) => { try { res.setHeader('Content-Type', req.url.endsWith('.js') ? 'text/javascript' : req.url.endsWith('.css') ? 'text/css' : 'text/html'); res.end(await readFile(dir + (req.url === '/' ? '/index.html' : req.url))) } catch { res.statusCode = 404; res.end() } })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
@@ -77,6 +83,30 @@ try {
   await page.screenshot({ path: artifacts + '/desktop-live-label.png' })
   await manager.getByRole('button', { name: 'Close' }).click(); await manager.waitFor({ state: 'detached' })
   await emptyPopup.getByRole('group', { name: 'Entry behaviors' }).getByRole('switch', { name: /Entered without a plan/ }).waitFor()
+  // Phase 26: Deep Dive percentages under the Expected Pattern, on the side the position profits from (long equity, CE bought and PE
+  // sold = Buy; short equity, PE bought and CE sold = Sell). The popup of an older server (no deep_dive) shows no panel.
+  await page.evaluate(() => { document.getElementById('root').innerHTML = '' })
+  const dd = (right, side, withStats = true) => page.evaluate(([r, s, w]) => window.showDeepDive(r, s, w), [right, side, withStats])
+  const label = right => right ? right + ' 25000 open' : 'EQ open'
+  for (const [right, side, expected] of [[null, 'BUY', 'Buy'], ['CE', 'BUY', 'Buy'], ['PE', 'BUY', 'Sell'], ['PE', 'SELL', 'Buy'], ['CE', 'SELL', 'Sell'], [null, 'SELL', 'Sell']]) {
+    await dd(right, side)
+    await page.getByRole('button', { name: label(right) }).click()
+    const popup = page.getByRole('dialog', { name: 'Label expected strategy' })
+    assert.equal(await popup.locator('.dd-stats').count(), 0, 'no panel before a strategy is chosen')
+    await popup.getByLabel('Category').selectOption('Momentum'); await popup.getByLabel('Strategy').selectOption('Breakout')
+    const panel = popup.locator('.dd-stats'); await panel.waitFor()
+    assert.match(await panel.innerText(), new RegExp('this position is ' + expected + '-side'), (right ?? 'EQ') + ' ' + side)
+    assert.match(await panel.innerText(), expected === 'Buy' ? /87\.5%\s*\(n=8\)/ : /16\.7%\s*\(n=6\)/)
+    await popup.getByRole('button', { name: 'Cancel' }).click(); await popup.waitFor({ state: 'detached' })
+  }
+  await dd('CE', 'BUY', false)
+  await page.getByRole('button', { name: label('CE') }).click()
+  const older = page.getByRole('dialog', { name: 'Label expected strategy' })
+  await older.getByLabel('Category').selectOption('Momentum'); await older.getByLabel('Strategy').selectOption('Breakout')
+  await page.waitForTimeout(100)
+  assert.equal(await older.locator('.dd-stats').count(), 0, 'no panel without deep dive data')
+  await older.getByRole('button', { name: 'Save' }).click(); await older.waitFor({ state: 'detached' })
+  assert.deepEqual(await page.evaluate(() => window.deepDiveSaves), [{ index: 7, fields: { expected_category: 'Momentum', expected_strategy: 'Breakout', entry_tag: 'AS_PER_PATTERN' } }], 'the save payload is unchanged')
   assert.deepEqual(errors, [])
   console.log('Desktop in-session behavior labeling (real-session slots, entry/exit popups, retry) passed')
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)) }

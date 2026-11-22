@@ -46,3 +46,12 @@ describe('formatting', () => {
     expect(clockTime(Date.UTC(2026, 10, 9, 9, 15, 7) / 1000)).toBe('09:15:07')
   })
 })
+
+describe('the practice filter', () => {
+  it('counts as a changed filter and defaults to including practice runs', async () => {
+    const { activeFilterCount, DEFAULT_FILTERS } = await import('./filters')
+    expect(DEFAULT_FILTERS.practice).toBe('')
+    expect(activeFilterCount({ ...DEFAULT_FILTERS, practice: 'exclude' })).toBe(1)
+    expect(activeFilterCount({ ...DEFAULT_FILTERS, practice: 'only', mode: 'sim' })).toBe(2)
+  })
+})

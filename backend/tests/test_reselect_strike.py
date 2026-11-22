@@ -80,7 +80,7 @@ async def test_max_price_uses_prepare_result_and_session_clock():
 
 @pytest.mark.asyncio
 async def test_max_price_failure_is_422():
-    prepared = {"panes": [{"availability": "error", "reason": "No observed premium at or below the cap within 30 strikes",
+    prepared = {"panes": [{"availability": "error", "reason": "No observed premium at or below the cap within 50 strikes",
                            "pane": {}}]}
     with patch("app.services.history_workers.run_history", new=AsyncMock(return_value=prepared)):
         with pytest.raises(HTTPException) as exc:

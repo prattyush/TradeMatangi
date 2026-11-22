@@ -80,7 +80,7 @@ test("the OTM setting shows the OTM box, not the Max Price dropdowns", async ({ 
 test("Max Price mode: a failed pick shows the server's reason and loads no wrong strike", async ({ page }) => {
   await open(page, "?mode=threshold&fail=1");
   await loadOptionsChart(page);
-  await expect(page.getByText("No observed premium at or below the cap within 30 strikes")).toBeVisible();
+  await expect(page.getByText("No observed premium at or below the cap within 50 strikes")).toBeVisible();
   expect(await requests(page, "/api/pattern/ohlc/options")).toHaveLength(0);
 });
 

@@ -17,6 +17,7 @@ export function SessionRow({ group, selected, onSelect }: { group: SessionGroup;
         <small>
           {instrumentLabel(group.instrument_type)}
           <span className={`badge badge-${group.session_type || 'sim'}`}>{modeLabel(group.session_type)}</span>
+          {group.practice && <span className="badge badge-practice" title="A practice run">Practice</span>}
           {group.trading_style === 'swing' && <span className="badge badge-swing">Swing</span>}
           {sessions}
         </small>

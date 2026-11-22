@@ -16,6 +16,7 @@ import { dateParts, formatPnl, pnlClass } from './format'
 import { PopoverMenu, type MenuItem } from '../../shell/PopoverMenu'
 import { useToast } from '../../shell/Toast'
 import { CompareOverlay } from './compare/CompareOverlay'
+import { PracticeOverlay } from './practice/PracticeOverlay'
 import { WalkthroughOverlay } from './walkthrough/WalkthroughOverlay'
 import { WhatIfOverlay } from './whatif/WhatIfOverlay'
 import { LabelingOverlay } from './labeling/LabelingOverlay'
@@ -26,8 +27,8 @@ import { TradesList } from './TradesList'
 
 type View = 'chart' | 'trades' | 'journey' | 'orders' | 'snapshots' | 'videos'
 /** The view menu also offers actions that open their own screen (Label trades). */
-type Choice = View | 'label' | 'compare' | 'walkthrough' | 'whatif'
-const LABELS: Record<Choice, string> = { chart: 'Chart', trades: 'Trades', journey: 'Day journey', orders: 'Orders', snapshots: 'Snapshots', videos: 'Videos', label: 'Label trades', compare: 'Compare', walkthrough: 'Walkthrough', whatif: 'What If' }
+type Choice = View | 'label' | 'compare' | 'walkthrough' | 'whatif' | 'practice'
+const LABELS: Record<Choice, string> = { chart: 'Chart', trades: 'Trades', journey: 'Day journey', orders: 'Orders', snapshots: 'Snapshots', videos: 'Videos', label: 'Label trades', compare: 'Compare', walkthrough: 'Walkthrough', whatif: 'What If', practice: 'Practice review' }
 
 /** The right-hand pane: one trading day of one instrument, with the chart, executions, orders and videos. */
 export function SessionDetail({ group, daysOpen, onToggleDays }: { group: SessionGroup; daysOpen: boolean; onToggleDays: () => void }) {
@@ -44,6 +45,7 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
   const toast = useToast()
   const [labeling, setLabeling] = useState(false)
   const [comparing, setComparing] = useState(false)
+  const [practicing, setPracticing] = useState(false)
   const [walking, setWalking] = useState(false)
   const [whatIfing, setWhatIfing] = useState(false)
   const [labelRevision, setLabelRevision] = useState(0)
@@ -66,8 +68,11 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
       { id: 'compare' as const, label: LABELS.compare },
       { id: 'label' as const, label: LABELS.label, detail: progress ? `${progress.labeled}/${progress.total}` : undefined },
     ]),
+    // Strategy Practice: the review of a practice run (read-only on the phone).
+    ...(group.practice && environment.practice ? [{ id: 'practice' as const, label: LABELS.practice }] : []),
   ]
   const choose = (choice: Choice) => {
+    if (choice === 'practice') { setPracticing(true); return }
     if (choice !== 'label' && choice !== 'compare' && choice !== 'walkthrough' && choice !== 'whatif') { setTab(choice); return }
     if (!details.data) { toast('The session is still loading'); return }
     if (choice === 'compare') setComparing(true)
@@ -140,6 +145,7 @@ export function SessionDetail({ group, daysOpen, onToggleDays }: { group: Sessio
         {walking && details.data && (
           <WalkthroughOverlay group={group} trades={trades} cycles={details.data.flatMap(detail => detail.cycles ?? [])} onClose={() => setWalking(false)} />
         )}
+        {practicing && <PracticeOverlay group={group} onClose={() => setPracticing(false)} />}
         {comparing && details.data && (
           <CompareOverlay group={group} trades={trades} historicalDays={environment.historicalDays ?? 2} onClose={() => setComparing(false)} />
         )}

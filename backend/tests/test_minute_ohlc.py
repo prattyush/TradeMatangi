@@ -278,7 +278,7 @@ class TestDataRoutesMinuteGranularity:
             response = await get("/api/data/options/find-strike-by-price", symbol="NIFTY", date=DATE, expiry="2026-05-12",
                                  right="PE", max_price=10, reference_time="09:30:00", granularity="minute")
         assert response.status_code == 404
-        assert response.json()["detail"] == "No observed premium at or below the cap within 30 strikes"
+        assert response.json()["detail"] == "No observed premium at or below the cap within 50 strikes"
 
     @pytest.mark.asyncio
     async def test_find_strike_minute_rejects_a_bad_cap_and_an_unknown_symbol_before_loading_anything(self):

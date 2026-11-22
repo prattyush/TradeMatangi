@@ -207,6 +207,8 @@ class DesktopLabelMetadata(ContractModel):
     strategies: list[str] = []
     entry_tags: list[str] = []
     exit_tags: list[str] = []
+    # Phase 26: the Deep Dive percentages (`stats_all`) of every strategy with marked days, for the Expected Pattern popup.
+    deep_dive: list[dict] = []
 
 
 class DesktopTradeLabelRequest(ContractModel):
@@ -903,7 +905,11 @@ def _historical_context_trades(session, user_id: str) -> list[dict]:
             session_type=session.session_type,
         )
         trades: list[dict] = []
+        from app.services.simulation import load_practice
         for record in sessions:
+            # A practice run starts clean, and a normal run does not show practice runs as that day's history.
+            if session.practice or load_practice(record):
+                continue
             if session.session_type == 'real':
                 from app.services.execution_broker import name
                 if name(record.get('execution_broker')) != name(session):
@@ -1138,6 +1144,10 @@ async def start_desktop_trading(req: DesktopTradingStartRequest, user_id: str = 
                 if (session.session_id in active_before and session.date == req.date
                         and session.symbol == req.symbol and session.instrument_type == req.instrument_type
                         and _desktop_mode(session) == req.desktop_mode):
+                    if req.practice:
+                        # A practice run is never attached to another screen's session (the marker would be dropped, and its trades
+                        # would join that session): stop that one first.
+                        raise HTTPException(status_code=409, detail=f"Another screen already has a {req.desktop_mode} session on this day and symbol. Stop it before you start a practice run.")
                     snapshot = _snapshot(session, user_id)
                     snapshot.created_for_request = False
                     return snapshot
@@ -1922,6 +1932,20 @@ async def trade_labels(session_id: str, user_id: str = Depends(get_desktop_user_
     return _desktop_label_state(_readable_session(session_id, user_id))
 
 
+DEEP_DIVE_STATS_TIMEOUT_SECONDS = 2.0
+
+
+async def _deep_dive_stats(user_id: str) -> list[dict]:
+    """The Deep Dive percentages beside the Expected Pattern. Optional and bounded: a slow or failing read gives an empty
+    list and never delays or fails the label values (or a save, which does not use this route)."""
+    try:
+        from app.services import deep_dive_service
+        return await asyncio.wait_for(asyncio.to_thread(deep_dive_service.stats_all, user_id), DEEP_DIVE_STATS_TIMEOUT_SECONDS)
+    except Exception:
+        logger.warning("desktop trade-label deep dive stats unavailable user_id=%s", user_id, exc_info=True)
+        return []
+
+
 @router.get("/trade-labels/metadata", response_model=DesktopLabelMetadata)
 async def trade_label_metadata(user_id: str = Depends(get_desktop_user_id)):
     from app.services import pattern_logger_service, trade_label_service
@@ -1930,6 +1954,7 @@ async def trade_label_metadata(user_id: str = Depends(get_desktop_user_id)):
         strategies=pattern_logger_service.list_strategy_names(user_id),
         entry_tags=trade_label_service.list_entry_tags(user_id),
         exit_tags=trade_label_service.list_exit_tags(user_id),
+        deep_dive=await _deep_dive_stats(user_id),
     )
     logger.info(
         "desktop trade-label metadata loaded user_id=%s categories=%d strategies=%d entry_tags=%d exit_tags=%d",

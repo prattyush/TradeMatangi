@@ -1,0 +1,40 @@
+/**
+ * Game registrations: one import and one `registerGame(...)` line per game (spec 4.1, 12). The hub lists every catalogue
+ * entry and shows the ones not registered here as "Coming soon".
+ */
+import quickMatch from '../brain/games/quick_match'
+import colourClash from '../brain/games/colour_clash'
+import greenLight from '../brain/games/green_light'
+import gridRecall from '../brain/games/grid_recall'
+import sequenceEcho from '../brain/games/sequence_echo'
+import nBackStream from '../brain/games/n_back_stream'
+import flankerFlock from '../brain/games/flanker_flock'
+import needleFinder from '../brain/games/needle_finder'
+import trackTheDots from '../brain/games/track_the_dots'
+import ruleSwitch from '../brain/games/rule_switch'
+import cardSorter from '../brain/games/card_sorter'
+import flipMap from '../brain/games/flip_map'
+import numberSprint from '../brain/games/number_sprint'
+import equationDrop from '../brain/games/equation_drop'
+import makeTarget from '../brain/games/make_target'
+import patternMatrix from '../brain/games/pattern_matrix'
+import numberSeries from '../brain/games/number_series'
+import codeBreaker from '../brain/games/code_breaker'
+import anagramDash from '../brain/games/anagram_dash'
+import letterGrid from '../brain/games/letter_grid'
+import wordLadder from '../brain/games/word_ladder'
+import tickReader from '../market/games/tick_reader'
+import riskCalculator from '../market/games/risk_calculator'
+import hotkeyDrill from '../market/games/hotkey_drill'
+import entrySniper from '../market/games/entry_sniper'
+import exitDiscipline from '../market/games/exit_discipline'
+import strikePicker from '../market/games/strike_picker'
+import regimeSwitch from '../market/games/regime_switch'
+import levelRecall from '../market/games/level_recall'
+import spotTheTrap from '../market/games/spot_the_trap'
+import noTradeDay from '../market/games/no_trade_day'
+import { isPlayable, registerGame } from '../core/registry'
+
+for (const definition of [quickMatch, colourClash, greenLight, gridRecall, sequenceEcho, nBackStream, flankerFlock, needleFinder, trackTheDots, ruleSwitch, cardSorter, flipMap, numberSprint, equationDrop, makeTarget, patternMatrix, numberSeries, codeBreaker, anagramDash, letterGrid, wordLadder, tickReader, riskCalculator, hotkeyDrill, entrySniper, exitDiscipline, strikePicker, regimeSwitch, levelRecall, spotTheTrap, noTradeDay]) {
+  if (!isPlayable(definition.id)) registerGame(definition)
+}

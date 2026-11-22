@@ -1,0 +1,25 @@
+/* Pattern Library: From your trades (Phase 26, S10). Shares the Deep Dive's table and badge styles (deepdive.css). */
+.td { display: flex; gap: 14px; flex: 1; min-height: 0; overflow: auto; }
+.td h3 { margin: 0 0 4px; font-size: 14px; }
+.td-strategies { flex: 0 0 300px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.td-strategies p { margin: 0; }
+.td-strategies ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+.td-strategies li button { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; padding: 6px 10px; }
+.td-strategies li button[aria-pressed="true"] { border-color: #d29922; background: #2a210b; }
+.td-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.td-empty { margin: auto; }
+.td-strategy { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.td-strategy p { margin: 0; }
+.td-table-wrap { max-height: 220px; overflow-y: auto; border: 1px solid #21262d; border-radius: 6px; }
+.td-table tr.active { background: #2a210b; }
+.td-viewer { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.td-viewer-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 13px; }
+.td-legend { color: #d29922; font-size: 12px; }
+.td-actions { margin-left: auto; display: flex; gap: 6px; }
+.td-viewer p { margin: 0; }
+/* The underlying and the contract chart sit side by side, each the full height of the viewer (a trade on the underlying alone takes the
+   whole width). Under 1000px wide they stack. */
+.td-charts { display: flex; flex-direction: row; gap: 8px; flex: 1 1 0; min-height: 0; }
+.td-chartbox { flex: 1 1 0; min-width: 0; min-height: 400px; display: flex; flex-direction: column; border: 1px solid #293142; border-radius: 6px; overflow: hidden; }
+.td-chartbox > :not(.dd-frame-bar) { flex: 1; min-height: 0; }
+@media (max-width: 1000px) { .td { flex-direction: column; } .td-strategies { flex: none; } .td-charts { flex-direction: column; flex: none; } .td-chartbox { flex: none; height: 340px; } }

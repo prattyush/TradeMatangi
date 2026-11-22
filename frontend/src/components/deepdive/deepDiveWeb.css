@@ -1,0 +1,30 @@
+/* Base look for the shared Deep Dive screens on the website: the desktop gets these from its own stylesheet.
+   :where() keeps them at the lowest specificity so the Deep Dive's own colours (green Buy, red Not valid, …) always win. */
+:where(.dd-web) { color: #e6edf3; font-size: 13px; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+:where(.dd-web) button { background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; }
+:where(.dd-web) button:hover:not(:disabled) { border-color: #58a6ff; }
+:where(.dd-web) button:disabled { opacity: .5; cursor: default; }
+:where(.dd-web) button[aria-pressed="true"], :where(.dd-web) button[aria-selected="true"] { background: #1f6feb; border-color: #58a6ff; }
+:where(.dd-web) input, :where(.dd-web) select, :where(.dd-web) textarea { background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 6px; padding: 4px 8px; font: inherit; }
+:where(.dd-web) .pl-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+:where(.dd-web) .pl-bar label { display: flex; align-items: center; gap: 6px; color: #c9d1d9; }
+:where(.dd-web) .pl-tabs { display: flex; gap: 6px; }
+:where(.dd-web) .pl-muted { color: #8b949e; font-size: 12px; }
+:where(.dd-web) .pl-error { background: #5a1d1d; color: #ffb4ab; border-radius: 6px; padding: 6px 10px; margin: 0; }
+:where(.dd-web) .pl-ok { color: #3fb950; margin: 0; }
+:where(.dd-web) .pl-primary { background: #1f6feb; border-color: #58a6ff; font-weight: 600; }
+:where(.dd-web) .pl-danger { background: #7f1d1d; border-color: #f87171; }
+:where(.dd-web) .pl-tool.entry { border-left: 3px solid #26a641; }
+:where(.dd-web) .pl-tool.exit { border-left: 3px solid #f85149; }
+:where(.dd-web) .pl-actions { display: flex; gap: 6px; }
+:where(.dd-web) .pl-notes { display: flex; flex-direction: column; gap: 4px; color: #c9d1d9; }
+:where(.dd-web) .pl-notes textarea { resize: vertical; }
+:where(.dd-web) table { width: 100%; border-collapse: collapse; }
+:where(.dd-web) a { color: #58a6ff; }
+.dd-web .dd { overflow: auto; }
+.dd-light-bar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: #161b22; border-bottom: 1px solid #21262d; flex-wrap: wrap; }
+.dd-light-title { font-size: 12px; font-weight: 600; margin-right: auto; }
+.dd-light-hint { font-size: 11px; color: #f0883e; }
+.dd-light-note { font-size: 11px; color: #8b949e; }
+.dd-light-error { font-size: 11px; color: #ffb4ab; }
+.dd-light-canvas { background: #0d1117; }

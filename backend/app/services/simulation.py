@@ -254,6 +254,7 @@ class SimulationSession:
     session_type: str = "sim"           # "sim", "paper", "real", or "stepwise"
     group_id: str | None = None
     session_alias: str | None = None
+    practice: dict | None = None  # Strategy Practice marker (server-side only: holds the recorded marks)
     wallet_ledger_id: str = ""
     stepwise: bool = False              # advance one bar per next-bar signal
     step_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -394,6 +395,8 @@ def _upsert_session_to_db(session: SimulationSession, *, strict: bool = False) -
             item["group_id"] = session.group_id
         if session.session_alias:
             item["session_alias"] = session.session_alias
+        if getattr(session, "practice", None):
+            item["practice"] = json.dumps(session.practice)  # a JSON string: the recorded marks hold floats
         if session.wallet_ledger_id:
             item["wallet_ledger_id"] = session.wallet_ledger_id
         if getattr(session, "desktop_contracts", None):
@@ -496,6 +499,7 @@ def create_session(
     stepwise: bool = False,
     group_id: str | None = None,
     session_alias: str | None = None,
+    practice: dict | None = None,
     wallet_ledger_id: str | None = None,
     starting_capital: float | None = None,
     execution_broker: str = "KotakNeo",
@@ -530,6 +534,7 @@ def create_session(
         stepwise=stepwise,
         group_id=group_id,
         session_alias=session_alias.strip() if session_alias else None,
+        practice=practice,
         wallet_ledger_id=ledger_id,
         execution_broker=execution_broker, broker_account_id=broker_account_id,
         trading_style=trading_style, portfolio_id=portfolio_id,
@@ -556,6 +561,17 @@ def create_session(
     return session
 
 
+def load_practice(record: dict) -> dict | None:
+    """The practice marker of a Sessions record (stored as a JSON string), or None."""
+    raw = record.get("practice")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def find_session_by_context(
     user_id: str,
     symbol: str,
@@ -580,6 +596,7 @@ def find_session_by_context(
             if it.get("symbol") == symbol
             and it.get("date") == date
             and it.get("session_type") == session_type
+            and not it.get("practice")  # a practice run is never the "same session" as a normal replay, nor removed by its override
             and it.get("trading_style", "intraday") != "swing"
             and (
                 instrument_type is None
@@ -622,6 +639,7 @@ def find_all_sessions_by_context(
             if it.get("symbol") == symbol
             and it.get("date") == date
             and it.get("session_type") == session_type
+            and not it.get("practice")  # a practice run is never the "same session" as a normal replay, nor removed by its override
             and it.get("trading_style", "intraday") != "swing"
             and (
                 instrument_type is None
@@ -727,6 +745,7 @@ def rebuild_session_from_db(
         created_at=created_at,
         group_id=db_record.get("group_id"),
         session_alias=db_record.get("session_alias"),
+        practice=load_practice(db_record),
         wallet_ledger_id=ledger_id,
         resumed_from_db=True,
         execution_broker=db_record.get("execution_broker", "KotakNeo"),

@@ -17,3 +17,8 @@ npm run tauri dev
 ```
 
 The Sprint 0 scaffold establishes renderer-neutral contracts, ordered snapshot/current-bar state handling, a restrictive Tauri CSP, and a native host-state test. Sprint 1 stores token bundles through the operating-system keyring (Windows Credential Manager), never a plaintext app configuration file. The KLineCharts renderer is wired in the next increment after the package/API proof on a Windows machine.
+
+## Games window (Phase 25)
+
+The toolbar **Games** button (shown when the backend advertises the `games` feature) opens a separate window (`index.html?window=games`, Tauri label `games`) with the practice games from `shared/games/`. It has no trading state and is closed with the main window. Rust commands `desktop_games_request` and `open_games_window` are new, so **the desktop app must be rebuilt** (`npm run tauri build`) to get the button working; the capability entry for the `games` window is in `src-tauri/tauri.conf.json`. Tests: `npm test` (includes the shared Games tests) and `cargo test --manifest-path src-tauri/Cargo.toml`.
+
