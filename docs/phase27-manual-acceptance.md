@@ -73,7 +73,7 @@ S6, the backend and the guardrail snapshot (use the website's address bar while 
 6. Label or change a trade and read the score again: it follows. Delete a label: the day goes back to `pending_labels`.
 
 ## G. Notes chart and score rules (S8, S9)
-Status: S8 merged #914 (the scoped drawings, shared with the trading chart's controller: dev only), S9 in PR; waiting for your try. Website, webapp and Windows app (a rebuild picks up shared code). Not the phone.
+Status: S8 merged #914 (the scoped drawings, shared with the trading chart's controller: dev only), S9 merged #915; waiting for your try. Website, webapp and Windows app (a rebuild picks up shared code). Not the phone.
 1. Analysis, open a day, **Notes**: a header with the full date and the day's score, then the day's charts. On a date with two symbols there is a tab per symbol (both sessions' trades, replay, paper and real, together); with options the Underlying and the CE / PE chart show, with the buy and sell markers. Try on both chart renderers (Settings, Analysis and Patterns chart).
 2. Draw a Horizontal line, a Trend line and a **Text** on the Notes chart; reload and reopen the day: they are there.
 3. Open the same contract in the **Trades** tab, in Browse and on a live chart: the lines and the text you drew in Notes are **not** there.
@@ -84,7 +84,7 @@ Status: S8 merged #914 (the scoped drawings, shared with the trading chart's con
 8. A day with no trades (or only a shared day) shows no chart and a plain message.
 
 ## H. Summary (S10 data, S11 screens)
-Status: S10 merged #916, S11 in PR. Items 1 to 6 are the data (a request in the browser); items 7 on are the screens (website, webapp, Windows app; not the phone). Needs the backend from this branch (and a Windows rebuild for the desktop route).
+Status: S10 merged #916, S11 merged #917; waiting for your try. Items 1 to 6 are the data (a request in the browser); items 7 on are the screens (website, webapp, Windows app; not the phone). Needs the backend from this branch (and a Windows rebuild for the desktop route).
 1. Signed in on the website, open `/api/analysis/day-summary?start_date=<a month ago>&end_date=<today>` in the same browser (or ask for it from the Windows app later in S11). You get `days`, newest first, one per market date you traded, each with `symbols`, `totals`, `strategies`, `labels`, `best`, `worst`, `journeys`, `score` and `note`.
 2. Pick one day and compare with Stats for the same single date and the same Mode / Type / Symbol: the trade count, win % and net P&L match; the Day P&L Journey end point equals the net P&L.
 3. A day where every trade is labelled shows the strategy rows by name; a day with unlabelled trades has an "Unlabelled" row last. "plan_followed" counts only trades that have both an expected and an actual strategy.

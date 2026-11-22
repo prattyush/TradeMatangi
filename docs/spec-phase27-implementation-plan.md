@@ -1,6 +1,6 @@
 # Phase 27: Implementation plan (Deep Dive upgrades, Analysis upgrades, Lightweight drawings)
 
-**Status (2026-11-21): S1 to S7 merged (#905 to #911); the owner's acceptance is pending. S8 (#914) and S9 (#915) are merged; S10 (#916, the Summary backend) is merged; S11 (the Summary screens) is built in a PR (Notes Upgrade and Analysis Summary, sections C and D below).** Where the build differs from sections A and B below, the "S# as built" sections at the end win. Approved 2026-11-20. Source of truth for sprint order; the status column is up to date. Spec: `docs/spec-phase27.md` (the owner's draft, with the decisions and Built notes under each requirement).
+**Status (2026-11-21): S1 to S7 merged (#905 to #911); the owner's acceptance is pending. S8 (#914) and S9 (#915) are merged; S10 (#916, the Summary backend) is merged; S11 (#917, the Summary screens) is merged: all of S1 to S11 are on `dev` (Notes Upgrade and Analysis Summary, sections C and D below).** Where the build differs from sections A and B below, the "S# as built" sections at the end win. Approved 2026-11-20. Source of truth for sprint order; the status column is up to date. Spec: `docs/spec-phase27.md` (the owner's draft, with the decisions and Built notes under each requirement).
 
 ## Context
 - `docs/spec-phase27.md` asks for: grouped tag results, a Deep Dive comparison, an Analysis maximize, a score of a day (as system habits and in Stats) and improvement notes with carried-over TODOs.
@@ -74,7 +74,7 @@
 | S8 | C. Scoped drawings foundation: an optional day scope on both Analysis chart renderers, the other charts' drawings copied once into it | shared Lightweight controller (also `Chart.tsx`): optional parameter, default unchanged; **dev only** | merged #914 (see "S8 as built") |
 | S9 | C. Notes upgrade: the date-wide symbol chart in Notes, a tidier layout, click-to-explain score rules | no | merged #915 (see "S9 as built") |
 | S10 | D. Summary backend: `GET /api/analysis/day-summary` and the three allowlists | no | merged #916 (see "S10 as built") |
-| S11 | D. Summary screens: day cards, the Deck view, the daily chart | no | built, in PR (see "S11 as built") |
+| S11 | D. Summary screens: day cards, the Deck view, the daily chart | no | merged #917 (see "S11 as built") |
 
 Order: S1 first (a visible defect of the last release); S2 to S4 are independent UI work; S5 before S6 because the score breakdown sits in the Notes tab.
 
