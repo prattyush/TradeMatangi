@@ -25,6 +25,12 @@ describe('desktop analysis transport', () => {
       for (const method of ['POST', 'DELETE', 'PUT']) expect(validAnalysisPath(path, method)).toBe(false)
     }
     for (const path of ['day-score/', 'day-score/x', 'day-scores/x', 'day-score/../labels', 'dayscore']) expect(validAnalysisPath(path, 'GET')).toBe(false)
+    // Phase 27: the Summary's day cards are one read-only route (the Stats filters as its query).
+    for (const path of ['day-summary', 'day-summary?start_date=2026-11-01&end_date=2026-11-30&session_type=real&symbol=NIFTY']) {
+      expect(validAnalysisPath(path, 'GET')).toBe(true)
+      for (const method of ['POST', 'DELETE', 'PUT']) expect(validAnalysisPath(path, method)).toBe(false)
+    }
+    for (const path of ['day-summary/', 'day-summary/x', 'day-summary/../labels', 'daysummary', 'day-summaries']) expect(validAnalysisPath(path, 'GET')).toBe(false)
     // Phase 26: the Deep Dive percentages for the label forms are one read-only route.
     expect(validAnalysisPath('deep-dive/stats/all', 'GET')).toBe(true)
     for (const method of ['POST', 'DELETE']) expect(validAnalysisPath('deep-dive/stats/all', method)).toBe(false)

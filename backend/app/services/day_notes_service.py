@@ -119,6 +119,21 @@ def get_note(user_id: str, date: str) -> dict | None:
     return _serialize_note(row, date) if row else None
 
 
+def notes_between(user_id: str, start: str, end: str) -> dict[str, dict]:
+    """The written notes of a date range (inclusive) by date, with all four parts (the Summary reads them in one query)."""
+    from boto3.dynamodb.conditions import Key
+    lo, hi = clean_date(start), clean_date(end)
+    items: list[dict] = []
+    params: dict = {"KeyConditionExpression": Key("user_id").eq(user_id) & Key("date").between(lo, hi)}
+    while True:
+        page = _notes().query(**params)
+        items.extend(page.get("Items", []))
+        if not page.get("LastEvaluatedKey"):
+            break
+        params["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+    return {row["date"]: _serialize_note(row, row["date"]) for row in items}
+
+
 def save_note(user_id: str, date: str, parts: dict) -> dict | None:
     """Writes (replaces) the day's note. A note with all four parts empty is removed and None is returned."""
     day = clean_date(date)
