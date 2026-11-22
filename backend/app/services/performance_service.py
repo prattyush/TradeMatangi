@@ -941,6 +941,9 @@ def _load_session_cycles_once(session, include_labels=True, apply_fee_correction
         )
 
     old_signatures = {}
+    # The same trips by the set of entry orders alone: a fill that crosses flat is one legacy trip with the whole exit quantity but two
+    # cycles, so the exact signature differs although the entry is the same trade.
+    old_entries = {}
     original_ids = {
         str(t["trade_id"]): str((t.get("broker_order_id") or t.get("kotak_order_id")) or t["trade_id"])
         for t in trades
@@ -955,6 +958,7 @@ def _load_session_cycles_once(session, include_labels=True, apply_fee_correction
             for r in rt["exit_trades"]
         ]
         old_signatures.setdefault(signature(es, xs), []).append(rt["index"])
+        old_entries.setdefault(frozenset(str((r.get("broker_order_id") or r.get("kotak_order_id")) or r["trade_id"]) for r in es), []).append(rt["index"])
     for c in cycles:
         stable_label = next(
             (l for l in labels if l.get("analytics_cycle_id") == c["cycle_id"]), None
@@ -979,6 +983,8 @@ def _load_session_cycles_once(session, include_labels=True, apply_fee_correction
             if k[0] == "exit"
         ]
         indexes = old_signatures.get(signature(es, xs), [])
+        if len(indexes) != 1 and es:
+            indexes = old_entries.get(frozenset(str(e["trade_id"]) for e in es), [])
         if len(indexes) == 1:
             candidate=next((l for l in labels if int(l["round_trip_index"])==indexes[0]),None)
             if session.get("trading_style")=="swing" and (not candidate or candidate.get("analytics_cycle_id") not in (None,c.get("legacy_cycle_id"))):

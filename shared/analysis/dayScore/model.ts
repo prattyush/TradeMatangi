@@ -8,12 +8,20 @@ export const scoreBand = (score: number): ScoreBand => (score >= 75 ? 'good' : s
 
 export const signedPoints = (points: number) => (points > 0 ? `+${points}` : points < 0 ? `−${Math.abs(points)}` : '0')
 
-/** What to say when a day has no score yet. */
-export function pendingText(score: Pick<DayScore, 'status' | 'closed' | 'labelled'>): string {
+const sessionKind = (type: string) => (type === 'sim' ? 'Replay' : type === 'stepwise' ? 'Stepwise' : type === 'paper' ? 'Paper' : type === 'real' ? 'Real' : type)
+
+/** What to say when a day has no score yet. The score covers every session of the date, so a pending day says where the missing labels are. */
+export function pendingText(score: Pick<DayScore, 'status' | 'closed' | 'labelled'> & Partial<Pick<DayScore, 'unlabelled'>>): string {
   if (score.status === 'no_trades') return 'No closed trades on this day, so there is nothing to score.'
   if (score.status === 'pending_labels') {
     const left = score.closed - score.labelled
+    const where = (score.unlabelled ?? []).map(row => {
+      const trades = (row.trades ?? []).map(trade => [trade.entry_time ? new Date(trade.entry_time * 1000).toISOString().slice(11, 16) : '', trade.strike ?? '', trade.right ?? '', trade.direction === 'SHORT' ? 'short' : ''].join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean)
+      const more = row.count > trades.length && trades.length ? ', …' : ''
+      return `${sessionKind(row.session_type)} ${row.symbol} ${row.count}`.replace(/\s+/g, ' ').trim() + (trades.length ? ` (${trades.join(', ')}${more})` : '')
+    })
     return `Label ${left === 1 ? 'the last closed trade' : `the ${left} closed trades that have no label`} (${score.labelled} of ${score.closed} labelled) to get the day's score.`
+      + (where.length ? ` The score covers every session of the day. Still without a label: ${where.join(', ')}.` : '')
   }
   return ''
 }
