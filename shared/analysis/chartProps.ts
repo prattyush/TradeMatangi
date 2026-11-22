@@ -27,6 +27,10 @@ export type AnalysisChartProps = {
   /** Epoch seconds (candle clock) to centre the chart on, e.g. the entry of the round trip being labeled. */
   focusTime?: number
   labelContractMarkers?: boolean
+  /** The day's Notes drawings: a private namespace (`notesScope(date)`) the other charts' drawings are copied into once. */
+  drawingScope?: string
+  /** Show the saved drawings only (the Summary). */
+  drawingsReadOnly?: boolean
 } & WhatIfChartProps
 
 export type OptionsChartProps = {
@@ -51,6 +55,8 @@ export type AnalysisChartPanelProps = {
   allTrades: AnalysisTrade[]
   isOptions: boolean
   historicalDays?: number
+  drawingScope?: string
+  drawingsReadOnly?: boolean
 }
 
 export type SnapshotChartProps = {
