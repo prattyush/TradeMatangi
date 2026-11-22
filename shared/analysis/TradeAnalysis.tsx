@@ -23,6 +23,7 @@ import './maximize.css'
 import TradeWalkthrough from './walkthrough/TradeWalkthrough'
 import TradeWhatIf from './whatif/TradeWhatIf'
 import StatsModal from './StatsModal'
+import SummaryModal from './summary/SummaryModal'
 import LabelProgressBadge from './labeling/LabelProgressBadge'
 import PatternVsTradeComparison from './PatternVsTradeComparison'
 import AnalysisPracticeReview from '../practice/ui/AnalysisPracticeReview'
@@ -574,6 +575,7 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
   useAnalysisError(error, 'TradeAnalysis')
   const [hasSearched, setHasSearched] = useState(false)
   const [statsOpen, setStatsOpen] = useState(false)
+  const [summaryOpen, setSummaryOpen] = useState(false)
 
   const searchGeneration = useRef(0)
   const swingDrafts = useRef(
@@ -747,6 +749,18 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
             📊 Stats
           </button>
 
+          {environment.daySummary && <button
+            onClick={() => {if(canNavigate())setSummaryOpen(true)}}
+            style={{
+              background: '#21262d', border: '1px solid #30363d',
+              color: '#a5b4fc', borderRadius: 6,
+              padding: '5px 16px', fontSize: 13,
+              cursor: 'pointer', fontWeight: 600,
+            }}
+          >
+            🧾 Summary
+          </button>}
+
           {hasSearched && groups.length > 0 && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 20 }}>
               <div style={{ textAlign: 'right' }}>
@@ -800,6 +814,17 @@ export default function TradeAnalysis({ onClose, historicalDays = 2,initialPortf
           ))}
         </div>
       </div>
+
+      {summaryOpen && (
+        <SummaryModal
+          onClose={() => setSummaryOpen(false)}
+          defaultSymbol={symbol}
+          defaultStartDate={startDate}
+          defaultEndDate={endDate}
+          defaultInstrumentType={instrumentType}
+          defaultSessionType={sessionType}
+        />
+      )}
 
       {statsOpen && (
         <StatsModal

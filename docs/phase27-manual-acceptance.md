@@ -83,11 +83,17 @@ Status: S8 merged #914 (the scoped drawings, shared with the trading chart's con
 7. Day score: click a rule, for example "Drawdown against the guardrail limit": why it counts, how its points are set (the numbers match the score you see) and, for repeat entries, adding to a loser and one loss wiping the wins, the times it was found. Click again: it closes.
 8. A day with no trades (or only a shared day) shows no chart and a plain message.
 
-## H. Summary data (S10; the screens come with S11)
-Status: S10 in PR. Backend only, so the try is a request in the browser. Needs the backend from this branch (and a Windows rebuild for the desktop route).
+## H. Summary (S10 data, S11 screens)
+Status: S10 merged #916, S11 in PR. Items 1 to 6 are the data (a request in the browser); items 7 on are the screens (website, webapp, Windows app; not the phone). Needs the backend from this branch (and a Windows rebuild for the desktop route).
 1. Signed in on the website, open `/api/analysis/day-summary?start_date=<a month ago>&end_date=<today>` in the same browser (or ask for it from the Windows app later in S11). You get `days`, newest first, one per market date you traded, each with `symbols`, `totals`, `strategies`, `labels`, `best`, `worst`, `journeys`, `score` and `note`.
 2. Pick one day and compare with Stats for the same single date and the same Mode / Type / Symbol: the trade count, win % and net P&L match; the Day P&L Journey end point equals the net P&L.
 3. A day where every trade is labelled shows the strategy rows by name; a day with unlabelled trades has an "Unlabelled" row last. "plan_followed" counts only trades that have both an expected and an actual strategy.
 4. A Strategy Practice run and a swing portfolio are not in the list.
 5. `note` is `null` on a day you wrote nothing for; once you write a Context line in the Notes tab it appears here. `score` is `null` for a day whose score was never stored (open its Notes tab once), and the number after.
 6. A range of more than 62 trading days returns the newest 62 with `truncated: true`.
+7. Analysis page: **🧾 Summary** beside Stats (Windows app: the **Summary** button next to Sessions and Stats). It opens with your page's dates, or the last 14 days, and shows a card per trading day, newest first. Change From, Through, Mode, Symbol and the others: the cards follow, and the headline counts days, closed trades and net P&L.
+8. A card shows the figures, the strategy table, "Labelled n of m" and plan followed, best and worst trade, the Day P&L Journey, and the day's note only on days where you wrote one (Context first). Compare a day with Stats and the Notes tab.
+9. **Show charts**: the small daily chart of the underlying (the day highlighted) and the day's chart with a tab per symbol and the buy and sell markers. The lines, Risk Reward and **texts you drew in that day's Notes are there**, and there are no drawing tools (view only). A day whose Notes you never opened shows the other charts' lines instead. A stock or index shows the daily chart; anything without daily history just says so.
+10. **Deck** (the switch at the top right, or "Open in deck" on a card): the newest day first with the charts large and the figures beside them. Previous / Next, the Left and Right arrow keys, Home and End and the strip of days move through it; Esc goes back to the list. Pick a symbol tab, then step: the same symbol stays while the day has it. Leave and come back later: the List or Deck choice is remembered.
+11. A range with more than 62 days says how many are shown and asks you to narrow the dates. A failed read shows a plain message, not a blank page.
+12. The phone has no Summary (as agreed). Real trading is untouched by this sprint.
