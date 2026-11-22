@@ -124,12 +124,12 @@ def build_ledger(cycles: list[dict], marks: list[dict], sessions: dict[str, dict
     BehaviorMarks rows; ``sessions`` maps a mark's session id to its Sessions row (for the alias → owner mapping).
     """
     own = [c for c in cycles if not c.get("shared") and c.get("trading_style", "intraday") != "swing"]
-    # System habits (Phase 27): calculated from each market date's cycles (all the sessions of that date, as the day score does), so a trade
+    # System habits (Phase 27): calculated from each market date's cycles (all the sessions of that date and session type, as the day score does), so a trade
     # is flagged as the day-score rules see it. They are computed on the cycles in scope, so a filter (a symbol, a mode) narrows them too.
     from app.services import day_score_service
-    by_date: dict[str, list[dict]] = defaultdict(list)
+    by_date: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for cycle in own:
-        by_date[cycle.get("date", "")].append(cycle)
+        by_date[(cycle.get("date", ""), cycle.get("mode") or "sim")].append(cycle)  # per session type, like the day score
     system_flags: dict[str, list[str]] = {}
     for group in by_date.values():
         system_flags.update(day_score_service.system_flags(group))

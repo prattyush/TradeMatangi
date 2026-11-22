@@ -20,7 +20,7 @@ describe('desktop analysis transport', () => {
     for (const [path, method] of [['day-notes', 'DELETE'], ['day-notes', 'PUT'], ['day-notes/todos/status', 'GET'], ['day-notes/todos/status', 'DELETE'], ['day-notes/todos', 'PUT']]) expect(validAnalysisPath(path, method)).toBe(false)
     for (const path of ['day-notes/', 'day-notes/extra', 'day-notes/todos/x', 'day-notes/../labels', 'day-notes%2Ftodos', 'daynotes']) for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath(path, method)).toBe(false)
     // Phase 27: the day score is read only (a single day and a range).
-    for (const path of ['day-score?date=2026-11-19', 'day-scores?start=2026-11-01&end=2026-11-30&compute=true', 'day-score', 'day-scores']) {
+    for (const path of ['day-score?date=2026-11-19&mode=paper', 'day-scores?mode=sim', 'day-scores?start=2026-11-01&end=2026-11-30&compute=true', 'day-score', 'day-scores']) {
       expect(validAnalysisPath(path, 'GET')).toBe(true)
       for (const method of ['POST', 'DELETE', 'PUT']) expect(validAnalysisPath(path, method)).toBe(false)
     }

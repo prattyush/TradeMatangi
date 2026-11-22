@@ -2,6 +2,7 @@ import { useState } from 'react'
 import DayJourneyChart from '../DayJourneyChart'
 import DayChart from '../notes/DayChart'
 import DayScoreBadge from '../dayScore/DayScoreBadge'
+import { scoreModeName } from '../dayScore/model'
 import DailyChart from './DailyChart'
 import { chartSymbol, clock, longDate, modeName, money, noteParts, percent, tone, tradeName } from './summaryModel'
 import type { SummaryDay, SummaryTrade } from './types'
@@ -74,8 +75,8 @@ export default function SummaryDayCard({ day, onDeck }: { day: SummaryDay; onDec
     <header className="sm-card-head">
       <h3>{longDate(day.date)}</h3>
       <span className="sm-symbols">{day.symbols.map(symbol => <span key={symbol.symbol} className="sm-chip" title={`${symbol.trades} closed trades · ${symbol.modes.map(modeName).join(', ')}`}>{symbol.symbol}</span>)}</span>
-      <DayScoreBadge score={day.score} />
-      {!day.score && <span className="sm-muted" title="Open the day's Notes tab to score it">no score yet</span>}
+      {day.scores.map(row => <span key={row.mode} className="sm-score">{day.scores.length > 1 && <span className="sm-muted">{scoreModeName(row.mode)}</span>}<DayScoreBadge score={row} /></span>)}
+      {!day.scores.length && <span className="sm-muted" title="Open the day's Notes tab to score it">no score yet</span>}
       <span className="sm-spacer" />
       {onDeck && <button type="button" onClick={() => onDeck(day.date)}>Open in deck</button>}
       <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Hide charts' : 'Show charts'}</button>

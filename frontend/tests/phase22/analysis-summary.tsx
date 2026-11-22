@@ -36,14 +36,14 @@ const symbol = (name: string, trades: number, net: number, ids: string[]) => ({ 
 const days: any[] = [
   { date: "2026-10-16", symbols: [symbol("BANKNIFTY", 1, -120, ["s2"]), symbol("NIFTY", 2, 500, ["s1"])], open_trades: 0, totals: totals(3, 2, 380, 0.38),
     strategies: [{ strategy: "Breakout", ...totals(2, 2, 500, 0.5) }, { strategy: "Unlabelled", ...totals(1, 0, -120, -0.12) }], labels: { closed: 3, labelled: 2, plan_followed: 2, plan_not_followed: 0, plan_unknown: 0 },
-    best: trade("c1", "NIFTY", 400, "Breakout"), worst: trade("c3", "BANKNIFTY", -120, null), journeys: [journey("2026-10-16", 380)], score: { score: 68, limit_source: "saved", partial: false },
+    best: trade("c1", "NIFTY", 400, "Breakout"), worst: trade("c3", "BANKNIFTY", -120, null), journeys: [journey("2026-10-16", 380)], scores: [{ mode: "sim", score: 68, limit_source: "saved", partial: false }],
     note: { date: "2026-10-16", context: "Gap-up open, trend day", went_well: "Waited for the retest", to_improve: "", specific_points: "", updated_at: "t" } },
   { date: "2026-10-15", symbols: [symbol("BANKNIFTY", 1, -50, ["s4"]), symbol("NIFTY", 1, 150, ["s3"])], open_trades: 1, totals: totals(2, 1, 100, 0.1),
     strategies: [{ strategy: "Reversal", ...totals(2, 1, 100, 0.1) }], labels: { closed: 2, labelled: 2, plan_followed: 1, plan_not_followed: 1, plan_unknown: 0 },
-    best: trade("c4", "NIFTY", 150, "Reversal"), worst: trade("c5", "BANKNIFTY", -50, "Reversal"), journeys: [journey("2026-10-15", 100)], score: { score: 82, limit_source: "saved", partial: false }, note: null },
+    best: trade("c4", "NIFTY", 150, "Reversal"), worst: trade("c5", "BANKNIFTY", -50, "Reversal"), journeys: [journey("2026-10-15", 100)], scores: [{ mode: "sim", score: 82, limit_source: "saved", partial: false }], note: null },
   { date: "2026-10-14", symbols: [symbol("NIFTY", 1, -90, ["s5"])], open_trades: 0, totals: totals(1, 0, -90, -0.09),
     strategies: [{ strategy: "Unlabelled", ...totals(1, 0, -90, -0.09) }], labels: { closed: 1, labelled: 0, plan_followed: 0, plan_not_followed: 0, plan_unknown: 0 },
-    best: null, worst: trade("c6", "NIFTY", -90, null), journeys: [journey("2026-10-14", -90)], score: null, note: null },
+    best: null, worst: trade("c6", "NIFTY", -90, null), journeys: [journey("2026-10-14", -90)], scores: [], note: null },
 ];
 const original = window.fetch.bind(window);
 window.fetch = async (input: any, options: any = {}) => {

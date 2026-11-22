@@ -41,7 +41,8 @@ export interface SummaryJourney extends JourneyCurve {
   max_drawdown: number
   max_drawdown_pct: number | null
 }
-export interface SummaryScore { score: number; limit_source: 'saved' | 'estimated' | null; partial: boolean }
+/** One stored day score of a date, for one of the session types the day was traded in. */
+export interface SummaryScore { mode: 'sim' | 'stepwise' | 'paper' | 'real'; score: number; limit_source: 'saved' | 'estimated' | null; partial: boolean }
 export interface SummaryNote { date: string; went_well: string; to_improve: string; specific_points: string; context: string; updated_at: string | null }
 export interface SummaryDay {
   date: string
@@ -53,7 +54,8 @@ export interface SummaryDay {
   best: SummaryTrade | null
   worst: SummaryTrade | null
   journeys: SummaryJourney[]
-  score: SummaryScore | null
+  /** One per session type the day was traded in that has a stored score (Replay, Stepwise, Paper, Real order); empty when none. */
+  scores: SummaryScore[]
   note: SummaryNote | null
 }
 export interface DaySummary { days: SummaryDay[]; total_days: number; truncated: boolean }

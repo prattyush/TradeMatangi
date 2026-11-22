@@ -91,6 +91,8 @@ test("Analysis day score: a stored score shows on the card, the full score and i
   const reads = (await page.evaluate(() => (window as any).scoreReads)).length;
   await page.getByRole("button", { name: "Trades", exact: true }).click();
   await expect.poll(async () => (await page.evaluate(() => (window as any).scoreReads)).length).toBeGreaterThan(reads);
+  // the card is scored for its own session type only (a Replay card asks for sim)
+  expect(new Set(await page.evaluate(() => (window as any).scoreModes))).toEqual(new Set(["sim"]));
   expect(errors).toEqual([]);
 });
 

@@ -29,12 +29,12 @@ async def _run(fn, *args, **kwargs):
 
 
 @router.get("/day-score")
-async def day_score(date: str = Query(...), user_id: str = Depends(get_request_user_id)):
-    """The score of a market date: ``status`` is ``scored``, ``pending_labels`` (label every closed trade first) or ``no_trades``."""
-    return await _run(svc.get_day_score, user_id, date)
+async def day_score(date: str = Query(...), mode: str = Query(..., description="sim, stepwise, paper or real"), user_id: str = Depends(get_request_user_id)):
+    """The score of a market date for one session type: ``status`` is ``scored``, ``pending_labels`` (label every closed trade of that type first) or ``no_trades``."""
+    return await _run(svc.get_day_score, user_id, date, mode)
 
 
 @router.get("/day-scores")
-async def day_scores(start: str | None = Query(None), end: str | None = Query(None), compute: bool = Query(False), user_id: str = Depends(get_request_user_id)):
-    """Stored scores over a date range, oldest first (for the Stats trend). ``compute=true`` also scores days that have none yet, a bounded number per call (``pending`` says how many are left)."""
-    return await _run(svc.scores_in_range, user_id, start, end, compute=compute)
+async def day_scores(start: str | None = Query(None), end: str | None = Query(None), compute: bool = Query(False), mode: str | None = Query(None), user_id: str = Depends(get_request_user_id)):
+    """Stored scores over a date range, oldest first (for the Stats trend), one row per date and session type (``mode`` keeps one). ``compute=true`` also scores days that have none yet, a bounded number per call (``pending`` says how many are left)."""
+    return await _run(svc.scores_in_range, user_id, start, end, compute=compute, mode=mode)

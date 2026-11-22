@@ -2,12 +2,12 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
-import { chartSymbol, chronological, clock, dailyCandles, dailyGeometry, deckStep, money, noteParts, percent, stripTone, summaryQuery, totalsOf, tradeName, tone } from '../../shared/analysis/summary/summaryModel'
+import { chartSymbol, chronological, clock, dailyCandles, dailyGeometry, deckStep, money, noteParts, percent, scoreWords, stripTone, summaryQuery, totalsOf, tradeName, tone } from '../../shared/analysis/summary/summaryModel'
 import { createDaySummarySource } from '../../shared/analysis/summary/source'
 import { validAnalysisPath } from './analysisApi'
 
 const totals = (net: number, trades = 1) => ({ trades, wins: net > 0 ? trades : 0, losses: net < 0 ? trades : 0, win_pct: null, net_pnl: net, pnl_pct: null, mean_pnl_pct: null, fees: 0 })
-const day = (date: string, net = 100, extra: Record<string, unknown> = {}) => ({ date, symbols: [{ symbol: 'NIFTY' }, { symbol: 'BANKNIFTY' }], totals: totals(net), score: null, note: null, ...extra }) as any
+const day = (date: string, net = 100, extra: Record<string, unknown> = {}) => ({ date, symbols: [{ symbol: 'NIFTY' }, { symbol: 'BANKNIFTY' }], totals: totals(net), scores: [], note: null, ...extra }) as any
 
 describe('the Summary request', () => {
   it('sends only the filled Stats filters the route understands', () => {
@@ -67,14 +67,23 @@ describe('the deck', () => {
     expect(chartSymbol(day('d', 1, { symbols: [] }))).toBe('')
   })
   it('colours the strip by the score band, or by the sign of the P&L when there is no score', () => {
-    expect(stripTone(day('d', 100, { score: { score: 80 } }))).toBe('good')
-    expect(stripTone(day('d', 100, { score: { score: 60 } }))).toBe('fair')
-    expect(stripTone(day('d', 100, { score: { score: 30 } }))).toBe('poor')
+    expect(stripTone(day('d', 100, { scores: [{ mode: 'paper', score: 80 }] }))).toBe('good')
+    expect(stripTone(day('d', 100, { scores: [{ mode: 'paper', score: 60 }] }))).toBe('fair')
+    expect(stripTone(day('d', 100, { scores: [{ mode: 'paper', score: 30 }] }))).toBe('poor')
     expect(stripTone(day('d', -5))).toBe('neg')
     expect(stripTone(day('d', 5))).toBe('pos')
   })
   it('adds the days up for the headline', () => {
     expect(totalsOf([day('a', 100, { totals: totals(100, 2) }), day('b', -40, { totals: totals(-40, 3) }), day('c', 0)])).toEqual({ days: 3, trades: 6, net_pnl: 60, winning_days: 1, losing_days: 1 })
+  })
+})
+
+describe('the scores of a day', () => {
+  it('says each session type\'s score, and colours the strip by their mean', () => {
+    const both = day('d', 100, { scores: [{ mode: 'sim', score: 40 }, { mode: 'paper', score: 90 }] })
+    expect(scoreWords(both as never)).toBe('Replay 40, Paper 90')
+    expect(scoreWords(day('d') as never)).toBe('')
+    expect(stripTone(both as never)).toBe('fair')
   })
 })
 

@@ -70,7 +70,7 @@ function notes(path: string, options: any, url: URL) {
 }
 // The day score: `?score=` picks what the server says (scored, estimated limit with partial candles, pending labels, none stored).
 const scoreMode = params.get("score") ?? "scored";
-w.scoreReads = [] as any[]; w.scoreRanges = [] as string[];
+w.scoreReads = [] as any[]; w.scoreModes = [] as any[]; w.scoreRanges = [] as string[];
 const item = (key: string, title: string, points: number, detail: string, count: number | null = null) => ({ key, title, points, detail, count });
 const dayScore = () => scoreMode === "pending" ? { date: "2026-10-16", status: "pending_labels", score: null, closed: 4, labelled: 3, sessions: 1 }
   : { date: "2026-10-16", status: "scored", score: scoreMode === "estimated" ? 41 : 72, closed: 4, labelled: 4, sessions: 1, base: 60, capital: 100000,
@@ -96,13 +96,13 @@ window.fetch = async (input: any, options: any = {}) => {
   if (path === "/api/analysis/labels") return json([]);
   if (path === "/api/whatif" || path === "/api/whatif/range") return json({ scenarios: [] });
   if (path.startsWith("/api/day-notes")) return notes(path, options, url);
-  if (path === "/api/analysis/day-scores") { w.scoreRanges.push(url.search); return json({ scores: scoreMode === "none" ? [] : [{ date: "2026-10-16", score: 68, limit_source: "saved", partial: false, computed_at: "t" }], pending: 0 }); }
+  if (path === "/api/analysis/day-scores") { w.scoreRanges.push(url.search); return json({ scores: scoreMode === "none" ? [] : [{ date: "2026-10-16", mode: "sim", score: 68, limit_source: "saved", partial: false, computed_at: "t" }], pending: 0 }); }
   // The symbols catalogue and the drawings service (the charts look the instrument up, then read and write their drawings).
   if (path === "/api/data/symbols") return json({ symbols: [{ symbol: "NIFTY", chart_type: "index" }, { symbol: "BANKNIFTY", chart_type: "index" }] });
   if (path === "/api/desktop/v1/chart-settings") return json({ settings: {} });
   if (path === "/api/desktop/v1/drawings") return json({ drawing_id: "d1", revision: 1, drawing: JSON.parse(options.body ?? "{}").drawing });
   if (path.startsWith("/api/desktop/v1/drawings")) return json({ version: 1, drawings: [] });
-  if (path === "/api/analysis/day-score") { w.scoreReads.push(url.searchParams.get("date")); return json(dayScore()); }
+  if (path === "/api/analysis/day-score") { w.scoreReads.push(url.searchParams.get("date")); w.scoreModes.push(url.searchParams.get("mode")); return json({ ...dayScore(), mode: url.searchParams.get("mode") }); }
   return json({});
 };
 createRoot(document.getElementById("test-root")!).render(

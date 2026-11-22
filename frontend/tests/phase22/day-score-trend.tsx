@@ -22,7 +22,7 @@ const dayScore = {
     if (params.get("fail") === "1") throw new Error("scores are down");
     round += 1;
     const known = Object.entries(scoreOf).filter(([d]) => compute ? (params.get("rounds") === "2" ? (round >= 2 || d <= "2026-11-11") : true) : false);
-    return { scores: known.map(([date, score]) => ({ date, score, limit_source: "saved", partial: false, computed_at: "t" })), pending: params.get("rounds") === "2" && round < 2 ? 2 : 0 };
+    return { scores: known.map(([date, score]) => ({ date, mode: "paper", score, limit_source: "saved", partial: false, computed_at: "t" })), pending: params.get("rounds") === "2" && round < 2 ? 2 : 0 };
   },
 };
 createRoot(document.getElementById("test-root")!).render(

@@ -233,7 +233,7 @@ def database(behavior_database, monkeypatch):
 
 
 def stub_day(monkeypatch, sessions, cycles_by_session):
-    monkeypatch.setattr(svc, "_day_sessions", lambda user, date: [s for s in sessions if s["date"] == date])
+    monkeypatch.setattr(svc, "_day_sessions", lambda user, date, mode=None: [s for s in sessions if s["date"] == date and (mode is None or s.get("session_type", "sim") == mode)])
     monkeypatch.setattr(performance_service, "load_session_cycles", lambda session, **kw: cycles_by_session[session["session_id"]])
 
 
@@ -274,6 +274,44 @@ def test_a_pending_day_says_which_session_still_has_trades_without_a_label(datab
     assert set(pending["unlabelled"][0]["trades"][0]) == {"entry_time", "right", "strike", "direction"}
     labelled(b)
     assert svc.compute_day("alice", "2026-11-16", load_frame=NO_CANDLES)["status"] == "scored"
+
+
+def test_a_paper_day_is_scored_on_its_own_even_when_a_replay_run_of_the_date_has_no_labels(database, monkeypatch):
+    # The owner's 2026-11-06: Paper BSESEN with 5 labelled trades and a Replay NIFTY session of the same date with 5 and no label rows.
+    paper_session = {**SESSION, "session_id": "p1", "symbol": "BSESEN", "session_type": "paper", "created_at": 1}
+    replay_session = {**SESSION, "session_id": "r1", "symbol": "NIFTY", "session_type": "sim", "created_at": 2}
+    paper = labelled(cycles_of(*[f for g in [trade(n, n * 600, 3) for n in range(1, 6)] for f in g], session=paper_session))
+    replay = cycles_of(*[f for g in [trade(n, n * 600, 3) for n in range(11, 16)] for f in g], session=replay_session)
+    stub_day(monkeypatch, [paper_session, replay_session], {"p1": paper, "r1": replay})
+    monkeypatch.setattr(svc, "_user_session_rows", lambda user: [paper_session, replay_session])
+    original = svc.score_day
+    monkeypatch.setattr(svc, "score_day", lambda *a, **k: original(*a, **{**k, "load_frame": NO_CANDLES}))
+    live = svc.get_day_score("alice", "2026-11-16", "paper")
+    assert live["status"] == "scored" and live["mode"] == "paper" and live["closed"] == len(paper) == live["labelled"]
+    practice = svc.get_day_score("alice", "2026-11-16", "sim")
+    assert practice["status"] == "pending_labels" and practice["closed"] == len(replay) and practice["labelled"] == 0
+    assert [(r["session_type"], r["symbol"], r["count"]) for r in practice["unlabelled"]] == [("sim", "NIFTY", len(replay))]
+    assert svc.get_day_score("alice", "2026-11-16", "real")["status"] == "no_trades" and svc.get_day_score("alice", "2026-11-16", "stepwise")["status"] == "no_trades"
+    assert [(r["date"], r["mode"]) for r in svc.list_scores("alice")] == [("2026-11-16", "paper")]
+    assert svc.list_scores("alice", mode="sim") == []
+    # the stored rows are per type, and an old row keyed by the plain date (a date-wide score of the earlier design) is not listed
+    keys = [row["date"] for row in svc._table().scan()["Items"]]
+    assert keys == ["2026-11-16#paper"]
+    svc._table().put_item(Item={"user_id": "alice", "date": "2026-11-16", "payload": "{}", "score": 50, "computed_at": "t"})
+    assert [(r["date"], r["mode"]) for r in svc.list_scores("alice", "2026-11-16", "2026-11-16")] == [("2026-11-16", "paper")]
+
+
+def test_system_flags_of_a_date_are_worked_out_per_session_type(database, monkeypatch):
+    # a loss on a contract in a Replay run and an entry on the same contract soon after in a Paper session are not a "repeat entry"
+    paper_session = {**SESSION, "session_id": "p1", "session_type": "paper"}
+    replay_session = {**SESSION, "session_id": "r1", "session_type": "sim"}
+    both = cycles_of(*trade(1, 0, -3), *trade(2, 400, -3))
+    assert svc.system_flags(both), "the two losses in a row on one contract are a repeat entry when they are in one session type"
+    first = cycles_of(*trade(1, 0, -3), session=replay_session)
+    second = cycles_of(*trade(2, 400, -3), session=paper_session)
+    stub_day(monkeypatch, [paper_session, replay_session], {"p1": second, "r1": first})
+    monkeypatch.setattr(svc, "_user_session_rows", lambda user: [paper_session, replay_session])
+    assert svc.day_cycles_flags("alice", "2026-11-16") == {}
 
 
 def test_a_pending_day_writes_one_diagnostic_line_per_change(database, monkeypatch, caplog):
@@ -318,18 +356,18 @@ def test_the_score_is_stored_and_reused_until_a_trade_or_label_changes(database,
     calls = []
     original = svc.score_day
     monkeypatch.setattr(svc, "score_day", lambda *a, **k: calls.append(1) or original(*a, **{**k, "load_frame": NO_CANDLES}))
-    first = svc.get_day_score("alice", "2026-11-16")
-    assert first["status"] == "scored" and len(calls) == 1
-    again = svc.get_day_score("alice", "2026-11-16")
+    first = svc.get_day_score("alice", "2026-11-16", "sim")
+    assert first["status"] == "scored" and len(calls) == 1 and first["mode"] == "sim"
+    again = svc.get_day_score("alice", "2026-11-16", "sim")
     assert again["score"] == first["score"] and len(calls) == 1, "served from the table"
-    assert svc.list_scores("alice")[0]["date"] == "2026-11-16" and svc.list_scores("alice")[0]["score"] == first["score"]
+    assert svc.list_scores("alice")[0]["date"] == "2026-11-16" and svc.list_scores("alice")[0]["mode"] == "sim" and svc.list_scores("alice")[0]["score"] == first["score"]
     cycles[0]["label"] = {"expected_strategy": "Reversal"}  # a label changed
-    svc.get_day_score("alice", "2026-11-16")
+    svc.get_day_score("alice", "2026-11-16", "sim")
     assert len(calls) == 2
     cycles[0]["net_pnl"] = -50.0  # a fill changed
-    assert svc.get_day_score("alice", "2026-11-16")["score"] != first["score"] and len(calls) == 3
+    assert svc.get_day_score("alice", "2026-11-16", "sim")["score"] != first["score"] and len(calls) == 3
     cycles[1]["label"] = None  # a label was removed: the day cannot be scored, and the old score is dropped
-    assert svc.get_day_score("alice", "2026-11-16")["status"] == "pending_labels"
+    assert svc.get_day_score("alice", "2026-11-16", "sim")["status"] == "pending_labels"
     assert svc.list_scores("alice") == []
     assert svc.list_scores("bob") == []
 
@@ -339,22 +377,31 @@ def test_range_lists_stored_scores_and_computes_a_bounded_number_of_missing_days
     sessions = [{**SESSION, "session_id": f"s{n}", "date": d} for n, d in enumerate(days)]
     cycles = {s["session_id"]: labelled(cycles_of(*[f for g in [trade(1, 0, 3), trade(2, 300, 3), trade(3, 600, 3)] for f in g], session=s)) for s in sessions}
     stub_day(monkeypatch, sessions, cycles)
-    monkeypatch.setattr(svc, "session_dates", lambda user, start=None, end=None: [d for d in days if (not start or d >= start) and (not end or d <= end)])
+    monkeypatch.setattr(svc, "session_day_modes", lambda user, start=None, end=None, mode=None: [(d, "sim") for d in days if (not start or d >= start) and (not end or d <= end) and mode in (None, "sim")])
     original = svc.score_day
     monkeypatch.setattr(svc, "score_day", lambda *a, **k: original(*a, **{**k, "load_frame": NO_CANDLES}))
     assert svc.scores_in_range("alice", "2026-11-01", "2026-11-30") == {"scores": [], "pending": 0}
     monkeypatch.setattr(svc, "MAX_RANGE_COMPUTE", 4)
     first = svc.scores_in_range("alice", "2026-11-01", "2026-11-30", compute=True)
     assert [r["date"] for r in first["scores"]] == days[-4:] and first["pending"] == 6, "the newest days first"
+    assert {r["mode"] for r in first["scores"]} == {"sim"}
     rest = svc.scores_in_range("alice", "2026-11-01", "2026-11-30", compute=True)
     assert len(rest["scores"]) == 8 and rest["pending"] == 2
     assert svc.scores_in_range("alice", "2026-11-03", "2026-11-05")["scores"][0]["date"] == "2026-11-03"
+    assert svc.scores_in_range("alice", "2026-11-03", "2026-11-05", mode="paper")["scores"] == []
+    assert svc.scores_in_range("alice", "2026-11-10", "2026-11-10")["scores"][0]["date"] == "2026-11-10", "the last day of the range is included"
 
 
 @pytest.mark.parametrize("date", ["", "2026-13-01", "yesterday"])
 def test_a_bad_date_is_refused(database, date):
     with pytest.raises(ValueError):
-        svc.get_day_score("alice", date)
+        svc.get_day_score("alice", date, "sim")
+
+
+def test_a_bad_session_type_is_refused(database):
+    for mode in ("", "swing", "all"):
+        with pytest.raises(ValueError):
+            svc.get_day_score("alice", "2026-11-16", mode)
 
 
 # ── API ──────────────────────────────────────────────────────────────────────
@@ -365,10 +412,10 @@ def test_api_and_desktop_routes_are_owner_only_and_read_only(database, monkeypat
     original = svc.score_day
     monkeypatch.setattr(svc, "score_day", lambda *a, **k: original(*a, **{**k, "load_frame": NO_CANDLES}))
     client = TestClient(app)
-    web = client.get("/api/analysis/day-score?date=2026-11-16", headers={"X-User-Id": "alice"}).json()
+    web = client.get("/api/analysis/day-score?date=2026-11-16&mode=sim", headers={"X-User-Id": "alice"}).json()
     assert web["status"] == "scored" and web["score"] == 75 and [i["key"] for i in web["items"]] == list(svc.RULES)
-    assert client.get("/api/analysis/day-score?date=bad", headers={"X-User-Id": "alice"}).status_code == 400
-    desktop = client.get("/api/desktop/v1/analysis/day-score?date=2026-11-16").json()
+    assert client.get("/api/analysis/day-score?date=bad&mode=sim", headers={"X-User-Id": "alice"}).status_code == 400
+    desktop = client.get("/api/desktop/v1/analysis/day-score?date=2026-11-16&mode=sim").json()
     assert desktop["score"] == 75
     assert client.get("/api/desktop/v1/analysis/day-scores").json()["scores"][0]["score"] == 75
     for method, path in (("post", "/api/desktop/v1/analysis/day-score"), ("put", "/api/desktop/v1/analysis/day-score"), ("delete", "/api/desktop/v1/analysis/day-scores")):

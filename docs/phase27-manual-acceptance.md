@@ -62,6 +62,7 @@ S7, the screens (website, webapp, Windows app):
 - A day with a trade not yet labelled: no chip; the Notes tab says how many trades still need a label. Label them in Label Trades, go back: the score is there.
 - Habits (Stats): a **System** filter beside Entry and Exit with the three calculated habits, each with the usual Costly / Rewarding verdict, deep dive and compare. They cannot be archived (Manage questions does not list them).
 - Stats > Behavior > Day P&L path: the metric **Day score (0 to 100)** plots your scored days over the range; it may take a moment the first time (it scores up to 31 new days per round, then say "more days still to score"; choose the metric again to continue).
+- **One score per session type (2026-11-22).** A date with a Paper session and a Replay run: the Paper card scores only its Paper trades ("Day score · Paper" in the Notes tab), the Replay card its own; label the Replay trades and that card scores too, without changing the Paper score. The Summary shows a chip per type ("Replay", "Paper") when a day has both. Old scores stored before this change are not shown until a card is opened (then they are worked out again).
 - Tell me if a day's score or one of the three system habits does not match what you remember: the weights are a first guess and are all in `CONFIG` in `day_score_service.py`.
 
 S6, the backend and the guardrail snapshot (use the website's address bar while signed in, or the browser's Network tab):

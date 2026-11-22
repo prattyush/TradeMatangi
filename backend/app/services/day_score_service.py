@@ -16,7 +16,10 @@ straight line. Every number lives in ``CONFIG`` below, in one place, so it can b
   4. A clean day: the running P&L of the closed trades never went below zero (with at least ``CLEAN_DAY_TIERS`` trades).
   5. One bad trade wiping out the profit of the three or more winning trades just before it.
 
-The result is stored per user and date (``DayScores``, created lazily) with a fingerprint of the trades and labels it was computed from,
+A day is scored **per session type**: Paper, Real, Replay (``sim``) and Stepwise each on their own sessions of that market date (found on
+2026-11-22: a Replay run of a date next to a Paper day made the Paper day look unlabelled). Nothing is added up across types.
+
+The result is stored per user, date and type (``DayScores``, created lazily, sort key ``<date>#<type>``) with a fingerprint of the trades and labels it was computed from,
 so it is recomputed when a fill, a label or a setting of the score changes, and served from the table otherwise. Nothing here changes a
 trade, an order, a label or the broker. Own intraday sessions only (like the Habits ledger); Strategy Practice runs are left out.
 """
@@ -32,7 +35,10 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 TABLE = "DayScores"
-CONFIG_VERSION = 1
+CONFIG_VERSION = 2  # 2: a score is per session type, not per date
+
+#: The session types a day is scored for, in the order they are listed.
+MODES = ("sim", "stepwise", "paper", "real")
 
 #: The limit used for a session that was created before the limit was saved (the owner's earlier setting).
 LEGACY_GUARDRAIL_LIMIT_PCT = 12.0
@@ -119,6 +125,22 @@ def clean_date(value) -> str:
     except ValueError:
         raise ValueError("The date must be a real calendar date") from None
     return text
+
+
+def clean_mode(value) -> str:
+    text = str(value or "").strip().lower()
+    if text not in MODES:
+        raise ValueError(f"The session type must be one of {', '.join(MODES)}")
+    return text
+
+
+def _row_key(date: str, mode: str) -> str:
+    return f"{date}#{mode}"
+
+
+def _split_key(key: str) -> tuple[str, str | None]:
+    date, _, mode = str(key).partition("#")
+    return date, (mode if mode in MODES else None)
 
 
 # ── Small helpers ────────────────────────────────────────────────────────────
@@ -403,11 +425,15 @@ def _user_session_rows(user_id: str) -> list[dict]:
     return query_all(_resource().Table("Sessions"), IndexName="UserIdIndex", KeyConditionExpression=Key("user_id").eq(user_id))
 
 
-def _day_sessions(user_id: str, date: str) -> list[dict]:
-    """The user's own intraday sessions of a market date (no swing, no practice, one per broker projection)."""
+def session_mode(session: dict) -> str:
+    return str(session.get("session_type") or "sim")
+
+
+def _day_sessions(user_id: str, date: str, mode: str | None = None) -> list[dict]:
+    """The user's own intraday sessions of a market date (no swing, no practice, one per broker projection), of one session type when ``mode`` is given."""
     owners, kept = set(), []
     for session in _user_session_rows(user_id):
-        if _skip_reason(session, user_id, date):
+        if _skip_reason(session, user_id, date) or (mode is not None and session_mode(session) != mode):
             continue
         owner = session.get("broker_projection_id") or session["session_id"]
         if owner in owners:
@@ -427,8 +453,8 @@ def session_limit(session: dict) -> tuple[float, str]:
     return LEGACY_GUARDRAIL_LIMIT_PCT, "estimated"
 
 
-def _fingerprint(date: str, sessions: list[dict], cycles: list[dict]) -> str:
-    parts = [CONFIG_VERSION, json.dumps(CONFIG, sort_keys=True, default=str), date, LEGACY_GUARDRAIL_LIMIT_PCT]
+def _fingerprint(date: str, sessions: list[dict], cycles: list[dict], mode: str | None = None) -> str:
+    parts = [CONFIG_VERSION, json.dumps(CONFIG, sort_keys=True, default=str), date, mode, LEGACY_GUARDRAIL_LIMIT_PCT]
     parts += [(s["session_id"], str(session_limit(s))) for s in sessions]
     for c in sorted(cycles, key=lambda c: c["cycle_id"]):
         label = c.get("label") or {}
@@ -459,18 +485,18 @@ def _unlabelled_by_session(sessions: list[dict], closed: list[dict]) -> list[dic
 
 # ── Diagnostics ──────────────────────────────────────────────────────────────
 
-_LOGGED: dict[tuple[str, str], str] = {}
+_LOGGED: dict[tuple[str, str, str | None], str] = {}
 
 
 def _short(value) -> str:
     return str(value)[:10] if value is not None else ""
 
 
-def _log_day(user_id: str, day: str, sessions: list[dict], cycles_by_session: dict[str, list[dict]], result: dict) -> None:
+def _log_day(user_id: str, day: str, sessions: list[dict], cycles_by_session: dict[str, list[dict]], result: dict, mode: str | None = None) -> None:
     """One ``DAYSCORE-DIAG`` line in the backend log for a day that cannot be scored yet (or is scored): which sessions were read and
     which were left out and why, how many closed trades each has against the round trips Label Trades shows and the label rows saved,
     and exactly which closed trades have no label. Written once per change of the day's data; never raises, never changes a score."""
-    key = (user_id, day)
+    key = (user_id, day, mode)
     if _LOGGED.get(key) == result.get("fingerprint"):
         return
     _LOGGED[key] = result.get("fingerprint")
@@ -513,30 +539,31 @@ def _log_day(user_id: str, day: str, sessions: list[dict], cycles_by_session: di
                            "label_rows": sorted(label_indexes), "label_rows_with_cycle_id": sum(1 for label in labels if label.get("analytics_cycle_id")),
                            "label_rows_complete": sum(1 for label in labels if label.get("expected_strategy") and label.get("actual_strategy") and label.get("expected_category") and label.get("actual_category")),
                            "unlabelled": unlabelled})
-        logger.info("DAYSCORE-DIAG %s", json.dumps({"date": day, "status": result.get("status"), "closed": result.get("closed"), "labelled": result.get("labelled"),
+        logger.info("DAYSCORE-DIAG %s", json.dumps({"date": day, "mode": mode, "status": result.get("status"), "closed": result.get("closed"), "labelled": result.get("labelled"),
                                                      "user": _short(user_id), "session_rows_of_the_date": rows, "scored_sessions": detail}, default=str))
     except Exception:  # noqa: BLE001
         logger.exception("DAYSCORE-DIAG failed for %s", day)
 
 
-def compute_day(user_id: str, date: str, *, load_frame=None) -> dict:
+def compute_day(user_id: str, date: str, mode: str | None = None, *, load_frame=None) -> dict:
     """Scores a market date from scratch (no cache): ``status`` is ``no_trades``, ``pending_labels`` (some closed trade has no label yet) or ``scored``."""
     from app.services import performance_service
     day = clean_date(date)
-    sessions = _day_sessions(user_id, day)
+    mode = clean_mode(mode) if mode is not None else None
+    sessions = _day_sessions(user_id, day, mode)
     cycles: list[dict] = []
     by_session: dict[str, list[dict]] = {}
     for session in sessions:
         by_session[session["session_id"]] = performance_service.load_session_cycles(session)
         cycles.extend(by_session[session["session_id"]])
     closed = closed_in_order(cycles)
-    base = {"date": day, "sessions": len(sessions), "closed": len(closed), "labelled": sum(1 for c in closed if c.get("label")), "config_version": CONFIG_VERSION}
-    fingerprint = _fingerprint(day, sessions, cycles)
+    base = {"date": day, "mode": mode, "sessions": len(sessions), "closed": len(closed), "labelled": sum(1 for c in closed if c.get("label")), "config_version": CONFIG_VERSION}
+    fingerprint = _fingerprint(day, sessions, cycles, mode)
     if not closed:
         return {**base, "status": "no_trades", "score": None, "fingerprint": fingerprint}
     if base["labelled"] < len(closed):
         pending = {**base, "status": "pending_labels", "score": None, "fingerprint": fingerprint, "unlabelled": _unlabelled_by_session(sessions, closed)}
-        _log_day(user_id, day, sessions, by_session, pending)
+        _log_day(user_id, day, sessions, by_session, pending, mode)
         return pending
     limits = [session_limit(s) for s in sessions]
     limit_pct = min(pct for pct, _ in limits)
@@ -549,16 +576,19 @@ def compute_day(user_id: str, date: str, *, load_frame=None) -> dict:
 def day_cycles_flags(user_id: str, date: str) -> dict[str, list[str]]:
     """System-habit flags (``sys:*``) by cycle id for a date: used by the Habits ledger."""
     from app.services import performance_service
-    cycles: list[dict] = []
+    by_mode: dict[str, list[dict]] = {}
     for session in _day_sessions(user_id, clean_date(date)):
-        cycles.extend(performance_service.load_session_cycles(session))
-    return system_flags(cycles)
+        by_mode.setdefault(session_mode(session), []).extend(performance_service.load_session_cycles(session))
+    flags: dict[str, list[str]] = {}
+    for cycles in by_mode.values():  # a Replay run is never judged against a Paper trade of the same date
+        flags.update(system_flags(cycles))
+    return flags
 
 
 # ── Stored scores ────────────────────────────────────────────────────────────
 
-def _stored(user_id: str, date: str) -> dict | None:
-    row = _table().get_item(Key={"user_id": user_id, "date": date}).get("Item")
+def _stored(user_id: str, date: str, mode: str) -> dict | None:
+    row = _table().get_item(Key={"user_id": user_id, "date": _row_key(date, mode)}).get("Item")
     if not row:
         return None
     try:
@@ -567,69 +597,76 @@ def _stored(user_id: str, date: str) -> dict | None:
         return None
 
 
-def get_day_score(user_id: str, date: str, *, load_frame=None) -> dict:
-    """The score of a market date: the stored one when the trades, labels and score settings have not changed since, else recomputed and stored.
+def get_day_score(user_id: str, date: str, mode: str, *, load_frame=None) -> dict:
+    """The score of a market date for one session type: the stored one when the trades, labels and score settings have not changed since, else recomputed and stored.
 
     A day that cannot be scored yet (no trades, or labels still missing) is returned, not stored.
     """
-    day = clean_date(date)
+    day, kind = clean_date(date), clean_mode(mode)
     from app.services import performance_service
-    sessions = _day_sessions(user_id, day)
+    sessions = _day_sessions(user_id, day, kind)
     cycles = [c for s in sessions for c in performance_service.load_session_cycles(s)]
-    fingerprint = _fingerprint(day, sessions, cycles)
-    stored = _stored(user_id, day)
+    fingerprint = _fingerprint(day, sessions, cycles, kind)
+    stored = _stored(user_id, day, kind)
     if stored and stored.get("fingerprint") == fingerprint:
         return stored
-    result = compute_day(user_id, day, load_frame=load_frame)
+    result = compute_day(user_id, day, kind, load_frame=load_frame)
     result["computed_at"] = _now()
     if result["status"] == "scored":
-        _table().put_item(Item={"user_id": user_id, "date": day, "payload": json.dumps(result, default=str), "score": int(result["score"]), "computed_at": result["computed_at"]})
+        _table().put_item(Item={"user_id": user_id, "date": _row_key(day, kind), "payload": json.dumps(result, default=str), "score": int(result["score"]), "computed_at": result["computed_at"]})
     elif stored:
-        _table().delete_item(Key={"user_id": user_id, "date": day})  # the day is no longer scorable (a label was removed): drop the old score
+        _table().delete_item(Key={"user_id": user_id, "date": _row_key(day, kind)})  # the day is no longer scorable (a label was removed): drop the old score
     return result
 
 
-def list_scores(user_id: str, start: str | None = None, end: str | None = None) -> list[dict]:
-    """The stored scores in a date range, oldest first, as ``{date, score, limit_source, partial, computed_at}`` (no recompute)."""
+def list_scores(user_id: str, start: str | None = None, end: str | None = None, mode: str | None = None) -> list[dict]:
+    """The stored scores in a date range, oldest first, as ``{date, mode, score, limit_source, partial, computed_at}`` (no recompute), of one session type when ``mode`` is given.
+
+    Rows from before scores were per type (a plain date as the key) are left out: they were date-wide and are scored again per type.
+    """
     from boto3.dynamodb.conditions import Key
     from app.services.performance_service import query_all
     lo, hi = (clean_date(start) if start else "0000-00-00"), (clean_date(end) if end else "9999-99-99")
-    rows = query_all(_table(), KeyConditionExpression=Key("user_id").eq(user_id) & Key("date").between(lo, hi))
+    kind = clean_mode(mode) if mode is not None else None
+    # "<date>#<type>" sorts after "<date>", so the last day of the range is reached with a suffix that sorts after every type.
+    rows = query_all(_table(), KeyConditionExpression=Key("user_id").eq(user_id) & Key("date").between(lo, f"{hi}#~"))
     out = []
     for row in rows:
+        day, row_mode = _split_key(row["date"])
+        if row_mode is None or (kind is not None and row_mode != kind):
+            continue
         try:
             payload = json.loads(row["payload"])
         except (KeyError, ValueError):
             continue
-        out.append({"date": row["date"], "score": int(row["score"]), "limit_source": payload.get("limit_source"), "partial": bool(payload.get("drawdown", {}).get("partial")),
+        out.append({"date": day, "mode": row_mode, "score": int(row["score"]), "limit_source": payload.get("limit_source"), "partial": bool(payload.get("drawdown", {}).get("partial")),
                     "computed_at": row.get("computed_at")})
-    return sorted(out, key=lambda r: r["date"])
+    return sorted(out, key=lambda r: (r["date"], MODES.index(r["mode"])))
 
 
-def session_dates(user_id: str, start: str | None = None, end: str | None = None) -> list[str]:
-    """The market dates on which the user has an intraday session (no swing, no practice) in a range, oldest first."""
-    from boto3.dynamodb.conditions import Key
-    from app.services.performance_service import query_all
+def session_day_modes(user_id: str, start: str | None = None, end: str | None = None, mode: str | None = None) -> list[tuple[str, str]]:
+    """The ``(market date, session type)`` pairs on which the user has an intraday session (no swing, no practice) in a range, oldest first."""
     lo, hi = (clean_date(start) if start else "0000-00-00"), (clean_date(end) if end else "9999-99-99")
-    rows = query_all(_resource().Table("Sessions"), IndexName="UserIdIndex", KeyConditionExpression=Key("user_id").eq(user_id))
-    dates = {r["date"] for r in rows if r.get("date") and lo <= r["date"] <= hi and r.get("trading_style") != "swing" and r.get("record_type") != "swing_portfolio"
-             and ":archive:" not in r["session_id"] and not r.get("practice") and r.get("user_id") == user_id}
-    return sorted(dates)
+    pairs = {(r["date"], session_mode(r)) for r in _user_session_rows(user_id)
+             if r.get("date") and lo <= r["date"] <= hi and not _skip_reason(r, user_id, r["date"]) and (mode is None or session_mode(r) == mode)}
+    return sorted(pairs, key=lambda p: (p[0], MODES.index(p[1]) if p[1] in MODES else len(MODES)))
 
 
-def scores_in_range(user_id: str, start: str | None = None, end: str | None = None, *, compute: bool = False, load_frame=None) -> dict:
-    """Scores over a date range for the Stats trend: the stored ones, and with ``compute`` also the days that have none yet.
+def scores_in_range(user_id: str, start: str | None = None, end: str | None = None, *, compute: bool = False, load_frame=None, mode: str | None = None) -> dict:
+    """Scores over a date range for the Stats trend: the stored ones, and with ``compute`` also the days that have none yet (per session type).
 
     At most ``MAX_RANGE_COMPUTE`` of the newest days are computed in one call (each reads candles); ``pending`` counts the days
-    that are left, so the caller can ask again.
+    that are left, so the caller can ask again. ``mode`` keeps one session type.
     """
-    stored = {row["date"]: row for row in list_scores(user_id, start, end)}
+    kind = clean_mode(mode) if mode is not None else None
+    stored = {(row["date"], row["mode"]): row for row in list_scores(user_id, start, end, kind)}
     pending = 0
     if compute:
-        missing = [d for d in session_dates(user_id, start, end) if d not in stored]
+        missing = [pair for pair in session_day_modes(user_id, start, end, kind) if pair not in stored and pair[1] in MODES]
         todo, pending = missing[-MAX_RANGE_COMPUTE:], max(0, len(missing) - MAX_RANGE_COMPUTE)
-        for date in todo:
-            result = get_day_score(user_id, date, load_frame=load_frame)
+        for date, row_mode in todo:
+            result = get_day_score(user_id, date, row_mode, load_frame=load_frame)
             if result["status"] == "scored":
-                stored[date] = {"date": date, "score": int(result["score"]), "limit_source": result.get("limit_source"), "partial": bool(result["drawdown"]["partial"]), "computed_at": result.get("computed_at")}
-    return {"scores": [stored[d] for d in sorted(stored)], "pending": pending}
+                stored[(date, row_mode)] = {"date": date, "mode": row_mode, "score": int(result["score"]), "limit_source": result.get("limit_source"),
+                                            "partial": bool(result["drawdown"]["partial"]), "computed_at": result.get("computed_at")}
+    return {"scores": [stored[key] for key in sorted(stored, key=lambda k: (k[0], MODES.index(k[1])))], "pending": pending}

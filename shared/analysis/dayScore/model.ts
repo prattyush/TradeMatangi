@@ -1,5 +1,5 @@
 /** Pure helpers for showing a day score: its colour band, its wording and the trend series. */
-import type { DayScore, ScoreItem, ScoreRow, ScoreRuleKey } from './types'
+import type { DayScore, ScoreItem, ScoreMode, ScoreRow, ScoreRuleKey } from './types'
 
 export type ScoreBand = 'good' | 'fair' | 'poor'
 
@@ -35,17 +35,25 @@ export function trustNote(score: Pick<DayScore, 'limit_source' | 'limit_pct' | '
 }
 
 /** The badge text and hover for a day card. */
-export function badgeFor(score: Pick<DayScore, 'score' | 'limit_source' | 'drawdown'> | Pick<ScoreRow, 'score' | 'limit_source' | 'partial'>): { text: string; title: string } {
+export function badgeFor(score: (Pick<DayScore, 'score' | 'limit_source' | 'drawdown'> | Pick<ScoreRow, 'score' | 'limit_source' | 'partial'>) & { mode?: string | null }): { text: string; title: string } {
   const partial = 'partial' in score ? score.partial : !!score.drawdown?.partial
   const flags = [score.limit_source === 'estimated' ? 'limit estimated' : '', partial ? 'partial candles' : ''].filter(Boolean)
-  return { text: `Score ${score.score}`, title: `Day score ${score.score} of 100${flags.length ? ` (${flags.join(', ')})` : ''}` }
+  return { text: `Score ${score.score}`, title: `${score.mode ? `${scoreModeName(score.mode)} day` : 'Day'} score ${score.score} of 100${flags.length ? ` (${flags.join(', ')})` : ''}` }
 }
 
 /** Items that cost points first, then bonuses, then the neutral ones: what to look at first. */
 export const itemsByImpact = (items: readonly ScoreItem[]): ScoreItem[] => [...items].sort((a, b) => a.points - b.points)
 
 /** Trend values by date for the Stats chart; days without a stored score are absent. */
-export const scoreByDate = (rows: readonly ScoreRow[]): Map<string, number> => new Map(rows.map(row => [row.date, row.score]))
+/** The session type a card is scored for, or null for a type that has no day score. */
+export const scoreModeOf = (sessionType: string | null | undefined): ScoreMode | null => (sessionType === 'sim' || sessionType === 'stepwise' || sessionType === 'paper' || sessionType === 'real' ? sessionType : null)
+
+export const scoreModeName = (mode: string | null | undefined): string => (mode === 'sim' ? 'Replay' : mode === 'stepwise' ? 'Stepwise' : mode === 'paper' ? 'Paper' : mode === 'real' ? 'Real' : '')
+
+/** The key of one score in a map: a date and its session type. */
+export const scoreKey = (date: string, mode: string | null | undefined): string => `${date}|${mode ?? ''}`
+
+export const scoreByDate = (rows: readonly ScoreRow[]): Map<string, number> => new Map(rows.map(row => [scoreKey(row.date, row.mode), row.score]))
 
 /** When each event of a rule happened (HH:MM on the market clock, in order), for "found at 10:42, 11:15" in the explanation. */
 export function eventTimes(score: Pick<DayScore, 'events'>, key: ScoreRuleKey): string[] {
