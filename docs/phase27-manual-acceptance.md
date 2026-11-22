@@ -71,3 +71,14 @@ S6, the backend and the guardrail snapshot (use the website's address bar while 
 4. `GET /api/analysis/day-score?date=YYYY-MM-DD` for a day whose trades are all labelled: `status: scored` with a score and five items; with one trade unlabelled: `status: pending_labels` with `labelled` and `closed`; a day with no trades: `no_trades`.
 5. For a day you remember: check each rule against your trades (a repeat loss within 9 minutes on the same contract, an add to a loser, a day whose closed P&L stayed above zero, one loss after three wins) and the drawdown against what the day really touched. Tell me which numbers feel too harsh or too soft: they are all in `CONFIG` in `day_score_service.py`.
 6. Label or change a trade and read the score again: it follows. Delete a label: the day goes back to `pending_labels`.
+
+## G. Notes chart and score rules (S8, S9)
+Status: S8 merged #914 (the scoped drawings, shared with the trading chart's controller: dev only), S9 in PR; waiting for your try. Website, webapp and Windows app (a rebuild picks up shared code). Not the phone.
+1. Analysis, open a day, **Notes**: a header with the full date and the day's score, then the day's charts. On a date with two symbols there is a tab per symbol (both sessions' trades, replay, paper and real, together); with options the Underlying and the CE / PE chart show, with the buy and sell markers. Try on both chart renderers (Settings, Analysis and Patterns chart).
+2. Draw a Horizontal line, a Trend line and a **Text** on the Notes chart; reload and reopen the day: they are there.
+3. Open the same contract in the **Trades** tab, in Browse and on a live chart: the lines and the text you drew in Notes are **not** there.
+4. A line you had drawn earlier on another chart (for example a support line from Browse) is on the Notes chart the first time you open that day. Delete it in Notes: it is still on the other charts. Reopen Notes: it does not come back.
+5. A line drawn on the other chart **after** you opened that day in Notes is not added to it (the one limit of this design).
+6. The note beside the Day score and the TODOs (two columns on a wide window, one on a narrow one); Maximize: the chart keeps a good height and everything still scrolls.
+7. Day score: click a rule, for example "Drawdown against the guardrail limit": why it counts, how its points are set (the numbers match the score you see) and, for repeat entries, adding to a loser and one loss wiping the wins, the times it was found. Click again: it closes.
+8. A day with no trades (or only a shared day) shows no chart and a plain message.

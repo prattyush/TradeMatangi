@@ -1,6 +1,17 @@
-/* The Notes tab of an Analysis day: TODOs on top, the day's note beneath, a collapsed review last. */
-.dn { display: flex; flex-direction: column; gap: 14px; max-width: 980px; padding-bottom: 12px; }
-.dn h4 { margin: 0 0 6px; font-size: 14px; }
+/* The Notes tab of an Analysis day: a header, the day's charts, the note beside the score and TODOs, a collapsed review last. */
+.dn { display: flex; flex-direction: column; gap: 16px; padding-bottom: 12px; }
+.dn-head { display: flex; align-items: center; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid #30363d; }
+.dn-head h3 { margin: 0; font-size: 16px; font-weight: 600; flex: 1; min-width: 0; }
+.dn-chartbox, .dn-note, .dn-todos, .dn .ds { border: 1px solid #30363d; border-radius: 8px; background: #0d1117; padding: 12px 14px; }
+.dn-chartbox { padding: 10px 12px; }
+.dn-chartbox h4 small { font-weight: 400; margin-left: 6px; }
+.dn-chart-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.dn-chart-tabs button { padding: 3px 12px; border-radius: 14px; border: 1px solid #30363d; background: #161b22; color: #8b949e; font-size: 12px; font-weight: 600; cursor: pointer; }
+.dn-chart-tabs button[aria-pressed="true"] { background: #1f3a5f; border-color: #58a6ff; color: #79c0ff; }
+.dn-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.dn-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (min-width: 1000px) { .dn-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.dn h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
 .dn-hint { margin: 0 0 6px; font-size: 12px; }
 .dn ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .dn-todo { border: 1px solid #30363d; border-left: 3px solid #d29922; border-radius: 6px; padding: 6px 10px; background: #161b22; }
@@ -31,3 +42,6 @@
 /* Open TODOs above Label Trades. */
 .dn-banner { margin: 0 0 8px; padding: 6px 10px; border: 1px solid #9e6a03; border-left-width: 3px; border-radius: 6px; background: rgba(210, 153, 34, .08); font-size: 12px; }
 .dn-banner ul { margin: 2px 0 0; padding-left: 18px; }
+
+/* The day's chart keeps a good height, also in a maximized card (the panels have no height of their own there). */
+.dn-chartbox .analysis-panels { flex: none; height: clamp(420px, 62vh, 680px); }

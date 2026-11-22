@@ -3,7 +3,9 @@ import { useAnalysisEnvironment } from '../environment'
 import { historyLine, isClosed, PART_LABEL, partsOf, sameParts, shortDate, STATUS_LABEL, STATUS_ORDER, todoTotals, weeklyReview } from './model'
 import { NOTE_PARTS, type DayNotesSource, type DayNotesView, type DayTodo, type NoteParts, type TodoStatus } from './types'
 import DayScoreBreakdown from '../dayScore/DayScoreBreakdown'
+import DayChart from './DayChart'
 import type { DayScore } from '../dayScore/types'
+import { scoreBand } from '../dayScore/model'
 import './notes.css'
 
 const AUTOSAVE_MS = 800
@@ -85,6 +87,26 @@ function Notes({ source, date, readOnly, score, scoreLoading, scoreError }: { so
   const carried = view.todos.filter(todo => todo.carried)
   return <div className="dn" aria-label={`Notes for ${date}`}>
     {error && <p role="alert" className="pl-error">{error}</p>}
+    <header className="dn-head">
+      <h3>{longDate(date)}</h3>
+      {score?.status === 'scored' && score.score !== null && <span className={`ds-badge ${scoreBand(score.score)}`} title="The day's score; open the rules below to see how it was worked out">Score {score.score}</span>}
+      <span className="pl-muted dn-state" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ''}</span>
+    </header>
+    <section className="dn-chartbox" aria-label="Day chart">
+      <h4>The day's charts <small className="pl-muted">All symbols. Lines and texts you add here stay with this day's notes; the lines from your other charts are shown and can be changed here without changing them there.</small></h4>
+      <DayChart date={date} readOnly={readOnly} />
+    </section>
+    <div className="dn-grid">
+    <div className="dn-col">
+    <section className="dn-note" aria-label="Day note">
+      <h4>Note for {shortDate(date)}</h4>
+      {NOTE_PARTS.map(part => <label key={part} className="dn-part">
+        <span>{PART_LABEL[part].title} <small className="pl-muted">{PART_LABEL[part].hint}</small></span>
+        <textarea rows={3} value={parts[part]} disabled={readOnly} maxLength={4000} onChange={event => setParts(current => ({ ...current, [part]: event.target.value }))} />
+      </label>)}
+    </section>
+    </div>
+    <div className="dn-col">
     <DayScoreBreakdown score={score} loading={scoreLoading} error={scoreError} />
     <section className="dn-todos" aria-label="TODOs">
       <h4>TODOs {view.todos.length > 0 && <span className="pl-muted">({view.todos.length}{carried.length ? `, ${carried.length} carried over` : ''})</span>}</h4>
@@ -98,13 +120,8 @@ function Notes({ source, date, readOnly, score, scoreLoading, scoreError }: { so
         <button type="submit" disabled={busy || !draft.trim()}>Add TODO</button>
       </form>}
     </section>
-    <section className="dn-note" aria-label="Day note">
-      <h4>Note for {shortDate(date)} <span className="pl-muted dn-state" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ''}</span></h4>
-      {NOTE_PARTS.map(part => <label key={part} className="dn-part">
-        <span>{PART_LABEL[part].title} <small className="pl-muted">{PART_LABEL[part].hint}</small></span>
-        <textarea rows={3} value={parts[part]} disabled={readOnly} maxLength={4000} onChange={event => setParts(current => ({ ...current, [part]: event.target.value }))} />
-      </label>)}
-    </section>
+    </div>
+    </div>
     <Review source={source} revision={reviewRevision} />
   </div>
 }
@@ -151,4 +168,6 @@ function Review({ source, revision }: { source: DayNotesSource; revision: number
   </details>
 }
 
+/** "Friday 14 Nov 2026" for the header of a day (the date is a market date, so it is read as that calendar day). */
+const longDate = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
 const message = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))

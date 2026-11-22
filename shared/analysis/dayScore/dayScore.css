@@ -15,3 +15,10 @@
 .ds-table tr.none .ds-points { color: #8b949e; }
 .ds-note { margin: 6px 0 0; font-size: 12px; }
 .ds-warn { margin: 6px 0 0; font-size: 12px; color: #e3b341; }
+
+/* A rule opens on a click: why it counts and how its points are set. */
+.ds-toggle { display: inline-flex; gap: 6px; align-items: baseline; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ds-toggle:hover, .ds-toggle:focus-visible { color: #58a6ff; }
+.ds-caret { color: #8b949e; font-size: 11px; width: 10px; }
+.ds-help td { padding: 2px 12px 10px 16px; background: rgba(88, 166, 255, .06); border-left: 2px solid #1f6feb; font-size: 12px; color: #c9d1d9; }
+.ds-help p { margin: 4px 0; }

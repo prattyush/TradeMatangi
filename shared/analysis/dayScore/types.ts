@@ -39,6 +39,8 @@ export interface DayScore {
   limit_source?: 'saved' | 'estimated'
   drawdown?: DayScoreDrawdown
   capital?: number
+  /** What the three event rules found, with the time of each (epoch seconds, market wall clock). */
+  events?: Partial<Record<'repeat_entry' | 'add_to_loser' | 'big_loss_wipes_gains', Array<{ cycle_id?: string; time?: number }>>>
 }
 
 /** One stored score in a range list. */

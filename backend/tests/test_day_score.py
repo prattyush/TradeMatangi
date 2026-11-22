@@ -385,3 +385,26 @@ def test_a_resumed_session_reads_its_saved_limit_back_and_keeps_writing_it(monke
     session.guardrail_ban_capital_pct = 20.0  # what initialize_guardrails re-reads from today's settings
     sim._upsert_session_to_db(session)
     assert table.items[-1]["guardrail_limit_snapshot"]["ban_capital_pct"] == Decimal("8.5")
+
+
+def test_notes_tab_rule_numbers_match_the_config():
+    """The Notes tab explains each rule with `RULE_NUMBERS` in `shared/analysis/dayScore/ruleHelp.ts`; it must be a copy of `CONFIG`."""
+    import json
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[2] / "shared" / "analysis" / "dayScore" / "ruleHelp.ts").read_text()
+    literal = re.search(r"export const RULE_NUMBERS = (\{.*?\n\})", source, re.S).group(1)
+    literal = re.sub(r"(\w+):", r'"\1":', literal)  # keys to JSON
+    literal = re.sub(r",(\s*[}\]])", r"\1", literal)  # trailing commas
+    shown = json.loads(literal)
+    config = svc.CONFIG
+    assert shown["base"] == config["base"]
+    assert shown["drawdownTiers"] == [list(tier) for tier in config["drawdown_tiers"]]
+    assert shown["repeatWindowBars"] == config["repeat_window_bars"]
+    assert shown["defaultBarSeconds"] == config["default_bar_seconds"]
+    assert shown["repeatPoints"] == list(config["repeat_points"])
+    assert shown["addPoints"] == list(config["add_points"])
+    assert shown["cleanDayTiers"] == [list(tier) for tier in config["clean_day_tiers"]]
+    assert shown["wipeMinWins"] == config["wipe_min_wins"]
+    assert shown["wipeTiers"] == [list(tier) for tier in config["wipe_tiers"]]
