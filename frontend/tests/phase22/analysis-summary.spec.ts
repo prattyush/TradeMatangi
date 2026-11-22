@@ -92,7 +92,7 @@ test("Summary: the deck steps through the days with the buttons, arrow keys and 
   await deck.getByRole("button", { name: /^2026-10-15/ }).click();
   await expect(page.getByTestId("deck-date")).toContainText("15 Oct 2026");
   await expect(deck.getByRole("button", { name: /^2026-10-15/ })).toHaveAttribute("aria-current", "true");
-  await expect(deck.getByRole("button", { name: /^2026-10-15/ })).toHaveAttribute("aria-label", /score 82/);
+  await expect(deck.getByRole("button", { name: /^2026-10-15/ })).toHaveAttribute("aria-label", /score Replay 82/);
   // The figures and the journey sit beside the charts; the page after the first loaded its own charts only when reached.
   await expect(deck.getByTestId("day-net")).toHaveText("₹100");
   // Esc goes back to the list, and the choice of layout is remembered.

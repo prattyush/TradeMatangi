@@ -1,5 +1,5 @@
 /** Pure helpers of the Analysis Summary: the request query, wording, ordering, the deck's stepping and the daily chart's geometry. */
-import { scoreBand } from '../dayScore/model'
+import { scoreBand, scoreModeName } from '../dayScore/model'
 import type { PerformanceFilters } from '../performance'
 import type { SummaryDay, SummaryNote, SummaryTrade } from './types'
 
@@ -40,9 +40,12 @@ export function noteParts(note: SummaryNote | null | undefined): Array<{ key: st
   return parts.filter(([, , text]) => (text ?? '').trim()).map(([key, title, text]) => ({ key, title, text: text.trim() }))
 }
 
+/** "Replay 64, Paper 82": the day's stored scores in words (for hovers and labels). */
+export const scoreWords = (day: Pick<SummaryDay, 'scores'>): string => day.scores.map(row => `${scoreModeName(row.mode)} ${row.score}`).join(', ')
+
 /** The colour of a day on the deck's strip: its score band when it has a score, otherwise the sign of its P&L. */
 export function stripTone(day: SummaryDay): 'good' | 'fair' | 'poor' | 'pos' | 'neg' | 'flat' {
-  if (day.score) return scoreBand(day.score.score)
+  if (day.scores.length) return scoreBand(Math.round(day.scores.reduce((sum, row) => sum + row.score, 0) / day.scores.length))
   return tone(day.totals.net_pnl)
 }
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import DayScoreBadge from '../dayScore/DayScoreBadge'
+import { scoreModeName } from '../dayScore/model'
 import { DayCharts, DayFigures, DayJourneys } from './SummaryDay'
-import { chronological, deckStep, longDate, money, percent, shortDate, stripTone, tone } from './summaryModel'
+import { chronological, deckStep, longDate, money, percent, scoreWords, shortDate, stripTone, tone } from './summaryModel'
 import type { SummaryDay } from './types'
 
 /** Keys that belong to a field or a control, not to the deck. */
@@ -47,15 +48,15 @@ export default function SummaryDeck({ days, start, onList }: { days: readonly Su
         <h3 data-testid="deck-date">{longDate(current.date)}</h3>
         <span className="sm-muted">Day {position + 1} of {ordered.length}</span>
       </div>
-      <DayScoreBadge score={current.score} />
+      {current.scores.map(row => <span key={row.mode} className="sm-score">{current.scores.length > 1 && <span className="sm-muted">{scoreModeName(row.mode)}</span>}<DayScoreBadge score={row} /></span>)}
       <span className={`sm-deck-pnl ${tone(current.totals.net_pnl)}`}>{money(current.totals.net_pnl)} <small>{percent(current.totals.pnl_pct)}</small></span>
       <span className="sm-spacer" />
       <button type="button" onClick={onList}>Back to list</button>
       <button type="button" onClick={() => setIndex(position + 1)} disabled={position >= ordered.length - 1} aria-label="Next day">Next ›</button>
     </div>
     <div className="sm-strip" role="group" aria-label="Days">
-      {ordered.map((day, at) => <button key={day.date} type="button" className={`sm-dot ${stripTone(day)}`} aria-current={at === position} aria-label={`${day.date}${day.score ? `, score ${day.score.score}` : ''}, ${money(day.totals.net_pnl)}`}
-        title={`${shortDate(day.date)} · ${money(day.totals.net_pnl)}${day.score ? ` · score ${day.score.score}` : ''}`} onClick={() => setIndex(at)}>{Number(day.date.slice(8))}</button>)}
+      {ordered.map((day, at) => <button key={day.date} type="button" className={`sm-dot ${stripTone(day)}`} aria-current={at === position} aria-label={`${day.date}${day.scores.length ? `, score ${scoreWords(day)}` : ''}, ${money(day.totals.net_pnl)}`}
+        title={`${shortDate(day.date)} · ${money(day.totals.net_pnl)}${day.scores.length ? ` · score ${scoreWords(day)}` : ''}`} onClick={() => setIndex(at)}>{Number(day.date.slice(8))}</button>)}
     </div>
     <div className="sm-deck-page" key={current.date}>
       <div className="sm-deck-main"><DayCharts day={current} symbol={symbol} onSymbolChange={setSymbol} /></div>

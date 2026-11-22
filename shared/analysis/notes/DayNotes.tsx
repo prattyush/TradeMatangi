@@ -5,7 +5,7 @@ import { NOTE_PARTS, type DayNotesSource, type DayNotesView, type DayTodo, type 
 import DayScoreBreakdown from '../dayScore/DayScoreBreakdown'
 import DayChart from './DayChart'
 import type { DayScore } from '../dayScore/types'
-import { scoreBand } from '../dayScore/model'
+import { scoreBand, scoreModeName } from '../dayScore/model'
 import './notes.css'
 
 const AUTOSAVE_MS = 800
@@ -89,7 +89,7 @@ function Notes({ source, date, readOnly, score, scoreLoading, scoreError }: { so
     {error && <p role="alert" className="pl-error">{error}</p>}
     <header className="dn-head">
       <h3>{longDate(date)}</h3>
-      {score?.status === 'scored' && score.score !== null && <span className={`ds-badge ${scoreBand(score.score)}`} title="The day's score; open the rules below to see how it was worked out">Score {score.score}</span>}
+      {score?.status === 'scored' && score.score !== null && <span className={`ds-badge ${scoreBand(score.score)}`} title={`The ${scoreModeName(score.mode)} day's score (only the ${scoreModeName(score.mode)} sessions of this date); open the rules below to see how it was worked out`}>Score {score.score}</span>}
       <span className="pl-muted dn-state" role="status">{state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : ''}</span>
     </header>
     <section className="dn-chartbox" aria-label="Day chart">

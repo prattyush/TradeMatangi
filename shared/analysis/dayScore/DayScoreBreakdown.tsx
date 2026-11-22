@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { DayScore, ScoreRuleKey } from './types'
-import { eventTimes, itemsByImpact, pendingText, scoreBand, signedPoints, trustNote } from './model'
+import { eventTimes, itemsByImpact, pendingText, scoreBand, scoreModeName, signedPoints, trustNote } from './model'
 import { baseHelp, ruleHelp } from './ruleHelp'
 import './dayScore.css'
 
@@ -12,10 +12,10 @@ export default function DayScoreBreakdown({ score, loading, error }: { score: Da
   const [open, setOpen] = useState<string | null>(null)
   if (error) return <p className="pl-muted" role="status">The day score could not be read: {error}</p>
   if (!score) return <p className="pl-muted" role="status">{loading ? 'Reading the day score…' : ''}</p>
-  if (score.status !== 'scored' || score.score === null || !score.items) return <section className="ds" aria-label="Day score"><h4>Day score</h4><p className="pl-muted" data-testid="score-pending">{pendingText(score)}</p></section>
+  if (score.status !== 'scored' || score.score === null || !score.items) return <section className="ds" aria-label="Day score"><h4>Day score{score.mode && <span className="pl-muted ds-of"> · {scoreModeName(score.mode)}</span>}</h4><p className="pl-muted" data-testid="score-pending">{pendingText(score)}</p></section>
   const trust = trustNote(score)
   return <section className="ds" aria-label="Day score">
-    <h4>Day score <span className={`ds-badge ${scoreBand(score.score)}`} data-testid="score-value">{score.score}</span><span className="pl-muted ds-of"> of 100</span></h4>
+    <h4>Day score <span className={`ds-badge ${scoreBand(score.score)}`} data-testid="score-value">{score.score}</span><span className="pl-muted ds-of"> of 100{score.mode ? ` · ${scoreModeName(score.mode)} trades of this date` : ''}</span></h4>
     <table className="ds-table"><tbody>
       <tr className="ds-base"><td>A plain day</td><td className="ds-points">{score.base}</td><td className="pl-muted">The starting point. <span title={baseHelp}>Click a rule to see how it works.</span></td></tr>
       {itemsByImpact(score.items).flatMap(item => {

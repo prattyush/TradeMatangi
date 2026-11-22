@@ -1,6 +1,8 @@
 /** The day score (Phase 27): the shapes of `/api/analysis/day-score` and `/day-scores`, and the source every host provides. */
 
 export type DayScoreStatus = 'scored' | 'pending_labels' | 'no_trades'
+/** A day is scored per session type: Replay (`sim`), Stepwise, Paper and Real are never added together. */
+export type ScoreMode = 'sim' | 'stepwise' | 'paper' | 'real'
 export type ScoreRuleKey = 'drawdown' | 'repeat_entry' | 'add_to_loser' | 'clean_day' | 'big_loss_wipes_gains'
 
 export interface ScoreItem {
@@ -27,6 +29,7 @@ export interface DayScoreDrawdown {
 /** A day's score. Only `scored` has the score and the items; the others say how far from a score the day is. */
 export interface DayScore {
   date: string
+  mode?: ScoreMode | null
   status: DayScoreStatus
   score: number | null
   closed: number
@@ -46,12 +49,12 @@ export interface DayScore {
 }
 
 /** One stored score in a range list. */
-export interface ScoreRow { date: string; score: number; limit_source: 'saved' | 'estimated' | null; partial: boolean; computed_at: string | null }
+export interface ScoreRow { date: string; mode: ScoreMode; score: number; limit_source: 'saved' | 'estimated' | null; partial: boolean; computed_at: string | null }
 
 export interface ScoreRange { scores: ScoreRow[]; pending: number }
 
 export interface DayScoreSource {
-  day(date: string): Promise<DayScore>
-  /** Stored scores in a range; `compute` also scores days that have none yet (a bounded number per call: `pending` says how many are left). */
-  range(start?: string, end?: string, compute?: boolean): Promise<ScoreRange>
+  day(date: string, mode: ScoreMode): Promise<DayScore>
+  /** Stored scores in a range, one row per date and session type (`mode` keeps one); `compute` also scores days that have none yet (a bounded number per call: `pending` says how many are left). */
+  range(start?: string, end?: string, compute?: boolean, mode?: ScoreMode): Promise<ScoreRange>
 }

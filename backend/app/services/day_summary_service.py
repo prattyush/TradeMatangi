@@ -11,7 +11,7 @@ day card needs without any candle read:
   * ``labels``     how many closed trades are labelled, and how many followed the plan (expected equals actual strategy)
   * ``best`` / ``worst``  the trade with the largest win and the largest loss (by P&L %), only when there is a win or a loss
   * ``journeys``   the Day P&L Journey, one per mode (``day_journey.journeys``)
-  * ``score``      the stored day score (no recompute here; ``null`` when the day has none yet)
+  * ``scores``     the stored day scores, one per session type the day was traded in (Paper, Real, Replay, Stepwise; no recompute here; empty when none yet)
   * ``note``       the day's note, only when something is written
 
 Nothing here changes a trade, an order, a label or the broker.
@@ -110,6 +110,14 @@ def _journey(row) -> dict:
     return {key: value for key, value in row.items() if key not in ("sizing", "sizing_ratio")}
 
 
+def _scores(stored: list[dict], cycles: list[dict]) -> list[dict]:
+    """The stored scores of the day for the session types it was traded in, in the order Replay, Stepwise, Paper, Real."""
+    present = {c.get("mode") or "sim" for c in cycles}
+    order = {"sim": 0, "stepwise": 1, "paper": 2, "real": 3}
+    rows = [{"mode": r["mode"], "score": r["score"], "limit_source": r.get("limit_source"), "partial": bool(r.get("partial"))} for r in stored if r.get("mode") in present]
+    return sorted(rows, key=lambda r: order.get(r["mode"], 9))
+
+
 def _note(row) -> dict | None:
     if not row or not any((row.get(field) or "").strip() for field in _NOTE_FIELDS):
         return None
@@ -119,7 +127,7 @@ def _note(row) -> dict | None:
 def build_days(cycles, scores: dict | None = None, notes: dict | None = None, *, max_days: int = MAX_DAYS) -> dict:
     """The cards for the dates of ``cycles``, newest first, at most ``max_days`` of them (``truncated`` says older ones were left out).
 
-    ``scores`` and ``notes`` are the stored day scores and notes by date (``None`` is the same as nothing stored).
+    ``scores`` are the stored day-score rows by date (a list per date, one per session type) and ``notes`` the stored notes by date (``None`` is the same as nothing stored).
     """
     from app.services.day_journey import journeys
     by_date: dict[str, list[dict]] = defaultdict(list)
@@ -135,7 +143,7 @@ def build_days(cycles, scores: dict | None = None, notes: dict | None = None, *,
     for date in kept:
         items = by_date[date]
         closed = sorted((c for c in items if c.get("state") == "closed"), key=lambda c: (c.get("exit_time") or 0, c["cycle_id"]))
-        stored = (scores or {}).get(date)
+        stored = (scores or {}).get(date) or []
         ranked = sorted(closed, key=lambda c: (_rank(c), c["cycle_id"]))
         best = ranked[-1] if ranked and _number(ranked[-1].get("net_pnl")) > 0 else None
         worst = ranked[0] if ranked and _number(ranked[0].get("net_pnl")) < 0 else None
@@ -144,8 +152,7 @@ def build_days(cycles, scores: dict | None = None, notes: dict | None = None, *,
             "totals": _stats(closed), "strategies": _strategies(closed), "labels": _labels(closed),
             "best": _trade(best) if best else None, "worst": _trade(worst) if worst else None,
             "journeys": sorted(paths.get(date, []), key=lambda p: (p.get("mode") or "", p.get("id") or "")),
-            "score": ({"score": stored["score"], "limit_source": stored.get("limit_source"), "partial": bool(stored.get("partial"))}
-                      if stored else None),
+            "scores": _scores(stored, items),
             "note": _note((notes or {}).get(date)),
         })
     return {"days": days, "total_days": len(dates), "truncated": len(dates) > len(kept)}
@@ -160,7 +167,9 @@ def day_summary(user_id: str, criteria: dict) -> dict:
     if not result["days"]:
         return result
     first, last = result["days"][-1]["date"], result["days"][0]["date"]
-    scores = {row["date"]: row for row in day_score_service.list_scores(user_id, first, last)}
+    scores: dict[str, list[dict]] = defaultdict(list)
+    for row in day_score_service.list_scores(user_id, first, last):
+        scores[row["date"]].append(row)
     notes = day_notes_service.notes_between(user_id, first, last)
     # the scores and notes are looked up for the kept range only, so build again with them (the cards are cheap to build)
     return build_days(cycles, scores, notes)

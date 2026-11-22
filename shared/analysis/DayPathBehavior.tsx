@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useOptionalAnalysisEnvironment } from './environment'
 import type { DayPath, JourneyMember } from './dayJourney'
 import DayJourneyChart from './DayJourneyChart'
+import { scoreKey } from './dayScore/model'
 const money=(v:number)=>`₹${v.toLocaleString('en-IN',{maximumFractionDigits:2})}`
 const pct=(v:number|null)=>v==null?'—':`${v.toFixed(2)}%`
 const ratio=(v:number|null)=>v==null?'—':`${v.toFixed(2)}×`
@@ -25,7 +26,7 @@ export default function DayPathBehavior({paths,onSelect}:{paths:DayPath[];onSele
         for(let round=0;round<SCORE_ROUNDS&&live;round++){
           const result=await scoreSource.range(firstDate,lastDate,true)
           if(!live)return
-          setScores(new Map(result.scores.map(row=>[row.date,row.score])));left=result.pending
+          setScores(new Map(result.scores.map(row=>[scoreKey(row.date,row.mode),row.score])));left=result.pending
           if(!left)break
         }
         if(live)setScoring({loading:false,left,error:''})
@@ -36,7 +37,7 @@ export default function DayPathBehavior({paths,onSelect}:{paths:DayPath[];onSele
   const selected=paths.find(p=>p.id===id)??paths[paths.length-1]
   if(!selected)return null
   const series=paths.filter(p=>scope(p)===scope(selected)).sort((a,b)=>a.date.localeCompare(b.date))
-  const values=series.map(p=>metric==='day_score'?(scores.get(p.date)??null):metric==='allocation'||metric==='risk'?p.sizing_ratio[metric]:p[metric])
+  const values=series.map(p=>metric==='day_score'?(scores.get(scoreKey(p.date,p.mode))??null):metric==='allocation'||metric==='risk'?p.sizing_ratio[metric]:p[metric])
   const high=metric==='day_score'?100:Math.max(1,...values.filter((v):v is number=>v!=null))
   const x=(i:number)=>50+i/Math.max(1,series.length-1)*520,y=(v:number)=>100-v/high*78
   const labels={max_drawdown_pct:'Maximum drawdown (%)',downward_pct:'Total downward movement (%)',giveback_pct:'Profit given back (%)',allocation:'Allocation ratio: down / up',risk:'Initial-risk ratio: down / up',day_score:'Day score (0 to 100)'}

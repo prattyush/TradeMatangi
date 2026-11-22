@@ -97,12 +97,13 @@ def test_a_note_shows_only_when_something_is_written_and_the_score_when_stored()
     cycles = day(D1, trade(1, 0, +5), session_id="a") + day(D2, trade(2, 0, +5), session_id="b") + day(D3, trade(3, 0, +5), session_id="c")
     notes = {D1: {"date": D1, "went_well": "", "to_improve": "", "specific_points": "", "context": "  ", "updated_at": "x"},
              D2: {"date": D2, "went_well": "", "to_improve": "", "specific_points": "", "context": "Gap-up open", "updated_at": "y"}}
-    scores = {D2: {"date": D2, "score": 82, "limit_source": "saved", "partial": True}}
+    scores = {D2: [{"date": D2, "mode": "sim", "score": 82, "limit_source": "saved", "partial": True}, {"date": D2, "mode": "paper", "score": 40, "limit_source": "saved", "partial": False}]}
     cards = {d["date"]: d for d in svc.build_days(cycles, scores, notes)["days"]}
     assert cards[D1]["note"] is None and cards[D3]["note"] is None
     assert cards[D2]["note"]["context"] == "Gap-up open" and cards[D2]["note"]["went_well"] == ""
-    assert cards[D2]["score"] == {"score": 82, "limit_source": "saved", "partial": True}
-    assert cards[D1]["score"] is None
+    # one score per session type the day was traded in; a stored score of a type with no trades in the card is not shown
+    assert cards[D2]["scores"] == [{"mode": "sim", "score": 82, "limit_source": "saved", "partial": True}]
+    assert cards[D1]["scores"] == []
 
 
 # ── The service: which cycles, which lookups ─────────────────────────────────
@@ -122,14 +123,14 @@ def test_the_service_asks_for_own_intraday_cycles_only_and_looks_up_scores_and_n
 
     ranges = {}
     monkeypatch.setattr(performance_service, "load_cycles", load)
-    monkeypatch.setattr(day_score_service, "list_scores", lambda user, start, end: ranges.update(scores=(user, start, end)) or [{"date": D1, "score": 70, "limit_source": "saved", "partial": False}])
+    monkeypatch.setattr(day_score_service, "list_scores", lambda user, start, end: ranges.update(scores=(user, start, end)) or [{"date": D1, "mode": "sim", "score": 70, "limit_source": "saved", "partial": False}])
     monkeypatch.setattr(day_notes_service, "notes_between", lambda user, start, end: ranges.update(notes=(user, start, end)) or {D2: {"date": D2, "context": "Trend day", "went_well": "", "to_improve": "", "specific_points": ""}})
     result = svc.day_summary("alice", {"symbol": "NIFTY", "session_type": "sim", "start_date": D1, "end_date": D3, "trading_style": "swing", "include_shared": True})
     assert asked["trading_style"] == "intraday" and asked["include_shared"] is False and asked["include_practice"] is False
     assert asked["symbol"] == "NIFTY" and asked["session_type"] == "sim" and asked["user"] == "alice"
     assert [d["date"] for d in result["days"]] == [D2, D1], "someone else's shared trades are not in the Summary"
     assert ranges == {"scores": ("alice", D1, D2), "notes": ("alice", D1, D2)}
-    assert result["days"][1]["score"]["score"] == 70 and result["days"][0]["note"]["context"] == "Trend day"
+    assert result["days"][1]["scores"][0]["score"] == 70 and result["days"][1]["scores"][0]["mode"] == "sim" and result["days"][0]["note"]["context"] == "Trend day"
 
 
 def test_no_days_means_no_lookups(monkeypatch):

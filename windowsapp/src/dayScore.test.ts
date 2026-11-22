@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createDayScoreSource } from '../../shared/analysis/dayScore/source'
-import { badgeFor, itemsByImpact, pendingText, scoreBand, scoreByDate, signedPoints, trustNote } from '../../shared/analysis/dayScore/model'
+import { badgeFor, itemsByImpact, pendingText, scoreBand, scoreByDate, scoreKey, scoreModeName, scoreModeOf, signedPoints, trustNote } from '../../shared/analysis/dayScore/model'
 import type { ScoreItem } from '../../shared/analysis/dayScore/types'
 import { summarize } from '../../shared/analysis/habits/habitStats'
 import { kindLabel, type LedgerQuestion, type LedgerTrade } from '../../shared/analysis/habits/types'
@@ -41,8 +41,20 @@ describe('day score model', () => {
       .toEqual(['big_loss_wipes_gains', 'drawdown', 'repeat_entry', 'clean_day'])
   })
 
-  it('maps stored rows by date', () => {
-    expect(scoreByDate([{ date: '2026-11-16', score: 70, limit_source: 'saved', partial: false, computed_at: null }]).get('2026-11-16')).toBe(70)
+  it('maps stored rows by date and session type', () => {
+    const rows = [{ date: '2026-11-16', mode: 'paper' as const, score: 70, limit_source: 'saved' as const, partial: false, computed_at: null }, { date: '2026-11-16', mode: 'sim' as const, score: 40, limit_source: 'saved' as const, partial: false, computed_at: null }]
+    const map = scoreByDate(rows)
+    expect(map.get(scoreKey('2026-11-16', 'paper'))).toBe(70)
+    expect(map.get(scoreKey('2026-11-16', 'sim'))).toBe(40)
+    expect(map.get(scoreKey('2026-11-16', 'real'))).toBeUndefined()
+  })
+
+  it('knows which session types are scored and names them', () => {
+    expect(['sim', 'stepwise', 'paper', 'real'].map(scoreModeOf)).toEqual(['sim', 'stepwise', 'paper', 'real'])
+    expect(scoreModeOf('swing')).toBeNull()
+    expect(scoreModeOf(undefined)).toBeNull()
+    expect(['sim', 'stepwise', 'paper', 'real'].map(scoreModeName)).toEqual(['Replay', 'Stepwise', 'Paper', 'Real'])
+    expect(badgeFor({ score: 78, limit_source: 'saved', partial: false, mode: 'paper' })).toEqual({ text: 'Score 78', title: 'Paper day score 78 of 100' })
   })
 })
 
@@ -50,12 +62,13 @@ describe('day score source', () => {
   it('reads two exact read-only paths', async () => {
     const calls: Array<[string, string]> = []
     const source = createDayScoreSource(async (path, method) => { calls.push([path, method]); return {} as never })
-    await source.day('2026-11-19')
+    await source.day('2026-11-19', 'paper')
     await source.range()
     await source.range('2026-11-01', '2026-11-30')
     await source.range('2026-11-01', undefined, true)
+    await source.range(undefined, undefined, false, 'sim')
     expect(calls).toEqual([
-      ['day-score?date=2026-11-19', 'GET'], ['day-scores', 'GET'], ['day-scores?start=2026-11-01&end=2026-11-30', 'GET'], ['day-scores?start=2026-11-01&compute=true', 'GET'],
+      ['day-score?date=2026-11-19&mode=paper', 'GET'], ['day-scores', 'GET'], ['day-scores?start=2026-11-01&end=2026-11-30', 'GET'], ['day-scores?start=2026-11-01&compute=true', 'GET'], ['day-scores?mode=sim', 'GET'],
     ])
   })
 })

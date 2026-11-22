@@ -28,6 +28,7 @@
 .sm-card-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
 .sm-symbols { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .sm-chip { font-size: 11px; padding: 0 8px; border: 1px solid #30363d; border-radius: 10px; color: #a5b4fc; }
+.sm-score { display: inline-flex; align-items: center; gap: 4px; }
 .sm-card-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
 @media (min-width: 1000px) { .sm-card-body { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); } }
 
