@@ -19,12 +19,15 @@ import { init } from "klinecharts";
 const w = window as any;
 const base = Date.parse("2026-10-16T09:15:00Z") / 1000;
 const prior = base - 86400;
+// An index has no volume; `?volume=1` gives the candles volume, like a stock or an option.
+const withVolume = new URLSearchParams(location.search).get("volume") === "1";
 const history = Array.from({ length: 70 }, (_, i) => ({
   time: prior + i * 180,
   open: 100 + Math.sin(i),
   high: 104 + Math.sin(i),
   low: 97 + Math.sin(i),
   close: 101 + Math.sin(i),
+  ...(withVolume ? { volume: 1000 + (i % 5) * 300 } : {}),
 }));
 const today = Array.from({ length: 12 }, (_, i) => ({
   time: base + i * 180,
@@ -32,6 +35,7 @@ const today = Array.from({ length: 12 }, (_, i) => ({
   high: 104 + i,
   low: 97 + i,
   close: 101 + i,
+  ...(withVolume ? { volume: 1500 + (i % 4) * 200 } : {}),
 }));
 const order = {
   order_id: "o1",
@@ -268,7 +272,7 @@ function Harness() {
     const environment={contextMenu:menu,sim:{sessionId:'session',symbol:'NIFTY',sessionType:'sim',sessionInstrumentType:'options',trades:[],openOrders:[],position:flat,positionCE:flat,positionPE:flat},simRef:{current:{sessionId:'session'}},panes:[pane],sizingMode:'quantity',cancelPricePick:()=>{},setMissingSlPick:()=>{},setContextMenuEntryTicket:setEntryTicket,setBrokerError:()=>{},strategySyncVersionRef:{current:0},setRunningStrategies:()=>{},setBrokerOrdersSnapshot:()=>{},targetDeviationPct:.01};
     return <>{React.cloneElement(chart,{onContextMenu:(price:number,x:number,y:number,ctx:any)=>setMenu({sessionId:'session',paneId:1,price,x,y,...ctx,strike:props.strike,expiry:props.expiry})})}
       {menu&&<ChartContextMenu x={menu.x} y={menu.y} price={menu.price} actions={buildDayChartContextMenu(environment as unknown as Parameters<typeof buildDayChartContextMenu>[0])} onClose={()=>setMenu(null)}/>}
-      {entryTicket&&<ChartEntryTicket ticket={entryTicket} fundsRatios={{l:3,m:6,h:12}} riskRatios={{l:1,m:2,h:4}} quantityTiers={{l:1,m:2,h:5}} instrumentType="options" sessionType="sim" onChange={setEntryTicket} onSubmit={(ticket,quantity)=>{w.submittedTicket={ticket,quantity};setEntryTicket(null)}} onClose={()=>setEntryTicket(null)}/>}
+      {entryTicket&&<ChartEntryTicket ticket={entryTicket} fundsRatios={{l:3,m:6,h:12}} riskRatios={{l:1,m:2,h:4}} quantityTiers={{l:1,m:2,h:5}} instrumentType="options" sessionType="sim" onChange={setEntryTicket} onSubmit={(ticket,quantity,fundsRatioPct,riskRatioPct,targetProfitPct)=>{w.submittedTicket={ticket,quantity,fundsRatioPct,riskRatioPct,targetProfitPct};setEntryTicket(null)}} onClose={()=>setEntryTicket(null)}/>}
     </>;
   }
   if (props.threeCharts) {

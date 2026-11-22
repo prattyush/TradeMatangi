@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DesktopTradingSettings } from './contracts'
-import { ticketSizingLabel, ticketSizingPayload, switchTicketSizing } from './ticketSizing'
+import { ticketQuantityTiers, ticketSizingLabel, ticketSizingPayload, switchTicketSizing } from './ticketSizing'
 
 const settings = {
   desktop_order_size_mode: 'funds_ratio',
@@ -46,5 +46,30 @@ describe('one-off ticket mode', () => {
     expect(risk.sizeKey).toBeUndefined()
     expect(ticketSizingLabel(risk.settings, 'l')).toBe('Risk 1%')
     expect(ticketSizingPayload(risk.settings, 'l', () => 1)).toEqual({ risk_pct: 1 })
+  })
+})
+
+describe('quantity as a one-off ticket choice', () => {
+  const quantitySettings = { ...settings, quantity_l: 1, quantity_m: 3, quantity_h: 7 } as DesktopTradingSettings
+  it('switches from capital or risk to quantity without changing the saved mode', () => {
+    for (const from of ['funds_ratio', 'risk_ratio'] as const) {
+      const shared = { ...quantitySettings, desktop_order_size_mode: from }
+      const ticket = { settings: { ...shared }, sizeKey: 'h', orderType: 'LIMIT' }
+      const quantity = switchTicketSizing(ticket, 'quantity')
+      expect(quantity.sizeKey).toBeUndefined()
+      expect(quantity.settings.desktop_order_size_mode).toBe('quantity')
+      expect(ticket.settings.desktop_order_size_mode).toBe(from)
+      expect(ticketSizingPayload(quantity.settings, '7', () => 7 * 75)).toEqual({ quantity: 525 })
+      const back = switchTicketSizing(quantity, from)
+      expect(ticketSizingPayload(back.settings, 'm', () => 1)).toEqual(from === 'funds_ratio' ? { funds_ratio_pct: .06 } : { risk_pct: 2 })
+    }
+  })
+  it('reads the saved Low/Medium/High quantities and falls back to the server defaults', () => {
+    expect(ticketQuantityTiers(quantitySettings)).toEqual([1, 3, 7])
+    expect(ticketQuantityTiers(settings)).toEqual([1, 2, 5])
+    expect(ticketQuantityTiers({ ...settings, quantity_l: 0, quantity_m: 2.5, quantity_h: undefined } as DesktopTradingSettings)).toEqual([1, 2, 5])
+  })
+  it('labels quantity buttons with their value', () => {
+    expect(ticketSizingLabel({ ...settings, desktop_order_size_mode: 'quantity' }, '5')).toBe('Qty 5')
   })
 })

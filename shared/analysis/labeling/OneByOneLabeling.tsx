@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import type { TradeLabel } from '../api'
-import { contractName, isLabeled, legsText, peakCapitalText, pnlText, pnlTitle, tripKey, type LabeledRoundTrip, type PnlDisplayMode } from './model'
+import { contractName, isLabeled, labelProgress, legsText, peakCapitalText, pnlText, pnlTitle, tripKey, type LabeledRoundTrip, type PnlDisplayMode } from './model'
 import type { SaverState } from './saver'
 
 const RT_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f0883e', '#bc8cff', '#f85149', '#79c0ff', '#a371f7', '#f778ba', '#7ee787']
@@ -9,6 +9,8 @@ interface Props {
   trips: LabeledRoundTrip[]
   index: number
   sessionCount: number
+  /** Show "3/5 labelled" beside the counter (Label Trades only: Walkthrough and What If have no labels to count). */
+  showLabelProgress?: boolean
   labels: Map<string, TradeLabel>
   busy: boolean
   readOnly: boolean
@@ -21,6 +23,8 @@ interface Props {
   active: boolean
   onGo: (to: number) => void
   onRetry: () => void
+  /** Replaces the save status line (Trade Walkthrough is read-only: no saving to talk about); null hides it. */
+  status?: ReactNode | null
 }
 
 const typing = (target: EventTarget | null) => {
@@ -29,7 +33,7 @@ const typing = (target: EventTarget | null) => {
 }
 
 /** Header, trade summary and save status of the one-round-trip-at-a-time view. The label fields are its children. */
-export default function OneByOneLabeling({ trips, index, sessionCount, labels, busy, readOnly, pnlMode, save, controls, children, active, onGo, onRetry }: Props) {
+export default function OneByOneLabeling({ trips, index, sessionCount, showLabelProgress = false, labels, busy, readOnly, pnlMode, save, controls, children, active, onGo, onRetry, status }: Props) {
   const total = trips.length
   const rt = trips[index]
 
@@ -47,6 +51,7 @@ export default function OneByOneLabeling({ trips, index, sessionCount, labels, b
   if (!rt) return <div className="tl-empty">No round trips in this selection.</div>
   const up = rt.pnl > 0, down = rt.pnl < 0
   const sessions = [...new Set(trips.map(trip => trip.session_id))]
+  const labelled = labelProgress(trips, labels)
   return (
     <div className="tl-panel">
       <div className="tl-head">
@@ -54,6 +59,7 @@ export default function OneByOneLabeling({ trips, index, sessionCount, labels, b
           <button type="button" className="tl-nav-button" disabled={busy || index === 0} onClick={() => onGo(index - 1)} aria-label="Previous trade">◀ Prev</button>
           <div className="tl-counter" role="status" aria-live="polite">
             Trade {index + 1} of {total}
+            {showLabelProgress && <small className="tl-labelled-count" data-done={labelled.total > 0 && labelled.done === labelled.total} title="Round trips with expected and actual category and strategy all filled">{labelled.done}/{labelled.total} labelled{labelled.done === labelled.total && labelled.total > 0 ? ' \u2713' : ''}</small>}
             {sessionCount > 1 && <small>Session {sessions.indexOf(rt.session_id) + 1} of {sessions.length} · RT#{rt.index}</small>}
           </div>
           <button type="button" className="tl-nav-button primary" disabled={busy || index >= total - 1} onClick={() => onGo(index + 1)} aria-label="Next trade">Next ▶</button>
@@ -81,13 +87,13 @@ export default function OneByOneLabeling({ trips, index, sessionCount, labels, b
         <strong>{legsText(rt.entry_trades, 'B')}</strong>{' → '}<strong>{legsText(rt.exit_trades, 'S') || 'open'}</strong>
       </div>
       <div className="tl-card">{children}</div>
-      <div className="tl-status" role="status">
-        {readOnly ? <span>Shared history · read only</span>
+      {status !== null && <div className="tl-status" role="status">
+        {status !== undefined ? status : readOnly ? <span>Shared history · read only</span>
           : save.error ? <><span className="bad" role="alert">{save.error}</span><button type="button" onClick={onRetry}>Retry save</button></>
           : save.saving ? <span>Saving…</span>
           : save.pending ? <span>Unsaved changes…</span>
           : save.savedCount ? <span className="ok">Saved ✓</span> : <span>Changes save automatically.</span>}
-      </div>
+      </div>}
       {/* Phones: Prev/Next live in a sticky bar at the bottom, within thumb reach. */}
       <div className="tl-bottom-nav">
         <button type="button" className="tl-nav-button" disabled={busy || index === 0} onClick={() => onGo(index - 1)} aria-label="Previous trade">◀ Prev</button>

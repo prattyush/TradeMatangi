@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.dependencies import get_request_user_id
+from app.services.minute_ohlc import load_candle_records
 from app.services import fine_structure_service as svc
 
 logger = logging.getLogger(__name__)
@@ -274,26 +275,8 @@ async def get_ohlc(
     user_id: str = Depends(get_request_user_id),
 ):
     try:
-        import pandas as pd
-        from app.utils import prior_trading_days
-        from app.services.broker_service import fetch_historical
-        from app.services.data_loader import load_dataframe, resample_to_candles, candles_to_records
-
-        prior_dates = prior_trading_days(date, n=days_back)
-        all_dfs = []
-        for d in prior_dates:
-            try:
-                fetch_historical(symbol.upper(), d)
-                all_dfs.append(load_dataframe(symbol.upper(), d))
-            except (FileNotFoundError, RuntimeError):
-                pass
-        fetch_historical(symbol.upper(), date)
-        all_dfs.append(load_dataframe(symbol.upper(), date))
-        if not all_dfs:
-            raise FileNotFoundError
-        combined = pd.concat(all_dfs).sort_index()
-        candles = resample_to_candles(combined, interval_minutes)
-        records = candles_to_records(candles)
+        # Minute data, not Breeze second-level downloads.
+        records = await load_candle_records(symbol.upper(), date, interval_minutes, days_back)
 
         flow = None
         try:
@@ -310,8 +293,8 @@ async def get_ohlc(
             candles=[OHLCItem(**r) for r in records],
             flow=FlowItem(**flow) if flow else None,
         )
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No data for {symbol} on {date}")
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("fine ohlc error %s %s: %s", symbol, date, exc)
         raise HTTPException(status_code=500, detail="Failed to load OHLC")
@@ -332,31 +315,18 @@ async def get_ohlc_options(
     if right.upper() not in ("CE", "PE"):
         raise HTTPException(status_code=400, detail="right must be CE or PE")
     try:
-        import pandas as pd
-        from app.utils import prior_trading_days
-        from app.services.options_service import fetch_options_historical, load_options_dataframe, get_expiry_date
-        from app.services.data_loader import resample_to_candles, candles_to_records
+        from app.services.options_service import get_expiry_date
 
         # Auto-calculate expiry if not provided
         if not expiry:
             expiry = get_expiry_date(symbol.upper(), date)
             logger.info("Auto-calculated expiry for %s on %s: %s", symbol, date, expiry)
 
-        prior_dates = prior_trading_days(date, n=days_back)
-        all_dfs = []
-        for d in prior_dates:
-            try:
-                fetch_options_historical(symbol.upper(), d, strike, expiry, right.upper())
-                all_dfs.append(load_options_dataframe(symbol.upper(), d, strike, expiry, right.upper()))
-            except (FileNotFoundError, RuntimeError):
-                pass
-        fetch_options_historical(symbol.upper(), date, strike, expiry, right.upper())
-        all_dfs.append(load_options_dataframe(symbol.upper(), date, strike, expiry, right.upper()))
-        if not all_dfs:
-            raise FileNotFoundError
-        combined = pd.concat(all_dfs).sort_index()
-        candles = resample_to_candles(combined, interval_minutes)
-        records = candles_to_records(candles)
+        # Minute data, not Breeze second-level downloads.
+        records = await load_candle_records(
+            symbol.upper(), date, interval_minutes, days_back, strike=strike, expiry=expiry, right=right.upper(),
+            not_found=f"No options data for {symbol} {right} {strike} on {date}",
+        )
 
         flow = None
         try:
@@ -373,8 +343,8 @@ async def get_ohlc_options(
             candles=[OHLCItem(**r) for r in records],
             flow=FlowItem(**flow) if flow else None,
         )
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"No options data for {symbol} {right} {strike} on {date}")
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("fine options ohlc error %s %s %s %s: %s", symbol, date, strike, right, exc)
         raise HTTPException(status_code=500, detail="Failed to load options OHLC")

@@ -476,7 +476,9 @@ class UserSettingsResponse(ContractModel):
     override_session_enabled: bool = False
     desktop_hide_chart_labels: bool = False
     desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] = "quantity"
-    desktop_pnl_display_mode: Literal["currency", "percent"] = "currency"
+    desktop_pnl_display_mode: Literal["currency", "percent", "milestones"] = "currency"
+    pnl_max_win_pct: float = 10.0
+    show_bar_pnl_label: bool = True
     pnl_target_levels: str = ""
     candle_alert_enabled: bool = False
     candle_alert_interval_min: int = 3
@@ -528,7 +530,9 @@ class UserSettingsUpdateRequest(ContractModel):
     override_session_enabled: bool | None = None
     desktop_hide_chart_labels: bool | None = None
     desktop_order_size_mode: Literal["quantity", "funds_ratio", "risk_ratio"] | None = None
-    desktop_pnl_display_mode: Literal["currency", "percent"] | None = None
+    desktop_pnl_display_mode: Literal["currency", "percent", "milestones"] | None = None
+    pnl_max_win_pct: float | None = Field(default=None, ge=1.0, le=100.0, allow_inf_nan=False)
+    show_bar_pnl_label: bool | None = None
     pnl_target_levels: str | None = None
     candle_alert_enabled: bool | None = None
     candle_alert_interval_min: Literal[1, 3, 5, 10, 15, 30] | None = None

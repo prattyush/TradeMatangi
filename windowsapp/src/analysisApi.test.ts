@@ -8,6 +8,12 @@ describe('desktop analysis transport', () => {
   it('restricts reads and writes to the analysis allowlist', () => {
     for (const path of ['../orders', '/sessions', 'data/%2e%2e/orders', 'sessions#other', 'orders']) expect(validAnalysisPath(path, 'GET')).toBe(false)
     expect(validAnalysisPath('labels', 'POST')).toBe(true)
+    // What If: saved scenarios (the exact path, plus a read-only date-range list).
+    for (const method of ['GET', 'POST', 'DELETE']) expect(validAnalysisPath('whatif', method)).toBe(true)
+    expect(validAnalysisPath('whatif/range?start=2026-11-01', 'GET')).toBe(true)
+    expect(validAnalysisPath('whatif/range', 'POST')).toBe(false)
+    expect(validAnalysisPath('whatif', 'PUT')).toBe(false)
+    for (const path of ['whatif/extra', 'whatif/', 'whatif/../labels', 'what-if']) expect(validAnalysisPath(path, 'GET')).toBe(false)
     expect(validAnalysisPath('sessions', 'POST')).toBe(false)
     for (const path of ['pattern/strategies', 'pattern/categories?']) expect(validAnalysisPath(path, 'POST')).toBe(true)
     for (const path of ['pattern/chart', 'pattern/ohlc/equity', 'pattern/strategies/extra']) expect(validAnalysisPath(path, 'POST')).toBe(false)

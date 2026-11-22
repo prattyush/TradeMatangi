@@ -476,6 +476,17 @@ class TestComputeSessionSummary:
         assert abs(summary["net_pnl"] - 9699.63) < 0.1
         assert summary["trade_count"] == 2
 
+    def test_winning_round_trips_are_counted_for_the_list_win_percentage(self):
+        from app.services.analysis_service import compute_session_summary
+        winner = {"state": "closed", "net_pnl": 10.0, "open_entry_fees": 0, "open_quantity": 0, "executions": []}
+        loser = {**winner, "net_pnl": -4.0}
+        flat = {**winner, "net_pnl": 0.0}
+        still_open = {**winner, "state": "open", "net_pnl": 99.0}
+        summary = compute_session_summary(SESSION_A, TRADES_A, [winner, winner, loser, flat, still_open])
+        assert summary["round_trip_count"] == 4
+        assert summary["winning_round_trip_count"] == 2  # only closed trips with a positive net P&L
+        assert compute_session_summary(SESSION_A, [], [])["winning_round_trip_count"] == 0
+
     def test_zero_capital_pnl_pct_is_zero(self):
         from app.services.analysis_service import compute_session_summary
         session_no_capital = {**SESSION_A, "session_capital": 0}

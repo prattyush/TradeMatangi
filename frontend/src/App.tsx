@@ -27,9 +27,12 @@ import { contractPosition, unrealizedPnl } from './services/positionAccounting'
 import { applyRecoveryEvent, pruneRecoveryNotices, RecoveryNotices } from './services/protectionRecoveryState'
 import { IndicatorHistoryRequests } from './services/tradingChartState'
 import { startPerformanceDiagnostics, recordPerformance } from './services/performanceDiagnostics'
-import { formatPnl } from './pnlFormat'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { formatPnlDisplay, pnlDisplayColor } from './pnlFormat'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import React from 'react'
+import { BROWSE_HEADER_SLOT } from './components/browse/browseSlot'
+// Browse (read-only charts, a symbol per pane) is the landing view when no session is running; loaded on first use.
+const BrowseWorkspace = lazy(() => import('./components/browse/BrowseWorkspace'))
 import PatternLibrary from './pages/PatternLibrary'
 import ChartStructures from './pages/ChartStructures'
 import type { ChartVisibleRange, PaneType } from './components/Chart'
@@ -41,7 +44,7 @@ import OrderPanel from './components/OrderPanel'
 import WalletWidget from './components/WalletWidget'
 import SessionSwitcher from './components/SessionSwitcher'
 import GuardRailPopup from './components/GuardRailPopup'
-import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadPnlPctMode, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, QuantityTiers, GuardRailSettingsLocal, loadSizingMode, loadRiskRatios, loadQuantityTiers, loadDefaultSlPct } from './components/SettingsModal'
+import SettingsModal, { loadFundsRatios, loadTargetDeviationPct, loadBrokeragePerOrder, loadStrategyIntervalSecs, loadAutostopTriggerType, loadAutostopDeviationPct, loadHistoricalDays, loadBreakevenMode, loadTargetProfitBufferTicks, loadAggrSlOnlyInProfit, loadAutoStartEventSnapshots, loadStepwiseLabelingPopupEnabled, loadLabelingModeByType, loadTradingRocRatioMode, FundsRatios, SizingMode, RiskRatios, QuantityTiers, GuardRailSettingsLocal, loadSizingMode, loadRiskRatios, loadQuantityTiers, loadDefaultSlPct } from './components/SettingsModal'
 import { StrategyResponse, StartStrategyRequest, OpenOptionContract, BrokerOrder } from './services/api'
 import LoginScreen from './components/LoginScreen'
 import TradeAnalysis from './components/TradeAnalysis'
@@ -58,6 +61,7 @@ import { IndicatorCandle, RocRatioMode, RocComparisonKey } from './indicators/op
 import { selectPaperResumePanes } from './paperResume'
 import { buildReselectBody, paneStrikeErrorMessage, reselectOutcome, type StrikeRule } from './strikeRule'
 import ConfirmModal from './components/ConfirmModal'
+import NavIconButton from './components/NavIconButton'
 import { isBrokerSnapshot, brokerSnapshotSessionId } from './brokerSnapshot'
 
 const FIXED_USER = { userId: 'abc12300-0000-0000-0000-000000000001', username: 'abc123' }
@@ -278,7 +282,6 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   const [targetProfitBufferTicks, setTargetProfitBufferTicks] = useState(loadTargetProfitBufferTicks)
   const [aggrSlOnlyInProfit, setAggrSlOnlyInProfit] = useState(loadAggrSlOnlyInProfit)
   const [historicalDays, setHistoricalDays] = useState(loadHistoricalDays)
-  const [pnlPctMode, setPnlPctMode] = useState(loadPnlPctMode)
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
   const [runningStrategies, setRunningStrategies] = useState<StrategyResponse[]>([])
   const strategySyncVersionRef = useRef(0)
@@ -317,6 +320,12 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
   // ── Trade Analysis modal ────────────────────────────────────────────────────
   const [swingAnalysisPortfolio,setSwingAnalysisPortfolio]=useState<string|undefined>()
   const [showAnalysis, setShowAnalysis] = useState(false)
+  // Browse is where a visit starts unless a session was running when the page was last used (decided for certain by the restore below).
+  const [showBrowse, setShowBrowse] = useState(() => {
+    try { return !JSON.parse(localStorage.getItem(`tradematangi_workspace_${authUser.userId}`) ?? '{}')?.sessionId } catch { return true }
+  })
+  // Starting or attaching a session always leaves Browse for the trading screen.
+  useEffect(() => { if (sim.sessionState !== 'idle' && sim.sessionState !== 'ended') setShowBrowse(false) }, [sim.sessionState])
 
   // ── Pattern Library page ─────────────────────────────────────────────────────
   const [showPatternLibrary, setShowPatternLibrary] = useState(false)
@@ -537,6 +546,9 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
 
   // ── Per-user chart/alert preferences: target P&L lines, candle sound, MAX SIZE alert ──
   const tradingDisplay = useTradingDisplaySettings()
+  const pnlDisplay = tradingDisplay.pnl
+  const pnlPctMode = pnlDisplay.mode === 'percent'
+  const milestonesMode = pnlDisplay.mode === 'milestones'
   const candleAlertClock = useMemo<CandleAlertClock>(() => {
     if (!sim.sessionId || (sim.sessionState !== 'running' && sim.sessionState !== 'paused')) return { kind: 'off' }
     if (sim.sessionType === 'sim') return { kind: 'market', time: sim.latestEquityTick?.time }
@@ -633,10 +645,13 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         if (!attached) {
           resetWorkspaceToIdle()
           localStorage.removeItem(workspaceStorageKey)
+          // No session is running: open on Browse. (With a live session the screen stays on Trading, as before.)
+          if (!cancelled) setShowBrowse(true)
           return
         }
 
         if (cancelled) return
+        setShowBrowse(false) // a session is running: Trading, never hidden behind Browse
         if (saved.view === 'patterns') setShowPatternLibrary(true)
         if (saved.view === 'structures') setShowChartStructures(true)
         if (saved.analysisOpen || saved.view === 'analysis') setShowAnalysis(true)
@@ -660,6 +675,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         }
       } catch (error) {
         failed = true
+        if (!cancelled) setShowBrowse(false)
         if (!cancelled) setWorkspaceRestoreError(`Session restoration needs attention: ${String(error)}`)
       } finally {
         if (!cancelled && !failed) workspaceRestoredRef.current = true
@@ -2002,6 +2018,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           pnl={draft ? 0 : getPnlForPane(pane)}
           pnlAvailable={sim.sessionType !== 'real' || getPositionForPane(pane).side === 'FLAT' || getTickForPane(pane) !== null}
           pnlPctMode={pnlPctMode}
+          pnlDisplay={pnlDisplay}
           pnlTargetLevels={tradingDisplay.pnlTargetLevels}
           sessionCapital={draft ? 0 : sim.sessionCapital}
           brokeragePerOrder={sim.brokeragePerOrder}
@@ -2243,28 +2260,21 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             <span style={{ color: '#8b949e' }}>Day P&L</span>
             <span style={{
               fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-              color: totalDayPnl > 0 ? '#26a641' : totalDayPnl < 0 ? '#f85149' : '#8b949e',
+              color: pnlDisplayColor(totalDayPnl, pnlDisplay, sim.sessionCapital, totalDayPnl),
             }}>
-              {formatPnl(totalDayPnl, pnlPctMode, sim.sessionCapital)}
+              {formatPnlDisplay(totalDayPnl, pnlDisplay, sim.sessionCapital, totalDayPnl)}
             </span>
-            {sim.prevDayPnl !== 0 && (
+            {sim.prevDayPnl !== 0 && !milestonesMode && (
               <span style={{ color: '#484f58', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
-                (prev {formatPnl(sim.prevDayPnl, pnlPctMode, sim.sessionCapital)})
+                (prev {formatPnlDisplay(sim.prevDayPnl, pnlDisplay, sim.sessionCapital, totalDayPnl)})
               </span>
             )}
           </div>
         )}
-        <button
-          onClick={() => setShowSwing(true)}
-          title="Swing portfolio — hold positions across days"
-          style={{
-            background: '#161b22', border: '1px solid #30363d',
-            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
-            fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          <span aria-hidden="true">🗂</span> Swing
-        </button>
+        <NavIconButton icon={showBrowse ? 'trading' : 'browse'} active={showBrowse} onClick={() => setShowBrowse(value => !value)}
+          label={showBrowse ? 'Back to Trading' : 'Browse — read-only charts: any symbol, any day, side by side'} />
+        <span id={BROWSE_HEADER_SLOT} style={{ display: 'inline-flex' }} />
+        <NavIconButton icon="swing" onClick={() => setShowSwing(true)} label="Swing portfolio — hold positions across days" />
         {sim.sessionId && (sim.sessionState === 'running' || sim.sessionState === 'paused') && <TradingSafetyActions sessionId={sim.sessionId} sessionType={sim.sessionType} onOrdersRequested={async sessionId => { if (simRef.current.sessionId === sessionId) await simRef.current.refreshOpenOrders(sessionId) }} />}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && !guardrailPopup?.type && (
           <button
@@ -2289,41 +2299,11 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           </button>
         )}
         <WalletWidget date={sim.date} sessionId={sim.sessionState === 'running' || sim.sessionState === 'paused' ? sim.sessionId : null} refreshKey={sim.walletRefreshKey} onWalletSnapshot={sim.applyWalletSnapshot} />
-        <button
-          onClick={() => setShowAnalysis(true)}
-          title="Trade Analysis"
-          style={{
-            background: '#161b22', border: '1px solid #30363d',
-            color: '#8b949e', borderRadius: 6, padding: '4px 10px',
-            fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          📊 Analysis
-        </button>
-        <button
-          onClick={() => setShowPatternLibrary(p => !p)}
-          title="Pattern Library — annotate and study trade setups"
-          style={{
-            background: showPatternLibrary ? '#1f6feb' : '#161b22',
-            border: `1px solid ${showPatternLibrary ? '#1f6feb' : '#30363d'}`,
-            color: showPatternLibrary ? '#fff' : '#8b949e',
-            borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          📚 Patterns
-        </button>
-        <button
-          onClick={() => setShowChartStructures(p => !p)}
-          title="Chart Structures — browse daily market structure classifications"
-          style={{
-            background: showChartStructures ? '#1f6feb' : '#161b22',
-            border: `1px solid ${showChartStructures ? '#1f6feb' : '#30363d'}`,
-            color: showChartStructures ? '#fff' : '#8b949e',
-            borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer',
-          }}
-        >
-          📊 Structures
-        </button>
+        <NavIconButton icon="analysis" onClick={() => setShowAnalysis(true)} label="Trade Analysis" />
+        <NavIconButton icon="patterns" active={showPatternLibrary} onClick={() => setShowPatternLibrary(p => !p)}
+          label="Pattern Library — annotate and study trade setups" />
+        <NavIconButton icon="structures" active={showChartStructures} onClick={() => setShowChartStructures(p => !p)}
+          label="Chart Structures — browse daily market structure classifications" />
         {/* Show/hide session controls — only when session is active */}
         {(sim.sessionState === 'running' || sim.sessionState === 'paused') && (
           <>
@@ -2499,7 +2479,6 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             setAggrSlOnlyInProfit(onlyInProfit)
           }}
           onHistoricalDaysChange={setHistoricalDays}
-          onPnlPctModeChange={setPnlPctMode}
           onGuardRailSettingsChange={setGuardRailSettings}
           onAutoStartSnapshotsChange={setAutoStartSnapshots}
           onStepwiseLabelingPopupChange={setStepwiseLabelingPopup}
@@ -2518,6 +2497,10 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
           </button>
         </div>
       </div>
+
+      {/* Browse: read-only charts, a symbol and a day per pane (the landing view when no session is running) */}
+      {/* (Not mounted while Analysis is open on top of it: one set of charts on screen at a time.) */}
+      {showBrowse && !showAnalysis && <Suspense fallback={null}><BrowseWorkspace userId={authUser.userId} /></Suspense>}
 
       {/* Trade Analysis modal */}
       {showAnalysis && (
@@ -2676,7 +2659,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
         <div
           style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '4px 12px' }}
         >
-          {renderLayout()}
+          {/* While Browse covers an idle trading screen its charts are not mounted, so they download nothing in the background. */}
+          {showBrowse && idle ? null : renderLayout()}
         </div>
 
         {/* Right sidebar — collapsible */}
@@ -2720,6 +2704,8 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             activeRight={instrumentType === 'options' ? activeRight : undefined}
             activeLabel={activeLabel}
             pnlPctMode={pnlPctMode}
+            pnlDisplay={pnlDisplay}
+            dayPnl={totalDayPnl}
             sessionCapital={sim.sessionCapital}
             positionMarginRate={instrumentType === 'equity' ? 0.2 : 1}
             sizingMode={sizingMode}
@@ -2746,16 +2732,16 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
                 <span style={{ color: '#8b949e' }}>Combined P&L</span>
                 <span style={{
                   marginLeft: 'auto', fontWeight: 700, fontSize: 14,
-                  color: sim.pnl > 0 ? '#26a641' : sim.pnl < 0 ? '#f85149' : '#8b949e',
+                  color: pnlDisplayColor(sim.pnl, pnlDisplay, sim.sessionCapital, totalDayPnl),
                   fontVariantNumeric: 'tabular-nums',
                 }}>
-                  {pnlPctMode && sim.sessionCapital > 0
+                  {milestonesMode ? formatPnlDisplay(sim.pnl, pnlDisplay, sim.sessionCapital, totalDayPnl) : pnlPctMode && sim.sessionCapital > 0
                     ? `${sim.pnl >= 0 ? '+' : ''}${((sim.pnl / sim.sessionCapital) * 100).toFixed(2)}%`
                     : `${sim.pnl >= 0 ? '+' : ''}${sim.pnl.toFixed(2)}`
                   }
                 </span>
               </div>
-              {combinedPnlOpen && !idle && (
+              {combinedPnlOpen && !idle && !milestonesMode && (
                 <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {sim.sessionType === 'paper' && sim.sessionInstrumentType === 'options' ? (
                     openOptionContracts.length > 0
@@ -2898,6 +2884,7 @@ function AppInner({ authUser, onLogout, onOpenMessages, showInstall }: { showIns
             roundTrips={roundTrips}
             labels={tradeLabels}
             pnlPctMode={pnlPctMode}
+            hidePnl={milestonesMode}
             sessionCapital={sim.sessionCapital}
           />
         </div>

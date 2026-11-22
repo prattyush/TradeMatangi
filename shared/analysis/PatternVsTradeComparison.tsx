@@ -26,7 +26,8 @@ function useStrikeTabs(allTrades: AnalysisTrade[], isOpt: boolean): StrikeTab[] 
   }, [allTrades, isOpt])
 }
 
-function Btn({s,onClick,active,children,title}:{s?:boolean;onClick?:()=>void;active?:boolean;children:React.ReactNode;title?:string}) {
+function Btn({s,onClick,active,children,title,strong}:{s?:boolean;onClick?:()=>void;active?:boolean;children:React.ReactNode;title?:string;strong?:boolean}) {
+  if(strong)return <button onClick={onClick} title={title} style={{padding:'4px 12px',fontSize:12,fontWeight:800,borderRadius:4,border:'1px solid #58a6ff',background:'#58a6ff',color:'#0d1117',cursor:'pointer'}}>{children}</button>
   return <button onClick={onClick} title={title} style={{padding:s?'3px 10px':'4px 12px',fontSize:11,fontWeight:600,borderRadius:4,border:`1px solid ${active?'#58a6ff':'#30363d'}`,background:active?'#1f3a5f':'#161b22',color:active?'#58a6ff':'#8b949e',cursor:'pointer'}}>{children}</button>
 }
 
@@ -55,7 +56,7 @@ export default function PatternVsTradeComparison({symbol,date,instrumentType,ses
       const map=new Map<string,TradeLabel[]>()
       sessionIds.forEach((id,i)=>{ const trips=new Map(rtRes[i].map(trip=>[trip.index,trip])); lblRes[i].forEach(label=>{const trip=trips.get(label.round_trip_index);if(trip)[...trip.entry_trades,...trip.exit_trades].forEach(trade=>[trade.trade_id,trade.execution_id].filter(Boolean).forEach(identity=>{const key=`${id}:${identity}`;const existing=map.get(key)??[];if(!existing.some(item=>item.round_trip_index===label.round_trip_index))map.set(key,[...existing,label])}))}) })
       slm(map);spa(pChart?.annotations??[]);stp(pChart?.top_patterns??{});ss(strats.strategies);scat(cats.categories)
-      spStrike({ce:pChart?.strike??null,pe:pChart?.strike??null,exp:expiry?.expiry??null})
+      spStrike({ce:pChart?.strike??null,pe:pChart?.strike_pe??pChart?.strike??null,exp:expiry?.expiry??null}) // CE and PE differ under Max Price; older charts have one strike for both
     })().catch(reason=>{if(!cancelled)setError(String(reason))}).finally(()=>{if(!cancelled)setLoading(false)})
     return()=>{cancelled=true}
   },[api,symbol,date,isOpt,sessionKey,retry])
@@ -66,20 +67,20 @@ export default function PatternVsTradeComparison({symbol,date,instrumentType,ses
     return names.length?[...new Set(names)].join(' / '):trade.side==='BUY'?'B':'S'
   },[labelMap])
 
-  if(max && !environment.desktop) return <div style={{position:'fixed',inset:0,zIndex:200,background:'#0d1117',display:'flex',flexDirection:'column'}}><div style={{display:'flex',alignItems:'center',padding:'8px 16px',background:'#161b22',borderBottom:'1px solid #30363d'}}><span style={{fontSize:14,fontWeight:700,color:'#e6edf3'}}>{symbol} · {date}</span><div style={{flex:1}}/><Btn onClick={()=>smax(null)}>⤡ Restore</Btn></div><div style={{flex:1,padding:8,overflow:'auto'}}>{max==='trades-underlying'&&<TradesChart symbol={symbol} date={date} trades={allTrades} getMarkerText={gmt} strikeTabs={strikeTabs} isOpt={isOpt}/>}{max==='patterns-underlying'&&<PatternChart symbol={symbol} date={date} annotations={pAnn} topPatterns={tp} activeStrategy={astr||null} activeCategory={acat||null} instFilter={instFilter} setInstFilter={sif} isOpt={isOpt} patternStrike={pStrike}/>}</div></div>
+  if(max && !environment.desktop) return <div style={{position:'fixed',inset:0,zIndex:200,background:'#0d1117',display:'flex',flexDirection:'column'}}><div style={{display:'flex',alignItems:'center',padding:'8px 16px',background:'#161b22',borderBottom:'1px solid #30363d'}}><span style={{fontSize:14,fontWeight:700,color:'#e6edf3'}}>{symbol} · {date}</span><div style={{flex:1}}/><Btn strong onClick={()=>smax(null)}>⤡ Restore</Btn></div><div style={{flex:1,padding:8,overflow:'auto'}}>{max==='trades-underlying'&&<TradesChart symbol={symbol} date={date} trades={allTrades} getMarkerText={gmt} strikeTabs={strikeTabs} isOpt={isOpt}/>}{max==='patterns-underlying'&&<PatternChart symbol={symbol} date={date} annotations={pAnn} topPatterns={tp} activeStrategy={astr||null} activeCategory={acat||null} instFilter={instFilter} setInstFilter={sif} isOpt={isOpt} patternStrike={pStrike}/>}</div></div>
 
   return <div className={`analysis-comparison-view ${max?'comparison-maximized':''}`} data-max={max??''} role="dialog" aria-label="Pattern comparison" style={{position:'fixed',inset:0,zIndex:99,background:'#0d1117',display:'flex',flexDirection:'column'}}>
-    <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 20px',borderBottom:'1px solid #21262d',flexShrink:0}}>
-      <div><div style={{fontSize:18,color:'#e6edf3',fontWeight:600}}>📊 Pattern vs Trade: {symbol} · {date}</div><div style={{fontSize:12,color:'#484f58',marginTop:4}}>Compare actual trades against saved pattern annotations</div></div>
-      <div style={{width:1,height:24,background:'#30363d',margin:'0 8px'}}/><span style={{fontSize:11,color:'#8b949e'}}>Filter:</span>
+    <div className="analysis-comparison-head" style={{display:'flex',alignItems:'center',gap:12,padding:'12px 20px',borderBottom:'1px solid #21262d',flexShrink:0}}>
+      <div><div className="analysis-comparison-title" style={{fontSize:18,color:'#e6edf3',fontWeight:600}}>📊 Pattern vs Trade: {symbol} · {date}</div><div className="analysis-comparison-subtitle" style={{fontSize:12,color:'#484f58',marginTop:4}}>Compare actual trades against saved pattern annotations</div></div>
+      <div className="analysis-comparison-divider" style={{width:1,height:24,background:'#30363d',margin:'0 8px'}}/><span className="analysis-comparison-filter-label" style={{fontSize:11,color:'#8b949e'}}>Filter:</span>
       <select value={acat} onChange={e=>sac(e.target.value)} style={sel}><option value="">All categories</option>{categories.map(c=><option key={c} value={c}>{c}</option>)}</select>
       <select value={astr} onChange={e=>sas(e.target.value)} style={sel}><option value="">All strategies</option>{strategies.map(s=><option key={s} value={s}>{s}</option>)}</select>
-      <div style={{flex:1}}/><span style={{fontSize:11,color:'#484f58'}}>{pAnn.length} annotations · {labelMap.size} labeled trades</span>
-      <button onClick={onClose} style={{background:'none',border:'1px solid #30363d',borderRadius:6,color:'#8b949e',fontSize:13,cursor:'pointer',padding:'6px 16px'}}>✕ Close</button>
+      <div style={{flex:1}}/><span className="analysis-comparison-counts" style={{fontSize:11,color:'#484f58'}}>{pAnn.length} annotations · {labelMap.size} labeled trades</span>
+      <button className="analysis-comparison-close" onClick={onClose} style={{background:'none',border:'1px solid #30363d',borderRadius:6,color:'#8b949e',fontSize:13,cursor:'pointer',padding:'6px 16px'}}>✕ Close</button>
     </div>
     {error&&<p role="alert">{error}<button onClick={()=>setRetry(n=>n+1)}>Retry comparison</button></p>}
     {loading&&<p role="status">Loading comparison…</p>}
-    {max&&environment.desktop&&<button onClick={()=>smax(null)}>Restore comparison</button>}
+    {max&&environment.desktop&&<button onClick={()=>smax(null)} style={{fontWeight:800}}>Restore comparison</button>}
     <div style={{flex:1,display:'flex',overflow:'hidden'}}>
       <div className="comparison-trades-pane" style={{flex:1,display:'flex',padding:'8px 4px',borderRight:'1px solid #21262d'}}>
         <TradesChart symbol={symbol} date={date} trades={allTrades} getMarkerText={gmt} strikeTabs={strikeTabs} isOpt={isOpt} onMax={()=>smax('trades-underlying')}/>

@@ -1,0 +1,32 @@
+/* Videos: the list of saved videos, then one video with the player as large as the height allows. */
+.screen.videos { min-height: 0; }
+.video-list { flex: 1 1 auto; overflow: auto; min-height: 0; }
+.video-day { position: sticky; top: 0; z-index: 1; padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--border); }
+.video-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 52px; padding: 6px 14px; text-align: left; background: none; color: inherit; font: inherit; border: 0; border-bottom: 1px solid #21262d; }
+.video-row:active { background: var(--panel-2); }
+.video-row-title { flex: 1 1 0; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-row-meta { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+.badge-unlisted { background: #1f3a2b; color: #8fd9a8; }
+.badge-public { background: #0f3a5f; color: #a5d6ff; }
+.badge-private { background: #4d3b0b; color: #f2cc60; }
+
+/* One video: stage (a size container so the 16:9 frame takes the larger size the pane allows) + a side column. */
+.video-detail { flex: 1 1 0; min-height: 0; display: flex; }
+.video-stage { flex: 1 1 0; min-width: 0; container-type: size; display: flex; align-items: center; justify-content: center; background: #000; }
+.video-frame { width: min(100cqw, 177.78cqh); aspect-ratio: 16 / 9; border: 0; background: #000; }
+.video-poster { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 12px; text-align: center; font-size: 12px; color: var(--muted); }
+.play-button { width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--text); background: transparent; color: var(--text); font-size: 26px; padding: 0 0 0 4px; }
+.video-side { flex: 0 0 clamp(190px, 27%, 280px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); }
+.video-side-head { display: flex; gap: 6px; padding: 6px; border-bottom: 1px solid var(--border); }
+.video-side-head .btn { min-height: 40px; padding: 0 8px; white-space: nowrap; font-size: 13px; }
+.video-side-body { flex: 1 1 0; min-height: 0; overflow: auto; padding: 8px 0 12px; }
+.video-title { padding: 0 12px; font-size: 14px; line-height: 1.3; }
+.video-meta { padding: 4px 12px 8px; font-size: 12px; color: var(--muted); }
+.video-meta .badge { margin-left: 0; margin-right: 4px; }
+.chapter-list { list-style: none; margin: 0; padding: 0; }
+.chapter-list button { display: flex; gap: 10px; width: 100%; min-height: 44px; align-items: center; padding: 4px 12px; text-align: left; background: none; border: 0; border-top: 1px solid #21262d; color: inherit; font: inherit; font-size: 13px; }
+.chapter-list button:disabled { opacity: 0.5; }
+.chapter-list button:active:not(:disabled) { background: var(--panel-2); }
+.chapter-time { flex: 0 0 auto; min-width: 42px; font-variant-numeric: tabular-nums; color: var(--accent); }
+.chapter-title { flex: 1 1 0; min-width: 0; }
+.video-side-body .muted { padding: 0 12px; }
