@@ -1,0 +1,91 @@
+/* The Analysis Summary: filter bar, day cards, the deck and the small daily chart. Dark, like Notes and Stats. */
+.sm { display: flex; flex-direction: column; gap: 12px; padding: 12px 16px 24px; color: #e2e8f0; font-size: 13px; min-width: 0; }
+.sm button, .sm select, .sm input { border: 1px solid #34415b; border-radius: 7px; background: #141e32; color: #e2e8f0; padding: 5px 10px; font: inherit; font-size: 12px; }
+.sm button { cursor: pointer; }
+.sm button:hover:not(:disabled) { border-color: #a5b4fc; background: #243252; }
+.sm button:disabled { opacity: .45; cursor: default; }
+.sm button:focus-visible { outline: 2px solid #a5b4fc; outline-offset: 2px; }
+.sm-muted { color: #8b949e; font-size: 12px; margin: 0; }
+.sm-warn { color: #d29922; }
+.sm-error { color: #fb7185; margin: 0; }
+.sm-spacer { flex: 1; }
+.pos { color: #4ade80; }
+.neg { color: #fb7185; }
+.flat { color: #94a3b8; }
+
+.sm-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
+.sm-filters label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: #94a3b8; }
+.sm-layout { display: inline-flex; }
+.sm-layout button { border-radius: 0; }
+.sm-layout button:first-child { border-radius: 7px 0 0 7px; }
+.sm-layout button:last-child { border-radius: 0 7px 7px 0; margin-left: -1px; }
+.sm-layout button[aria-pressed="true"] { background: #1f3a5f; border-color: #58a6ff; color: #79c0ff; }
+.sm-headline { margin: 0; font-size: 13px; color: #cbd5e1; }
+
+.sm-list { display: flex; flex-direction: column; gap: 14px; }
+.sm-card { border: 1px solid #30363d; border-radius: 10px; background: #0d1117; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sm-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.sm-card-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.sm-symbols { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.sm-chip { font-size: 11px; padding: 0 8px; border: 1px solid #30363d; border-radius: 10px; color: #a5b4fc; }
+.sm-score { display: inline-flex; align-items: center; gap: 4px; }
+.sm-card-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (min-width: 1000px) { .sm-card-body { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); } }
+
+.sm-figures { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sm-totals { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0; }
+.sm-totals div { display: flex; flex-direction: column; }
+.sm-totals dt { font-size: 11px; color: #94a3b8; }
+.sm-totals dd { margin: 0; font-size: 16px; font-weight: 600; }
+.sm-totals small { font-size: 11px; font-weight: 400; color: #94a3b8; }
+.sm-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.sm-table th, .sm-table td { padding: 3px 10px 3px 0; text-align: right; border-bottom: 1px solid #21262d; white-space: nowrap; }
+.sm-table th:first-child { text-align: left; font-weight: 600; white-space: normal; }
+.sm-table thead th { color: #94a3b8; font-weight: 500; font-size: 11px; }
+.sm-labels { margin: 0; font-size: 12px; color: #94a3b8; }
+.sm-extremes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.sm-extreme { border: 1px solid #21262d; border-radius: 8px; padding: 6px 10px; background: #161b22; }
+.sm-extreme h5, .sm-note h5 { margin: 0 0 2px; font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; }
+.sm-extreme p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.sm-note { border-left: 3px solid #58a6ff; padding: 4px 0 4px 10px; display: flex; flex-direction: column; gap: 6px; }
+.sm-note p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.sm-journeys { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sm-journeys .day-journey { margin: 0; }
+
+.sm-charts { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sm-daily { margin: 0; display: flex; flex-direction: column; gap: 2px; max-width: 460px; }
+.sm-daily figcaption { font-size: 11px; color: #94a3b8; }
+.sm-daily svg { width: 100%; height: 110px; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; }
+.sm-daily .up line { stroke: #3fb950; } .sm-daily .up rect { fill: #3fb950; }
+.sm-daily .down line { stroke: #f85149; } .sm-daily .down rect { fill: #f85149; }
+.sm-daily .sm-daily-band { fill: rgba(88, 166, 255, .22); stroke: none; }
+.sm-daily-axis { display: flex; justify-content: space-between; font-size: 10px; color: #6e7681; }
+.sm-charts .dn-chart .analysis-panels { flex: none; height: clamp(360px, 52vh, 600px); }
+
+/* The deck */
+.sm-deck { display: flex; flex-direction: column; gap: 10px; }
+.sm-deck-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.sm-deck-title h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.sm-deck-pnl { font-size: 16px; font-weight: 600; }
+.sm-deck-pnl small { font-size: 11px; font-weight: 400; }
+.sm-strip { display: flex; gap: 4px; overflow-x: auto; padding: 4px 2px 6px; }
+.sm-dot { flex: none; width: 24px; height: 24px; padding: 0 !important; border-radius: 50% !important; border: 2px solid transparent !important; background: #475569 !important; color: #0d1117 !important; font-size: 10px !important; font-weight: 700; line-height: 1; }
+.sm-dot.good, .sm-dot.pos { background: #3fb950 !important; }
+.sm-dot.fair { background: #d29922 !important; }
+.sm-dot.poor, .sm-dot.neg { background: #f85149 !important; }
+.sm-dot.flat { background: #6e7681 !important; }
+.sm-dot[aria-current="true"] { border-color: #e2e8f0 !important; transform: scale(1.15); }
+.sm-deck-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (min-width: 1100px) { .sm-deck-page { grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); } }
+.sm-deck-main, .sm-deck-side { min-width: 0; border: 1px solid #30363d; border-radius: 10px; background: #0d1117; padding: 10px 12px; }
+.sm-deck-side { display: flex; flex-direction: column; gap: 12px; }
+.sm-deck .sm-charts .dn-chart .analysis-panels { height: clamp(440px, 66vh, 760px); }
+
+/* The website's and webapp's full window; the Windows app puts SummaryView in its own view. */
+.sm-overlay { position: fixed; inset: 0; z-index: 2100; background: #0a1020; color: #e2e8f0; display: flex; flex-direction: column; font-family: Inter, system-ui, sans-serif; }
+.sm-overlay-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px 8px; background: radial-gradient(ellipse at 25% 0, #25375f 0, transparent 75%); }
+.sm-overlay-head h1 { margin: 2px 0 0; font-size: 22px; letter-spacing: -.5px; }
+.sm-eyebrow { font-size: 10px; letter-spacing: 2px; color: #a5b4fc; font-weight: 700; }
+.sm-close { border: 1px solid #34415b; border-radius: 7px; background: #141e32; color: #e2e8f0; font-size: 18px; line-height: 1; padding: 4px 12px; cursor: pointer; }
+.sm-overlay-body { flex: 1; overflow: auto; min-height: 0; }

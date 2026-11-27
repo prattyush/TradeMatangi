@@ -3,6 +3,7 @@ import { AnalysisProvider } from '../../../shared/analysis/environment'
 import DesktopAnalysisChart from '../AnalysisChart'
 import { usePatternsRuntime } from './usePatternsRuntime'
 import DeepDive from '../../../shared/deepdive/ui/DeepDive'
+import Compare from '../../../shared/deepdive/ui/Compare'
 import { useDesktopDeepDiveHost } from './deepdive/desktopHost'
 import { PATTERN_SYMBOLS } from '../../../shared/deepdive/symbols'
 import TradedPatterns from '../../../shared/traded/ui/TradedPatterns'
@@ -41,7 +42,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active,
   const [deepDiveSlot, setDeepDiveSlot] = useState<HTMLElement | null>(null)
   const deepDiveHost = useDesktopDeepDiveHost(client, settings, deepDiveSlot)
 
-  const [view, setView] = useState<'create' | 'view' | 'deepdive' | 'traded' | 'practice'>(practiceReviewId ? 'practice' : 'create')
+  const [view, setView] = useState<'create' | 'view' | 'deepdive' | 'compare' | 'traded' | 'practice'>(practiceReviewId ? 'practice' : 'create')
   useEffect(() => { if (practiceReviewId) setView('practice') }, [practiceReviewId])
   const [symbol, setSymbol] = useState('NIFTY')
   const [date, setDate] = useState(() => defaultPatternDate())
@@ -216,6 +217,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active,
           <button role="tab" aria-selected={view === 'create'} onClick={() => setView('create')}>Annotate</button>
           <button role="tab" aria-selected={view === 'view'} onClick={() => setView('view')}>Saved charts ({gallery.length})</button>
           <button role="tab" aria-selected={view === 'deepdive'} onClick={() => setView('deepdive')}>Deep dive</button>
+          <button role="tab" aria-selected={view === 'compare'} onClick={() => setView('compare')}>Compare</button>
           <button role="tab" aria-selected={view === 'traded'} onClick={() => setView('traded')}>From your trades</button>
           {onStartPractice && <button role="tab" aria-selected={view === 'practice'} onClick={() => setView('practice')}>Practice</button>}
         </div>
@@ -285,6 +287,7 @@ export default function PatternLibrary({ baseUrl, token, onUnauthorized, active,
         </>}
       </>}
       {view === 'deepdive' && <DeepDive host={deepDiveHost} />}
+      {view === 'compare' && <Compare host={deepDiveHost} />}
       {view === 'traded' && <TradedPatterns host={tradedHost} />}
       {view === 'practice' && onStartPractice && <Practice host={practiceHost} />}
       {view === 'view' && <div className="pl-gallery">

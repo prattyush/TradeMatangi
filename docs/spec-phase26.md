@@ -170,7 +170,7 @@ Owner requests made while using the Deep Dive and Patterns charts (PRs #897, #90
 > - **Backend.** No change: a drawing is stored as given; the only checks are a non-empty tool and integer-timestamp points; delete is a soft delete.
 
 > **Not done, and limits.**
-> - The Lightweight **live-trading chart** (`Chart.tsx`, real trading) keeps its own local drawing tools, unchanged; Text, picking and saving were not added there.
+> - The Lightweight **live-trading chart** (`Chart.tsx`, real trading) keeps its own local drawing tools, unchanged; Text, picking and saving were not added there. **This is why KLine lines did not show on the website Browse in Lightweight mode (found 2026-11-20): Browse, Day, Swing and live Lightweight charts all use `Chart.tsx`. Built as Phase 27 sprint S1 (PR #905, 2026-11-20): `Chart.tsx` now saves its drawings to the database and shares them with KLine; see `docs/spec-phase27.md` and `docs/spec-phase27-implementation-plan.md` "S1 as built". It stays on `dev` until the owner's replay, paper, then real try.**
 > - Lightweight drawings cannot be moved; there are no drawing tools on the phone.
 > - Live sync is same page only (no cross-tab push); two browsers that both copy up the same old drawings before either finishes could duplicate them.
 > - The backend lists a user's drawings and filters by instrument in Python, so each chart open reads all of the user's drawings; fine at today's size, an index would be the fix if they grow.

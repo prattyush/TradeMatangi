@@ -1,10 +1,13 @@
-import { createContext, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react'
 import type { OHLCCandle } from './api'
 import type websiteApi from '../../frontend/src/services/api'
 import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesDay } from './performance'
 import type { HabitLedger } from './habits/types'
 import type { VideoLinksSource } from './videoLinks'
 import type { WhatIfSource } from './whatif/scenarios'
+import type { DayNotesSource } from './notes/types'
+import type { DayScoreSource } from './dayScore/types'
+import type { DaySummarySource } from './summary/types'
 import type { StatsAllEntry } from '../deepdive/types'
 import type { DiveChartProps } from '../deepdive/ui/host'
 import type { PracticeApi } from '../practice/types'
@@ -36,6 +39,12 @@ export interface AnalysisEnvironment {
   chartPicking?: boolean
   /** Saved What If scenarios (owner only). Absent => What If is a playground that is lost on refresh. */
   whatIf?: WhatIfSource
+  /** Day notes and carried-over TODOs (Phase 27). Without it the Notes tab is not offered. */
+  dayNotes?: DayNotesSource
+  /** The day score (Phase 27). Without it no score is shown. */
+  dayScore?: DayScoreSource
+  /** The Summary's day cards (Phase 27). Without it the Summary is not offered (the phone). */
+  daySummary?: DaySummarySource
   performance: {
     getSwingReport?: (filters:PerformanceFilters,signal?:AbortSignal)=>Promise<any>
     getRealFees?: (date: string, signal?: AbortSignal) => Promise<RealFeesDay>
@@ -85,6 +94,18 @@ export function AnalysisProvider({ value, children }: { value: AnalysisEnvironme
   const parent = useContext(Context)
   const [intervalMinutes, setIntervalMinutes] = useState(3)
   return <Context.Provider value={{...value, intervalMinutes: parent?.intervalMinutes ?? intervalMinutes, setIntervalMinutes: parent?.setIntervalMinutes ?? setIntervalMinutes}}>{children}</Context.Provider>
+}
+/**
+ * A chart (or a pair of charts) with a candle interval of its own. Every Analysis chart reads the interval from the environment, which
+ * is one shared setting; inside this scope the interval is local, starting at `initial` (re-applied when it changes), and a change
+ * the user makes on a chart stays in the scope. Used by Compare, where two panes show different days with their own intervals.
+ */
+export function AnalysisIntervalScope({ initial, children }: { initial: number; children: ReactNode }) {
+  const env = useAnalysisEnvironment()
+  const [minutes, setMinutes] = useState(initial)
+  useEffect(() => { setMinutes(initial) }, [initial])
+  const value = useMemo(() => ({ ...env, intervalMinutes: minutes, setIntervalMinutes: setMinutes }), [env, minutes])
+  return <Context.Provider value={value}>{children}</Context.Provider>
 }
 export function useAnalysisEnvironment(): AnalysisEnvironment {
   const value = useContext(Context)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo } from 'react'
 import type { AnalysisTrade } from '../api'
 import { roundTripMarkerText, tradesForRoundTrip, type LabeledRoundTrip } from './model'
 
@@ -20,14 +20,14 @@ export function useRoundTripView(roundTrips: LabeledRoundTrip[], current: Labele
   return { getMarkerText, focusTime, chartTrades }
 }
 
-/** The maximize toggle of the split layout; Escape restores. */
-export function useMaximized(): [boolean, (value: boolean) => void] {
-  const [maximized, setMaximized] = useState(false)
-  useEffect(() => {
-    if (!maximized) return
-    const handler = (event: KeyboardEvent) => { if (event.key === 'Escape') setMaximized(false) }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [maximized])
-  return [maximized, setMaximized]
+/**
+ * Whether the Analysis day card is maximized. The card (`GroupCard`) owns the one Maximize button for all four tabs and
+ * provides this; a tab opened on its own (the phone's full-screen overlays) has no card, so it is never maximized.
+ */
+export const CardMaximizeContext = createContext<boolean | null>(null)
+
+/** The card's maximized state for a tab: true stacks the Underlying and strike charts. `inCard` tells the layout the card already supplies the full-window container. */
+export function useCardMaximized(): { maximized: boolean; inCard: boolean } {
+  const value = useContext(CardMaximizeContext)
+  return { maximized: value === true, inCard: value !== null }
 }

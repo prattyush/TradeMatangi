@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { kindLabel } from './types'
 import { fmtDuration, fmtMoney, fmtNumber, fmtPct, fmtShare, fmtSigned } from './format'
 import {
   barBuckets, capitalBuckets, quickLosses, scatterPoints, sortTrades, timeBuckets, weekdayBuckets, MIN_TERCILE_TRADES, type BucketRow, type TradeSort,
@@ -89,11 +90,11 @@ export default function HabitDeepDive({ trades, overview, unit, mode, habitId, o
         <div className="hb-controls">
           <label className="hb-field">Habit
             <select value={summary.question_id} onChange={event => { onSelectHabit(event.target.value); setShown(PAGE) }}>
-              {overview.habits.map(h => <option key={h.question_id} value={h.question_id}>{h.kind === 'entry' ? 'Entry' : 'Exit'} · {h.text}{h.status === 'archived' ? ' (archived)' : ''}</option>)}
+              {overview.habits.map(h => <option key={h.question_id} value={h.question_id}>{kindLabel(h.kind)} · {h.text}{h.status === 'archived' ? ' (archived)' : ''}</option>)}
             </select>
           </label>
           <span className={`hb-verdict ${summary.verdict}`} title={summary.verdict_reason}>{VERDICT_LABEL[summary.verdict]}</span>
-          <span className={`hb-kind ${summary.kind}`}>{summary.kind === 'entry' ? 'Entry habit' : 'Exit habit'}</span>
+          <span className={`hb-kind ${summary.kind}`}>{kindLabel(summary.kind)} habit</span>
         </div>
         <div className="hb-tiles">
           {TILES.map(key => {

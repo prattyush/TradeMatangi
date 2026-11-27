@@ -29,6 +29,7 @@ import { useRecording } from "../../shared/useRecording"
 import { desktopRecordingSessions } from "../../shared/recordingClocks"
 import { requiredContracts, primaryLinkedScreen } from "./sessionContracts"
 import { premiumPresetsFor } from '../../shared/optionPremiumPresets'
+import { metadataQuery } from './optionMetadata'
 import { BoundedHistoryCache, browseCandles, browseHistoryPath, browseHorizonDays, mergeHistory, oldestDate, type BrowseHistoryPage, type UnderlyingHistoryPage } from './historyPaging'
 import { strategySettingsPayload, settingsWalletContext } from './settingsFields'
 import { accountSettingsRequest } from './desktopSettingsRequest'
@@ -388,7 +389,7 @@ function InstrumentPicker({ initial, lockedTradingDate, referenceTime, sessionId
     setMetadata(null)
     const params = new URLSearchParams({ symbol: draft.symbol, trading_date: draft.tradingDate, interval_minutes: '1', context_days: '0' })
     if (mode === 'Browse') params.set('granularity', 'minute') // Browse only draws candles: minute data, not second-level
-    void Promise.all([api<OptionMetadata>('metadata', new URLSearchParams({ symbol: draft.symbol, as_of_date: draft.tradingDate })), api<HistoricalPage>('history', params)]).then(([value, page]) => {
+    void Promise.all([api<OptionMetadata>('metadata', new URLSearchParams(metadataQuery(draft.symbol, draft.tradingDate, mode !== 'Browse'))), api<HistoricalPage>('history', params)]).then(([value, page]) => {
       if (!active) return
       setMetadata(value)
       const at = Math.floor(new Date(draft.tradingDate + 'T' + referenceTime + 'Z').getTime() / 1000)
@@ -441,10 +442,15 @@ function DesktopTile({ minuteHistory, refreshVersion, contextDays, config, catal
   const [olderCandles, setOlderCandles] = useState<Candle[]>([])
   const historyAnchor = liveTile ? paperMarketDate() : config.tradingDate
   const historyGeneration = useRef(0)
+  // Which tile data the first load has delivered. A chart that was just re-created for a new interval can still hold the previous
+  // interval's oldest candle and scroll back from it; such a cursor is not answered (the page would be for the new interval and
+  // leave a hole next to the new first load).
+  const tileDataKey = `${config.kind}:${config.symbol}:${config.tradingDate}:${config.interval}:${config.expiry ?? ''}:${config.strike ?? ''}:${config.right ?? ''}`
+  const loadedDataKey = useRef('')
   const pageCursor = useRef<string | null | undefined>(undefined)
   useEffect(() => { historyGeneration.current++; pageCursor.current = undefined; setOlderCandles([]) }, [config.symbol, historyAnchor, config.interval, config.kind, replayRunId, liveTile ? canonicalKey(liveTile.instrument) : ''])
   useEffect(() => { if (config.kind === 'option' && connection === 'connected') void api<OptionMetadata>('metadata', new URLSearchParams({ symbol: config.symbol, as_of_date: config.tradingDate })).then(setMetadata).catch(error => setStatus(String(error))) }, [config.kind, config.symbol, config.tradingDate, connection])
-  useEffect(() => { if (connection !== 'connected' || (config.kind === 'option' && (!config.expiry || !config.strike || !metadata?.available))) return; let active = true; setCandles([]); setStatus(''); setLoading(true); const params = new URLSearchParams({ symbol: config.symbol, trading_date: config.tradingDate, interval_minutes: config.interval, context_days: String(contextDays) }); if (minuteHistory) params.set('granularity', 'minute'); if (config.kind === 'option') { params.set('expiry', config.expiry); params.set('strike', config.strike); params.set('right', config.right) }; const cacheKey = `${instrumentKeyForTile(config, catalogue)}:${config.tradingDate}:${config.interval}:${contextDays}${minuteHistory ? ':m' : ''}`; const promise = historyCache.get(cacheKey) ?? api<HistoricalPage>(config.kind === 'option' ? 'optionHistory' : 'history', params).then(page => { if (page.available === false) setStatus(page.unavailable_reason ?? 'Option unavailable'); return page.candles }); historyCache.set(cacheKey, promise); void promise.then(nextCandles => { if (active) { setCandles(nextCandles); setHistoryVersion(version => version + 1) } }).catch(error => active && setStatus(String(error))).finally(() => active && setLoading(false)); return () => { active = false } }, [contextDays, minuteHistory, config.expiry, config.interval, config.kind, config.right, config.strike, config.symbol, config.tradingDate, connection, metadata?.available, catalogue])
+  useEffect(() => { if (connection !== 'connected' || (config.kind === 'option' && (!config.expiry || !config.strike || !metadata?.available))) return; let active = true; setCandles([]); setStatus(''); setLoading(true); const params = new URLSearchParams({ symbol: config.symbol, trading_date: config.tradingDate, interval_minutes: config.interval, context_days: String(contextDays) }); if (minuteHistory) params.set('granularity', 'minute'); if (config.kind === 'option') { params.set('expiry', config.expiry); params.set('strike', config.strike); params.set('right', config.right) }; const cacheKey = `${instrumentKeyForTile(config, catalogue)}:${config.tradingDate}:${config.interval}:${contextDays}${minuteHistory ? ':m' : ''}`; const promise = historyCache.get(cacheKey) ?? api<HistoricalPage>(config.kind === 'option' ? 'optionHistory' : 'history', params).then(page => { if (page.available === false) setStatus(page.unavailable_reason ?? 'Option unavailable'); return page.candles }); historyCache.set(cacheKey, promise); void promise.then(nextCandles => { if (active) { loadedDataKey.current = `${config.kind}:${config.symbol}:${config.tradingDate}:${config.interval}:${config.expiry ?? ''}:${config.strike ?? ''}:${config.right ?? ''}`; setCandles(nextCandles); setHistoryVersion(version => version + 1) } }).catch(error => active && setStatus(String(error))).finally(() => active && setLoading(false)); return () => { active = false } }, [contextDays, minuteHistory, config.expiry, config.interval, config.kind, config.right, config.strike, config.symbol, config.tradingDate, connection, metadata?.available, catalogue])
   const label = config.kind === 'option' ? `${config.symbol} ${config.expiry} ${config.strike} ${config.right}` : config.symbol
   const catalogueInstrument = catalogue.find(item => item.symbol === config.symbol) ?? fallbackCatalogue[0]
   const chartInstrument = useMemo(
@@ -469,6 +475,7 @@ function DesktopTile({ minuteHistory, refreshVersion, contextDays, config, catal
   )
   const loadOlder = config.kind !== 'spot' ? undefined : async (beforeTimestamp: number): Promise<{ candles: Candle[]; more: boolean }> => {
     const generation = historyGeneration.current
+    if (loadedDataKey.current !== tileDataKey) return { candles: [], more: true }
     if (minuteHistory && !subscribedTile) {
       // Browse: pages of whole trading days from the paged history route, back to a year or more (interval dependent).
       const intervalMinutes = Number(config.interval)

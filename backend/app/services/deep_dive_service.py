@@ -690,7 +690,8 @@ def stats_all(user_id: str) -> list[dict]:
     """Stats of every strategy that has marked days, for the label forms.
 
     One entry per category + strategy: the caller's own dive wins; otherwise the first owner who shared with
-    them. Each entry carries ``all``, ``buy`` and ``sell`` blocks so the form can switch side without a request.
+    them. Each entry carries ``all``, ``buy`` and ``sell`` blocks so the form can switch side without a request, and
+    ``days`` (the newest marked days with their tag values) for the Group view.
     """
     cached = _stats_cache.get(user_id)
     if cached and cached[0] > time.monotonic():
@@ -698,6 +699,19 @@ def stats_all(user_id: str) -> list[dict]:
     result = _stats_all_uncached(user_id)
     _stats_cache[user_id] = (time.monotonic() + STATS_ALL_TTL_SECONDS, result)
     return copy.deepcopy(result)
+
+
+# The newest days sent per strategy for the label popups' Group view (two tags together), so the payload stays small.
+GROUP_DAYS_LIMIT = 400
+
+
+def group_days(setups: list[dict], limit: int = GROUP_DAYS_LIMIT) -> list[dict]:
+    """The marked days as ``{date, side, tag_values}``, newest first, at most ``limit``.
+
+    The client runs the same arithmetic as the Results screen's Group tab over these (days where both tags are marked).
+    """
+    rows = sorted(setups, key=lambda s: (s["date"], s["side"]), reverse=True)[:limit]
+    return [{"date": s["date"], "side": s["side"], "tag_values": dict(s.get("tag_values") or {})} for s in rows]
 
 
 def _stats_all_uncached(user_id: str) -> list[dict]:
@@ -712,6 +726,7 @@ def _stats_all_uncached(user_id: str) -> list[dict]:
                 "all": compute_stats(entry["setups"], entry["tags"]),
                 "buy": compute_stats(entry["setups"], entry["tags"], "buy"),
                 "sell": compute_stats(entry["setups"], entry["tags"], "sell"),
+                "days": group_days(entry["setups"]),
             }
     return sorted(chosen.values(), key=lambda d: (d["category"].casefold(), d["strategy"].casefold()))
 

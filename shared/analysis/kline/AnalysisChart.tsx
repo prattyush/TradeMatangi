@@ -16,7 +16,7 @@ import { registerTextOverlay } from '../../charts/klineText'
 import { registerRiskRewardOverlay } from '../../charts/klineRiskReward'
 import { registerMarkerOverlays } from '../../charts/klineMarker'
 import ChartTextPrompt from '../../charts/ChartTextPrompt'
-import { annotationFigures, type AnnotationMark } from './annotationFigures'
+import { annotationFigures, MARK_TEXT_STYLE, type AnnotationMark } from './annotationFigures'
 import { KLineIndicatorMenu, KLineToolsRail, useToolsRailVisible } from '../../charts/KLineToolsPanel'
 
 interface Props {
@@ -47,6 +47,10 @@ interface Props {
   focusTime?: number
   /** Show `getMarkerText` on option-contract markers (they are unlabeled by default). */
   labelContractMarkers?: boolean
+  /** The day's Notes drawings (`notesScope(date)`): a private namespace the other charts' drawings are copied into once. */
+  drawingScope?: string
+  /** Show the saved drawings only, no tools (the Summary). */
+  drawingsReadOnly?: boolean
   observationResolution?: number; snapshotEventId?: string; snapshotEventTime?: number;
   sessionId?: string; filledTrades?: Array<Partial<AnalysisTrade>>; barTime?: number
   barOhlc?: Omit<OHLCCandle, 'time'> | null; currentPrice?: number
@@ -62,13 +66,13 @@ function registerAnalysisOverlays() {
   registerOverlay({ name: 'analysisExecution', totalStep: 1, needDefaultPointFigure: false, needDefaultXAxisFigure: false, needDefaultYAxisFigure: false,
     createPointFigures: ({coordinates,overlay}) => { const point=coordinates[0]; if(!point) return []; const marker=overlay.extendData as ExecutionMarker; return [
       {type:'circle',attrs:{x:point.x,y:point.y,r:6},styles:{color:marker.color,borderColor:marker.color,style:'fill'},ignoreEvent:false},
-      ...(marker.text ? [{type:'text',attrs:{x:point.x,y:point.y-9,text:marker.text,align:'center',baseline:'bottom'},styles:{color:marker.color,size:11,weight:'bold'},ignoreEvent:false}] : []),
+      ...(marker.text ? [{type:'text',attrs:{x:point.x,y:point.y-9,text:marker.text,align:'center',baseline:'bottom'},styles:{...MARK_TEXT_STYLE,color:marker.color},ignoreEvent:false}] : []),
     ] },
   })
   registerOverlay({ name: 'analysisWhatIf', totalStep: 1, needDefaultPointFigure: false, needDefaultXAxisFigure: false, needDefaultYAxisFigure: false,
     createPointFigures: ({coordinates,overlay}) => { const point=coordinates[0]; if(!point) return []; const marker=overlay.extendData as {color:string;text:string;removed:boolean}; return [
       {type:'circle',attrs:{x:point.x,y:point.y,r:marker.removed?5:8},styles:{color:'transparent',borderColor:marker.color,borderSize:2,style:marker.removed?'stroke_fill':'stroke',borderStyle:marker.removed?'dashed':'solid'},ignoreEvent:true},
-      {type:'text',attrs:{x:point.x,y:point.y+11,text:marker.text,align:'center',baseline:'top'},styles:{color:marker.color,size:11,weight:'bold'},ignoreEvent:true},
+      {type:'text',attrs:{x:point.x,y:point.y+11,text:marker.text,align:'center',baseline:'top'},styles:{...MARK_TEXT_STYLE,color:marker.color},ignoreEvent:true},
     ] },
   })
   registerOverlay({ name:'analysisAnnotation', totalStep:1, needDefaultPointFigure:false, needDefaultXAxisFigure:false, needDefaultYAxisFigure:false,
@@ -172,13 +176,13 @@ export default function DesktopAnalysisChart(props: Props) {
   },[props.symbol,environment.resolveSymbolInstrument])
   const drawingInstrument=useMemo(()=>environment.drawingRequest&&symbolInfo!==undefined&&symbolInfo!==false?analysisDrawingInstrument({symbol:props.symbol,right:props.right,strike:props.strike,expiry:props.expiry,kind:symbolInfo?.kind,exchange:symbolInfo?.exchange}):null,[environment.drawingRequest,symbolInfo,props.symbol,props.right,props.strike,props.expiry])
   const [hovered,setHovered]=useState(false)
-  const drawings=useKLineDrawings({chartRef,instrument:drawingInstrument,request:environment.drawingRequest,active:hovered&&environment.active!==false,readOnly:environment.drawingsReadOnly,onError:error=>environment.reportError?.(String(error),'Drawings')})
+  const drawings=useKLineDrawings({chartRef,instrument:drawingInstrument,request:environment.drawingRequest,active:hovered&&environment.active!==false,readOnly:environment.drawingsReadOnly||props.drawingsReadOnly,scope:props.drawingScope,onError:error=>environment.reportError?.(String(error),'Drawings')})
   // Details over the chart follow the environment setting (default: always, as before).
   const chartInfo=environment.chartInfo??'always'; const chartInfoRef=useRef(chartInfo); chartInfoRef.current=chartInfo
   useEffect(()=>{chartRef.current?.setStyles({candle:{tooltip:{showRule:chartInfo}},indicator:{tooltip:{showRule:chartInfo}}})},[chartInfo])
   const indicators=useKLineIndicators(chartRef,`analysis-kline-indicators:${environment.accountKey??''}:${props.right?'option':'underlying'}`,{hasVolume:candles.some(c=>c.volume!=null)})
   const [toolsVisible,toggleTools]=useToolsRailVisible()
-  const toolsAvailable=Boolean(environment.drawingRequest)&&!environment.drawingsReadOnly
+  const toolsAvailable=Boolean(environment.drawingRequest)&&!environment.drawingsReadOnly&&!props.drawingsReadOnly
   // The bars the chart asks for: everything fetched on init, and (Browse) older pages on the left edge via `loadOlder`.
   const analysisLoader=()=>({getBars:async({type,timestamp,callback}:{type:string;timestamp:number|null;callback:(rows:KLineData[],more?:{forward:boolean;backward:boolean})=>void})=>{
     const toBar=(c:OHLCCandle):KLineData=>({timestamp:c.time*1000,open:c.open,high:c.high,low:c.low,close:c.close,...(c.volume!=null?{volume:c.volume}:{})})
@@ -349,7 +353,7 @@ export default function DesktopAnalysisChart(props: Props) {
   },[candles,loading,snapshotPending,filter,trades,props.annotations,props.activeStrategy,props.activeCategory,props.topPatterns,props.riskRewardRatios,props.openOrders,props.position,props.currentPrice,intervalMinutes])
   return <section aria-label={`${props.title??props.right??'Underlying'} chart`} className={`desktop-analysis-chart ${props.isMaximized?'maximized':''} ${props.pickMode?'picking':''} ${toolsAvailable&&toolsVisible?'has-tools-rail':''}`} data-contract-labels={props.right?(props.labelContractMarkers?'on':'off'):undefined} onPointerEnter={()=>setHovered(true)} onPointerLeave={()=>setHovered(false)}>
     <header>{props.toolbarStart}<strong>{props.title??(props.right?`${props.right} ${props.strike} · ${props.expiry}`:'Underlying')} · {intervalMinutes}m · IST</strong>
-      {!props.right&&trades.some(t=>t.right)&&<select aria-label="Underlying markers" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All</option><option>CE</option><option>PE</option></select>}
+      {!props.right&&trades.some(t=>t.right)&&(['all','CE','PE'] as const).map(f=><button key={f} type="button" className="marker-filter" aria-pressed={filter===f} title={f==='all'?'Show all markers':`Show only ${f} markers`} aria-label={f==='all'?'All markers':`${f} markers only`} onClick={()=>setFilter(f)}>{f==='all'?'All':f}</button>)}
       <CandleInterval />
       {toolsAvailable&&<button className="kline-tools-toggle" type="button" aria-pressed={toolsVisible} aria-label={toolsVisible?'Hide drawing tools':'Show drawing tools'} title={toolsVisible?'Hide drawing tools':'Show drawing tools'} onClick={toggleTools}>✎</button>}
       <KLineIndicatorMenu names={indicators.names} toggle={indicators.toggle} clear={indicators.clear} />

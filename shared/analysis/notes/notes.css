@@ -1,0 +1,47 @@
+/* The Notes tab of an Analysis day: a header, the day's charts, the note beside the score and TODOs, a collapsed review last. */
+.dn { display: flex; flex-direction: column; gap: 16px; padding-bottom: 12px; }
+.dn-head { display: flex; align-items: center; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid #30363d; }
+.dn-head h3 { margin: 0; font-size: 16px; font-weight: 600; flex: 1; min-width: 0; }
+.dn-chartbox, .dn-note, .dn-todos, .dn .ds { border: 1px solid #30363d; border-radius: 8px; background: #0d1117; padding: 12px 14px; }
+.dn-chartbox { padding: 10px 12px; }
+.dn-chartbox h4 small { font-weight: 400; margin-left: 6px; }
+.dn-chart-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.dn-chart-tabs button { padding: 3px 12px; border-radius: 14px; border: 1px solid #30363d; background: #161b22; color: #8b949e; font-size: 12px; font-weight: 600; cursor: pointer; }
+.dn-chart-tabs button[aria-pressed="true"] { background: #1f3a5f; border-color: #58a6ff; color: #79c0ff; }
+.dn-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.dn-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (min-width: 1000px) { .dn-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.dn h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.dn-hint { margin: 0 0 6px; font-size: 12px; }
+.dn ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dn-todo { border: 1px solid #30363d; border-left: 3px solid #d29922; border-radius: 6px; padding: 6px 10px; background: #161b22; }
+.dn-todo.working { border-left-color: #58a6ff; }
+.dn-todo.done, .dn-todo.improved { border-left-color: #3fb950; opacity: .85; }
+.dn-todo-main { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.dn-todo-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.dn-badge { font-size: 11px; padding: 0 6px; border: 1px solid #30363d; border-radius: 8px; color: #8b949e; white-space: nowrap; }
+.dn-status { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.dn-status button { font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid #30363d; background: transparent; color: inherit; cursor: pointer; }
+.dn-status button[aria-pressed="true"] { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+.dn-status button.dn-s-done[aria-pressed="true"], .dn-status button.dn-s-improved[aria-pressed="true"] { background: #166534; border-color: #4ade80; }
+.dn-x { background: none; border: none; color: #8b949e; cursor: pointer; }
+.dn-history { margin-top: 4px; font-size: 12px; }
+.dn-history p { margin: 2px 0 0; }
+.dn-add { display: flex; gap: 6px; margin-top: 8px; }
+.dn-add input { flex: 1; min-width: 0; }
+.dn-note { display: flex; flex-direction: column; gap: 8px; }
+.dn-part { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.dn-part textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.dn-state { font-size: 11px; font-weight: 400; }
+.dn-review summary { cursor: pointer; font-weight: 600; }
+.dn-weeks { border-collapse: collapse; font-size: 12px; margin: 6px 0; }
+.dn-weeks th, .dn-weeks td { padding: 2px 14px 2px 0; text-align: left; }
+.dn-all li { font-size: 12px; }
+.dn-all li.done, .dn-all li.improved { opacity: .8; }
+
+/* Open TODOs above Label Trades. */
+.dn-banner { margin: 0 0 8px; padding: 6px 10px; border: 1px solid #9e6a03; border-left-width: 3px; border-radius: 6px; background: rgba(210, 153, 34, .08); font-size: 12px; }
+.dn-banner ul { margin: 2px 0 0; padding-left: 18px; }
+
+/* The day's chart keeps a good height, also in a maximized card (the panels have no height of their own there). */
+.dn-chartbox .analysis-panels { flex: none; height: clamp(420px, 62vh, 680px); }

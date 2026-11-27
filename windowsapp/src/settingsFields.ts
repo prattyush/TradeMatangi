@@ -7,6 +7,8 @@ export interface SettingsField {
   step?: number
   scale?: number
   options?: readonly string[]
+  /** A longer explanation, shown as a tooltip on the setting (not as text under it). */
+  help?: string
 }
 const number = (
   key: string,
@@ -21,10 +23,11 @@ const select = (
   label: string,
   options: string[]
 ): SettingsField => ({ key, label, type: 'select', options })
-const toggle = (key: string, label: string): SettingsField => ({
+const toggle = (key: string, label: string, help?: string): SettingsField => ({
   key,
   label,
-  type: 'boolean'
+  type: 'boolean',
+  ...(help ? { help } : {})
 })
 export const sharedSettingsSections: Record<string, SettingsField[]> = {
   General: [
@@ -49,6 +52,11 @@ export const sharedSettingsSections: Record<string, SettingsField[]> = {
       'risk_ratio'
     ]),
     toggle('merge_exit_orders_on_consolidate', 'Merge exit orders when consolidating (Move SL / Move to Limit)'),
+    toggle(
+      'next_expiry_on_expiry_day',
+      'Next expiry on expiry days',
+      "On the day an options contract expires, new Paper, Real, Replay and Stepwise sessions use the next expiry's contracts instead, because expiry days are volatile. Sessions already started keep their contracts. Browse and the analysis screens always show the real expiry."
+    ),
     toggle('candle_alert_enabled', 'Candle-close sound alert (Replay, Paper, Real)'),
     select('candle_alert_interval_min', 'Alert candle interval', ['1', '3', '5', '10', '15', '30']),
     number('candle_alert_seconds_before', 'Alert seconds before candle end', 1, 600),

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { kindLabel } from './types'
 import { fmtNumber, fmtPct, fmtSigned } from './format'
 import {
   COMPARE_METRICS, compareHabit, customPeriods, customSessionPeriods, daysWithWithout, lastPeriods, tradingDays,
@@ -106,7 +107,7 @@ export default function HabitCompare({ trades, overview, unit, mode, axis = 'dat
                     {rows.map(({ h, result }) => (
                       <tr key={h.question_id} className={h.status === 'archived' ? 'archived' : ''}>
                         <th scope="row" className="hb-sticky">
-                          <span className={`hb-kind ${h.kind}`}>{h.kind === 'entry' ? 'Entry' : 'Exit'}</span><span className="hb-name">{h.text}</span>
+                          <span className={`hb-kind ${h.kind}`}>{kindLabel(h.kind)}</span><span className="hb-name">{h.text}</span>
                         </th>
                         <td><span className={`hb-flag ${result.flag}`} title={result.reasons.join('. ')}>{FLAG_LABEL[result.flag]}</span></td>
                         <td>{result.trades.before} → <b>{result.trades.recent}</b></td>
@@ -138,7 +139,7 @@ export default function HabitCompare({ trades, overview, unit, mode, axis = 'dat
                 const tone = r.difference == null ? '' : r.difference >= 0 ? 'positive' : 'negative'
                 return (
                   <tr key={h.question_id} className={h.status === 'archived' ? 'archived' : ''}>
-                    <th scope="row" className="hb-sticky"><span className={`hb-kind ${h.kind}`}>{h.kind === 'entry' ? 'Entry' : 'Exit'}</span><span className="hb-name">{h.text}</span></th>
+                    <th scope="row" className="hb-sticky"><span className={`hb-kind ${h.kind}`}>{kindLabel(h.kind)}</span><span className="hb-name">{h.text}</span></th>
                     <td>{r.daysWith}</td><td>{show(r.netWith)}</td><td>{r.daysWithout}</td><td>{show(r.netWithout)}</td><td className={tone}>{show(r.difference)}</td>
                   </tr>
                 )

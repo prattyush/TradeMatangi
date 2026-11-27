@@ -446,6 +446,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
   const [pnlMaxLoss, setPnlMaxLoss] = useState(() => cachedTradingDisplaySettings().pnl.maxLossPct)
   const [pnlTargetsInput, setPnlTargetsInput] = useState(() => cachedTradingDisplaySettings().pnlTargetLevels)
   const [candleAlertEnabled, setCandleAlertEnabled] = useState(() => cachedTradingDisplaySettings().candleAlert.enabled)
+  const [nextExpiryOnExpiryDay, setNextExpiryOnExpiryDay] = useState(false)
   const [candleAlertInterval, setCandleAlertInterval] = useState(() => cachedTradingDisplaySettings().candleAlert.intervalMin)
   const [candleAlertSecondsInput, setCandleAlertSecondsInput] = useState(() => String(cachedTradingDisplaySettings().candleAlert.secondsBefore))
   const [tradingRocRatioMode, setTradingRocRatioMode] = useState<RocRatioMode>(loadTradingRocRatioMode)
@@ -653,6 +654,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
     setKotakProtectionEnabled(s.kotak_automated_protection_enabled ?? true)
     setPnlTargetsInput(s.pnl_target_levels ?? '')
     setCandleAlertEnabled(s.candle_alert_enabled ?? false)
+    setNextExpiryOnExpiryDay(s.next_expiry_on_expiry_day ?? false)
     setCandleAlertInterval(s.candle_alert_interval_min ?? 3)
     setCandleAlertSecondsInput(String(s.candle_alert_seconds_before ?? 15))
     publishTradingDisplaySettings(s)
@@ -1947,6 +1949,17 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   <span style={{ fontSize: 11, color: '#484f58' }}>seconds</span>
                 </div>
               </div>
+            </div>
+            {/* Options contract on expiry days */}
+            <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: '#8b949e', fontWeight: 600 }}>
+                <input type="checkbox" aria-label="Next expiry on expiry days" checked={nextExpiryOnExpiryDay} disabled={preferenceSaving} onChange={e => {
+                  const enabled = e.target.checked
+                  void savePreference({ next_expiry_on_expiry_day: enabled }, () => setNextExpiryOnExpiryDay(enabled))
+                }} />
+                NEXT EXPIRY ON EXPIRY DAYS
+                <SettingHelp text="On the day an options contract expires, new Paper, Real, Replay and Stepwise sessions use the next expiry's contracts instead, because expiry days are volatile. Sessions already started keep their contracts. Browse and the analysis screens always show the real expiry." />
+              </label>
             </div>
             {/* Candle-close sound alert */}
             <div style={{ borderTop: '1px solid #21262d', paddingTop: 16 }}>

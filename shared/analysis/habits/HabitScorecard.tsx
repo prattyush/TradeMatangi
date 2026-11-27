@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { kindLabel } from './types'
 import { fmtDuration, fmtNumber, fmtPct, fmtShare, fmtSigned, tint } from './format'
 import { metric, sortHabits, type HabitSummary, type SortKey, type StatMode, type Unit, type Verdict } from './habitStats'
 
@@ -92,7 +93,7 @@ export default function HabitScorecard({ habits, columns, unit, mode, onOpenHabi
           {rows.map(summary => (
             <tr key={summary.question_id} className={summary.status === 'archived' ? 'archived' : ''}>
               <th scope="row" className="hb-sticky">
-                <span className={`hb-kind ${summary.kind}`}>{summary.kind === 'entry' ? 'Entry' : 'Exit'}</span>
+                <span className={`hb-kind ${summary.kind}`}>{kindLabel(summary.kind)}</span>
                 {onOpenHabit
                   ? <button type="button" className="hb-name hb-link" onClick={() => onOpenHabit(summary.question_id)} title="Open the deep dive for this habit" aria-label={`Deep dive: ${summary.text}`}>{summary.text}</button>
                   : <span className="hb-name">{summary.text}</span>}

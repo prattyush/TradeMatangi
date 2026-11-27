@@ -13,6 +13,10 @@ import DesktopAnalysisChart, { clearAnalysisViewports, ComparisonChart } from '.
 import { analysisRequest, createAnalysisApi, type AnalysisRequest } from './analysisApi'
 import { createVideoLinksApi } from './tools/videoLinks'
 import { createWhatIfApi } from './tools/whatIf'
+import { createDayNotesSource } from '../../shared/analysis/notes/source'
+import { createDayScoreSource } from '../../shared/analysis/dayScore/source'
+import { createDaySummarySource } from '../../shared/analysis/summary/source'
+import SummaryView from '../../shared/analysis/summary/SummaryView'
 import ExecutionInspector from './ExecutionInspector'
 import { createAnalysisPracticeApi } from './analysisApi'
 import type { ComponentType } from 'react'
@@ -43,6 +47,17 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
       ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
     return createWhatIfApi(analysisRequest(baseUrl, token, native, onUnauthorized))
   }, [baseUrl, token, onUnauthorized])
+  // Day notes and carried-over TODOs (owner only), through the same analysis transport.
+  const notesRequest = useMemo(() => {
+    const native: AnalysisRequest | undefined = '__TAURI_INTERNALS__' in window
+      ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
+    return analysisRequest(baseUrl, token, native, onUnauthorized)
+  }, [baseUrl, token, onUnauthorized])
+  const dayNotes = useMemo(() => createDayNotesSource(notesRequest), [notesRequest])
+  // The day score: two read-only routes on the same transport.
+  const dayScore = useMemo(() => createDayScoreSource(notesRequest), [notesRequest])
+  // The Summary's day cards: one read-only route on the same transport.
+  const daySummary = useMemo(() => createDaySummarySource(notesRequest), [notesRequest])
   const drawingRequest=useCallback(async<T,>(path:string,method:'GET'|'POST'|'PUT'|'PATCH'|'DELETE',body:Record<string,unknown>={})=>{if('__TAURI_INTERNALS__' in window)return invoke<T>('desktop_drawing_request',{baseUrl,path,method,body});const response=await fetch(`${baseUrl.replace(/\/$/,'')}/api/desktop/v1/${path}`,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:method==='GET'?undefined:JSON.stringify(body)});if(!response.ok)throw new Error('Swing analytics could not read this portfolio');return response.json() as Promise<T>},[baseUrl,token])
   // Same catalogue kind/exchange the Day tiles use, so Analysis drawings share their instrument key.
   const catalogue=useRef<Promise<Array<{symbol:string;exchange:string;chart_type?:string}>>|null>(null)
@@ -79,7 +94,8 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
   const labelSaving = useRef(false)
   const [dataRevision,setDataRevision] = useState(0)
   const [navigationMessage,setNavigationMessage] = useState('')
-  const [view, setView] = useState<'Sessions' | 'Stats'>('Sessions')
+  const [view, setView] = useState<'Sessions' | 'Stats' | 'Summary'>('Sessions')
+  const [summaryVisited, setSummaryVisited] = useState(false)
   const [trade, setTrade] = useState<AnalysisTrade | null>(null)
   const [detail, setDetail] = useState<SessionDetail | null>(null)
   const [error, setError] = useState('')
@@ -115,7 +131,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return { api: createAnalysisPracticeApi(analysisRequest(baseUrl, token, native, onUnauthorized)), Chart: DesktopAnalysisChart as unknown as ComponentType<DiveChartProps>, historicalDays }
   }, [baseUrl, token, onUnauthorized, historicalDays])
   const environment: AnalysisEnvironment = useMemo(() => ({
-    practice, swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, whatIf, chartPicking: true, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
+    practice, swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, whatIf, dayNotes, dayScore, daySummary, chartPicking: true, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
     onDataChanged: () => setDataRevision(n => n + 1),
     onLabelSavingChange: saving => { labelSaving.current = saving; if(!saving)setNavigationMessage('') },
     charts: { SwingChart:swingRenderer,AnalysisChartPanel: AnalysisPanels, LabelCharts: AnalysisPanels, AnalysisChart: DesktopAnalysisChart, OptionsChart: DesktopAnalysisChart, SnapshotChart: DesktopAnalysisChart, SnapshotOptionsChart: DesktopAnalysisChart, TradesChart: ComparisonChart, PatternChart: ComparisonChart },
@@ -123,7 +139,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     onDirtyChange: value => { dirty.current = value },
     confirmDiscard: () => { if(labelSaving.current){setNavigationMessage('Labels are saving. Wait for the result before changing sessions.');return false}; if (!dirty.current || window.confirm('Discard unsaved labels?')) { dirty.current = false; return true }; return false },
     onSelectionContextChange: () => setTrade(null),
-  }), [adapter, practice, videoLinks, whatIf, active, dataRevision,historicalDays,labelView,pnlDisplayMode,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
+  }), [adapter, practice, videoLinks, whatIf, dayNotes, dayScore, daySummary, active, dataRevision,historicalDays,labelView,pnlDisplayMode,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
   const navigationReady = useRef(onNavigationReady);
   navigationReady.current = onNavigationReady;
   const guard = useRef(environment.confirmDiscard);
@@ -133,10 +149,11 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     return () => navigationReady.current?.(null);
   }, []);
   return <AnalysisProvider value={environment}><div className="desktop-analysis" hidden={!active}>
-    <nav className="analysis-navigation" aria-label="Analysis views">{viewSelector}<button aria-pressed={view === 'Sessions'} onClick={() => {if(environment.confirmDiscard?.()!==false)setView('Sessions')}}>Sessions</button><button aria-pressed={view === 'Stats'} onClick={() => { if(environment.confirmDiscard?.()===false)return;setStatsVisited(true); setView('Stats') }}>Stats</button>{!viewSelector && <button onClick={()=>{if(environment.confirmDiscard?.()!==false)onClose()}}>Return to Workspace</button>}</nav>
+    <nav className="analysis-navigation" aria-label="Analysis views">{viewSelector}<button aria-pressed={view === 'Sessions'} onClick={() => {if(environment.confirmDiscard?.()!==false)setView('Sessions')}}>Sessions</button><button aria-pressed={view === 'Stats'} onClick={() => { if(environment.confirmDiscard?.()===false)return;setStatsVisited(true); setView('Stats') }}>Stats</button><button aria-pressed={view === 'Summary'} onClick={() => { if(environment.confirmDiscard?.()===false)return;setSummaryVisited(true); setView('Summary') }}>Summary</button>{!viewSelector && <button onClick={()=>{if(environment.confirmDiscard?.()!==false)onClose()}}>Return to Workspace</button>}</nav>
     {navigationMessage && <p className="analysis-navigation-message" role="status">{navigationMessage}</p>}
     <div className="analysis-sessions" hidden={view !== 'Sessions'}><AnalysisProvider value={{...environment, active: active && view === 'Sessions'}}><DesktopAnalysisSessions key={initialPortfolioId??'all'} initialPortfolioId={initialPortfolioId}/></AnalysisProvider></div>
     <div className="analysis-stats" hidden={view !== 'Stats'}>{statsVisited && <AnalysisProvider value={{...environment, active: active && view === 'Stats'}}><PerformanceDashboard key={initialPortfolioId??'all'} onClose={() => setView('Sessions')} defaultSymbol="" defaultStartDate="" defaultEndDate="" defaultInstrumentType="" defaultSessionType="" defaultTradingStyle={initialPortfolioId?'swing':undefined} defaultPortfolioId={initialPortfolioId} selectedCycle={cycle} /></AnalysisProvider>}</div>
+    <div className="analysis-summary" hidden={view !== 'Summary'}>{summaryVisited && <AnalysisProvider value={{...environment, active: active && view === 'Summary'}}><SummaryView /></AnalysisProvider>}</div>
     {trade && <ExecutionInspector trade={trade} detail={detail} error={error} onRetry={()=>setRetry(n=>n+1)} onClose={()=>setTrade(null)} onCycle={value=>{setCycle(value);setStatsVisited(true);setView('Stats');setTrade(null)}} />}
 
   </div></AnalysisProvider>

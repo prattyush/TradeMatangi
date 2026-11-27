@@ -594,3 +594,133 @@ test("KLine Analysis, read-only (the phone): saved drawings are shown locked, wi
   expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method !== "GET"))).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test("KLine Analysis: the Underlying chart offers All / CE / PE marker buttons like the Lightweight chart", async ({ page }) => {
+  await page.goto("/tests/phase22/analysis-tools.html?mode=panels", { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".analysis-kline canvas");
+  const underlying = page.locator(".analysis-underlying-pane");
+  const buttons = underlying.locator("header > button.marker-filter");
+  await expect(buttons).toHaveText(["All", "CE", "PE"]);
+  await expect(buttons.nth(0)).toHaveAttribute("aria-pressed", "true");
+  // The Underlying chart (the first KLine chart) draws the CE fill once; only PE hides it; the option chart beside it keeps its own.
+  const marks = () => page.evaluate(() => (window as any).charts().map((chart: any) => chart.getOverlays().filter((o: any) => o.name === "analysisExecution").length));
+  await expect.poll(marks).toEqual([1, 1]);
+  await buttons.nth(2).click();
+  await expect(buttons.nth(2)).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(marks).toEqual([0, 1]);
+  await buttons.nth(1).click();
+  await expect.poll(marks).toEqual([1, 1]);
+  await buttons.nth(0).click();
+  await expect.poll(marks).toEqual([1, 1]);
+  // A contract chart has no filter.
+  await expect(page.locator(".analysis-option-pane header > button.marker-filter")).toHaveCount(0);
+});
+
+// ── A day's Notes chart (Phase 27, S8): its own drawings, started from the other charts' ────────────────────────────────────────────────
+const NOTES = "notes:2026-10-16";
+const BASE = Date.parse("2026-10-16T09:15:00Z") / 1000;
+const NIFTY = { exchange: "NSE", kind: "index", symbol: "NIFTY" };
+/** Two drawings the other charts (trading, Browse, Analysis) already saved for NIFTY. */
+const OTHER_CHARTS = [
+  { drawing_id: "g1", revision: 1, drawing: { tool: "Horizontal", points: [{ timestamp: BASE + 40 * 180, price: 100 }] }, instrument: NIFTY },
+  { drawing_id: "g2", revision: 1, drawing: { tool: "Text", text: "support", points: [{ timestamp: BASE + 30 * 180, price: 98 }] }, instrument: NIFTY },
+];
+const serverRows = async (page: Page) => JSON.parse(await page.evaluate(() => sessionStorage.getItem("drawing-store") ?? "[]")) as any[];
+const scopedTools = async (page: Page) => (await serverRows(page)).filter((row) => row.instrument?.drawing_scope === NOTES).map((row) => row.drawing.tool).sort();
+const otherChartTools = async (page: Page) => (await serverRows(page)).filter((row) => !row.instrument?.drawing_scope).map((row) => row.drawing.tool).sort();
+const withOtherCharts = async (page: Page) =>
+  page.addInitScript((rows) => { if (!sessionStorage.getItem("drawing-store")) sessionStorage.setItem("drawing-store", JSON.stringify(rows)); }, OTHER_CHARTS);
+
+test("KLine Notes chart: starts from the other charts' drawings, then deletes and new texts stay in Notes", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await withOtherCharts(page);
+  await page.goto(`/tests/phase22/analysis-tools.html?mode=kline&scope=${NOTES}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".analysis-kline canvas");
+  const rail = page.locator(".kline-tools-rail");
+  // The other charts' two drawings are copied once (plus the hidden marker); the originals are untouched.
+  await expect(rail).toHaveAttribute("data-drawing-count", "2");
+  await expect.poll(() => scopedTools(page)).toEqual(["Horizontal", "NotesSeed", "Text"]);
+  expect(await otherChartTools(page)).toEqual(["Horizontal", "Text"]);
+
+  // Delete the line in Notes: gone from Notes (and it is not copied again on reload), still there for the other charts.
+  const line = await page.evaluate(() => {
+    const chart = (window as any).charts()[0];
+    const o = chart.getOverlays().find((x: any) => x.name === "horizontalStraightLine");
+    const [p] = chart.convertToPixel([{ timestamp: o.points[0].timestamp, value: o.points[0].value }], { paneId: "candle_pane" });
+    const box = chart.getDom("candle_pane", "main").getBoundingClientRect();
+    return { x: box.left + p.x, y: box.top + p.y };
+  });
+  await press(page, line.x, line.y);
+  await page.keyboard.press("Delete");
+  await expect(rail).toHaveAttribute("data-drawing-count", "1");
+  await expect.poll(() => scopedTools(page)).toEqual(["NotesSeed", "Text"]);
+  expect(await otherChartTools(page)).toEqual(["Horizontal", "Text"]);
+
+  // A new text typed in Notes is saved in Notes only.
+  await rail.getByRole("button", { name: "Text", exact: true }).click();
+  const p = await chartPoint(page, ".analysis-kline", 220, 110); // clear of the two copied drawings
+  await page.waitForTimeout(500);
+  await press(page, p.x, p.y);
+  await page.getByRole("dialog", { name: "Chart text" }).getByLabel("Text to show on the chart").fill("Missed the retest");
+  await page.keyboard.press("Enter");
+  await expect(rail).toHaveAttribute("data-drawing-count", "2");
+  await expect.poll(() => scopedTools(page)).toEqual(["NotesSeed", "Text", "Text"]);
+  expect(await otherChartTools(page)).toEqual(["Horizontal", "Text"]);
+
+  // Reopened: still two, nothing copied again.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "2");
+  expect(await scopedTools(page)).toEqual(["NotesSeed", "Text", "Text"]);
+
+  // An ordinary chart (no scope) sees only the other charts' two drawings, not the Notes text.
+  await page.goto("/tests/phase22/analysis-tools.html?mode=kline", { waitUntil: "domcontentloaded" });
+  await expect(page.locator(".kline-tools-rail")).toHaveAttribute("data-drawing-count", "2");
+  expect(await otherChartTools(page)).toEqual(["Horizontal", "Text"]);
+  expect(errors).toEqual([]);
+});
+
+test("KLine Notes chart, viewed (Summary): shows the Notes drawings read only, and the other charts' ones before Notes was opened", async ({ page }) => {
+  await withOtherCharts(page);
+  // Never opened in Notes: the other charts' drawings, nothing is copied or saved by viewing.
+  await page.goto(`/tests/phase22/analysis-tools.html?mode=kline&scope=${NOTES}&view=1`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".analysis-kline canvas");
+  await expect(page.locator(".kline-tools-rail")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).charts().flatMap((c: any) => c.getOverlays()).length)).toBe(2);
+  expect(await scopedTools(page)).toEqual([]);
+  expect(await page.evaluate(() => (window as any).drawingLog.filter((r: any) => r.method !== "GET" && r.path !== "chart-settings"))).toHaveLength(0);
+});
+
+test("Lightweight Notes chart: starts from the other charts' drawings, then deletes and new texts stay in Notes", async ({ page }) => {
+  test.setTimeout(90_000);
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await withOtherCharts(page);
+  await page.goto(`/tests/phase22/analysis-tools.html?mode=lightweight&scope=${NOTES}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("canvas");
+  await expect.poll(() => scopedTools(page)).toEqual(["Horizontal", "NotesSeed", "Text"]);
+  expect(await otherChartTools(page)).toEqual(["Horizontal", "Text"]);
+
+  // A new text typed in Notes is saved in Notes only.
+  const c = await chartPoint(page, "canvas");
+  await page.getByRole("button", { name: "Draw ▾" }).click();
+  await page.getByRole("menuitem", { name: "T Text" }).click();
+  await page.waitForTimeout(250);
+  await press(page, c.x - 150, c.y + 90);
+  await page.getByLabel("Text to show on the chart").fill("Missed the retest");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => scopedTools(page)).toEqual(["Horizontal", "NotesSeed", "Text", "Text"]);
+  expect(await otherChartTools(page)).toEqual(["Horizontal", "Text"]);
+
+  // Reopened: nothing is copied again.
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForSelector("canvas");
+  await page.waitForTimeout(800);
+  expect(await scopedTools(page)).toEqual(["Horizontal", "NotesSeed", "Text", "Text"]);
+
+  // Viewed only: no Draw menu, nothing written.
+  await page.goto(`/tests/phase22/analysis-tools.html?mode=lightweight&scope=${NOTES}&view=1`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("canvas");
+  await expect(page.getByRole("button", { name: "Draw ▾" })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

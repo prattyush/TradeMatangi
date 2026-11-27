@@ -111,7 +111,7 @@ function SettingControl({
 }) {
   if (field.type === 'boolean')
     return (
-      <label>
+      <label title={field.help}>
         <span>
           <input
             aria-label={field.label}

@@ -150,8 +150,20 @@ class LedgerCoverage(BaseModel):
     truncated: bool
 
 
+class LedgerQuestion(BaseModel):
+    """A question as the Habits ledger lists it: the user's own (entry / exit) and the calculated system habits (kind ``system``, ``system`` true)."""
+    question_id: str
+    kind: Literal["entry", "exit", "system"]
+    text: str
+    status: Literal["active", "archived"]
+    sort_order: int
+    created_at: str
+    archived_at: Optional[str] = None
+    system: bool = False
+
+
 class HabitLedgerResponse(BaseModel):
-    questions: list[QuestionOut]
+    questions: list[LedgerQuestion]
     trades: list[LedgerTrade]
     coverage: LedgerCoverage
 

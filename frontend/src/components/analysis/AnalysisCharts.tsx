@@ -89,8 +89,10 @@ function ChartToolbar({ title, isMaximized = false, onMaximize, tools }: {
 export function WebsiteAnalysisChart({
   symbol, date, trades, historicalDays = 2, title = 'Underlying',
   isMaximized = false, onMaximize,
-  getMarkerText, fill = false, focusTime,
+  getMarkerText, fill = false, focusTime, drawingScope, drawingsReadOnly,
 }: {
+  drawingScope?: string
+  drawingsReadOnly?: boolean
   symbol: string
   date: string
   trades: AnalysisTrade[]
@@ -115,7 +117,7 @@ export function WebsiteAnalysisChart({
   const tradeMarkerPoolRef = useRef<ISeriesApi<'Line'>[]>([])
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const tools = useLightweightTools(useLightweightStore({ symbol }))
+  const tools = useLightweightTools(useLightweightStore({ symbol, scope: drawingScope, readOnly: drawingsReadOnly }))
   const [candles, setCandles] = useState<CandlestickData[]>([])
   const [markerFilter, setMarkerFilter] = useState<'all' | 'CE' | 'PE'>('all')
 
@@ -350,8 +352,10 @@ export function WebsiteAnalysisChart({
 
 export function WebsiteOptionsChart({
   symbol, date, strike, expiry, right, trades, historicalDays = 2,
-  isMaximized = false, onMaximize, getMarkerText, fill = false, focusTime,
+  isMaximized = false, onMaximize, getMarkerText, fill = false, focusTime, drawingScope, drawingsReadOnly,
 }: {
+  drawingScope?: string
+  drawingsReadOnly?: boolean
   symbol: string
   date: string
   strike: number
@@ -378,7 +382,7 @@ export function WebsiteOptionsChart({
   const tradeMarkerPoolRef = useRef<ISeriesApi<'Line'>[]>([])
   const ema9Ref = useRef<ISeriesApi<'Line'> | null>(null)
   const ema21Ref = useRef<ISeriesApi<'Line'> | null>(null)
-  const tools = useLightweightTools(useLightweightStore({ symbol, right, strike, expiry }))
+  const tools = useLightweightTools(useLightweightStore({ symbol, right, strike, expiry, scope: drawingScope, readOnly: drawingsReadOnly }))
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -570,8 +574,10 @@ interface OptionTab {
 }
 
 export function WebsiteAnalysisChartPanel({
-  symbol, date, allTrades, isOptions, historicalDays = 2,
+  symbol, date, allTrades, isOptions, historicalDays = 2, drawingScope, drawingsReadOnly,
 }: {
+  drawingScope?: string
+  drawingsReadOnly?: boolean
   symbol: string
   date: string
   allTrades: AnalysisTrade[]
@@ -644,14 +650,14 @@ export function WebsiteAnalysisChartPanel({
           {isUnderlying ? (
             <WebsiteAnalysisChart
               symbol={symbol} date={date} trades={allTrades}
-              historicalDays={historicalDays} title="Underlying"
+              historicalDays={historicalDays} title="Underlying" drawingScope={drawingScope} drawingsReadOnly={drawingsReadOnly}
               isMaximized onMaximize={() => setMaximizedChart(null)}
             />
           ) : optTab ? (
             <WebsiteOptionsChart
               symbol={symbol} date={date}
               strike={optTab.strike} expiry={optTab.expiry} right={optTab.right}
-              trades={optTab.trades} historicalDays={historicalDays}
+              trades={optTab.trades} historicalDays={historicalDays} drawingScope={drawingScope} drawingsReadOnly={drawingsReadOnly}
               isMaximized onMaximize={() => setMaximizedChart(null)}
             />
           ) : null}
@@ -666,7 +672,7 @@ export function WebsiteAnalysisChartPanel({
       <div style={{ marginTop: 8 }}>
         <WebsiteAnalysisChart
           symbol={symbol} date={date} trades={allTrades}
-          historicalDays={historicalDays} title="Underlying"
+          historicalDays={historicalDays} title="Underlying" drawingScope={drawingScope} drawingsReadOnly={drawingsReadOnly}
           onMaximize={() => setMaximizedChart('underlying')}
         />
       </div>
@@ -680,7 +686,7 @@ export function WebsiteAnalysisChartPanel({
       <div style={{ flex: 1, minWidth: 0 }}>
         <WebsiteAnalysisChart
           symbol={symbol} date={date} trades={allTrades}
-          historicalDays={historicalDays} title="Underlying"
+          historicalDays={historicalDays} title="Underlying" drawingScope={drawingScope} drawingsReadOnly={drawingsReadOnly}
           onMaximize={() => setMaximizedChart('underlying')}
         />
       </div>
@@ -708,7 +714,7 @@ export function WebsiteAnalysisChartPanel({
             key={activeTab}
             symbol={symbol} date={date}
             strike={activeTabData.strike} expiry={activeTabData.expiry} right={activeTabData.right}
-            trades={activeTabData.trades} historicalDays={historicalDays}
+            trades={activeTabData.trades} historicalDays={historicalDays} drawingScope={drawingScope} drawingsReadOnly={drawingsReadOnly}
             onMaximize={() => setMaximizedChart(activeTab)}
           />
         )}

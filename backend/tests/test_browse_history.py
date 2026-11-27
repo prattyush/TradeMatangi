@@ -246,7 +246,7 @@ def test_max_price_search_accepts_the_websites_header_for_browse_only(monkeypatc
 
     from app.services import desktop_preparation
 
-    monkeypatch.setattr(desktop_preparation, "prepare", lambda mode, date, ref, panes: {"version": 1, "date": date, "reference_time": ref, "panes": []})
+    monkeypatch.setattr(desktop_preparation, "prepare", lambda mode, date, ref, panes, *rest: {"version": 1, "date": date, "reference_time": ref, "panes": []})
     pane = dict(id="ce", kind="option", symbol="NIFTY", interval="3", tradingDate="2026-10-08", expiry="2026-10-08", strike="24500", right="CE")
     client = TestClient(app)
     path = "/api/desktop/v1/trading/prepare-session"
@@ -318,3 +318,25 @@ def test_a_day_no_provider_has_data_for_is_a_real_gap_and_is_skipped(monkeypatch
     page = bh.page("NIFTY", 5, ANCHOR, days=5)
     assert date(2026, 10, 6) not in _days_in(page)
     assert _days_in(page)[-1] == date(2026, 10, 9) and len(_days_in(page)) == 4 and page["more"] is True
+
+
+def test_a_page_writes_one_diagnostic_line_naming_where_every_day_came_from(monkeypatch, caplog):
+    """A provider that answers without rows for some days leaves a gap the client cannot see; the line says which days and what each window returned."""
+    import json
+    import logging
+
+    class Partial(Fetcher):
+        def __call__(self, provider, item, start, end, daily):
+            frame = super().__call__(provider, item, start, end, daily)
+            return frame[pd.to_datetime(frame["datetime"]) < pd.Timestamp("2026-10-06")]  # nothing from the 6th on, whatever the window
+
+    monkeypatch.setattr(swing_charts, "_fetch", Partial())
+    with caplog.at_level(logging.INFO, logger=bh.logger.name):
+        result = bh.page("NIFTY", 30, ANCHOR)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("BROWSE-DIAG")]
+    assert len(lines) == 1
+    data = json.loads(lines[0].split(" ", 1)[1])
+    assert data["symbol"] == "NIFTY" and data["interval"] == 30 and data["anchor"] == "2026-10-09"
+    assert any(w["provider"] == "kite" and w["rows"] > 0 and w["days_with_rows"] < w["days"] for w in data["provider_windows"])
+    assert "no_rows_anywhere" in data["days_by_source"] and "2026-10-09" in data["days_by_source"]["no_rows_anywhere"]
+    assert data["returned"]["candles"] == len(result["candles"]) and data["returned"]["oldest_date"] == result["oldest_date"]

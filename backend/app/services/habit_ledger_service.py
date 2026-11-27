@@ -124,6 +124,15 @@ def build_ledger(cycles: list[dict], marks: list[dict], sessions: dict[str, dict
     BehaviorMarks rows; ``sessions`` maps a mark's session id to its Sessions row (for the alias → owner mapping).
     """
     own = [c for c in cycles if not c.get("shared") and c.get("trading_style", "intraday") != "swing"]
+    # System habits (Phase 27): calculated from each market date's cycles (all the sessions of that date and session type, as the day score does), so a trade
+    # is flagged as the day-score rules see it. They are computed on the cycles in scope, so a filter (a symbol, a mode) narrows them too.
+    from app.services import day_score_service
+    by_date: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for cycle in own:
+        by_date[(cycle.get("date", ""), cycle.get("mode") or "sim")].append(cycle)  # per session type, like the day score
+    system_flags: dict[str, list[str]] = {}
+    for group in by_date.values():
+        system_flags.update(day_score_service.system_flags(group))
     by_trip = {(c["session_id"], int(c["index"])): c for c in own}
     habits: dict[tuple[str, int], set[str]] = defaultdict(set)
     seen: set[tuple[str, int, str]] = set()
@@ -151,15 +160,16 @@ def build_ledger(cycles: list[dict], marks: list[dict], sessions: dict[str, dict
         (c for c in own if c.get("state") == "closed"),
         key=lambda c: (c.get("created_at") or 0, c.get("date", ""), c["session_id"], c["entry_time"], c["cycle_id"]),
     )
-    rows = [trade_row(c, list(habits.get((c["session_id"], int(c["index"])), ()))) for c in closed]
+    rows = [trade_row(c, [*habits.get((c["session_id"], int(c["index"])), ()), *system_flags.get(c["cycle_id"], ())]) for c in closed]
     ordinals: dict[str, int] = {}
     for row in rows:
         row["session_seq"] = ordinals.setdefault(row["session_id"], len(ordinals))
     truncated = len(rows) > max_rows
     if truncated:
         rows = rows[-max_rows:]  # keep the most recent trades
+    from app.services.day_score_service import SYSTEM_QUESTIONS
     return {
-        "questions": questions,
+        "questions": [*questions, *(dict(q) for q in SYSTEM_QUESTIONS)],
         "trades": rows,
         "coverage": {
             "closed_trades": len(closed),

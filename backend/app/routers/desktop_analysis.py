@@ -11,7 +11,7 @@ from typing import get_type_hints
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.routing import APIRoute
 from app.dependencies import get_desktop_user_id
-from app.routers import analysis, behavior, data, deep_dive, labels, pattern_logger, performance, snapshots, video_links, whatif
+from app.routers import analysis, behavior, data, deep_dive, labels, pattern_logger, performance, snapshots, video_links, whatif, day_notes, day_score, day_summary
 from app.services import analysis_service, performance_service
 from app.services.history_workers import desktop_history_scope, run_history
 
@@ -89,6 +89,12 @@ allowed = [
     (video_links.router, {"/api/video-links": {"GET", "POST", "DELETE"}, "/api/video-links/mine": {"GET"}}),
     # Phase 24 saved What If scenarios (owner only; the router never touches trades, orders or labels).
     (whatif.router, {"/api/whatif": {"GET", "POST", "DELETE"}, "/api/whatif/range": {"GET"}}),
+    # Phase 27 day score (owner only, read only for the caller; the first read of a scorable day stores it).
+    (day_score.router, {"/api/analysis/day-score": {"GET"}, "/api/analysis/day-scores": {"GET"}}),
+    # Phase 27 Summary: one card per market date (owner only, read only; the Stats filters, the caller's own intraday sessions).
+    (day_summary.router, {"/api/analysis/day-summary": {"GET"}}),
+    # Phase 27 day notes and carried-over TODOs (owner only; exact paths, writes are POST / DELETE with ids in the body or query).
+    (day_notes.router, {"/api/day-notes": {"GET", "POST"}, "/api/day-notes/todos": {"GET", "POST", "DELETE"}, "/api/day-notes/todos/status": {"POST"}}),
     # Phase 26 Deep Dive: the frequency percentages for the label forms, and Strategy Practice's review and run list for the Analysis
     # screens: read-only routes (the Deep Dive itself and starting a practice run are on the patterns transport).
     (deep_dive.router, {"/api/deep-dive/stats/all": {"GET"}, "/api/deep-dive/practice/evaluate": {"GET"}, "/api/deep-dive/practice/runs": {"GET"}}),

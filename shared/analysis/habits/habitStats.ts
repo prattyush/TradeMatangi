@@ -1,4 +1,4 @@
-import type { BehaviorKind, BehaviorQuestion } from '../api'
+import type { HabitKind, LedgerQuestion } from './types'
 import type { LedgerTrade } from './types'
 
 /**
@@ -151,7 +151,7 @@ export type Verdict = 'costly' | 'rewarding' | 'mixed' | 'low_sample'
 export interface HabitSummary {
   question_id: string
   text: string
-  kind: BehaviorKind
+  kind: HabitKind
   status: 'active' | 'archived'
   /** Results of the trades with the habit. */
   habit: TradeTotals
@@ -190,7 +190,7 @@ export function verdictFor(habit: TradeTotals, baseline: TradeTotals): { verdict
 }
 
 export interface SummaryOptions {
-  kind?: BehaviorKind | 'all'
+  kind?: HabitKind | 'all'
   includeArchived?: boolean
 }
 
@@ -198,18 +198,18 @@ export interface HabitsOverview {
   scope: TradeTotals
   habits: HabitSummary[]
   /** Habits (after the filters) with no trade in scope. */
-  idle: BehaviorQuestion[]
+  idle: LedgerQuestion[]
 }
 
 /** Summaries for every habit with at least one trade in scope, plus the scope totals. Sort order is the caller's. */
-export function summarize(questions: BehaviorQuestion[], trades: LedgerTrade[], options: SummaryOptions = {}): HabitsOverview {
+export function summarize(questions: LedgerQuestion[], trades: LedgerTrade[], options: SummaryOptions = {}): HabitsOverview {
   const kind = options.kind ?? 'all'
   const includeArchived = options.includeArchived ?? true
   const scope = totals(trades)
   const byHabit = new Map<string, LedgerTrade[]>()
   for (const trade of trades) for (const id of trade.habits) byHabit.set(id, [...(byHabit.get(id) ?? []), trade])
   const habits: HabitSummary[] = []
-  const idle: BehaviorQuestion[] = []
+  const idle: LedgerQuestion[] = []
   for (const question of questions) {
     if ((kind !== 'all' && question.kind !== kind) || (!includeArchived && question.status === 'archived')) continue
     const own = byHabit.get(question.question_id) ?? []

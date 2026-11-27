@@ -293,6 +293,25 @@ def test_stats_all_prefers_own_dive_then_first_sharer(database, monkeypatch):
     assert svc.stats_all(USER)[0]["shared"] is False
 
 
+def test_stats_all_carries_the_marked_days_for_the_group_view(database):
+    first, second = ask("Second leg?"), ask("Exhaustive bar?")
+    mark(D1); mark(D2, side="sell")
+    svc.set_tag_values(USER, CAT, STRAT, "NIFTY", D1, "buy", {first["tag_id"]: True, second["tag_id"]: False})
+    svc.set_tag_values(USER, CAT, STRAT, "NIFTY", D2, "sell", {first["tag_id"]: False})
+    days = svc.stats_all(USER)[0]["days"]
+    # newest first; only the tags a day has marked appear in its tag_values
+    assert [(d["date"], d["side"]) for d in days] == sorted([(D1, "buy"), (D2, "sell")], reverse=True)
+    by_date = {d["date"]: d["tag_values"] for d in days}
+    assert by_date[D1] == {first["tag_id"]: True, second["tag_id"]: False}
+    assert by_date[D2] == {first["tag_id"]: False}
+
+
+def test_group_days_are_capped_to_the_newest():
+    setups = [{"date": f"2026-01-{n:02d}", "side": "buy", "tag_values": {"t": True}} for n in range(1, 11)]
+    out = svc.group_days(setups, limit=3)
+    assert [d["date"] for d in out] == ["2026-01-10", "2026-01-09", "2026-01-08"]
+
+
 def test_stats_all_skips_dives_without_marked_days(database):
     ask("Anything?")
     assert svc.stats_all(USER) == []

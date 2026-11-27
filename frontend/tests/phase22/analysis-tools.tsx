@@ -32,12 +32,20 @@ const api: any = {
   getOptionsHistorical: async () => ({ candles }),
   patternOhlcEquity: async () => ({ candles }),
 };
+// `?scope=notes:2026-10-16` makes the chart a day's Notes chart; `?view=1` only views it (the Summary).
+const scope = new URLSearchParams(location.search).get("scope") ?? undefined;
+const viewOnly = new URLSearchParams(location.search).get("view") === "1";
+// Like the service: a scoped instrument has records of its own; every other key sees the unscoped records (the other charts').
+const rowsFor = (key: string) => {
+  const wanted = JSON.parse(key);
+  return readStore().filter((row) => (wanted.drawing_scope ? row.instrument?.drawing_scope === wanted.drawing_scope && row.instrument?.symbol === wanted.symbol && row.instrument?.underlying === wanted.underlying && row.instrument?.strike === wanted.strike : !row.instrument?.drawing_scope));
+};
 const drawingRequest = async (path: string, method: string, body?: any) => {
   w.drawingLog.push({ path, method, body });
   if (path === "chart-settings") return { settings: {} };
-  if (path.startsWith("drawings?")) return { version: 1, drawings: readStore() };
+  if (path.startsWith("drawings?")) return { version: 1, drawings: rowsFor(decodeURIComponent(path.split("instrument=")[1])) };
   if (path === "drawings" && method === "POST") {
-    const row = { drawing_id: `d${readStore().length + 1}`, revision: 1, drawing: body.drawing };
+    const row = { drawing_id: `d${readStore().length + 1}`, revision: 1, drawing: body.drawing, instrument: body.instrument };
     writeStore([...readStore(), row]);
     return row;
   }
@@ -80,12 +88,12 @@ function App() {
       ) : mode === "kline" ? (
         <KLineAnalysisScope>
           <div style={{ width: 900, height: 520, position: "relative" }}>
-            <KLineAnalysisChart symbol="NIFTY" date="2026-10-16" trades={[]} historicalDays={2} />
+            <KLineAnalysisChart symbol="NIFTY" date="2026-10-16" trades={[]} historicalDays={2} drawingScope={scope} drawingsReadOnly={viewOnly} />
           </div>
         </KLineAnalysisScope>
       ) : (
         <div style={{ width: 900, height: maximized ? 700 : undefined }}>
-          <WebsiteAnalysisChart symbol="NIFTY" date="2026-10-16" trades={[]} isMaximized={maximized} onMaximize={() => setMaximized((v) => !v)} />
+          <WebsiteAnalysisChart symbol="NIFTY" date="2026-10-16" trades={[]} drawingScope={scope} drawingsReadOnly={viewOnly} isMaximized={maximized} onMaximize={() => setMaximized((v) => !v)} />
         </div>
       )}
     </AnalysisProvider>

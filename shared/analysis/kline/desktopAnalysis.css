@@ -1,7 +1,8 @@
 .desktop-analysis { position: fixed; inset: 0; background: #10131a; overflow: hidden; z-index: 20; }
 .desktop-analysis[hidden], .desktop-analysis [hidden] { display: none !important; }
 .analysis-navigation { height: 42px; display: flex; gap: 8px; align-items: center; padding: 4px 12px; }
-.analysis-sessions, .analysis-stats { position: absolute; inset: 42px 0 0; }
+.analysis-sessions, .analysis-stats, .analysis-summary { position: absolute; inset: 42px 0 0; }
+.analysis-summary { overflow: auto; }
 .analysis-sessions > div { position: absolute !important; inset: 0 !important; }
 .desktop-analysis .pa-overlay { position: absolute; inset: 0; }
 .desktop-analysis main { height: auto; display: block; }
@@ -50,7 +51,7 @@
 .analysis-pane-navigation { display: none; }
 .analysis-panels.chart-maximized { position: fixed; inset: 42px 0 0; height: auto; background: #10131a; z-index: 2200; grid-template-columns: minmax(0,1fr); }
 .chart-maximized .analysis-chart-separator { display: none; }
-.desktop-label-workflow.labels-maximized { position: fixed; inset: 42px 0 0; background: #10131a; z-index: 2200; padding: 12px; overflow: auto; }
+.desktop-label-workflow.labels-maximized { flex: 1; min-height: 0; background: #10131a; overflow: auto; }
 .analysis-snapshot-viewer { top: 42px !important; }
 .analysis-snapshot-viewer input { width: 100%; }
 .desktop-analysis-chart > [role="alert"], .desktop-analysis-chart > [role="status"] { position: absolute; top: 42px; left: 8px; padding: 6px; background: #182233; z-index: 3; }
@@ -140,3 +141,7 @@
 
 /* A maximized chart's way back: bold and labelled, not just an icon. */
 .desktop-analysis-chart header > button.chart-restore { gap: 4px; font-weight: 800; color: #0d1117; background: #58a6ff; border-color: #58a6ff; }
+
+/* The Underlying chart's marker filter (All / CE / PE), the same choice the Lightweight chart offers: the chosen one is lit. */
+.desktop-analysis-chart header > button.marker-filter { padding: 0 8px; }
+.desktop-analysis-chart header > button.marker-filter[aria-pressed="true"] { color: #79c0ff; border-color: #388bfd; background: #1f3a6e; font-weight: 600; }

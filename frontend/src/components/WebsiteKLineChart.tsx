@@ -27,6 +27,7 @@ import api, {
 } from "../services/api";
 import { rendererAccountKey } from "../services/websiteChartPreferences";
 import type { Time } from "lightweight-charts";
+import { chartDrawingInstrument } from "./chartDrawingInstrument";
 import { BACKEND_URL } from "../config";
 import { flashError } from "../services/notifications";
 import type {
@@ -201,33 +202,16 @@ export default function WebsiteKLineChart(
   const symbolInfo = catalogue.find((s) => s.symbol === props.symbol);
   const instrument = useMemo(
     () =>
-      props.paneType === "options"
-        ? {
-            kind: "option",
-            underlying: props.symbol,
-            exchange: props.swingChart
-              ? props.symbol === "BSESEN"
-                ? "BFO"
-                : "NFO"
-              : props.symbol === "BSESEN"
-                ? "BSE"
-                : "NSE",
-            right: props.right,
-            strike: props.strike,
-            expiry: props.expiry,
-          }
-        : props.paneType === "futures"
-          ? {
-              kind: "future",
-              underlying: props.symbol,
-              exchange: props.symbol === "BSESEN" ? "BFO" : "NFO",
-              expiry: props.expiry,
-            }
-          : {
-              kind: props.chartKind ?? symbolInfo?.chart_type ?? "equity",
-              symbol: props.symbol,
-              exchange: props.symbol === "BSESEN" ? "BSE" : "NSE",
-            },
+      chartDrawingInstrument({
+        paneType: props.paneType,
+        symbol: props.symbol,
+        swingChart: props.swingChart,
+        right: props.right,
+        strike: props.strike,
+        expiry: props.expiry,
+        chartKind: props.chartKind,
+        catalogueKind: symbolInfo?.chart_type,
+      }),
     [
       props.paneType,
       props.symbol,
