@@ -32,6 +32,14 @@ Needs a Windows desktop build that includes Sprints 1-4 (the CI job `Desktop Win
 6. Saving to a full or read-only folder shows an error.
 7. Time check: note how long a 1-hour recording takes (progress should move steadily) and the CPU use. If the machine has an NVIDIA, Intel or AMD GPU, note which encoder the result reports (it should say so after "Finished").
 
+## K. Milestones risk switch (added 2026-11-16; website, webapp and Windows app)
+Set Settings > General > P&L Display Mode to **Milestones** and note your GuardRails **Capital loss limit (%)** (Max loss), for example 6%.
+1. Start a replay or paper session. With a small loss (under 3% of capital) the Day P&L pill and the chart label show a step ("—", "Loss 1/3"), the header is normal.
+2. Take the day loss to **50% of Max loss** (3% of capital for a 6% limit; it counts realized and unrealized): the Day P&L pill, the right pane and the chart labels switch to **a %** that moves with every tick, the **header turns red**, and a warning notification says the loss is past 50% of Max loss. Order labels and trade history now show P&L, as in % mode.
+3. Let the loss recover a little, to between 40% and 50% of Max loss (2.4% to 3% here): it **stays** in % mode and red. Recover below 40%: it goes back to Milestones, the header is normal and a notification says Milestones are back. Check the same during an open trade, not only after closing.
+4. With P&L Display Mode set to Monetary or % of Capital nothing changes at 50% (no switch, no red header from this). The older GuardRails halfway alert still works as before.
+5. Do this on the website, the Windows app and, if you use it, the webapp.
+
 ## E. Recording stops with the session, and YouTube (added 2026-11-09)
 Recording auto-stop (needs the build with #790):
 1. Start a recording, start a replay or paper session, then press Stop on the session. About 10 seconds later the recording stops by itself, `video.webm` and `video.rec.json` download, and a notice says why.
@@ -54,7 +62,7 @@ Volume (#801):
 4. Open a stock chart (for example `NAUKRI`) on the website, choose Indicators > Volume: a volume pane appears under the candles. Open an option chart: same. Open `NIFTY`: choosing Volume or VWAP shows nothing (the index has no volume).
 5. Start a replay or stepwise session on an option for a day you have cached. Volume bars appear for the earlier candles; as new candles form during the replay each gets a volume bar that grows second by second. Pause and resume: no bar doubles. Change the candle interval: volumes still add up (the 3-minute bar equals the sum of its three 1-minute bars).
 6. Same replay on the desktop (Indicators > Volume); also check a Swing chart on a stock (Volume appears with the daily candles).
-7. Live and real sessions show history volume only; the forming candle has no volume yet (B2, not built). If a live candle shows a huge or zero-only volume, report it.
+7. Live and real sessions show history volume only; the forming candle has no volume yet. **Update (live volume step 1, Kite, dev only):** the backend now subscribes Kite in QUOTE mode and puts a per-second `volume` on stock and option candles, but the charts do not show it yet (the frontend handoff is a later step). To check the backend: start a **paper** session on a Kite stock or option in market hours with the backend log at INFO; there must be no `broker_error` or queue overflow, ticks keep arriving about as often as before, and orders, stoplosses and square-offs behave as usual. Set `KITE_STREAM_MODE=ltp` and restart to compare. If a live candle shows a huge or zero-only volume, report it.
 
 VWAP and Lightweight volume (added 2026-11-14, `feat/vwap-volume-charts`):
 8. KLine, stock or option: Indicators > VWAP draws a line **over the candles** (not in a pane of its own); Volume still has its own pane. On a daily (1D) Swing chart VWAP draws nothing. `NIFTY` offers neither. Do this on the website, the desktop (trading and Swing) and the phone Browse.
@@ -81,7 +89,7 @@ Speed (website, webapp):
 
 Max Price in Patterns:
 5. Settings, Option strike mode = OTM Offset: Patterns, Options shows the OTM box; Load Chart takes ATM from the 09:15 price (the open of the first minute) plus and minus the offset, as before.
-6. Settings, Option strike mode = Max Price with CE and PE caps (for example 60 and 45): the OTM box is replaced by two dropdowns, "Max Price CE" and "PE", like the trading screen's (presets of the symbol, a Settings value that is not a preset shows as "₹60 (saved)"). Choose other values: Load Chart uses them, and Settings shows the new values afterwards (and the trading screen's Max Price dropdown too). Load Chart picks a CE and a PE strike that are usually different; check each strike's premium at 09:30 on the chart is at or below its cap and the next strike toward ATM is above it. A day where nothing within 30 strikes qualifies shows the server's message and loads no chart.
+6. Settings, Option strike mode = Max Price with CE and PE caps (for example 60 and 45): the OTM box is replaced by two dropdowns, "Max Price CE" and "PE", like the trading screen's (presets of the symbol, a Settings value that is not a preset shows as "₹60 (saved)"). Choose other values: Load Chart uses them, and Settings shows the new values afterwards (and the trading screen's Max Price dropdown too). Load Chart picks a CE and a PE strike that are usually different; check each strike's premium at 09:30 on the chart is at or below its cap and the next strike toward ATM is above it. A day where nothing within 50 strikes qualifies shows the server's message and loads no chart.
 7. Save annotations, open the chart again from the gallery (Load): the CE pane and the PE pane use their own strikes. A chart saved before this change still opens, with its one strike on both sides.
 8. Trade Analysis, pattern-vs-trade comparison of that day (website, Windows app, phone): the CE and PE pattern tabs show their own strikes.
 9. A stock symbol (Reliance, Tata Motors, Tata Power) stays on the OTM box whatever the setting says.

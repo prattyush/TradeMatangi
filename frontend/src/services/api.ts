@@ -9,6 +9,10 @@ import type { PositionSnapshot } from './positionAccounting'
 import { measureRequest } from './performanceDiagnostics'
 import { legacyBrowserSettings, cacheSharedSettings } from './sharedSettings'
 import { BACKEND_URL, AI_HELPER_URL } from '../config'
+import { createDeepDiveClient } from '../../../shared/deepdive/client'
+import { createTradedClient } from '../../../shared/traded/client'
+import { createPracticeClient } from '../../../shared/practice/client'
+import type { StatsAllEntry } from '../../../shared/deepdive/types'
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); this.name = 'ApiError' }
@@ -27,6 +31,27 @@ async function behaviorRequest<T>(path: string, method: 'GET' | 'POST', body?: u
   }
   return res.json()
 }
+
+/** Deep Dive (Phase 26): same `deep-dive/...` paths as the desktop transport; validation text is in `detail`. */
+async function deepDiveRequest<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
+  const res = await fetch(`${BACKEND_URL}/api/${path}`, {
+    method,
+    headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ..._authHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null))?.detail
+    throw new Error(typeof detail === 'string' ? detail : `Deep dive request failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+/** The Deep Dive client for the website and webapp. */
+export const deepDiveApi = createDeepDiveClient(deepDiveRequest)
+/** The user's labelled trades as pattern material (Phase 26, S10): the same `pattern/traded...` paths as the desktop. */
+export const tradedApi = createTradedClient(deepDiveRequest)
+/** Strategy Practice (Phase 26, S15): the same `deep-dive/practice/...` paths as the desktop. */
+export const practiceApi = createPracticeClient(deepDiveRequest)
 
 /** Saved YouTube links of one of the user's own sessions. A 404 (not the owner, or no links yet) is thrown with "404" in the message. */
 export async function getVideoLinks(sessionId: string): Promise<import('../../../shared/analysis/videoLinks').SavedLink[]> {
@@ -248,6 +273,8 @@ export interface SimulationStartRequest {
   override?: boolean
   group_id?: string
   session_alias?: string
+  /** Strategy Practice (replay only): practise this Deep Dive strategy on the request's symbol and date. */
+  practice?: { category: string; strategy: string; start_offset_min: number }
 }
 
 export interface UserSettingsResponse {
@@ -374,6 +401,8 @@ export interface SimulationStartResponse {
   group_state: 'running' | 'paused' | 'ended' | null
   group_current_time: string | null
   session_alias: string | null
+  /** Set for a Strategy Practice run. Never carries the recorded side or marks. */
+  practice?: { category: string; strategy: string } | null
   wallet_ledger_id: string
   lot_size: number
 }
@@ -461,6 +490,10 @@ export interface PatternAnnotation {
   strategy_name: string
   category?: string
   text: string
+  /** Phase 26: set only on marks drawn from the user's actual orders (never saved): the Pattern view shows them as "traded". */
+  source?: 'traded'
+  /** With `source: 'traded'`: the order that was placed at this mark. */
+  action?: 'BUY' | 'SELL'
 }
 
 export interface TopPatternItem {
@@ -530,6 +563,7 @@ export interface AdminTokensResponse {
 // ── Analysis types ──────────────────────────────────────────────────────────
 
 export interface SessionSummary {
+  practice?: { category: string; strategy: string } | null // a Strategy Practice run
   trading_style?: 'intraday'|'swing'; portfolio_id?:string; entry_date?:string|null;exit_date?:string|null;
   snapshot_session_ids?: string[]
   shared?: boolean
@@ -1728,6 +1762,9 @@ const api = {
     if (!res.ok) throw new Error(`Save labels failed: ${res.status}`)
     return res.json()
   },
+
+  /** Phase 26: Deep Dive percentages of every strategy with marked days, for the label forms. */
+  getDeepDiveStats(): Promise<StatsAllEntry[]> { return deepDiveApi.getStatsAll() },
 
   // ── Behavior questions & marks (Phase 23) ──────────────────────────────────
 

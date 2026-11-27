@@ -26,7 +26,8 @@
           "identifier": "desktop-windows",
           "windows": [
             "main",
-            "screen:*"
+            "screen:*",
+            "games"
           ],
           "permissions": [
             "core:default"

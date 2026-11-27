@@ -45,6 +45,7 @@ class SessionSummary(BaseModel):
     winning_round_trip_count: int = 0
     buy_count: int = 0
     sell_count: int = 0
+    practice: dict | None = None  # {category, strategy} of a Strategy Practice run
 
 
 class TradeSummary(BaseModel):

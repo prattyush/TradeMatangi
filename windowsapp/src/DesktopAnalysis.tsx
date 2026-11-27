@@ -14,6 +14,9 @@ import { analysisRequest, createAnalysisApi, type AnalysisRequest } from './anal
 import { createVideoLinksApi } from './tools/videoLinks'
 import { createWhatIfApi } from './tools/whatIf'
 import ExecutionInspector from './ExecutionInspector'
+import { createAnalysisPracticeApi } from './analysisApi'
+import type { ComponentType } from 'react'
+import type { DiveChartProps } from '../../shared/deepdive/ui/host'
 import '../../shared/analysis/kline/desktopAnalysis.css'
 
 export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, onClose, onUnauthorized, historicalDays=2,initialPortfolioId,onNavigationReady }:  { onNavigationReady?:(guard:(()=>boolean)|null)=>void;initialPortfolioId?:string; viewSelector?: ReactNode; historicalDays?:number; onUnauthorized?:()=>void; baseUrl: string; token: string; active: boolean; onClose: () => void }) {
@@ -105,8 +108,14 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     window.addEventListener('keydown', escape, true)
     return () => window.removeEventListener('keydown', escape, true)
   }, [active, trade])
+  // Strategy Practice: the review of a practice run on the Sessions cards (read-only routes of the analysis transport).
+  const practice = useMemo(() => {
+    const native: AnalysisRequest | undefined = '__TAURI_INTERNALS__' in window
+      ? <T,>(path: string, method: string, body?: unknown) => invoke<T>('desktop_analysis_request', { baseUrl, path, method, body: body ?? {} }) : undefined
+    return { api: createAnalysisPracticeApi(analysisRequest(baseUrl, token, native, onUnauthorized)), Chart: DesktopAnalysisChart as unknown as ComponentType<DiveChartProps>, historicalDays }
+  }, [baseUrl, token, onUnauthorized, historicalDays])
   const environment: AnalysisEnvironment = useMemo(() => ({
-    swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, whatIf, chartPicking: true, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
+    practice, swingRequest, drawingRequest, resolveSymbolInstrument, videoLinks, whatIf, chartPicking: true, api: adapter.api, performance: adapter.performance, desktop: true, active, dataRevision, historicalDays, labelView, pnlDisplayMode, onLabelViewChange,
     onDataChanged: () => setDataRevision(n => n + 1),
     onLabelSavingChange: saving => { labelSaving.current = saving; if(!saving)setNavigationMessage('') },
     charts: { SwingChart:swingRenderer,AnalysisChartPanel: AnalysisPanels, LabelCharts: AnalysisPanels, AnalysisChart: DesktopAnalysisChart, OptionsChart: DesktopAnalysisChart, SnapshotChart: DesktopAnalysisChart, SnapshotOptionsChart: DesktopAnalysisChart, TradesChart: ComparisonChart, PatternChart: ComparisonChart },
@@ -114,7 +123,7 @@ export default function DesktopAnalysis({ viewSelector, baseUrl, token, active, 
     onDirtyChange: value => { dirty.current = value },
     confirmDiscard: () => { if(labelSaving.current){setNavigationMessage('Labels are saving. Wait for the result before changing sessions.');return false}; if (!dirty.current || window.confirm('Discard unsaved labels?')) { dirty.current = false; return true }; return false },
     onSelectionContextChange: () => setTrade(null),
-  }), [adapter, videoLinks, whatIf, active, dataRevision,historicalDays,labelView,pnlDisplayMode,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
+  }), [adapter, practice, videoLinks, whatIf, active, dataRevision,historicalDays,labelView,pnlDisplayMode,onLabelViewChange,swingRequest,swingRenderer,drawingRequest,resolveSymbolInstrument])
   const navigationReady = useRef(onNavigationReady);
   navigationReady.current = onNavigationReady;
   const guard = useRef(environment.confirmDiscard);

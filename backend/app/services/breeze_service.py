@@ -20,6 +20,8 @@ Usage (primary stream source — paper/real sessions):
 from __future__ import annotations
 
 from app.services.instrument_identity import strike_number
+from app.services.ohlc_accumulator import OHLCAccumulator as _OHLCAccumulator
+from app.services.volume_delta import VolumeDelta, clean_total
 import asyncio
 import logging
 import threading
@@ -110,43 +112,6 @@ def _unsubscribe_feed(breeze, spec: dict) -> None:
 # 1-second OHLC accumulator
 # ---------------------------------------------------------------------------
 
-@dataclass
-class _OHLCAccumulator:
-    open: float = 0.0
-    high: float = 0.0
-    low: float = 0.0
-    close: float = 0.0
-    current_second: int = 0
-
-    def update(self, price: float, ts_second: int) -> dict | None:
-        """
-        Feed a price. Returns a completed candle dict when a new second begins,
-        otherwise returns None. Completed candle covers the previous second.
-        """
-        if self.current_second == 0:
-            self.current_second = ts_second
-            self.open = self.high = self.low = self.close = price
-            return None
-
-        if ts_second == self.current_second:
-            self.high = max(self.high, price)
-            self.low = min(self.low, price)
-            self.close = price
-            return None
-
-        completed = {
-            "type": "tick",
-            "time": self.current_second,
-            "open": round(self.open, 2),
-            "high": round(self.high, 2),
-            "low": round(self.low, 2),
-            "close": round(self.close, 2),
-        }
-        self.current_second = ts_second
-        self.open = self.high = self.low = self.close = price
-        return completed
-
-
 # ---------------------------------------------------------------------------
 # BreezeStreamManager — per-session live streaming via ICICI Direct WebSocket
 # ---------------------------------------------------------------------------
@@ -163,6 +128,8 @@ class BreezeStreamManager:
         self._session_id: str | None = None
         self._breeze = None
         self._accumulators: dict[str, _OHLCAccumulator] = defaultdict(_OHLCAccumulator)
+        # per-feed guard turning Breeze's cumulative total traded quantity (ttq) into a per-second volume
+        self._volume_guards: dict[str, VolumeDelta] = {}
         self._queue: asyncio.Queue | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._instruments: list[dict] = []
@@ -207,6 +174,7 @@ class BreezeStreamManager:
         self._loop = loop
         self._instruments = instruments
         self._session_id = session_id
+        self._volume_guards.clear()  # a (re)started manager: the first total of every feed is a baseline
         logger.info(
             "breeze_manager_starting manager_id=%s session_id=%s instruments=%d routed=%s",
             self._manager_id, self._session_id or "-", len(instruments), bool(routes),
@@ -441,6 +409,22 @@ class BreezeStreamManager:
             )
         return f"equity:{instrument.get('exchange_code')}:{instrument.get('stock_code')}"
 
+    def _tick_volume(self, key: str, tick: dict) -> int | None:
+        """Volume since this feed's previous ``ttq`` (the cumulative day total), or None when the feed has no volume.
+
+        Indices (and a contract that has not traded yet) report ``ttq`` 0: that is "no volume", not a series of zeros,
+        so no guard is created until a total above 0 is seen. ``ltq`` (the last trade's size) is never used.
+        """
+        total = clean_total(tick.get("ttq"))
+        if total is None:
+            return None
+        guard = self._volume_guards.get(key)
+        if guard is None:
+            if total == 0:
+                return None
+            guard = self._volume_guards[key] = VolumeDelta()
+        return guard.delta(total)
+
     def _on_ticks(self, ticks) -> None:
         if self._queue is None or self._loop is None:
             return
@@ -569,7 +553,7 @@ class BreezeStreamManager:
                 key = route_key or key
                 ts_second = int(_time.time()) + 19800
 
-                candle = self._accumulators[key].update(price, ts_second)
+                candle = self._accumulators[key].update(price, ts_second, self._tick_volume(key, tick))
                 self._accepted_tick_count += 1
                 if not self._first_accepted_logged:
                     self._first_accepted_logged = True

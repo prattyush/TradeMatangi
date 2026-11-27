@@ -18,7 +18,7 @@ export const guardrailFields = [
   ['guardrail_maxentry_mode', 'Max per entry mode'],
   ['guardrail_maxentry_pct', 'Max per entry (% of capital)', 1, 100, 0.1],
   ['guardrail_maxentry_value', 'Max per entry value (₹)', 0, undefined, 0.1],
-  ['guardrail_mingap_enabled', 'Enable minimum gap between entries (exits are never held back)'],
+  ['guardrail_mingap_enabled', 'Enable minimum gap between entries (resets when every position is closed; exits are never held back)'],
   ['guardrail_mingap_minutes', 'Minutes between entries', 1, 390, 1],
 ] as const
 

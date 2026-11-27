@@ -1,0 +1,239 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createPracticeClient } from '../../shared/practice/client'
+import { practiceStartConfig } from '../../shared/practice/startConfig'
+import {
+  bestFor, captureSentence, captureText, daysOnOffer, deltaText, gradeLabel, isDayProblem, modeLabel, negativeDays, runModeLabel, snapStartTime, negativeVerdict, pctText, pickFilter, pointsText, runLine, tripMarks,
+} from '../../shared/practice/model'
+import { GRADES, type Grade, type PracticeStrategy, type ReviewTrade } from '../../shared/practice/types'
+
+const strategy: PracticeStrategy = {
+  category: 'Breakout', strategy: 'Opening range', days: 5,
+  grades: { ideal: 2, average: 1, poor: 0, ungraded: 1, failed: 1, open: 0 },
+  symbols: [{ symbol: 'BSESEN', days: 1 }, { symbol: 'NIFTY', days: 4 }],
+}
+const all = new Set<Grade>(GRADES)
+
+const trade = (extra: Partial<ReviewTrade> = {}): ReviewTrade => ({
+  index: 0, instrument: 'CE', right: 'CE', strike: 24500, expiry: '2026-10-07', action: 'BUY', side: 'buy', state: 'closed', quantity: 75,
+  pnl: 1500, pnl_pct: 2, entry: { time: 1_791_244_800 + 9 * 3600 + 51 * 60 + 20, price: 55 }, exit: { time: 1_791_244_800 + 10 * 3600 + 24 * 60 + 5, price: 75 },
+  points: 20, entry_delta_min: 6, exit_delta_min: -6, capture_pct: 50, theoretical_points: 40, theoretical_rupees: 3000, ...extra,
+})
+
+describe('what to send for a pick', () => {
+  it('sends nothing when every grade is ticked and no symbol is chosen', () => {
+    expect(pickFilter('', all)).toEqual({})
+  })
+  it('sends the symbol and only the ticked grades, in a fixed order', () => {
+    expect(pickFilter('NIFTY', new Set<Grade>(['failed', 'ideal']))).toEqual({ symbol: 'NIFTY', grades: ['ideal', 'failed'] })
+    expect(pickFilter('', new Set<Grade>())).toEqual({}) // nothing ticked: the screen disables Start instead
+  })
+  it('counts the days a choice leaves on offer', () => {
+    expect(daysOnOffer(strategy, '', all)).toBe(5)
+    expect(daysOnOffer(strategy, 'BSESEN', all)).toBe(1)
+    expect(daysOnOffer(strategy, '', new Set<Grade>(['ideal']))).toBe(2)
+    expect(daysOnOffer(strategy, 'BSESEN', new Set<Grade>(['ideal']))).toBe(1) // never more than the symbol has
+    expect(daysOnOffer(strategy, '', new Set<Grade>(['poor']))).toBe(0)
+  })
+  it('names every grade', () => {
+    expect(GRADES.map(gradeLabel)).toEqual(['Ideal', 'Average', 'Poor', 'Success (not graded)', 'Failed', 'No outcome'])
+  })
+})
+
+describe('a Stepwise start snapped to a bar boundary (the twin of the server\'s snap_start, same table)', () => {
+  it('floors to a multiple of the bar and never before the open', () => {
+    expect([snapStartTime('09:33:00', 180), snapStartTime('09:34:00', 180), snapStartTime('09:35:00', 180), snapStartTime('09:36:00', 180)]).toEqual(['09:33:00', '09:33:00', '09:33:00', '09:36:00'])
+    expect([snapStartTime('09:34:00', 300), snapStartTime('09:20:00', 300)]).toEqual(['09:30:00', '09:20:00'])
+    expect([snapStartTime('09:15:00', 180), snapStartTime('09:15:00', 300), snapStartTime('09:15:00', 120)]).toEqual(['09:15:00', '09:15:00', '09:15:00']) // 120 s: its bar starts at 09:14, clamped to the open
+    expect([snapStartTime('09:16:00', 120), snapStartTime('09:17:00', 120), snapStartTime('09:16:30', 120)]).toEqual(['09:16:00', '09:16:00', '09:16:00'])
+    for (let h = 9; h < 14; h += 1) for (let m = 0; m < 60; m += 1) {
+      if (h === 9 && m < 15) continue
+      for (const interval of [120, 180, 300]) {
+        const text = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
+        const snapped = snapStartTime(text, interval)
+        expect(snapped <= text && snapped >= '09:15:00').toBe(true)
+        expect(snapped === '09:15:00' || (Number(snapped.slice(0, 2)) * 3600 + Number(snapped.slice(3, 5)) * 60) % interval === 0).toBe(true)
+      }
+    }
+  })
+  it('names the modes', () => {
+    expect([modeLabel('replay'), modeLabel('stepwise'), runModeLabel({ session_type: 'stepwise' }), runModeLabel({ session_type: 'sim' }), runModeLabel({})]).toEqual(['Replay', 'Stepwise', 'Stepwise', 'Replay', 'Replay'])
+  })
+})
+
+describe('a start that fails', () => {
+  it('sends the days that could not be started, and nothing when there are none', () => {
+    const day = { date: '2026-10-06', symbol: 'NIFTY' }
+    expect(pickFilter('', all, false, [day])).toEqual({ exclude: [day] })
+    expect(pickFilter('NIFTY', all, true, [day, { date: '2026-10-07', symbol: 'NIFTY' }])).toEqual({ symbol: 'NIFTY', include_negatives: true, exclude: [day, { date: '2026-10-07', symbol: 'NIFTY' }] })
+    expect(pickFilter('', all, false, [])).toEqual({})
+  })
+  it('skips the day only when the failure is about the day, not about a session already running', () => {
+    expect(isDayProblem('No data for NIFTY on 2026-10-06')).toBe(true)
+    expect(isDayProblem('Could not load that day\'s data')).toBe(true)
+    expect(isDayProblem('A session is running on this screen. Stop it before you start a practice run.')).toBe(false)
+    expect(isDayProblem('You already have an active session group')).toBe(false)
+  })
+})
+
+describe('no-setup days (the strategy was absent)', () => {
+  const withAbsent: PracticeStrategy = { ...strategy, negative_days: [{ symbol: 'NIFTY', days: 6 }, { symbol: 'BSESEN', days: 2 }] }
+  it('counts the absent days a symbol leaves, and none from an older server', () => {
+    expect(negativeDays(withAbsent, '')).toBe(8)
+    expect(negativeDays(withAbsent, 'NIFTY')).toBe(6)
+    expect(negativeDays(withAbsent, 'RELIND')).toBe(0)
+    expect(negativeDays(strategy, '')).toBe(0)
+  })
+  it('asks for them only when ticked', () => {
+    expect(pickFilter('NIFTY', all, true)).toEqual({ symbol: 'NIFTY', include_negatives: true })
+    expect(pickFilter('NIFTY', all)).toEqual({ symbol: 'NIFTY' })
+  })
+  it('says whether you stayed out', () => {
+    expect(negativeVerdict({ traded: false, correct: true, points: null })).toBe('No-setup day: you stayed out, the right call')
+    expect(negativeVerdict({ traded: true, correct: false, points: -2 })).toBe('No-setup day: you traded (-2.00 pts), no trade was wanted')
+    expect(runLine({ traded: false, negative: true, correct: true })).toBe('No-setup day: you stayed out, the right call')
+    expect(runLine({ traded: true, negative: true, correct: false, points: 3 })).toMatch(/you traded \(\+3.00 pts\)/)
+  })
+})
+
+describe('the wording of the review', () => {
+  it('says early, late or on the candle', () => {
+    expect(deltaText(6)).toBe('Entered 6 min late')
+    expect(deltaText(-3)).toBe('Entered 3 min early')
+    expect(deltaText(0)).toBe('Entered on the recorded candle')
+    expect(deltaText(-6, 'exit')).toBe('Exited 6 min early')
+    expect(deltaText(null)).toBe('—')
+  })
+  it('formats points, percentages and capture', () => {
+    expect([pointsText(12), pointsText(-3.5), pointsText(null), pctText(2.5), captureText(49.6), captureText(null)])
+      .toEqual(['+12.00 pts', '-3.50 pts', '—', '+2.50%', '50%', '—'])
+  })
+  it('explains what a trade kept of the theoretical move, or why it cannot say', () => {
+    expect(captureSentence(trade())).toBe('You kept 50% of the +40.00 pts on offer.')
+    expect(captureSentence(trade({ theoretical_points: null, capture_pct: null }))).toMatch(/could not be priced/)
+    expect(captureSentence(trade({ theoretical_points: -5, capture_pct: null }))).toMatch(/made nothing/)
+    expect(captureSentence(trade({ points: null, exit: null, capture_pct: null }))).toMatch(/Still open/)
+  })
+  it('summarises a run for the History list', () => {
+    expect(runLine(null)).toBe('Not reviewed yet')
+    expect(runLine({ traded: false })).toBe('No trade')
+    expect(runLine({ traded: true, entry_delta_min: 3, capture_pct: 75 })).toBe('3 min late · kept 75%')
+    expect(runLine({ traded: true, entry_delta_min: -2, capture_pct: null })).toBe('2 min early')
+  })
+  it('finds the best priced pair of an instrument', () => {
+    const setup = { theoretical: [{ instrument: 'underlying' as const, strike: null, expiry: null, unavailable: 'no data' },
+      { instrument: 'CE' as const, strike: 24500, expiry: null, points: 21 }] }
+    expect(bestFor(setup, 'CE')?.points).toBe(21)
+    expect(bestFor(setup, 'underlying')).toBeNull()
+  })
+})
+
+describe('your trades as gold marks', () => {
+  it('puts the entry and exit on the candle they happened in, on the traded instrument', () => {
+    const marks = tripMarks(trade(), { category: 'Breakout', strategy: 'Opening range' }, 3, 'buy0')
+    expect(marks.map(m => [m.type, m.instrument, m.action, m.source])).toEqual([['entry', 'CE', 'BUY', 'traded'], ['exit', 'CE', 'SELL', 'traded']])
+    expect(marks[0].time % 180).toBe(0)
+    expect(marks[0].time).toBe(1_791_244_800 + 9 * 3600 + 51 * 60) // 09:51:20 sits on the 09:51 candle
+    expect(marks[1].time).toBe(1_791_244_800 + 10 * 3600 + 24 * 60)
+    expect(marks[0].text).toBe('BUY 75 @ 55')
+    expect(new Set(marks.map(m => m.id)).size).toBe(2)
+  })
+  it('a short and an open trade', () => {
+    const short = tripMarks(trade({ action: 'SELL', instrument: 'underlying', right: null }), { category: 'c', strategy: 's' }, 5, 'k')
+    expect(short.map(m => [m.type, m.action])).toEqual([['entry', 'SELL'], ['exit', 'BUY']])
+    expect(tripMarks(trade({ exit: null }), { category: 'c', strategy: 's' }, 3, 'k').map(m => m.type)).toEqual(['entry'])
+  })
+})
+
+describe('the client', () => {
+  it('uses the deep-dive/practice paths a transport must allow', async () => {
+    const request = vi.fn(async (path: string) => path.endsWith('strategies') ? { strategies: [strategy] } : path.endsWith('runs') ? { runs: [] } : { ok: true })
+    const api = createPracticeClient(request as never)
+    expect(await api.strategies()).toEqual([strategy])
+    expect(await api.runs()).toEqual([])
+    await api.pick({ category: 'Breakout', strategy: 'Opening range' })
+    await api.pick({ category: 'Breakout', strategy: 'Opening range' }, { symbol: 'NIFTY', grades: ['ideal', 'failed'] })
+    await api.pick({ category: 'Breakout', strategy: 'Opening range' }, { include_negatives: true })
+    await api.evaluate('s 1')
+    expect(request.mock.calls).toEqual([
+      ['deep-dive/practice/strategies', 'GET'], ['deep-dive/practice/runs', 'GET'],
+      ['deep-dive/practice/pick', 'POST', { category: 'Breakout', strategy: 'Opening range' }],
+      ['deep-dive/practice/pick', 'POST', { category: 'Breakout', strategy: 'Opening range', symbol: 'NIFTY', grades: ['ideal', 'failed'] }],
+      ['deep-dive/practice/pick', 'POST', { category: 'Breakout', strategy: 'Opening range', include_negatives: true }],
+      ['deep-dive/practice/evaluate?session_id=s%201', 'GET'],
+    ])
+  })
+})
+
+describe('the instrument settings of a practice start', () => {
+  const plan = (extra: Record<string, unknown> = {}) => ({
+    symbol: 'NIFTY', date: '2026-10-16', start_time: '09:33:00', interval_minutes: 3, instrument_type: 'options' as const,
+    strike_ce: 24500, strike_pe: 24400, expiry: '2026-10-20', practice: { category: 'c', strategy: 's', start_offset_min: 12 },
+    days_available: 1, repeated: false, ...extra,
+  })
+  const lookups = () => ({ getExpiry: vi.fn(async () => ({ expiry: '2026-10-27' })), getPriceAt: vi.fn(async () => ({ price: 24512 })) })
+
+  it('trades the strikes the day was marked on, with no lookups', async () => {
+    const l = lookups()
+    expect(await practiceStartConfig(plan(), l)).toEqual({ symbol: 'NIFTY', date: '2026-10-16', instrument_type: 'options', strike: 24500, expiry: '2026-10-20', strike_ce: 24500, strike_pe: 24400, underlyingPrice: 0 })
+    expect(l.getExpiry).not.toHaveBeenCalled(); expect(l.getPriceAt).not.toHaveBeenCalled()
+  })
+  it('fills strikes that were never saved with the ATM strike at the start time', async () => {
+    const l = lookups()
+    const c = await practiceStartConfig(plan({ strike_ce: null, strike_pe: 24400 }), l)
+    expect([c.strike_ce, c.strike_pe, c.underlyingPrice]).toEqual([24500, 24400, 24512]) // 24512 rounds to 24500 on a 50 interval
+    expect(l.getPriceAt).toHaveBeenCalledWith('NIFTY', '2026-10-16', '09:33')
+    const both = await practiceStartConfig(plan({ strike_ce: null, strike_pe: null, symbol: 'BSESEN' }), l)
+    expect([both.strike_ce, both.strike_pe]).toEqual([24500, 24500]) // 100 interval: 24512 -> 24500
+  })
+  it('looks the expiry up only when the server gave none', async () => {
+    const l = lookups()
+    expect((await practiceStartConfig(plan({ expiry: null }), l)).expiry).toBe('2026-10-27')
+  })
+  it('an equity-only symbol is plain equity', async () => {
+    const l = lookups()
+    expect(await practiceStartConfig(plan({ instrument_type: 'equity', strike_ce: null, strike_pe: null, expiry: null }), l))
+      .toEqual({ symbol: 'NIFTY', date: '2026-10-16', instrument_type: 'equity', underlyingPrice: 0 })
+    expect(l.getExpiry).not.toHaveBeenCalled()
+  })
+})
+
+describe('the History summary', () => {
+  const run = (result: import('../../shared/practice/types').RunSummary | null) => ({ result })
+  it('totals reviewed runs, entry timing, capture and no-setup days, leaving unreviewed runs out', async () => {
+    const { historySummary, historyLine } = await import('../../shared/practice/model')
+    const summary = historySummary([
+      run({ traded: true, entry_delta_min: -3, capture_pct: 80 }), run({ traded: true, entry_delta_min: 6, capture_pct: 40 }), run({ traded: true, entry_delta_min: 0, capture_pct: null }),
+      run({ traded: false }), run(null),
+      run({ traded: false, negative: true, correct: true }), run({ traded: true, negative: true, correct: false, points: -2 }),
+    ])
+    expect(summary).toEqual({ reviewed: 6, traded: 3, early: 1, late: 1, onTime: 1, averageCapture: 60, noSetupDays: 2, stayedOut: 1 })
+    expect(historyLine(summary)).toBe('6 reviewed · entered early 1, late 1, on time 1 · kept 60% on average · no-setup days: stayed out 1 of 2')
+  })
+  it('says nothing when nothing is reviewed, and leaves out what does not apply', async () => {
+    const { historySummary, historyLine } = await import('../../shared/practice/model')
+    expect(historyLine(historySummary([]))).toBe('')
+    expect(historyLine(historySummary([run(null)]))).toBe('')
+    expect(historyLine(historySummary([run({ traded: false })]))).toBe('1 reviewed')
+  })
+})
+
+describe('practice runs in the Analysis session list', () => {
+  const session = (id: string, extra: Record<string, unknown> = {}) => ({ session_id: id, user_id: 'u', symbol: 'NIFTY', date: '2026-10-16', instrument_type: 'options', session_type: 'sim',
+    session_capital: 100000, net_pnl: 100, trade_count: 2, round_trip_count: 1, winning_round_trip_count: 1, total_commission: 5, ...extra }) as never
+  const practice = { category: 'Breakout', strategy: 'Opening range' }
+  it('groups a practice run apart from an ordinary replay of the same day, and lists a run with no trade', async () => {
+    const { groupSessions } = await import('../../shared/analysis/TradeAnalysis')
+    const groups = groupSessions([session('a'), session('b', { practice }), session('c', { practice, date: '2026-10-14', trade_count: 0, round_trip_count: 0 }), session('d', { trade_count: 0 })])
+    expect(groups.map(g => [g.date, g.practice?.strategy ?? null, g.sessions.length])).toEqual([['2026-10-16', null, 1], ['2026-10-16', 'Opening range', 1], ['2026-10-14', 'Opening range', 1]])
+    // two runs of one strategy on one day stay together
+    expect(groupSessions([session('p1', { practice }), session('p2', { practice })])[0].sessions).toHaveLength(2)
+  }, 30000) // the first import of the Analysis screen is slow
+  it('reads the review through the analysis allowlist only', async () => {
+    const { createAnalysisPracticeApi } = await import('./analysisApi')
+    const calls: string[] = []
+    const api = createAnalysisPracticeApi((async (path: string, method: string) => { calls.push(`${method} ${path}`); return { runs: [] } }) as never)
+    await api.runs(); await api.evaluate('s 1')
+    expect(calls).toEqual(['GET deep-dive/practice/runs', 'GET deep-dive/practice/evaluate?session_id=s%201'])
+    expect(Object.keys(api).sort()).toEqual(['evaluate', 'runs'])
+  })
+})

@@ -391,6 +391,10 @@ mod tests {
         YoutubeTokens { refresh_token: "r".into(), access_token: access.into(), expires_at, client_id: "cid".into(), client_secret: Some("sec".into()), scope: String::new() }
     }
 
+    // Not on Windows: there the keyring crate uses the real Credential Manager, which keeps the value (so saving
+    // succeeds and this scenario cannot be produced), and `entry()` is the app's own YouTube connection entry, which
+    // a test must never overwrite.
+    #[cfg(not(windows))]
     #[test]
     fn saving_fails_loudly_when_the_store_does_not_keep_the_value() {
         // Without a real backend the keyring crate hands out a fresh empty entry each time (the "mock" store),

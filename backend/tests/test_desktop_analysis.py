@@ -131,3 +131,37 @@ def test_desktop_history_worker_keeps_context_and_website_executor():
     name, value, default_name = asyncio.run(exercise())
     assert name.startswith('desktop-history') and value == 'captured'
     assert not default_name.startswith('desktop-history')
+
+
+def test_the_read_only_deep_dive_routes_are_the_only_ones_on_the_analysis_transport(client):
+    """Phase 26: label forms read the percentages, and Analysis reads a practice run's review and the run list, here; the Deep Dive
+    itself and starting a practice run live on the patterns transport."""
+    routes = {(m, r.path) for r in desktop_analysis.router.routes for m in r.methods if 'deep-dive' in r.path}
+    assert routes == {('GET', '/api/desktop/v1/analysis/deep-dive/stats/all'), ('GET', '/api/desktop/v1/analysis/deep-dive/practice/evaluate'),
+                      ('GET', '/api/desktop/v1/analysis/deep-dive/practice/runs')}
+    with patch('app.routers.deep_dive.svc') as svc:
+        svc.stats_all.return_value = [{'category': 'Breakout', 'strategy': 'ORB'}]
+        response = client.get('/api/desktop/v1/analysis/deep-dive/stats/all', headers={'X-User-Id': 'mallory'})
+    assert response.status_code == 200, response.text
+    assert response.json() == {'dives': [{'category': 'Breakout', 'strategy': 'ORB'}]}
+    svc.stats_all.assert_called_once_with('alice')
+    for method, path in (('POST', 'stats/all'), ('GET', 'dives'), ('PUT', 'setup'), ('POST', 'tags'), ('POST', 'practice/runs'), ('POST', 'practice/evaluate'),
+                         ('GET', 'practice/pick'), ('POST', 'practice/pick'), ('GET', 'practice/strategies')):
+        assert client.request(method, f'/api/desktop/v1/analysis/deep-dive/{path}').status_code in (404, 405)
+
+
+def test_a_practice_review_is_read_through_the_analysis_transport_for_the_bearer_identity(client):
+    with patch('app.routers.desktop_analysis.owned_session'), patch('app.routers.deep_dive.practice', create=True), \
+            patch('app.services.strategy_practice_service.evaluate', return_value={'session_id': 's1', 'negative': False}) as evaluate, \
+            patch('app.services.strategy_practice_service.list_runs', return_value=[{'session_id': 's1'}]) as runs:
+        review = client.get('/api/desktop/v1/analysis/deep-dive/practice/evaluate?session_id=s1', headers={'X-User-Id': 'mallory'})
+        listing = client.get('/api/desktop/v1/analysis/deep-dive/practice/runs', headers={'X-User-Id': 'mallory'})
+    assert review.status_code == 200 and review.json()['session_id'] == 's1', review.text
+    assert listing.status_code == 200 and listing.json() == {'runs': [{'session_id': 's1'}]}
+    evaluate.assert_called_once_with('alice', 's1')  # the bearer's identity, never the header's
+    runs.assert_called_once_with('alice')
+
+
+def test_deep_dive_stats_requires_the_bearer():
+    with TestClient(app) as anonymous:
+        assert anonymous.get('/api/desktop/v1/analysis/deep-dive/stats/all', headers={'X-User-Id': 'alice'}).status_code == 401

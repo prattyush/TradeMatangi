@@ -2621,6 +2621,7 @@ export default function SettingsModal({ date, isAdmin, isRealTradingUser, sessio
                   </div>
                   <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10 }}>
                     A new entry must wait this many minutes after the previous entry was filled (session time, so it follows replay time).
+                    The wait starts over once every open position (CE and PE) is closed, so you can enter again straight after a full exit.
                     Exits and stoplosses are never held back.
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

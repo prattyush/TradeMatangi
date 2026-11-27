@@ -1,0 +1,2 @@
+# The word-list assets are hashed (NOTICE) and decoded line by line: keep them byte-exact LF on every checkout, Windows included.
+shared/games/brain/assets/words/* text eol=lf

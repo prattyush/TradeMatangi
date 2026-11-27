@@ -10,6 +10,9 @@ export const MARKER_COLORS: Record<string, { color: string; shape: 'arrowUp' | '
   'exit-PE':          { color: '#7c3aed', shape: 'arrowDown' },
 }
 
+/** The colour of a mark that is an actual order, not a marked pattern. */
+export const TRADED_MARK_COLOR = '#d29922'
+
 export function markerKey(type: string, instrument: string) { return `${type}-${instrument}` }
 
 export function patternIdentity(ann: { strategy_name: string; category?: string }): string {
@@ -42,6 +45,12 @@ export function buildMarkers(
     .slice()
     .sort((a, b) => a.time - b.time)
     .map(ann => {
+      // Phase 26: a mark drawn from an order the user really placed. Gold, with the order in the text, so it cannot be taken for
+      // an ideal pattern mark (and it never dims: it is always the trade being looked at).
+      if (ann.source === 'traded') {
+        const buy = ann.action === 'BUY'
+        return { time: ann.time, position: buy ? 'belowBar' : 'aboveBar', color: TRADED_MARK_COLOR, shape: buy ? 'arrowUp' : 'arrowDown', text: `⚑ ${ann.action ?? ann.type}`, size: 2 } as PatternMarker
+      }
       const cfg = MARKER_COLORS[markerKey(ann.type, ann.instrument)] ?? { color: '#8b949e', shape: 'arrowUp' as const }
       const matchedStrategy = activeStrategy === null || ann.strategy_name === activeStrategy
       const matchedCategory = activeCategory === null || ann.category === activeCategory

@@ -78,6 +78,8 @@ export interface SimulationState {
   savedExitRtKeys: string[]        // dedupe: same for exits already saved
   activeEntryStrategies: Record<string, ActiveEntryStrategy>  // keyed by 'EQ'|'CE'|'PE'
   lastStartedContext: { symbol: string; date: string; sessionType: string; instrumentType: 'equity' | 'options' } | null
+  /** Set for a Strategy Practice run: its strategy (never the recorded side or marks). */
+  practice: { category: string; strategy: string } | null
 }
 
 interface SessionRuntimeCache {
@@ -112,6 +114,8 @@ export interface InstrumentConfig {
   override?: boolean
   group_id?: string
   session_alias?: string
+  /** Strategy Practice (replay or stepwise): the strategy being practised on this symbol and date. */
+  practice?: { category: string; strategy: string; start_offset_min: number }
 }
 
 export function useSimulation() {
@@ -169,6 +173,7 @@ export function useSimulation() {
     savedExitRtKeys: [],
     activeEntryStrategies: {},
     lastStartedContext: null,
+    practice: null,
   })
 
   const applyPositionSnapshot = useCallback((snapshot: PositionSnapshot) => {
@@ -233,6 +238,7 @@ export function useSimulation() {
       sessionExpiry: res.expiry,
       sessionType,
       lastStartedContext: { symbol: sym, date: res.date, sessionType, instrumentType },
+      practice: res.practice ?? null,
       brokeragePerOrder: res.brokerage_per_order ?? 0,
       stepwise: res.stepwise === true,
       barPaused: cached?.barPaused ?? false,
@@ -243,7 +249,8 @@ export function useSimulation() {
       lastCompletedBarPE: cached?.lastCompletedBarPE ?? null,
     }))
 
-    api.getTradesByContext(sym, res.date, instrumentType, sessionType).then(({ trades }) => {
+    // A practice run starts clean: earlier trades of that day (the server also leaves practice runs out of a day's history) stay hidden.
+    if (!res.practice) api.getTradesByContext(sym, res.date, instrumentType, sessionType).then(({ trades }) => {
       if (generation !== attachGenerationRef.current) return
       setState(s => ({ ...s, historicalTrades: trades.filter(t => t.session_id !== res.session_id && (sessionType !== 'real' ||
         ((t.execution_broker ?? 'kotak').toLowerCase().replace('neo', '') === (res.execution_broker ?? 'kotak').toLowerCase().replace('neo', '')))) }))

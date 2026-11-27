@@ -63,6 +63,20 @@ def test_drawings_are_filtered_by_canonical_instrument():
     assert drawings[0]["instrument"] == equity()
 
 
+def test_text_drawing_keeps_its_text_across_save_and_reload():
+    """A Text drawing is one point plus a `text` field; the store keeps the whole drawing, so the text comes back and can be changed."""
+    table = FakeTable()
+    text = {"tool": "Text", "text": "Breakout retest", "points": [{"timestamp": 1778058900, "price": 24010.5}], "style": {"color": "#60a5fa"}, "visible": True, "locked": False}
+    with patch.object(persistence, "_table", return_value=table):
+        created = persistence.create_drawing("user-1", equity(), text, "mutation-1")
+        changed = persistence.update_drawing("user-1", created["drawing_id"], {**text, "text": "Failed breakout"}, created["revision"], "mutation-2")
+        [reloaded] = persistence.list_drawings("user-1", equity())
+
+    assert created["drawing"]["text"] == "Breakout retest"
+    assert changed["drawing"]["text"] == "Failed breakout" and changed["revision"] == created["revision"] + 1
+    assert reloaded["drawing"]["tool"] == "Text" and reloaded["drawing"]["text"] == "Failed breakout"
+
+
 def test_deleted_drawing_is_excluded_from_reload():
     table = FakeTable()
     with patch.object(persistence, "_table", return_value=table):

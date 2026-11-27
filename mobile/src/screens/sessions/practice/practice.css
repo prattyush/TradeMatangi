@@ -1,0 +1,13 @@
+/* The Strategy Practice review on a landscape phone: the shared review screen, full screen and scrollable. */
+.phone-practice {
+  position: absolute; inset: 0; z-index: 60; background: var(--bg, #0d1117); color: var(--text);
+  overflow: auto; padding: calc(var(--sai-t) + 6px) calc(var(--sai-r) + 8px) calc(var(--sai-b) + 8px) calc(var(--sai-l) + 8px);
+  -webkit-overflow-scrolling: touch;
+}
+.phone-practice .pr, .phone-practice .pr-review, .phone-practice .pr-setup { min-width: 0; }
+.phone-practice .pr-table { font-size: 11px; }
+.phone-practice .pr-table td, .phone-practice .pr-table th { padding: 3px 6px; }
+.phone-practice .pr-review button { min-height: 36px; }
+/* Two charts side by side would be too small: stack them, each as tall as the window. */
+.phone-practice .td-charts { flex-direction: column; flex: none; }
+.phone-practice .td-chartbox { flex: none; height: 300px; min-height: 260px; }

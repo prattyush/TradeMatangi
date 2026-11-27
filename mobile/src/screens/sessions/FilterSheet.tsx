@@ -6,6 +6,7 @@ const RANGES: RangePreset[] = ['7d', '30d', '90d', '1y', 'custom']
 const STYLES: Array<[SessionFilters['style'], string]> = [['', 'All'], ['intraday', 'Day'], ['swing', 'Swing']]
 const MODES: Array<[SessionFilters['mode'], string]> = [['', 'All'], ['sim', 'Replay'], ['stepwise', 'Stepwise'], ['paper', 'Paper'], ['real', 'Real']]
 const INSTRUMENTS: Array<[SessionFilters['instrument'], string]> = [['', 'All'], ['equity', 'Equity'], ['options', 'Options']]
+const PRACTICE: Array<[SessionFilters['practice'], string]> = [['', 'Include'], ['exclude', 'Exclude'], ['only', 'Only']]
 
 function Chips<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: Array<[T, string]>; onChange: (next: T) => void }) {
   return (
@@ -47,6 +48,7 @@ export function FilterSheet({ filters, symbols, onApply, onClose }: { filters: S
       <Chips label="Style" value={draft.style} options={STYLES} onChange={style => patch({ style })} />
       <Chips label="Mode" value={draft.mode} options={MODES} onChange={mode => patch({ mode })} />
       <Chips label="Instrument" value={draft.instrument} options={INSTRUMENTS} onChange={instrument => patch({ instrument })} />
+      <Chips label="Practice runs" value={draft.practice} options={PRACTICE} onChange={practice => patch({ practice })} />
       <label>
         Symbol
         <input type="text" list="session-symbols" autoCapitalize="characters" autoCorrect="off" value={draft.symbol} placeholder="All symbols" onChange={event => patch({ symbol: event.target.value.toUpperCase() })} />

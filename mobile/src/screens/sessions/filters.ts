@@ -12,9 +12,11 @@ export interface SessionFilters {
   mode: '' | 'sim' | 'stepwise' | 'paper' | 'real'
   symbol: string
   instrument: '' | 'equity' | 'options'
+  /** Strategy Practice runs: listed with the others (default), left out, or the only ones. Applied on the phone, not sent to the server. */
+  practice: '' | 'exclude' | 'only'
 }
 
-export const DEFAULT_FILTERS: SessionFilters = { range: '30d', start: '', end: '', style: '', mode: '', symbol: '', instrument: '' }
+export const DEFAULT_FILTERS: SessionFilters = { range: '30d', start: '', end: '', style: '', mode: '', symbol: '', instrument: '', practice: '' }
 
 export const RANGE_LABELS: Record<Exclude<RangePreset, 'custom'>, string> = { '7d': '7 days', '30d': '30 days', '90d': '90 days', '1y': '1 year' }
 const RANGE_DAYS: Record<Exclude<RangePreset, 'custom'>, number> = { '7d': 7, '30d': 30, '90d': 90, '1y': 365 }
@@ -51,6 +53,7 @@ export function activeFilterCount(filters: SessionFilters): number {
   if (filters.mode) count++
   if (filters.symbol) count++
   if (filters.instrument) count++
+  if (filters.practice) count++
   return count
 }
 

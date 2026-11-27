@@ -8,6 +8,8 @@ export default defineConfig(({ mode }) => {
   return {
     base: '/webapp/',
     plugins: [react()],
+    // The Games workers (puzzle generators) load their word lists with import(): that needs the ES module format, not the default IIFE.
+    worker: { format: 'es' },
     define: {
       'import.meta.env.VITE_API_BASE_URL': JSON.stringify(env.VITE_API_BASE_URL ?? ''),
       'import.meta.env.VITE_AI_HELPER_URL': JSON.stringify(env.VITE_AI_HELPER_URL ?? ''),

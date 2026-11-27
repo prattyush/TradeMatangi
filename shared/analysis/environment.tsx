@@ -5,6 +5,9 @@ import type { PerformanceCycle, PerformanceFilters, PerformanceReport, RealFeesD
 import type { HabitLedger } from './habits/types'
 import type { VideoLinksSource } from './videoLinks'
 import type { WhatIfSource } from './whatif/scenarios'
+import type { StatsAllEntry } from '../deepdive/types'
+import type { DiveChartProps } from '../deepdive/ui/host'
+import type { PracticeApi } from '../practice/types'
 
 export type AnalysisApi = Pick<typeof websiteApi,
   'getAnalysisSessions' | 'getSessionDetail' | 'getRoundTrips' | 'getLabels' | 'saveLabels' |
@@ -13,6 +16,8 @@ export type AnalysisApi = Pick<typeof websiteApi,
   'getExpiry' | 'getSnapshots' | 'deleteSnapshots' | 'patternListStrategies' |
   'patternListCategories' | 'patternAddStrategy' | 'patternAddCategory' | 'patternGetChartByDate' | 'patternOhlcEquity' | 'patternOhlcOptions'> & {
   getSnapshotCandle?: (sessionId: string, eventId: string, instrument: 'underlying' | 'CE' | 'PE', signal?: AbortSignal) => Promise<{candle: OHLCCandle | null}>
+  /** Phase 26: the Deep Dive percentages of every strategy that has marked days, for the label forms. Absent (an older server or host) => no panel. */
+  getDeepDiveStats?: () => Promise<StatsAllEntry[]>
 }
 export interface AnalysisEnvironment {
   swingRequest?: import('../SwingPortfolioPanel').SwingRequest
@@ -20,6 +25,8 @@ export interface AnalysisEnvironment {
   drawingRequest?: (path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: Record<string, unknown>) => Promise<unknown>
   /** Catalogue kind/exchange of an underlying, so Analysis drawings share the trading chart's instrument key. */
   resolveSymbolInstrument?: (symbol: string) => Promise<{ kind: string; exchange: string } | undefined>
+  /** The charts show saved drawings but offer no tools to make or change them (the phone). */
+  drawingsReadOnly?: boolean
   /** Scopes locally-stored chart preferences (indicators) to the signed-in account. */
   accountKey?: string
   api: AnalysisApi
@@ -43,6 +50,11 @@ export interface AnalysisEnvironment {
   // Each adapter implements the existing chart's public props. The heterogeneous
   // snapshot/pattern inputs are normalized inside the desktop renderer boundary.
   charts?: Record<string, ComponentType<any>>
+  /**
+   * Strategy Practice (Phase 26): what the review of a practice run needs (its read-only API and a chart that draws marks). Absent where
+   * the host cannot show it, and the Practice review button is then not offered.
+   */
+  practice?: { api: Pick<PracticeApi, 'runs' | 'evaluate'>; Chart: ComponentType<DiveChartProps>; historicalDays?: number }
   reportError?: (error: string, source: string) => void
   active?: boolean
   desktop?: boolean
@@ -79,6 +91,8 @@ export function useAnalysisEnvironment(): AnalysisEnvironment {
   if (!value) throw new Error('Analysis must have an authenticated provider')
   return value
 }
+/** The environment, or null outside an Analysis provider (a chart that can run without one). */
+export function useOptionalAnalysisEnvironment(): AnalysisEnvironment | null { return useContext(Context) }
 export function useAnalysisApi() { return useAnalysisEnvironment().api }
 
 export function useAnalysisError(error: string | null | undefined, source: string) {

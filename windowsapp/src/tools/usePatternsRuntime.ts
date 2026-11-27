@@ -7,7 +7,8 @@ import { patternsRequest, type PatternsRequest } from '../patternsApi'
 
 export const native = '__TAURI_INTERNALS__' in window
 
-export interface PatternSettings { mode: string; ceCap: number; peCap: number; historicalDays: number }
+/** `loaded` is false until the account's settings have been read (or the read failed), so a screen can wait before it resolves strikes. */
+export interface PatternSettings { mode: string; ceCap: number; peCap: number; historicalDays: number; loaded?: boolean }
 
 /**
  * What every Patterns tool (Pattern Library, Chart Structures, Fine Structures) needs: the typed patterns client, the
@@ -25,14 +26,14 @@ export function usePatternsRuntime(baseUrl: string, token: string, onUnauthorize
   }, [baseUrl, token, onUnauthorized])
   useEffect(() => () => adapter.dispose(), [adapter])
 
-  const [settings, setSettings] = useState<PatternSettings>({ mode: 'otm', ceCap: 0, peCap: 0, historicalDays: 2 })
+  const [settings, setSettings] = useState<PatternSettings>({ mode: 'otm', ceCap: 0, peCap: 0, historicalDays: 2, loaded: !native })
   useEffect(() => {
     if (!active || !native) return
     let cancelled = false
     void invoke<Record<string, unknown>>('desktop_drawing_request', { baseUrl, path: 'trading/settings/current', method: 'GET', body: {} }).then(value => {
       if (cancelled) return
-      setSettings({ mode: String(value.max_price_mode ?? 'otm'), ceCap: Number(value.max_price_threshold_ce) || 0, peCap: Number(value.max_price_threshold_pe) || 0, historicalDays: Number(value.historical_days) || 2 })
-    }).catch(() => undefined)
+      setSettings({ mode: String(value.max_price_mode ?? 'otm'), ceCap: Number(value.max_price_threshold_ce) || 0, peCap: Number(value.max_price_threshold_pe) || 0, historicalDays: Number(value.historical_days) || 2, loaded: true })
+    }).catch(() => { if (!cancelled) setSettings(current => ({ ...current, loaded: true })) })
     return () => { cancelled = true }
   }, [baseUrl, active])
 
